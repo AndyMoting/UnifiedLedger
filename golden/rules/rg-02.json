@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-02",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a"
+  },
+  "catalog": {
+    "accounts": [
+      {"id": "asset-bank-a", "name": "银行卡 A", "kind": "asset", "real_account": true},
+      {"id": "asset-wallet-b", "name": "支付钱包 B", "kind": "asset", "real_account": true},
+      {"id": "equity-opening-a", "name": "期初权益 A", "kind": "equity", "real_account": false},
+      {"id": "income-account-salary", "name": "工资收入", "kind": "income", "real_account": false},
+      {"id": "income-account-red-packet", "name": "红包收入", "kind": "income", "real_account": false},
+      {"id": "income-account-project-payment", "name": "项目款收入", "kind": "income", "real_account": false},
+      {"id": "expense-account-other", "name": "其他支出", "kind": "expense", "real_account": false}
+    ],
+    "categories": [
+      {"id": "income-category-work", "name": "职业收入", "kind": "income", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "income-category-salary", "name": "工资", "kind": "income", "parent_id": "income-category-work", "posting_account_id": "income-account-salary", "active": true},
+      {"id": "income-category-inactive", "name": "已停用收入", "kind": "income", "parent_id": "income-category-work", "posting_account_id": null, "active": false},
+      {"id": "income-category-gifts", "name": "礼金", "kind": "income", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "income-category-red-packet", "name": "红包", "kind": "income", "parent_id": "income-category-gifts", "posting_account_id": "income-account-red-packet", "active": true},
+      {"id": "income-category-business", "name": "经营收入", "kind": "income", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "income-category-project-payment", "name": "项目款", "kind": "income", "parent_id": "income-category-business", "posting_account_id": "income-account-project-payment", "active": true},
+      {"id": "expense-category-general", "name": "一般支出", "kind": "expense", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "expense-category-other", "name": "其他支出", "kind": "expense", "parent_id": "expense-category-general", "posting_account_id": "expense-account-other", "active": true}
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-rg02-a",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {"id": "posting-opening-bank-rg02-a", "account_id": "asset-bank-a", "amount": "1000.00", "currency": "CNY"},
+          {"id": "posting-opening-equity-rg02-a", "account_id": "equity-opening-a", "amount": "-1000.00", "currency": "CNY"}
+        ]
+      }
+    ],
+    "expected_balances": {"asset-bank-a": "1000.00"}
+  },
+  "create": {
+    "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+    "candidate": null,
+    "request": {
+      "request_id": "request-rg02-create",
+      "kind": "manual_income",
+      "occurred_at": "2026-01-16T09:00:00+08:00",
+      "amount": "3000.00",
+      "currency": "CNY",
+      "category_id": "income-category-salary",
+      "receiving_account_id": "asset-bank-a",
+      "note": ""
+    },
+    "expected": {
+      "accepted": true,
+      "transaction": {
+        "id": "tx-income-rg02",
+        "current_version_id": "version-income-rg02-v1",
+        "posting_set_id": "posting-set-income-rg02",
+        "occurred_at": "2026-01-16T09:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {"id": "posting-bank-rg02", "account_id": "asset-bank-a", "amount": "3000.00", "currency": "CNY"},
+          {"id": "posting-income-rg02", "account_id": "income-account-salary", "amount": "-3000.00", "currency": "CNY"}
+        ]
+      },
+      "balances": {"asset-bank-a": "4000.00"},
+      "statistics": {
+        "day": "2026-01-16",
+        "month": "2026-01",
+        "day_income": "3000.00",
+        "month_income": "3000.00",
+        "day_cash_inflow": "3000.00",
+        "month_cash_inflow": "3000.00",
+        "consumption": "0.00",
+        "net_worth_change": "3000.00",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-bank-rg02": "pending",
+        "posting-income-rg02": "not_applicable",
+        "transaction": "pending"
+      },
+      "evidence_refs": []
+    }
+  },
+  "category_rename": {
+    "request": {"category_id": "income-category-salary", "new_name": "薪资"},
+    "expected": {
+      "category_id": "income-category-salary",
+      "current_name": "薪资",
+      "display_path": "职业收入 > 薪资",
+      "name_versions": [
+        {"version": 1, "status": "superseded", "name": "工资"},
+        {"version": 2, "status": "current", "name": "薪资"}
+      ],
+      "transaction_category_id": "income-category-salary",
+      "posting_account_id": "income-account-salary",
+      "transaction_version_count": 1,
+      "funding_effect_count": 1,
+      "balances": {"asset-bank-a": "4000.00"},
+      "statistics": {
+        "day": "2026-01-16", "month": "2026-01", "day_income": "3000.00", "month_income": "3000.00",
+        "day_cash_inflow": "3000.00", "month_cash_inflow": "3000.00", "consumption": "0.00",
+        "net_worth_change": "3000.00", "budget": "not_applicable"
+      },
+      "reconciliation": {"posting-bank-rg02": "pending", "posting-income-rg02": "not_applicable", "transaction": "pending"},
+      "evidence_refs": []
+    }
+  },
+  "idempotency": {
+    "repeated_request_id": "request-rg02-create",
+    "expected": {
+      "returned_transaction_id": "tx-income-rg02",
+      "new_transaction_count": 0,
+      "new_posting_set_count": 0,
+      "new_version_count": 0,
+      "funding_effect_count": 1,
+      "balances": {"asset-bank-a": "4000.00"},
+      "statistics": {
+        "day": "2026-01-16", "month": "2026-01", "day_income": "3000.00", "month_income": "3000.00",
+        "day_cash_inflow": "3000.00", "month_cash_inflow": "3000.00", "consumption": "0.00",
+        "net_worth_change": "3000.00", "budget": "not_applicable"
+      },
+      "reconciliation": {"posting-bank-rg02": "pending", "posting-income-rg02": "not_applicable", "transaction": "pending"},
+      "evidence_refs": []
+    }
+  },
+  "invalid_inputs": [
+    {"id": "missing-amount", "input": {"amount": null, "receiving_account_id": "asset-bank-a", "category_id": "income-category-salary"}, "expected": {"accepted": false, "field": "amount", "reason": "required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "zero-amount", "input": {"amount": "0.00", "receiving_account_id": "asset-bank-a", "category_id": "income-category-salary"}, "expected": {"accepted": false, "field": "amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "negative-amount", "input": {"amount": "-0.01", "receiving_account_id": "asset-bank-a", "category_id": "income-category-salary"}, "expected": {"accepted": false, "field": "amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "missing-receiving-account", "input": {"amount": "3000.00", "receiving_account_id": null, "category_id": "income-category-salary"}, "expected": {"accepted": false, "field": "receiving_account_id", "reason": "required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "missing-income-category", "input": {"amount": "3000.00", "receiving_account_id": "asset-bank-a", "category_id": null}, "expected": {"accepted": false, "field": "category_id", "reason": "required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "primary-income-category", "input": {"amount": "3000.00", "receiving_account_id": "asset-bank-a", "category_id": "income-category-work"}, "expected": {"accepted": false, "field": "category_id", "reason": "secondary_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "inactive-income-category", "input": {"amount": "3000.00", "receiving_account_id": "asset-bank-a", "category_id": "income-category-inactive"}, "expected": {"accepted": false, "field": "category_id", "reason": "category_inactive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "expense-category", "input": {"amount": "3000.00", "receiving_account_id": "asset-bank-a", "category_id": "expense-category-other"}, "expected": {"accepted": false, "field": "category_id", "reason": "income_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}}
+  ],
+  "variants": [
+    {
+      "id": "wallet-red-packet",
+      "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+      "candidate": null,
+      "request": {"request_id": "request-rg02-red-packet", "kind": "manual_income", "occurred_at": "2026-01-17T12:00:00+08:00", "amount": "88.88", "currency": "CNY", "category_id": "income-category-red-packet", "receiving_account_id": "asset-wallet-b"},
+      "expected": {
+        "accepted": true,
+        "transaction": {"id": "tx-income-rg02-red-packet", "current_version_id": "version-income-rg02-red-packet-v1", "posting_set_id": "posting-set-income-rg02-red-packet", "occurred_at": "2026-01-17T12:00:00+08:00", "effective": true, "postings": [
+          {"id": "posting-wallet-rg02-red-packet", "account_id": "asset-wallet-b", "amount": "88.88", "currency": "CNY"},
+          {"id": "posting-income-rg02-red-packet", "account_id": "income-account-red-packet", "amount": "-88.88", "currency": "CNY"}
+        ]},
+        "balances": {"asset-wallet-b": "88.88"},
+        "statistics": {"income": "88.88", "cash_inflow": "88.88", "consumption": "0.00", "net_worth_change": "88.88", "budget": "not_applicable"},
+        "reconciliation": {"posting-wallet-rg02-red-packet": "pending", "posting-income-rg02-red-packet": "not_applicable", "transaction": "pending"},
+        "evidence_refs": []
+      }
+    },
+    {
+      "id": "bank-project-payment",
+      "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+      "candidate": null,
+      "request": {"request_id": "request-rg02-project-payment", "kind": "manual_income", "occurred_at": "2026-01-18T14:00:00+08:00", "amount": "1200.00", "currency": "CNY", "category_id": "income-category-project-payment", "receiving_account_id": "asset-bank-a"},
+      "expected": {
+        "accepted": true,
+        "transaction": {"id": "tx-income-rg02-project-payment", "current_version_id": "version-income-rg02-project-payment-v1", "posting_set_id": "posting-set-income-rg02-project-payment", "occurred_at": "2026-01-18T14:00:00+08:00", "effective": true, "postings": [
+          {"id": "posting-bank-rg02-project-payment", "account_id": "asset-bank-a", "amount": "1200.00", "currency": "CNY"},
+          {"id": "posting-income-rg02-project-payment", "account_id": "income-account-project-payment", "amount": "-1200.00", "currency": "CNY"}
+        ]},
+        "balances": {"asset-bank-a": "1200.00"},
+        "statistics": {"income": "1200.00", "cash_inflow": "1200.00", "consumption": "0.00", "net_worth_change": "1200.00", "budget": "not_applicable"},
+        "reconciliation": {"posting-bank-rg02-project-payment": "pending", "posting-income-rg02-project-payment": "not_applicable", "transaction": "pending"},
+        "evidence_refs": []
+      }
+    }
+  ],
+  "forbidden_side_effects": [
+    "create_refund_relation", "create_transfer", "create_loan", "create_order_relation", "create_consumption",
+    "create_budget_result", "create_import_candidate", "create_external_evidence", "automatic_name_based_income",
+    "invoke_network", "invoke_sync", "invoke_intelligent_suggestion"
+  ]
+}
