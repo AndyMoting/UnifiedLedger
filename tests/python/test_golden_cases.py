@@ -70,7 +70,14 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         self.assertEqual(case["idempotency"]["expected"]["funding_effect_count"], 1)
         zero_amount = next(item for item in case["invalid_inputs"] if item["id"] == "zero-amount")
         self.assertEqual(zero_amount["expected"]["reason"], "must_be_positive")
-        self.assertEqual(len(case["invalid_inputs"]), 4)
+        invalid_reasons = {
+            item["id"]: item["expected"].get("reason")
+            for item in case["invalid_inputs"]
+        }
+        self.assertEqual(invalid_reasons["negative-amount"], "must_be_positive")
+        self.assertEqual(invalid_reasons["primary-category"], "secondary_category_required")
+        self.assertEqual(invalid_reasons["inactive-secondary-category"], "category_inactive")
+        self.assertEqual(len(case["invalid_inputs"]), 7)
 
     def test_rg01_freezes_unchanged_state_after_non_funding_operations(self):
         case = load_golden_case(RG01_PATH)

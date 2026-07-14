@@ -35,13 +35,22 @@
         "id": "expense-category-food",
         "name": "餐饮",
         "parent_id": null,
-        "posting_account_id": null
+        "posting_account_id": null,
+        "active": true
       },
       {
         "id": "expense-category-breakfast",
         "name": "早餐",
         "parent_id": "expense-category-food",
-        "posting_account_id": "expense-account-breakfast"
+        "posting_account_id": "expense-account-breakfast",
+        "active": true
+      },
+      {
+        "id": "expense-category-inactive",
+        "name": "已停用分类",
+        "parent_id": "expense-category-food",
+        "posting_account_id": null,
+        "active": false
       }
     ]
   },
@@ -300,6 +309,90 @@
         "accepted": false,
         "field": "amount",
         "reason": "must_be_positive",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "negative-amount",
+      "input": {
+        "amount": "-0.01",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "amount",
+        "reason": "must_be_positive",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "primary-category",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-food"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "secondary_category_required",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "inactive-secondary-category",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-inactive"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "category_inactive",
         "new_transaction_count": 0,
         "new_posting_count": 0,
         "state_changes": {
