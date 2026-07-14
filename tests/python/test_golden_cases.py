@@ -67,6 +67,45 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         self.assertEqual(zero_amount["expected"]["reason"], "must_be_positive")
         self.assertEqual(len(case["invalid_inputs"]), 4)
 
+    def test_rg01_freezes_unchanged_state_after_non_funding_operations(self):
+        case = load_golden_case(RG01_PATH)
+        created = case["create"]["expected"]
+        note_updated = case["note_update"]["expected"]
+        repeated = case["idempotency"]["expected"]
+
+        self.assertEqual(case["case"]["rule_version"], 1)
+        self.assertEqual(case["case"]["currency"], "CNY")
+        self.assertEqual(case["case"]["precision"], 2)
+        self.assertEqual(case["case"]["ledger_id"], "ledger-a")
+        self.assertEqual(case["opening"]["expected_balances"]["asset-bank-a"], "1000.00")
+        self.assertEqual(case["create"]["request"]["occurred_at"], "2026-01-15T08:30:00+08:00")
+
+        self.assertEqual(note_updated["balances"], created["balances"])
+        self.assertEqual(note_updated["statistics"], created["statistics"])
+        self.assertEqual(note_updated["reconciliation"], created["reconciliation"])
+        self.assertEqual(note_updated["evidence_refs"], created["evidence_refs"])
+
+        self.assertEqual(repeated["returned_transaction_id"], created["transaction"]["id"])
+        self.assertEqual(repeated["new_version_count"], 0)
+        self.assertEqual(repeated["balances"], created["balances"])
+        self.assertEqual(repeated["statistics"], created["statistics"])
+        self.assertEqual(repeated["reconciliation"], created["reconciliation"])
+
+        zero_changes = {
+            "balance": {"asset-bank-a": "0.00"},
+            "statistics": {
+                "consumption": "0.00",
+                "cash_outflow": "0.00",
+                "income": "0.00",
+                "net_worth": "0.00",
+            },
+            "new_version_count": 0,
+            "reconciliation_change_count": 0,
+        }
+        for invalid_input in case["invalid_inputs"]:
+            with self.subTest(invalid_input=invalid_input["id"]):
+                self.assertEqual(invalid_input["expected"]["state_changes"], zero_changes)
+
 
 class GoldenCaseInvariantTests(unittest.TestCase):
     def test_rg01_satisfies_schema_and_financial_invariants(self):

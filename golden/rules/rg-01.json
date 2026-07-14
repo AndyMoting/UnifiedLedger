@@ -155,15 +155,22 @@
         "asset-bank-a": "964.20"
       },
       "statistics": {
+        "day": "2026-01-15",
+        "month": "2026-01",
+        "day_consumption": "35.80",
         "month_consumption": "35.80",
+        "day_cash_outflow": "35.80",
         "month_cash_outflow": "35.80",
         "income": "0.00",
-        "net_worth_change": "-35.80"
+        "net_worth_change": "-35.80",
+        "budget": "not_applicable"
       },
       "reconciliation": {
         "posting-bank-rg01": "pending",
+        "posting-expense-rg01": "not_applicable",
         "transaction": "pending"
-      }
+      },
+      "evidence_refs": []
     }
   },
   "idempotency": {
@@ -172,9 +179,27 @@
       "returned_transaction_id": "tx-expense-rg01",
       "new_transaction_count": 0,
       "new_posting_set_count": 0,
+      "new_version_count": 0,
       "funding_effect_count": 1,
-      "asset-bank-a_balance": "964.20",
-      "month_consumption": "35.80"
+      "balances": {
+        "asset-bank-a": "964.20"
+      },
+      "statistics": {
+        "day": "2026-01-15",
+        "month": "2026-01",
+        "day_consumption": "35.80",
+        "month_consumption": "35.80",
+        "day_cash_outflow": "35.80",
+        "month_cash_outflow": "35.80",
+        "income": "0.00",
+        "net_worth_change": "-35.80",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-bank-rg01": "pending",
+        "posting-expense-rg01": "not_applicable",
+        "transaction": "pending"
+      }
     }
   },
   "invalid_inputs": [
@@ -189,7 +214,20 @@
         "accepted": false,
         "field": "amount",
         "new_transaction_count": 0,
-        "new_posting_count": 0
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
       }
     },
     {
@@ -203,7 +241,20 @@
         "accepted": false,
         "field": "payment_account_id",
         "new_transaction_count": 0,
-        "new_posting_count": 0
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
       }
     },
     {
@@ -217,7 +268,20 @@
         "accepted": false,
         "field": "category_id",
         "new_transaction_count": 0,
-        "new_posting_count": 0
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
       }
     },
     {
@@ -232,7 +296,20 @@
         "field": "amount",
         "reason": "must_be_positive",
         "new_transaction_count": 0,
-        "new_posting_count": 0
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
       }
     }
   ],
