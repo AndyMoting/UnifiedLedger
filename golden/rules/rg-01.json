@@ -1,0 +1,473 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-01",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a"
+  },
+  "catalog": {
+    "accounts": [
+      {
+        "id": "asset-bank-a",
+        "name": "银行卡 A",
+        "kind": "asset",
+        "real_account": true
+      },
+      {
+        "id": "equity-opening-a",
+        "name": "期初权益 A",
+        "kind": "equity",
+        "real_account": false
+      },
+      {
+        "id": "expense-account-breakfast",
+        "name": "早餐费用",
+        "kind": "expense",
+        "real_account": false
+      }
+    ],
+    "categories": [
+      {
+        "id": "expense-category-food",
+        "name": "餐饮",
+        "parent_id": null,
+        "posting_account_id": null,
+        "active": true
+      },
+      {
+        "id": "expense-category-breakfast",
+        "name": "早餐",
+        "parent_id": "expense-category-food",
+        "posting_account_id": "expense-account-breakfast",
+        "active": true
+      },
+      {
+        "id": "expense-category-inactive",
+        "name": "已停用分类",
+        "parent_id": "expense-category-food",
+        "posting_account_id": null,
+        "active": false
+      }
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-a",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-opening-bank-a",
+            "account_id": "asset-bank-a",
+            "amount": "1000.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-opening-equity-a",
+            "account_id": "equity-opening-a",
+            "amount": "-1000.00",
+            "currency": "CNY"
+          }
+        ]
+      }
+    ],
+    "expected_balances": {
+      "asset-bank-a": "1000.00"
+    }
+  },
+  "create": {
+    "confirmation": {
+      "mode": "explicit_manual_save",
+      "confirmed": true
+    },
+    "candidate": null,
+    "request": {
+      "request_id": "request-rg01-create",
+      "kind": "manual_expense",
+      "occurred_at": "2026-01-15T08:30:00+08:00",
+      "amount": "35.80",
+      "currency": "CNY",
+      "category_id": "expense-category-breakfast",
+      "payment_account_id": "asset-bank-a",
+      "note": ""
+    },
+    "expected": {
+      "accepted": true,
+      "transaction": {
+        "id": "tx-expense-rg01",
+        "current_version_id": "version-expense-rg01-v1",
+        "posting_set_id": "posting-set-expense-rg01",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-expense-rg01",
+            "account_id": "expense-account-breakfast",
+            "amount": "35.80",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-bank-rg01",
+            "account_id": "asset-bank-a",
+            "amount": "-35.80",
+            "currency": "CNY"
+          }
+        ]
+      },
+      "balances": {
+        "asset-bank-a": "964.20"
+      },
+      "statistics": {
+        "day": "2026-01-15",
+        "month": "2026-01",
+        "day_consumption": "35.80",
+        "month_consumption": "35.80",
+        "day_cash_outflow": "35.80",
+        "month_cash_outflow": "35.80",
+        "income": "0.00",
+        "net_worth_change": "-35.80",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-bank-rg01": "pending",
+        "posting-expense-rg01": "not_applicable",
+        "transaction": "pending"
+      },
+      "evidence_refs": []
+    }
+  },
+  "note_update": {
+    "request": {
+      "request_id": "request-rg01-note-update",
+      "transaction_id": "tx-expense-rg01",
+      "note": "早餐"
+    },
+    "expected": {
+      "transaction_id": "tx-expense-rg01",
+      "current_version_id": "version-expense-rg01-v2",
+      "versions": [
+        {
+          "id": "version-expense-rg01-v1",
+          "status": "superseded",
+          "note": ""
+        },
+        {
+          "id": "version-expense-rg01-v2",
+          "status": "current",
+          "note": "早餐"
+        }
+      ],
+      "effective_posting_set_id": "posting-set-expense-rg01",
+      "effective_transaction_count": 1,
+      "funding_effect_count": 1,
+      "balances": {
+        "asset-bank-a": "964.20"
+      },
+      "statistics": {
+        "day": "2026-01-15",
+        "month": "2026-01",
+        "day_consumption": "35.80",
+        "month_consumption": "35.80",
+        "day_cash_outflow": "35.80",
+        "month_cash_outflow": "35.80",
+        "income": "0.00",
+        "net_worth_change": "-35.80",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-bank-rg01": "pending",
+        "posting-expense-rg01": "not_applicable",
+        "transaction": "pending"
+      },
+      "evidence_refs": []
+    }
+  },
+  "idempotency": {
+    "repeated_request_id": "request-rg01-create",
+    "expected": {
+      "returned_transaction_id": "tx-expense-rg01",
+      "new_transaction_count": 0,
+      "new_posting_set_count": 0,
+      "new_version_count": 0,
+      "funding_effect_count": 1,
+      "balances": {
+        "asset-bank-a": "964.20"
+      },
+      "statistics": {
+        "day": "2026-01-15",
+        "month": "2026-01",
+        "day_consumption": "35.80",
+        "month_consumption": "35.80",
+        "day_cash_outflow": "35.80",
+        "month_cash_outflow": "35.80",
+        "income": "0.00",
+        "net_worth_change": "-35.80",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-bank-rg01": "pending",
+        "posting-expense-rg01": "not_applicable",
+        "transaction": "pending"
+      }
+    }
+  },
+  "distinct_reentry": {
+    "request": {
+      "request_id": "request-rg01-distinct-create",
+      "kind": "manual_expense",
+      "occurred_at": "2026-01-15T08:30:00+08:00",
+      "amount": "35.80",
+      "currency": "CNY",
+      "category_id": "expense-category-breakfast",
+      "payment_account_id": "asset-bank-a",
+      "note": ""
+    },
+    "expected": {
+      "accepted": true,
+      "new_transaction_count": 1,
+      "effective_transaction_count": 2,
+      "transaction": {
+        "id": "tx-expense-rg01-distinct",
+        "current_version_id": "version-expense-rg01-distinct-v1",
+        "posting_set_id": "posting-set-expense-rg01-distinct",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-expense-rg01-distinct",
+            "account_id": "expense-account-breakfast",
+            "amount": "35.80",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-bank-rg01-distinct",
+            "account_id": "asset-bank-a",
+            "amount": "-35.80",
+            "currency": "CNY"
+          }
+        ]
+      },
+      "balances": {
+        "asset-bank-a": "928.40"
+      },
+      "statistics": {
+        "day_consumption": "71.60",
+        "month_consumption": "71.60",
+        "day_cash_outflow": "71.60",
+        "month_cash_outflow": "71.60",
+        "income": "0.00",
+        "net_worth_change": "-71.60",
+        "budget": "not_applicable"
+      }
+    }
+  },
+  "invalid_inputs": [
+    {
+      "id": "missing-amount",
+      "input": {
+        "amount": null,
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "amount",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "missing-payment-account",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": null,
+        "category_id": "expense-category-breakfast"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_account_id",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "missing-secondary-category",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": null
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "zero-amount",
+      "input": {
+        "amount": "0.00",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "amount",
+        "reason": "must_be_positive",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "negative-amount",
+      "input": {
+        "amount": "-0.01",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "amount",
+        "reason": "must_be_positive",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "primary-category",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-food"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "secondary_category_required",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    },
+    {
+      "id": "inactive-secondary-category",
+      "input": {
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-inactive"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "category_inactive",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "state_changes": {
+          "balance": {
+            "asset-bank-a": "0.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth": "0.00"
+          },
+          "new_version_count": 0,
+          "reconciliation_change_count": 0
+        }
+      }
+    }
+  ],
+  "forbidden_side_effects": [
+    "create_order_relation",
+    "create_budget_result",
+    "create_import_candidate",
+    "create_external_evidence",
+    "invoke_network",
+    "invoke_sync",
+    "invoke_intelligent_suggestion"
+  ]
+}
