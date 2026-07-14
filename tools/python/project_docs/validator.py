@@ -16,6 +16,27 @@ FORMAL_DOCUMENTS = (
     "docs/CONTRIBUTING.md",
 )
 
+PROHIBITED_REFERENCES = (
+    "Tal" + "ly",
+    "Ji" + "Zhang",
+    "XX" + "JZ",
+    "小" + "星",
+    "Gnu" + "Cash",
+    "Mi" + "uix",
+)
+
+ASSISTANT_TRACES = (
+    "Code" + "x",
+    "Clau" + "de",
+    "Chat" + "GPT",
+    "Open" + "AI",
+    "Co" + "pilot",
+    "Gem" + "ini",
+    "Co-authored-" + "by",
+    "Generated-" + "by",
+    "Assisted-" + "by",
+)
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -46,6 +67,16 @@ def validate_formal_docs(root: Path) -> list[ValidationIssue]:
         "",
     )
     decision_ids = re.findall(r"(?m)^##\s+(D-\d{3})\b", decision_text)
+    decision_tokens = re.findall(r"(?m)^##\s+(D-[^\s]+)", decision_text)
+    for decision_token in decision_tokens:
+        if not re.fullmatch(r"D-\d{3}", decision_token):
+            issues.append(
+                ValidationIssue(
+                    "invalid-decision-id",
+                    "docs/DECISIONS.md",
+                    f"invalid decision id: {decision_token}",
+                )
+            )
     seen: set[str] = set()
     for decision_id in decision_ids:
         if decision_id in seen:
@@ -69,6 +100,23 @@ def validate_formal_docs(root: Path) -> list[ValidationIssue]:
     markdown_link = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
     for relative_path, path, text in documents:
+        folded_text = text.casefold()
+        if any(name.casefold() in folded_text for name in PROHIBITED_REFERENCES):
+            issues.append(
+                ValidationIssue(
+                    "prohibited-reference",
+                    relative_path,
+                    "external reference name found",
+                )
+            )
+        if any(name.casefold() in folded_text for name in ASSISTANT_TRACES):
+            issues.append(
+                ValidationIssue(
+                    "assistant-trace",
+                    relative_path,
+                    "development assistant trace found",
+                )
+            )
         if any(pattern.search(text) for pattern in absolute_paths):
             issues.append(
                 ValidationIssue("absolute-path", relative_path, "machine path found")

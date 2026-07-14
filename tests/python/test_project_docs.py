@@ -31,6 +31,35 @@ class ProjectDocsValidatorTests(unittest.TestCase):
             issues = validate_formal_docs(root)
         self.assertEqual(["duplicate-decision-id"], [i.code for i in issues])
 
+    def test_reports_malformed_decision_ids(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            (root / "docs" / "DECISIONS.md").write_text(
+                "## D-01 Invalid\n", encoding="utf-8"
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual(["invalid-decision-id"], [i.code for i in issues])
+
+    def test_reports_external_reference_names(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            external_name = "Tal" + "ly"
+            (root / "docs" / "CURRENT_STATE.md").write_text(
+                external_name, encoding="utf-8"
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual(["prohibited-reference"], [i.code for i in issues])
+
+    def test_reports_development_assistant_traces(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            assistant_name = "Code" + "x"
+            (root / "docs" / "CURRENT_STATE.md").write_text(
+                assistant_name, encoding="utf-8"
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual(["assistant-trace"], [i.code for i in issues])
+
     def test_reports_broken_relative_links(self):
         with TemporaryDirectory() as directory:
             root = build_minimal_document_tree(Path(directory))
