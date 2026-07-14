@@ -28,5 +28,28 @@ class GoldenCaseLoaderTests(unittest.TestCase):
                 load_golden_case(path)
 
 
+class RG01FrozenAnswerTests(unittest.TestCase):
+    def test_rg01_contains_the_approved_user_visible_results(self):
+        case = load_golden_case(RG01_PATH)
+
+        self.assertEqual(case["case"]["id"], "RG-01")
+        self.assertEqual(case["case"]["level"], "core_required")
+        self.assertEqual(case["case"]["timezone"], "Asia/Shanghai")
+        self.assertEqual(case["create"]["request"]["amount"], "35.80")
+        self.assertEqual(case["create"]["request"]["payment_account_id"], "asset-bank-a")
+        self.assertEqual(case["create"]["request"]["category_id"], "expense-category-breakfast")
+        self.assertEqual(case["create"]["expected"]["balances"]["asset-bank-a"], "964.20")
+        self.assertEqual(case["create"]["expected"]["statistics"]["month_consumption"], "35.80")
+        self.assertEqual(case["create"]["expected"]["reconciliation"]["transaction"], "pending")
+        self.assertEqual(case["note_update"]["request"]["note"], "早餐")
+        self.assertEqual(case["note_update"]["expected"]["funding_effect_count"], 1)
+        self.assertEqual(case["idempotency"]["expected"]["new_transaction_count"], 0)
+        self.assertEqual(case["idempotency"]["expected"]["new_posting_set_count"], 0)
+        self.assertEqual(case["idempotency"]["expected"]["funding_effect_count"], 1)
+        zero_amount = next(item for item in case["invalid_inputs"] if item["id"] == "zero-amount")
+        self.assertEqual(zero_amount["expected"]["reason"], "must_be_positive")
+        self.assertEqual(len(case["invalid_inputs"]), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
