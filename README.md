@@ -1,34 +1,46 @@
 # UnifiedLedger
 
-UnifiedLedger is an Android-first, local-first personal finance application that combines daily bookkeeping, bill imports, reconciliation, and audit history in one consistent ledger.
+UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将日常记账、账单导入和对账审计建立在同一份正式账本之上。
 
-## Product Principles
+## 当前阶段
 
-- The formal ledger uses an `Account -> Transaction -> Posting` model.
-- Manual entry, automatic capture, and imported bills share the same deterministic accounting core.
-- Imported facts and inferred candidates remain separate from confirmed ledger records.
-- Money uses exact decimal or integer minor-unit representations.
-- Reconciliation records verification state without changing balances.
-- Corrections preserve history; refunds and reversals remain separate economic events.
-- Local storage is the default. Network services and synchronization are optional.
-- Private financial data and machine-specific configuration are not stored in this repository.
+项目处于正式文档迁移与核心规则验证阶段。仓库当前包含 Python 编写的金额、来源事实、证据和状态原语，用于冻结行为、整理规则和建立黄金测试；它不是最终客户端账务核心。
 
-## Current Modules
+Android 与 Desktop 工程尚未建立。具体数据库、UI、导航和同步实现将在核心规则与模块接口稳定后选择。
 
-The first Python core checkpoint provides:
+## 核心原则
 
-- exact money values;
-- immutable transaction facts;
-- evidence origin and confidence;
-- conservative transaction-status evaluation.
+- 正式账本采用 `Account -> Transaction -> Posting` 模型。
+- 金额使用精确十进制或整数最小货币单位，不使用二进制浮点数。
+- 来源事实、推断候选和正式账目相互分离。
+- 解析、匹配和未来的 AI 能力只能提出带来源与置信度的候选。
+- 本地账本是事实来源；网络、同步和 AI 默认不是核心功能的前置条件。
+- 修正保留历史版本，退款和真实冲回作为独立经济事件记录。
 
-## Tests
+## 验证
+
+运行完整测试：
 
 ```powershell
 $env:PYTHONPATH="tools\python"
 python -m unittest discover -s tests -t . -v
 ```
 
-## Status
+验证正式文档：
 
-The project is in its accounting-core extraction phase. Application modules and the platform-independent production ledger will be added after the core rules and acceptance cases are stable.
+```powershell
+$env:PYTHONPATH="tools\python"
+python -m project_docs .
+```
+
+## 正式文档
+
+- [项目章程](docs/PROJECT_CHARTER.md)
+- [产品需求](docs/PRODUCT_REQUIREMENTS.md)
+- [账务规则](docs/ACCOUNTING_RULES.md)
+- [系统架构](docs/ARCHITECTURE.md)
+- [决定记录](docs/DECISIONS.md)
+- [路线图](docs/ROADMAP.md)
+- [当前状态](docs/CURRENT_STATE.md)
+- [黄金测试](docs/GOLDEN_TESTS.md)
+- [开发规范](docs/CONTRIBUTING.md)
