@@ -78,6 +78,18 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         self.assertEqual(invalid_reasons["primary-category"], "secondary_category_required")
         self.assertEqual(invalid_reasons["inactive-secondary-category"], "category_inactive")
         self.assertEqual(len(case["invalid_inputs"]), 7)
+        self.assertEqual(
+            set(case["forbidden_side_effects"]),
+            {
+                "create_order_relation",
+                "create_budget_result",
+                "create_import_candidate",
+                "create_external_evidence",
+                "invoke_network",
+                "invoke_sync",
+                "invoke_intelligent_suggestion",
+            },
+        )
 
     def test_rg01_freezes_unchanged_state_after_non_funding_operations(self):
         case = load_golden_case(RG01_PATH)
@@ -190,6 +202,25 @@ class GoldenCaseInvariantTests(unittest.TestCase):
         with self.assertRaisesRegex(
             GoldenCaseError,
             r"transactions\[0\].occurred_at must be timezone-aware",
+        ):
+            validate_transactions([transaction], case["catalog"]["accounts"])
+
+    def test_validator_rejects_binary_floating_point_amounts(self):
+        case = deepcopy(load_golden_case(RG01_PATH))
+        transaction = case["create"]["expected"]["transaction"]
+        transaction["postings"][0]["amount"] = 35.80
+
+        with self.assertRaisesRegex(GoldenCaseError, "must be an exact two-decimal string"):
+            validate_transactions([transaction], case["catalog"]["accounts"])
+
+    def test_validator_rejects_an_unknown_posting_account(self):
+        case = deepcopy(load_golden_case(RG01_PATH))
+        transaction = case["create"]["expected"]["transaction"]
+        transaction["postings"][0]["account_id"] = "unknown-account"
+
+        with self.assertRaisesRegex(
+            GoldenCaseError,
+            "posting references unknown account: unknown-account",
         ):
             validate_transactions([transaction], case["catalog"]["accounts"])
 
