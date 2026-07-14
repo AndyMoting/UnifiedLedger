@@ -72,6 +72,11 @@
     }
   },
   "create": {
+    "confirmation": {
+      "mode": "explicit_manual_save",
+      "confirmed": true
+    },
+    "candidate": null,
     "request": {
       "request_id": "request-rg01-create",
       "kind": "manual_expense",

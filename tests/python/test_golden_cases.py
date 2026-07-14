@@ -47,6 +47,11 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         self.assertEqual(case["create"]["request"]["amount"], "35.80")
         self.assertEqual(case["create"]["request"]["payment_account_id"], "asset-bank-a")
         self.assertEqual(case["create"]["request"]["category_id"], "expense-category-breakfast")
+        self.assertEqual(
+            case["create"]["confirmation"],
+            {"mode": "explicit_manual_save", "confirmed": True},
+        )
+        self.assertIsNone(case["create"]["candidate"])
         self.assertEqual(case["create"]["expected"]["balances"]["asset-bank-a"], "964.20")
         self.assertEqual(case["create"]["expected"]["statistics"]["month_consumption"], "35.80")
         self.assertEqual(case["create"]["expected"]["reconciliation"]["transaction"], "pending")
