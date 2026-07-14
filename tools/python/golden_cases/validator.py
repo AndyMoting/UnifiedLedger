@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import re
 from typing import Any
@@ -29,6 +30,14 @@ def _require_unique_ids(items: list[dict[str, Any]], path: str) -> None:
 
 
 def _validate_transaction(transaction: dict[str, Any], path: str) -> None:
+    occurred_at = transaction.get("occurred_at")
+    try:
+        parsed_time = datetime.fromisoformat(occurred_at)
+    except (TypeError, ValueError):
+        raise GoldenCaseError(f"{path}.occurred_at must be a valid ISO 8601 time") from None
+    if parsed_time.tzinfo is None or parsed_time.utcoffset() is None:
+        raise GoldenCaseError(f"{path}.occurred_at must be timezone-aware")
+
     postings = transaction.get("postings")
     if not isinstance(postings, list) or len(postings) < 2:
         raise GoldenCaseError(f"{path} must contain at least two postings")
