@@ -231,6 +231,27 @@
       "accepted": true,
       "new_transaction_count": 1,
       "effective_transaction_count": 2,
+      "transaction": {
+        "id": "tx-expense-rg01-distinct",
+        "current_version_id": "version-expense-rg01-distinct-v1",
+        "posting_set_id": "posting-set-expense-rg01-distinct",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-expense-rg01-distinct",
+            "account_id": "expense-account-breakfast",
+            "amount": "35.80",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-bank-rg01-distinct",
+            "account_id": "asset-bank-a",
+            "amount": "-35.80",
+            "currency": "CNY"
+          }
+        ]
+      },
       "balances": {
         "asset-bank-a": "928.40"
       },

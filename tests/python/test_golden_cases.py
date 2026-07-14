@@ -143,6 +143,20 @@ class GoldenCaseInvariantTests(unittest.TestCase):
         self.assertEqual(balances["asset-bank-a"], Decimal("964.20"))
         assert_expected_balances(balances, case["create"]["expected"]["balances"])
 
+    def test_distinct_reentry_replays_from_a_second_balanced_transaction(self):
+        case = load_golden_case(RG01_PATH)
+        transactions = [
+            *case["opening"]["transactions"],
+            case["create"]["expected"]["transaction"],
+            case["distinct_reentry"]["expected"]["transaction"],
+        ]
+
+        validate_transactions(transactions, case["catalog"]["accounts"])
+        assert_expected_balances(
+            replay_balances(transactions),
+            case["distinct_reentry"]["expected"]["balances"],
+        )
+
     def test_validator_reports_an_unbalanced_posting_set(self):
         case = deepcopy(load_golden_case(RG01_PATH))
         case["create"]["expected"]["transaction"]["postings"][1]["amount"] = "-35.79"
