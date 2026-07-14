@@ -216,6 +216,35 @@
       }
     }
   },
+  "distinct_reentry": {
+    "request": {
+      "request_id": "request-rg01-distinct-create",
+      "kind": "manual_expense",
+      "occurred_at": "2026-01-15T08:30:00+08:00",
+      "amount": "35.80",
+      "currency": "CNY",
+      "category_id": "expense-category-breakfast",
+      "payment_account_id": "asset-bank-a",
+      "note": ""
+    },
+    "expected": {
+      "accepted": true,
+      "new_transaction_count": 1,
+      "effective_transaction_count": 2,
+      "balances": {
+        "asset-bank-a": "928.40"
+      },
+      "statistics": {
+        "day_consumption": "71.60",
+        "month_consumption": "71.60",
+        "day_cash_outflow": "71.60",
+        "month_cash_outflow": "71.60",
+        "income": "0.00",
+        "net_worth_change": "-71.60",
+        "budget": "not_applicable"
+      }
+    }
+  },
   "invalid_inputs": [
     {
       "id": "missing-amount",

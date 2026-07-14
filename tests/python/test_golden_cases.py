@@ -103,6 +103,16 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         self.assertEqual(repeated["statistics"], created["statistics"])
         self.assertEqual(repeated["reconciliation"], created["reconciliation"])
 
+        distinct = case["distinct_reentry"]
+        self.assertNotEqual(distinct["request"]["request_id"], case["create"]["request"]["request_id"])
+        self.assertEqual(distinct["request"]["amount"], case["create"]["request"]["amount"])
+        self.assertEqual(distinct["request"]["occurred_at"], case["create"]["request"]["occurred_at"])
+        self.assertTrue(distinct["expected"]["accepted"])
+        self.assertEqual(distinct["expected"]["new_transaction_count"], 1)
+        self.assertEqual(distinct["expected"]["effective_transaction_count"], 2)
+        self.assertEqual(distinct["expected"]["balances"]["asset-bank-a"], "928.40")
+        self.assertEqual(distinct["expected"]["statistics"]["month_consumption"], "71.60")
+
         zero_changes = {
             "balance": {"asset-bank-a": "0.00"},
             "statistics": {
