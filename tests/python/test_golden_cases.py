@@ -53,8 +53,30 @@ class RG01FrozenAnswerTests(unittest.TestCase):
         )
         self.assertIsNone(case["create"]["candidate"])
         self.assertEqual(case["create"]["expected"]["balances"]["asset-bank-a"], "964.20")
-        self.assertEqual(case["create"]["expected"]["statistics"]["month_consumption"], "35.80")
-        self.assertEqual(case["create"]["expected"]["reconciliation"]["transaction"], "pending")
+        self.assertEqual(
+            case["create"]["expected"]["statistics"],
+            {
+                "day": "2026-01-15",
+                "month": "2026-01",
+                "day_consumption": "35.80",
+                "month_consumption": "35.80",
+                "day_cash_outflow": "35.80",
+                "month_cash_outflow": "35.80",
+                "income": "0.00",
+                "net_worth_change": "-35.80",
+                "budget": "not_applicable",
+            },
+        )
+        self.assertEqual(
+            case["create"]["expected"]["reconciliation"],
+            {
+                "posting-bank-rg01": "pending",
+                "posting-expense-rg01": "not_applicable",
+                "transaction": "pending",
+            },
+        )
+        self.assertEqual(case["create"]["expected"]["evidence_refs"], [])
+        self.assertEqual(len(case["create"]["expected"]["transaction"]["postings"]), 2)
         self.assertEqual(case["note_update"]["request"]["note"], "早餐")
         self.assertEqual(case["note_update"]["expected"]["funding_effect_count"], 1)
         self.assertEqual(
