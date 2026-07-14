@@ -6,7 +6,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 项目处于正式文档迁移与核心规则验证阶段。仓库当前包含 Python 编写的金额、来源事实、证据和状态原语，用于冻结行为、整理规则和建立黄金测试；它不是最终客户端账务核心。
 
-Android 与 Desktop 工程尚未建立。具体数据库、UI、导航和同步实现将在核心规则与模块接口稳定后选择。
+Android 与 Desktop 工程尚未建立。具体数据库、UI、导航、依赖注入和同步实现将在黄金测试与模块接口稳定后选择。
 
 ## 核心原则
 
@@ -32,6 +32,8 @@ python -m unittest discover -s tests -t . -v
 $env:PYTHONPATH="tools\python"
 python -m project_docs .
 ```
+
+完整环境、分支、提交、合并和隐私要求见[开发规范](docs/CONTRIBUTING.md)。
 
 ## 正式文档
 
