@@ -76,13 +76,17 @@ def validate_transactions(
 ) -> None:
     _require_unique_ids(transactions, "transactions")
     account_ids = {account["id"] for account in accounts}
+    posting_ids: list[str] = []
     for transaction_index, transaction in enumerate(transactions):
         path = f"transactions[{transaction_index}]"
         _validate_transaction(transaction, path)
         for posting in transaction["postings"]:
+            posting_ids.append(posting["id"])
             account_id = posting.get("account_id")
             if account_id not in account_ids:
                 raise GoldenCaseError(f"posting references unknown account: {account_id}")
+    if len(posting_ids) != len(set(posting_ids)):
+        raise GoldenCaseError("transactions contain duplicate posting ids")
 
 
 def replay_balances(transactions: list[dict[str, Any]]) -> dict[str, Decimal]:

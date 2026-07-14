@@ -170,6 +170,18 @@ class GoldenCaseInvariantTests(unittest.TestCase):
                 case["catalog"]["accounts"],
             )
 
+    def test_validator_rejects_a_posting_id_reused_by_another_transaction(self):
+        case = deepcopy(load_golden_case(RG01_PATH))
+        first_transaction = case["create"]["expected"]["transaction"]
+        second_transaction = case["distinct_reentry"]["expected"]["transaction"]
+        second_transaction["postings"][0]["id"] = first_transaction["postings"][0]["id"]
+
+        with self.assertRaisesRegex(GoldenCaseError, "transactions contain duplicate posting ids"):
+            validate_transactions(
+                [first_transaction, second_transaction],
+                case["catalog"]["accounts"],
+            )
+
     def test_validator_reports_a_balance_that_does_not_replay(self):
         case = deepcopy(load_golden_case(RG01_PATH))
         case["create"]["expected"]["balances"]["asset-bank-a"] = "964.21"
