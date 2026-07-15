@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-03",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a",
+    "scope": "one_to_one_same_currency_own_real_financial_account_transfer"
+  },
+  "catalog": {
+    "accounts": [
+      {"id": "asset-bank-a", "name": "银行卡 A", "kind": "asset", "real_account": true, "owned_by_user": true},
+      {"id": "asset-wallet-b", "name": "支付钱包 B", "kind": "asset", "real_account": true, "owned_by_user": true},
+      {"id": "liability-credit-c", "name": "信用账户 C", "kind": "liability", "real_account": true, "owned_by_user": true},
+      {"id": "asset-external-x", "name": "外部资产账户 X", "kind": "asset", "real_account": true, "owned_by_user": false},
+      {"id": "equity-opening-a", "name": "期初权益 A", "kind": "equity", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-transfer-fee", "name": "转账手续费", "kind": "expense", "real_account": false, "owned_by_user": false}
+    ],
+    "categories": [
+      {"id": "expense-category-financial", "name": "金融费用", "kind": "expense", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "expense-category-transfer-fee", "name": "转账手续费", "kind": "expense", "parent_id": "expense-category-financial", "posting_account_id": "expense-account-transfer-fee", "active": true}
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-rg03",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {"id": "posting-opening-bank-rg03", "account_id": "asset-bank-a", "amount": "1000.00", "currency": "CNY"},
+          {"id": "posting-opening-wallet-rg03", "account_id": "asset-wallet-b", "amount": "100.00", "currency": "CNY"},
+          {"id": "posting-opening-equity-rg03", "account_id": "equity-opening-a", "amount": "-1100.00", "currency": "CNY"}
+        ]
+      }
+    ],
+    "expected_balances": {"asset-bank-a": "1000.00", "asset-wallet-b": "100.00"}
+  },
+  "manual_create": {
+    "independent_baseline": "opening",
+    "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+    "candidate": null,
+    "request": {
+      "request_id": "request-rg03-manual-create",
+      "kind": "manual_account_transfer",
+      "occurred_at": "2026-01-20T10:00:00+08:00",
+      "source_account_id": "asset-bank-a",
+      "destination_account_id": "asset-wallet-b",
+      "source_debit_amount": "60.00",
+      "destination_credit_amount": "59.00",
+      "fee_amount": "1.00",
+      "currency": "CNY",
+      "fee_category_id": "expense-category-transfer-fee"
+    },
+    "expected": {
+      "accepted": true,
+      "transaction": {
+        "id": "tx-transfer-rg03-manual",
+        "current_version_id": "version-transfer-rg03-manual-v1",
+        "posting_set_id": "posting-set-transfer-rg03-manual",
+        "occurred_at": "2026-01-20T10:00:00+08:00",
+        "effective": true,
+        "provenance": {"kind": "manual_confirmation", "confirmation_ref": "request-rg03-manual-create"},
+        "postings": [
+          {"id": "posting-source-rg03-manual", "account_id": "asset-bank-a", "amount": "-60.00", "currency": "CNY"},
+          {"id": "posting-destination-rg03-manual", "account_id": "asset-wallet-b", "amount": "59.00", "currency": "CNY"},
+          {"id": "posting-fee-rg03-manual", "account_id": "expense-account-transfer-fee", "amount": "1.00", "currency": "CNY", "category_id": "expense-category-transfer-fee"}
+        ]
+      },
+      "balances": {"asset-bank-a": "940.00", "asset-wallet-b": "159.00"},
+      "statistics": {
+        "day": "2026-01-20",
+        "month": "2026-01",
+        "day_consumption": "1.00",
+        "month_consumption": "1.00",
+        "day_cash_outflow": "1.00",
+        "month_cash_outflow": "1.00",
+        "day_income": "0.00",
+        "month_income": "0.00",
+        "principal_consumption": "0.00",
+        "principal_external_cash_flow": "0.00",
+        "net_worth_change": "-1.00",
+        "budget": "not_applicable"
+      },
+      "reconciliation": {
+        "posting-source-rg03-manual": "pending",
+        "posting-destination-rg03-manual": "pending",
+        "posting-fee-rg03-manual": "not_applicable",
+        "transaction": "pending"
+      },
+      "evidence_refs": []
+    }
+  },
+  "import_lifecycle": {
+    "independent_baseline": "opening",
+    "ordered_operations": [
+      {
+        "sequence": 1,
+        "id": "import-complete-source",
+        "input": {
+          "request_id": "request-rg03-import-source",
+          "kind": "import_source_record",
+          "source_record": {
+            "id": "source-record-rg03-debit",
+            "evidence_id": "evidence-rg03-debit",
+            "observed_at": "2026-01-21T11:00:00+08:00",
+            "source_account_id": "asset-bank-a",
+            "destination_account_id": "asset-wallet-b",
+            "source_debit_amount": "60.00",
+            "destination_credit_amount": "59.00",
+            "fee_amount": "1.00",
+            "currency": "CNY",
+            "completeness": "complete"
+          }
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-transfer-rg03",
+            "status": "pending_confirmation",
+            "kind": "account_transfer_with_fee",
+            "confidence": "1.00",
+            "source_refs": ["source-record-rg03-debit"],
+            "evidence_refs": ["evidence-rg03-debit"],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["formal_transaction_creation"]
+          },
+          "new_candidate_count": 1,
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "funding_effect_count": 0,
+            "balance_changes": {"asset-bank-a": "0.00", "asset-wallet-b": "0.00"},
+            "balances": {"asset-bank-a": "1000.00", "asset-wallet-b": "100.00"},
+            "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+            "reconciliation_change_count": 0
+          }
+        }
+      },
+      {
+        "sequence": 2,
+        "id": "confirm-import-candidate",
+        "input": {
+          "request_id": "request-rg03-confirm-candidate",
+          "kind": "explicit_candidate_confirmation",
+          "candidate_id": "candidate-transfer-rg03",
+          "confirmed": true
+        },
+        "expected": {
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-transfer-rg03-imported",
+            "current_version_id": "version-transfer-rg03-imported-v1",
+            "posting_set_id": "posting-set-transfer-rg03-imported",
+            "occurred_at": "2026-01-21T11:00:00+08:00",
+            "effective": true,
+            "provenance": {
+              "kind": "confirmed_import_candidate",
+              "candidate_id": "candidate-transfer-rg03",
+              "confirmation_ref": "request-rg03-confirm-candidate",
+              "source_refs": ["source-record-rg03-debit"]
+            },
+            "postings": [
+              {"id": "posting-source-rg03-imported", "account_id": "asset-bank-a", "amount": "-60.00", "currency": "CNY"},
+              {"id": "posting-destination-rg03-imported", "account_id": "asset-wallet-b", "amount": "59.00", "currency": "CNY"},
+              {"id": "posting-fee-rg03-imported", "account_id": "expense-account-transfer-fee", "amount": "1.00", "currency": "CNY", "category_id": "expense-category-transfer-fee"}
+            ]
+          },
+          "balances": {"asset-bank-a": "940.00", "asset-wallet-b": "159.00"},
+          "statistics": {
+            "day": "2026-01-21",
+            "month": "2026-01",
+            "day_consumption": "1.00",
+            "month_consumption": "1.00",
+            "day_cash_outflow": "1.00",
+            "month_cash_outflow": "1.00",
+            "day_income": "0.00",
+            "month_income": "0.00",
+            "principal_consumption": "0.00",
+            "principal_external_cash_flow": "0.00",
+            "net_worth_change": "-1.00",
+            "budget": "not_applicable"
+          },
+          "reconciliation": {
+            "posting-source-rg03-imported": "matched",
+            "posting-destination-rg03-imported": "pending",
+            "posting-fee-rg03-imported": "not_applicable",
+            "transaction": "partially_matched"
+          },
+          "evidence_refs": ["evidence-rg03-debit"],
+          "evidence_links": [
+            {"id": "match-rg03-debit", "evidence_id": "evidence-rg03-debit", "posting_id": "posting-source-rg03-imported", "status": "matched"}
+          ],
+          "effective_transaction_count": 1,
+          "funding_effect_count": 1
+        }
+      },
+      {
+        "sequence": 3,
+        "id": "merge-mirror-evidence",
+        "input": {
+          "request_id": "request-rg03-import-mirror",
+          "kind": "import_mirror_record",
+          "source_record": {
+            "id": "source-record-rg03-credit-mirror",
+            "evidence_id": "evidence-rg03-credit-mirror",
+            "observed_at": "2026-01-21T11:01:00+08:00",
+            "account_id": "asset-wallet-b",
+            "credit_amount": "59.00",
+            "currency": "CNY"
+          }
+        },
+        "expected": {
+          "merged_into_transaction_id": "tx-transfer-rg03-imported",
+          "current_version_id": "version-transfer-rg03-imported-v1",
+          "effective_posting_set_id": "posting-set-transfer-rg03-imported",
+          "posting_ids": [
+            "posting-source-rg03-imported",
+            "posting-destination-rg03-imported",
+            "posting-fee-rg03-imported"
+          ],
+          "candidate_id": "candidate-transfer-rg03",
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "effective_transaction_count": 1,
+          "funding_effect_count": 1,
+          "balances": {"asset-bank-a": "940.00", "asset-wallet-b": "159.00"},
+          "statistics": {
+            "day": "2026-01-21",
+            "month": "2026-01",
+            "day_consumption": "1.00",
+            "month_consumption": "1.00",
+            "day_cash_outflow": "1.00",
+            "month_cash_outflow": "1.00",
+            "day_income": "0.00",
+            "month_income": "0.00",
+            "principal_consumption": "0.00",
+            "principal_external_cash_flow": "0.00",
+            "net_worth_change": "-1.00",
+            "budget": "not_applicable"
+          },
+          "reconciliation": {
+            "posting-source-rg03-imported": "matched",
+            "posting-destination-rg03-imported": "matched",
+            "posting-fee-rg03-imported": "not_applicable",
+            "transaction": "matched"
+          },
+          "evidence_refs": ["evidence-rg03-debit", "evidence-rg03-credit-mirror"],
+          "source_refs": ["source-record-rg03-debit", "source-record-rg03-credit-mirror"],
+          "evidence_links": [
+            {"id": "match-rg03-debit", "evidence_id": "evidence-rg03-debit", "posting_id": "posting-source-rg03-imported", "status": "matched"},
+            {"id": "match-rg03-credit-mirror", "evidence_id": "evidence-rg03-credit-mirror", "posting_id": "posting-destination-rg03-imported", "status": "matched"}
+          ],
+          "duplicate_income_count": 0,
+          "duplicate_statistics_effect_count": 0
+        }
+      }
+    ]
+  },
+  "unknown_one_sided_debit": {
+    "independent_baseline": "opening",
+    "input": {
+      "request_id": "request-rg03-unknown-debit",
+      "kind": "import_source_record",
+      "source_record": {
+        "id": "source-record-rg03-unknown-debit",
+        "evidence_id": "evidence-rg03-unknown-debit",
+        "observed_at": "2026-01-22T09:00:00+08:00",
+        "source_account_id": "asset-bank-a",
+        "debit_amount": "40.00",
+        "destination_account_id": null,
+        "currency": "CNY",
+        "completeness": "missing_destination"
+      }
+    },
+    "expected": {
+      "candidate": {
+        "id": "candidate-transfer-rg03-unknown-debit",
+        "status": "pending_confirmation",
+        "source_refs": ["source-record-rg03-unknown-debit"],
+        "evidence_refs": ["evidence-rg03-unknown-debit"],
+        "requires_confirmation": ["destination_account_id", "formal_transaction_creation"]
+      },
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_version_count": 0,
+      "balance_changes": {"asset-bank-a": "0.00", "asset-wallet-b": "0.00"},
+      "balances": {"asset-bank-a": "1000.00", "asset-wallet-b": "100.00"},
+      "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+      "reconciliation_change_count": 0,
+      "balancing_account_id": null,
+      "suspense_posting_count": 0
+    },
+    "retry": {
+      "repeated_request_id": "request-rg03-unknown-debit",
+      "expected": {
+        "returned_candidate_id": "candidate-transfer-rg03-unknown-debit",
+        "candidate_status": "pending_confirmation",
+        "new_candidate_count": 0,
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "new_version_count": 0,
+        "reconciliation_change_count": 0,
+        "balance_changes": {"asset-bank-a": "0.00", "asset-wallet-b": "0.00"},
+        "balances": {"asset-bank-a": "1000.00", "asset-wallet-b": "100.00"},
+        "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+        "source_refs": ["source-record-rg03-unknown-debit"],
+        "evidence_refs": ["evidence-rg03-unknown-debit"]
+      }
+    }
+  },
+  "invalid_manual_inputs": [
+    {"id": "missing-source", "input": {"source_account_id": null, "destination_account_id": "asset-wallet-b", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "source_account_id", "reason": "required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "missing-destination", "input": {"source_account_id": "asset-bank-a", "destination_account_id": null, "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "destination_account_id", "reason": "required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "same-account", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-bank-a", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "destination_account_id", "reason": "distinct_own_real_financial_accounts_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "unknown-account", "input": {"source_account_id": "unknown-account", "destination_account_id": "asset-wallet-b", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "source_account_id", "reason": "known_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "non-owned-account", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-external-x", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "destination_account_id", "reason": "own_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "non-financial-account", "input": {"source_account_id": "expense-account-transfer-fee", "destination_account_id": "asset-wallet-b", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "source_account_id", "reason": "real_financial_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "zero-principal", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-wallet-b", "source_debit_amount": "1.00", "destination_credit_amount": "0.00", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "destination_credit_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "negative-principal", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-wallet-b", "source_debit_amount": "0.99", "destination_credit_amount": "-0.01", "fee_amount": "1.00", "currency": "CNY"}, "expected": {"accepted": false, "field": "destination_credit_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "unbalanced-fee", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-wallet-b", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "0.99", "currency": "CNY"}, "expected": {"accepted": false, "field": "fee_amount", "reason": "amounts_must_balance", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}},
+    {"id": "cross-currency", "input": {"source_account_id": "asset-bank-a", "destination_account_id": "asset-wallet-b", "source_debit_amount": "60.00", "destination_credit_amount": "59.00", "fee_amount": "1.00", "source_currency": "CNY", "destination_currency": "USD"}, "expected": {"accepted": false, "field": "destination_currency", "reason": "same_currency_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "reconciliation_change_count": 0}}
+  ],
+  "idempotency": {
+    "repeated_manual_request_id": "request-rg03-manual-create",
+    "repeated_source_request_id": "request-rg03-import-source",
+    "repeated_confirmation_request_id": "request-rg03-confirm-candidate",
+    "repeated_mirror_request_id": "request-rg03-import-mirror",
+    "expected": {
+      "manual_returned_transaction_id": "tx-transfer-rg03-manual",
+      "import_returned_candidate_id": "candidate-transfer-rg03",
+      "confirmation_returned_transaction_id": "tx-transfer-rg03-imported",
+      "mirror_merged_transaction_id": "tx-transfer-rg03-imported",
+      "new_candidate_count": 0,
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_version_count": 0,
+      "new_evidence_link_count": 0,
+      "funding_effect_count_per_flow": 1,
+      "manual_state": {
+        "transaction_id": "tx-transfer-rg03-manual",
+        "current_version_id": "version-transfer-rg03-manual-v1",
+        "posting_set_id": "posting-set-transfer-rg03-manual",
+        "balances": {"asset-bank-a": "940.00", "asset-wallet-b": "159.00"},
+        "statistics": {"day": "2026-01-20", "month": "2026-01", "day_consumption": "1.00", "month_consumption": "1.00", "day_cash_outflow": "1.00", "month_cash_outflow": "1.00", "day_income": "0.00", "month_income": "0.00", "principal_consumption": "0.00", "principal_external_cash_flow": "0.00", "net_worth_change": "-1.00", "budget": "not_applicable"},
+        "reconciliation": {"posting-source-rg03-manual": "pending", "posting-destination-rg03-manual": "pending", "posting-fee-rg03-manual": "not_applicable", "transaction": "pending"},
+        "source_refs": [],
+        "evidence_refs": [],
+        "evidence_links": []
+      },
+      "import_state": {
+        "candidate_id": "candidate-transfer-rg03",
+        "candidate_status": "confirmed",
+        "transaction_id": "tx-transfer-rg03-imported",
+        "current_version_id": "version-transfer-rg03-imported-v1",
+        "posting_set_id": "posting-set-transfer-rg03-imported",
+        "posting_ids": ["posting-source-rg03-imported", "posting-destination-rg03-imported", "posting-fee-rg03-imported"],
+        "balances": {"asset-bank-a": "940.00", "asset-wallet-b": "159.00"},
+        "statistics": {"day": "2026-01-21", "month": "2026-01", "day_consumption": "1.00", "month_consumption": "1.00", "day_cash_outflow": "1.00", "month_cash_outflow": "1.00", "day_income": "0.00", "month_income": "0.00", "principal_consumption": "0.00", "principal_external_cash_flow": "0.00", "net_worth_change": "-1.00", "budget": "not_applicable"},
+        "reconciliation": {"posting-source-rg03-imported": "matched", "posting-destination-rg03-imported": "matched", "posting-fee-rg03-imported": "not_applicable", "transaction": "matched"},
+        "source_refs": ["source-record-rg03-debit", "source-record-rg03-credit-mirror"],
+        "evidence_refs": ["evidence-rg03-debit", "evidence-rg03-credit-mirror"],
+        "evidence_links": [
+          {"id": "match-rg03-debit", "evidence_id": "evidence-rg03-debit", "posting_id": "posting-source-rg03-imported", "status": "matched"},
+          {"id": "match-rg03-credit-mirror", "evidence_id": "evidence-rg03-credit-mirror", "posting_id": "posting-destination-rg03-imported", "status": "matched"}
+        ]
+      }
+    }
+  },
+  "forbidden_side_effects": [
+    "auto_confirm_import_candidate",
+    "create_duplicate_transfer",
+    "create_duplicate_postings",
+    "create_income_for_transfer_principal",
+    "count_transfer_principal_as_consumption",
+    "count_transfer_principal_as_external_cash_flow",
+    "create_balancing_account",
+    "create_suspense_posting",
+    "overwrite_source_evidence",
+    "create_fee_refund",
+    "create_target_balance_adjustment",
+    "invoke_network",
+    "invoke_sync",
+    "invoke_intelligent_suggestion"
+  ],
+  "out_of_scope": {
+    "combination_transfer": "future_draft",
+    "fee_refund": "RG-07",
+    "target_balance_adjustment": "RG-09"
+  }
+}
