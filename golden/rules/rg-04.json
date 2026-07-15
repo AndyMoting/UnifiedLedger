@@ -1,0 +1,673 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-04",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a",
+    "scope": "single_expense_two_funding_legs_and_principal_repayment"
+  },
+  "catalog": {
+    "accounts": [
+      {"id": "asset-bank-a", "name": "资产账户 A", "kind": "asset", "real_account": true, "owned_by_user": true},
+      {"id": "liability-credit-b", "name": "信用负债 B", "kind": "liability", "real_account": true, "owned_by_user": true},
+      {"id": "asset-external-x", "name": "外部资产账户 X", "kind": "asset", "real_account": true, "owned_by_user": false},
+      {"id": "equity-opening-a", "name": "期初权益 A", "kind": "equity", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-daily", "name": "日常用品费用", "kind": "expense", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-inactive", "name": "停用费用", "kind": "expense", "real_account": false, "owned_by_user": false},
+      {"id": "income-account-other", "name": "其他收入", "kind": "income", "real_account": false, "owned_by_user": false}
+    ],
+    "categories": [
+      {"id": "expense-category-living", "name": "生活", "kind": "expense", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "expense-category-daily", "name": "日常用品", "kind": "expense", "parent_id": "expense-category-living", "posting_account_id": "expense-account-daily", "active": true},
+      {"id": "expense-category-inactive", "name": "停用支出分类", "kind": "expense", "parent_id": "expense-category-living", "posting_account_id": "expense-account-inactive", "active": false},
+      {"id": "income-category-general", "name": "收入", "kind": "income", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "income-category-other", "name": "其他收入", "kind": "income", "parent_id": "income-category-general", "posting_account_id": "income-account-other", "active": true}
+    ],
+    "association_group_types": [
+      {"id": "mixed_payment", "display_name": "混合支付", "system_managed": true, "generic_order_lifecycle": false}
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-rg04",
+        "occurred_at": "2026-02-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {"id": "posting-opening-asset-rg04", "account_id": "asset-bank-a", "amount": "1000.00", "currency": "CNY"},
+          {"id": "posting-opening-equity-rg04", "account_id": "equity-opening-a", "amount": "-1000.00", "currency": "CNY"}
+        ]
+      }
+    ],
+    "expected_balances": {"asset-bank-a": "1000.00", "liability-credit-b": "0.00"}
+  },
+  "manual_lifecycle": {
+    "independent_baseline": "opening",
+    "ordered_operations": [
+      {
+        "sequence": 1,
+        "id": "manual-mixed-purchase",
+        "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+        "candidate": null,
+        "input": {
+          "request_id": "request-rg04-manual-purchase",
+          "kind": "manual_mixed_expense",
+          "occurred_at": "2026-02-10T12:00:00+08:00",
+          "total_amount": "120.00",
+          "currency": "CNY",
+          "category_id": "expense-category-daily",
+          "funding_components": [
+            {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+          ],
+          "settlement_explanation": {
+            "original_amount": "135.00",
+            "discount_amount": "15.00",
+            "settled_amount": "120.00"
+          }
+        },
+        "expected": {
+          "accepted": true,
+          "transaction": {
+            "id": "tx-purchase-rg04-manual",
+            "business_type": "expense",
+            "current_version_id": "version-purchase-rg04-manual-v1",
+            "posting_set_id": "posting-set-purchase-rg04-manual",
+            "occurred_at": "2026-02-10T12:00:00+08:00",
+            "effective": true,
+            "provenance": {"kind": "manual_confirmation", "confirmation_ref": "request-rg04-manual-purchase"},
+            "postings": [
+              {"id": "posting-expense-rg04-manual", "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily"},
+              {"id": "posting-asset-rg04-manual", "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY"},
+              {"id": "posting-liability-rg04-manual", "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY"}
+            ]
+          },
+          "association_group": {
+            "id": "association-group-rg04-manual",
+            "type": "mixed_payment",
+            "system_managed": true,
+            "display_name": "混合支付",
+            "business_transaction_id": "tx-purchase-rg04-manual",
+            "funding_components": [
+              {"posting_id": "posting-asset-rg04-manual", "account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+              {"posting_id": "posting-liability-rg04-manual", "account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+            ],
+            "payment_composition_total": "120.00",
+            "generic_order_lifecycle": false
+          },
+          "association_group_count": 1,
+          "balances": {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"},
+          "liability_display": {"amount_owed": "50.00"},
+          "statistics": {
+            "day": "2026-02-10",
+            "month": "2026-02",
+            "day_consumption": "120.00",
+            "month_consumption": "120.00",
+            "day_cash_outflow": "70.00",
+            "month_cash_outflow": "70.00",
+            "income": "0.00",
+            "net_worth_change": "-120.00",
+            "budget": "not_applicable"
+          },
+          "reconciliation": {
+            "posting-expense-rg04-manual": "not_applicable",
+            "posting-asset-rg04-manual": "pending",
+            "posting-liability-rg04-manual": "pending",
+            "transaction": "pending"
+          },
+          "settlement_explanation": {
+            "original_amount": "135.00",
+            "discount_amount": "15.00",
+            "settled_amount": "120.00",
+            "discount_accounting_effect_count": 0
+          },
+          "source_refs": [],
+          "evidence_refs": [],
+          "evidence_links": []
+        }
+      },
+      {
+        "sequence": 2,
+        "id": "repay-credit-principal",
+        "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+        "candidate": null,
+        "input": {
+          "request_id": "request-rg04-repayment",
+          "kind": "credit_repayment",
+          "occurred_at": "2026-03-05T09:00:00+08:00",
+          "asset_account_id": "asset-bank-a",
+          "liability_account_id": "liability-credit-b",
+          "principal_amount": "50.00",
+          "currency": "CNY"
+        },
+        "expected": {
+          "accepted": true,
+          "transaction": {
+            "id": "tx-repayment-rg04",
+            "business_type": "credit_repayment",
+            "principal_amount": "50.00",
+            "current_version_id": "version-repayment-rg04-v1",
+            "posting_set_id": "posting-set-repayment-rg04",
+            "occurred_at": "2026-03-05T09:00:00+08:00",
+            "effective": true,
+            "provenance": {"kind": "manual_confirmation", "confirmation_ref": "request-rg04-repayment"},
+            "postings": [
+              {"id": "posting-repayment-asset-rg04", "account_id": "asset-bank-a", "amount": "-50.00", "currency": "CNY"},
+              {"id": "posting-repayment-liability-rg04", "account_id": "liability-credit-b", "amount": "50.00", "currency": "CNY"}
+            ]
+          },
+          "balances": {"asset-bank-a": "880.00", "liability-credit-b": "0.00"},
+          "liability_display": {"amount_owed": "0.00"},
+          "statistics": {
+            "day": "2026-03-05",
+            "month": "2026-03",
+            "day_consumption": "0.00",
+            "month_consumption": "0.00",
+            "day_cash_outflow": "50.00",
+            "month_cash_outflow": "50.00",
+            "income": "0.00",
+            "net_worth_change": "0.00",
+            "budget": "not_applicable"
+          },
+          "lifecycle_statistics": {
+            "total_consumption": "120.00",
+            "total_cash_outflow": "120.00",
+            "total_income": "0.00",
+            "total_net_worth_change": "-120.00"
+          },
+          "reconciliation": {
+            "posting-repayment-asset-rg04": "pending",
+            "posting-repayment-liability-rg04": "pending",
+            "transaction": "pending"
+          },
+          "duplicate_consumption_count": 0,
+          "source_refs": [],
+          "evidence_refs": []
+        }
+      }
+    ]
+  },
+  "import_lifecycle": {
+    "independent_baseline": "opening",
+    "ordered_operations": [
+      {
+        "sequence": 1,
+        "id": "import-complete-mixed-payment",
+        "input": {
+          "request_id": "request-rg04-import-complete",
+          "kind": "import_source_record",
+          "source_record": {
+            "id": "source-record-rg04-complete",
+            "evidence_id": "evidence-rg04-asset-debit",
+            "observed_at": "2026-02-11T12:00:00+08:00",
+            "total_amount": "120.00",
+            "currency": "CNY",
+            "suggested_category_id": "expense-category-daily",
+            "funding_components": [
+              {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY", "evidence_available": true},
+              {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY", "evidence_available": false}
+            ],
+            "completeness": "complete"
+          }
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-purchase-rg04",
+            "status": "pending_confirmation",
+            "kind": "mixed_payment_expense",
+            "confidence": "1.00",
+            "source_refs": ["source-record-rg04-complete"],
+            "evidence_refs": ["evidence-rg04-asset-debit"],
+            "provenance": {"rule": "complete_mixed_payment_source", "rule_version": 1},
+            "requires_confirmation": ["category_id", "funding_components", "formal_transaction_creation"]
+          },
+          "new_candidate_count": 1,
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_association_group_count": 0,
+            "balance_changes": {"asset-bank-a": "0.00", "liability-credit-b": "0.00"},
+            "balances": {"asset-bank-a": "1000.00", "liability-credit-b": "0.00"},
+            "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+            "reconciliation_change_count": 0
+          }
+        }
+      },
+      {
+        "sequence": 2,
+        "id": "complete-and-confirm-candidate",
+        "input": {
+          "request_id": "request-rg04-confirm-candidate",
+          "kind": "explicit_candidate_completion_and_confirmation",
+          "candidate_id": "candidate-purchase-rg04",
+          "category_id": "expense-category-daily",
+          "confirmed_funding_components": [
+            {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+          ],
+          "confirmed": true
+        },
+        "expected": {
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-purchase-rg04-imported",
+            "business_type": "expense",
+            "current_version_id": "version-purchase-rg04-imported-v1",
+            "posting_set_id": "posting-set-purchase-rg04-imported",
+            "occurred_at": "2026-02-11T12:00:00+08:00",
+            "effective": true,
+            "provenance": {
+              "kind": "confirmed_import_candidate",
+              "candidate_id": "candidate-purchase-rg04",
+              "confirmation_ref": "request-rg04-confirm-candidate",
+              "source_refs": ["source-record-rg04-complete"]
+            },
+            "postings": [
+              {"id": "posting-expense-rg04-imported", "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily"},
+              {"id": "posting-asset-rg04-imported", "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY"},
+              {"id": "posting-liability-rg04-imported", "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY"}
+            ]
+          },
+          "association_group": {
+            "id": "association-group-rg04-imported",
+            "type": "mixed_payment",
+            "system_managed": true,
+            "display_name": "混合支付",
+            "business_transaction_id": "tx-purchase-rg04-imported",
+            "funding_components": [
+              {"posting_id": "posting-asset-rg04-imported", "account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+              {"posting_id": "posting-liability-rg04-imported", "account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+            ],
+            "payment_composition_total": "120.00",
+            "generic_order_lifecycle": false
+          },
+          "association_group_count": 1,
+          "effective_transaction_count": 1,
+          "funding_effect_count": 1,
+          "expense_effect_count": 1,
+          "consumption_effect_count": 1,
+          "cash_flow_effect_count": 1,
+          "balances": {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"},
+          "liability_display": {"amount_owed": "50.00"},
+          "statistics": {
+            "day": "2026-02-11",
+            "month": "2026-02",
+            "day_consumption": "120.00",
+            "month_consumption": "120.00",
+            "day_cash_outflow": "70.00",
+            "month_cash_outflow": "70.00",
+            "income": "0.00",
+            "net_worth_change": "-120.00",
+            "budget": "not_applicable"
+          },
+          "reconciliation": {
+            "posting-expense-rg04-imported": "not_applicable",
+            "posting-asset-rg04-imported": "matched",
+            "posting-liability-rg04-imported": "pending",
+            "transaction": "partial"
+          },
+          "source_refs": ["source-record-rg04-complete"],
+          "evidence_refs": ["evidence-rg04-asset-debit"],
+          "evidence_links": [
+            {"id": "match-rg04-asset-imported", "evidence_id": "evidence-rg04-asset-debit", "posting_id": "posting-asset-rg04-imported", "status": "matched"}
+          ]
+        }
+      },
+      {
+        "sequence": 3,
+        "id": "merge-liability-mirror-evidence",
+        "input": {
+          "request_id": "request-rg04-liability-mirror",
+          "kind": "import_mirror_evidence",
+          "source_record_id": "source-record-rg04-liability-mirror",
+          "evidence_id": "evidence-rg04-liability-mirror",
+          "account_id": "liability-credit-b",
+          "amount": "-50.00",
+          "currency": "CNY",
+          "observed_at": "2026-02-11T12:00:00+08:00"
+        },
+        "expected": {
+          "merged_into_transaction_id": "tx-purchase-rg04-imported",
+          "current_version_id": "version-purchase-rg04-imported-v1",
+          "effective_posting_set_id": "posting-set-purchase-rg04-imported",
+          "posting_ids": ["posting-expense-rg04-imported", "posting-asset-rg04-imported", "posting-liability-rg04-imported"],
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_association_group_count": 0,
+          "association_group_count": 1,
+          "association_group": {
+            "id": "association-group-rg04-imported",
+            "type": "mixed_payment",
+            "system_managed": true,
+            "display_name": "混合支付",
+            "business_transaction_id": "tx-purchase-rg04-imported",
+            "funding_components": [
+              {"posting_id": "posting-asset-rg04-imported", "account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+              {"posting_id": "posting-liability-rg04-imported", "account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+            ],
+            "payment_composition_total": "120.00",
+            "generic_order_lifecycle": false
+          },
+          "effective_transaction_count": 1,
+          "funding_effect_count": 1,
+          "expense_effect_count": 1,
+          "consumption_effect_count": 1,
+          "cash_flow_effect_count": 1,
+          "balances": {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"},
+          "statistics": {
+            "day": "2026-02-11",
+            "month": "2026-02",
+            "day_consumption": "120.00",
+            "month_consumption": "120.00",
+            "day_cash_outflow": "70.00",
+            "month_cash_outflow": "70.00",
+            "income": "0.00",
+            "net_worth_change": "-120.00",
+            "budget": "not_applicable"
+          },
+          "reconciliation": {
+            "posting-expense-rg04-imported": "not_applicable",
+            "posting-asset-rg04-imported": "matched",
+            "posting-liability-rg04-imported": "matched",
+            "transaction": "complete"
+          },
+          "source_refs": ["source-record-rg04-complete", "source-record-rg04-liability-mirror"],
+          "evidence_refs": ["evidence-rg04-asset-debit", "evidence-rg04-liability-mirror"],
+          "evidence_links": [
+            {"id": "match-rg04-asset-imported", "evidence_id": "evidence-rg04-asset-debit", "posting_id": "posting-asset-rg04-imported", "status": "matched"},
+            {"id": "match-rg04-liability-mirror", "evidence_id": "evidence-rg04-liability-mirror", "posting_id": "posting-liability-rg04-imported", "status": "matched"}
+          ]
+        }
+      }
+    ]
+  },
+  "missing_funding_leg": {
+    "independent_baseline": "opening",
+    "input": {
+      "request_id": "request-rg04-import-missing-leg",
+      "kind": "import_source_record",
+      "source_record": {
+        "id": "source-record-rg04-missing-leg",
+        "evidence_id": "evidence-rg04-known-asset-debit",
+        "observed_at": "2026-02-12T12:00:00+08:00",
+        "total_amount": "120.00",
+        "known_asset_funding_amount": "70.00",
+        "currency": "CNY",
+        "completeness": "missing_funding_leg"
+      }
+    },
+    "expected": {
+      "candidate": {
+        "id": "candidate-purchase-rg04-missing-leg",
+        "status": "pending_confirmation",
+        "kind": "mixed_payment_expense_incomplete",
+        "confidence": "0.58",
+        "known_funding_amount": "70.00",
+        "missing_funding_amount": "50.00",
+        "source_refs": ["source-record-rg04-missing-leg"],
+        "evidence_refs": ["evidence-rg04-known-asset-debit"],
+        "requires_confirmation": ["funding_account_id", "missing_funding_amount", "category_id", "formal_transaction_creation"]
+      },
+      "new_candidate_count": 1,
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_association_group_count": 0,
+      "guessed_funding_account_id": null,
+      "balancing_account_id": null,
+      "hidden_posting_count": 0,
+      "balance_changes": {"asset-bank-a": "0.00", "liability-credit-b": "0.00"},
+      "balances": {"asset-bank-a": "1000.00", "liability-credit-b": "0.00"},
+      "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+      "reconciliation_change_count": 0
+    },
+    "retry": {
+      "repeated_request_id": "request-rg04-import-missing-leg",
+      "repeated_source_record_id": "source-record-rg04-missing-leg",
+      "expected": {
+        "returned_candidate_id": "candidate-purchase-rg04-missing-leg",
+        "candidate_status": "pending_confirmation",
+        "new_candidate_count": 0,
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "new_association_group_count": 0,
+        "balances": {"asset-bank-a": "1000.00", "liability-credit-b": "0.00"},
+        "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}
+      }
+    }
+  },
+  "idempotency": {
+    "retried_inputs": [
+      "request-rg04-manual-purchase",
+      "request-rg04-repayment",
+      "source-record-rg04-complete",
+      "request-rg04-confirm-candidate",
+      "evidence-rg04-liability-mirror"
+    ],
+    "expected": {
+      "manual_returned_transaction_id": "tx-purchase-rg04-manual",
+      "repayment_returned_transaction_id": "tx-repayment-rg04",
+      "import_returned_candidate_id": "candidate-purchase-rg04",
+      "import_returned_transaction_id": "tx-purchase-rg04-imported",
+      "new_candidate_count": 0,
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_version_count": 0,
+      "new_evidence_link_count": 0,
+      "new_association_group_count": 0,
+      "duplicate_expense_count": 0,
+      "duplicate_consumption_count": 0,
+      "duplicate_cash_flow_count": 0,
+      "manual_state": {
+        "transaction_id": "tx-purchase-rg04-manual",
+        "current_version_id": "version-purchase-rg04-manual-v1",
+        "posting_set_id": "posting-set-purchase-rg04-manual",
+        "posting_ids": ["posting-expense-rg04-manual", "posting-asset-rg04-manual", "posting-liability-rg04-manual"],
+        "association_group_count": 1,
+        "association_group": {
+          "id": "association-group-rg04-manual",
+          "type": "mixed_payment",
+          "system_managed": true,
+          "display_name": "混合支付",
+          "business_transaction_id": "tx-purchase-rg04-manual",
+          "funding_components": [
+            {"posting_id": "posting-asset-rg04-manual", "account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"posting_id": "posting-liability-rg04-manual", "account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+          ],
+          "payment_composition_total": "120.00",
+          "generic_order_lifecycle": false
+        },
+        "balances": {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"},
+        "statistics": {
+          "day": "2026-02-10",
+          "month": "2026-02",
+          "day_consumption": "120.00",
+          "month_consumption": "120.00",
+          "day_cash_outflow": "70.00",
+          "month_cash_outflow": "70.00",
+          "income": "0.00",
+          "net_worth_change": "-120.00",
+          "budget": "not_applicable"
+        },
+        "reconciliation": {
+          "posting-expense-rg04-manual": "not_applicable",
+          "posting-asset-rg04-manual": "pending",
+          "posting-liability-rg04-manual": "pending",
+          "transaction": "pending"
+        },
+        "source_refs": [],
+        "evidence_refs": [],
+        "evidence_links": []
+      },
+      "repayment_state": {
+        "transaction_id": "tx-repayment-rg04",
+        "current_version_id": "version-repayment-rg04-v1",
+        "posting_set_id": "posting-set-repayment-rg04",
+        "posting_ids": ["posting-repayment-asset-rg04", "posting-repayment-liability-rg04"],
+        "balances": {"asset-bank-a": "880.00", "liability-credit-b": "0.00"},
+        "statistics": {
+          "day": "2026-03-05",
+          "month": "2026-03",
+          "day_consumption": "0.00",
+          "month_consumption": "0.00",
+          "day_cash_outflow": "50.00",
+          "month_cash_outflow": "50.00",
+          "income": "0.00",
+          "net_worth_change": "0.00",
+          "budget": "not_applicable"
+        },
+        "reconciliation": {
+          "posting-repayment-asset-rg04": "pending",
+          "posting-repayment-liability-rg04": "pending",
+          "transaction": "pending"
+        },
+        "source_refs": [],
+        "evidence_refs": [],
+        "evidence_links": []
+      },
+      "import_state": {
+        "candidate_id": "candidate-purchase-rg04",
+        "candidate_status": "confirmed",
+        "transaction_id": "tx-purchase-rg04-imported",
+        "current_version_id": "version-purchase-rg04-imported-v1",
+        "posting_set_id": "posting-set-purchase-rg04-imported",
+        "posting_ids": ["posting-expense-rg04-imported", "posting-asset-rg04-imported", "posting-liability-rg04-imported"],
+        "association_group_count": 1,
+        "association_group": {
+          "id": "association-group-rg04-imported",
+          "type": "mixed_payment",
+          "system_managed": true,
+          "display_name": "混合支付",
+          "business_transaction_id": "tx-purchase-rg04-imported",
+          "funding_components": [
+            {"posting_id": "posting-asset-rg04-imported", "account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"posting_id": "posting-liability-rg04-imported", "account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}
+          ],
+          "payment_composition_total": "120.00",
+          "generic_order_lifecycle": false
+        },
+        "balances": {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"},
+        "statistics": {
+          "day": "2026-02-11",
+          "month": "2026-02",
+          "day_consumption": "120.00",
+          "month_consumption": "120.00",
+          "day_cash_outflow": "70.00",
+          "month_cash_outflow": "70.00",
+          "income": "0.00",
+          "net_worth_change": "-120.00",
+          "budget": "not_applicable"
+        },
+        "reconciliation": {
+          "posting-expense-rg04-imported": "not_applicable",
+          "posting-asset-rg04-imported": "matched",
+          "posting-liability-rg04-imported": "matched",
+          "transaction": "complete"
+        },
+        "source_refs": ["source-record-rg04-complete", "source-record-rg04-liability-mirror"],
+        "evidence_refs": ["evidence-rg04-asset-debit", "evidence-rg04-liability-mirror"],
+        "evidence_links": [
+          {"id": "match-rg04-asset-imported", "evidence_id": "evidence-rg04-asset-debit", "posting_id": "posting-asset-rg04-imported", "status": "matched"},
+          {"id": "match-rg04-liability-mirror", "evidence_id": "evidence-rg04-liability-mirror", "posting_id": "posting-liability-rg04-imported", "status": "matched"}
+        ]
+      }
+    }
+  },
+  "invalid_manual_inputs": [
+    {
+      "id": "missing-secondary-category",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": null, "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "category_id", "reason": "secondary_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "funding-total-mismatch",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "49.99"},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "funding_total_must_equal_expense", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "zero-total",
+      "input": {"total_amount": "0.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "asset-bank-a", "asset_funding_amount": "0.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "0.00"},
+      "expected": {"accepted": false, "field": "total_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "unknown-funding-account",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "unknown-account", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "unknown_real_account", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "negative-total",
+      "input": {"total_amount": "-120.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "total_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "zero-funding-leg",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "asset-bank-a", "asset_funding_amount": "0.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "120.00"},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "funding_leg_must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "negative-funding-leg",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "asset_account_id": "asset-bank-a", "asset_funding_amount": "-1.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "121.00"},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "funding_leg_must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "duplicate-funding-account",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "funding_components": [{"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "asset-bank-a", "funding_amount": "50.00", "currency": "CNY"}]},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "duplicate_funding_account", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "known-nonfinancial-account",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "funding_components": [{"account_id": "expense-account-daily", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}]},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "real_financial_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "known-non-owned-account",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "funding_components": [{"account_id": "asset-external-x", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"}]},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "owned_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "primary-category",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-living", "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "category_id", "reason": "secondary_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "inactive-secondary-category",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-inactive", "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "category_id", "reason": "category_inactive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "wrong-kind-income-category",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "income-category-other", "asset_account_id": "asset-bank-a", "asset_funding_amount": "70.00", "liability_account_id": "liability-credit-b", "liability_funding_amount": "50.00"},
+      "expected": {"accepted": false, "field": "category_id", "reason": "expense_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    },
+    {
+      "id": "mixed-funding-currencies",
+      "input": {"total_amount": "120.00", "currency": "CNY", "category_id": "expense-category-daily", "funding_components": [{"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "USD"}]},
+      "expected": {"accepted": false, "field": "funding_components", "reason": "single_currency_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0}
+    }
+  ],
+  "out_of_scope": {
+    "refunds": "RG-07",
+    "merged_payments": "RG-05",
+    "staged_or_unpaid_amounts": "RG-06",
+    "later_posting_corrections": "RG-12"
+  },
+  "forbidden_side_effects": [
+    "create_generic_order_lifecycle",
+    "guess_missing_funding_leg",
+    "create_hidden_balancing_posting",
+    "auto_confirm_import_candidate",
+    "duplicate_transaction",
+    "duplicate_posting",
+    "duplicate_expense",
+    "duplicate_consumption",
+    "duplicate_cash_flow",
+    "create_discount_posting",
+    "invoke_network",
+    "invoke_sync",
+    "invoke_intelligent_suggestion"
+  ]
+}
