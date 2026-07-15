@@ -1,0 +1,5238 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-06",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a"
+  },
+  "catalog": {
+    "accounts": [
+      {
+        "id": "asset-bank-a",
+        "name": "资产账户 A",
+        "kind": "asset",
+        "real_account": true,
+        "owned_by_user": true
+      },
+      {
+        "id": "liability-credit-a",
+        "name": "信用负债 A",
+        "kind": "liability",
+        "real_account": true,
+        "owned_by_user": true
+      },
+      {
+        "id": "asset-external-x",
+        "name": "外部资产账户 X",
+        "kind": "asset",
+        "real_account": true,
+        "owned_by_user": false
+      },
+      {
+        "id": "equity-opening-a",
+        "name": "期初权益 A",
+        "kind": "equity",
+        "real_account": false,
+        "owned_by_user": false
+      },
+      {
+        "id": "expense-account-service",
+        "name": "生活服务费用",
+        "kind": "expense",
+        "real_account": false,
+        "owned_by_user": false
+      },
+      {
+        "id": "expense-account-inactive",
+        "name": "停用费用",
+        "kind": "expense",
+        "real_account": false,
+        "owned_by_user": false
+      },
+      {
+        "id": "income-account-other",
+        "name": "其他收入",
+        "kind": "income",
+        "real_account": false,
+        "owned_by_user": false
+      }
+    ],
+    "categories": [
+      {
+        "id": "expense-category-service-parent",
+        "name": "服务",
+        "kind": "expense",
+        "parent_id": null,
+        "posting_account_id": null,
+        "active": true
+      },
+      {
+        "id": "expense-category-service",
+        "name": "生活服务",
+        "kind": "expense",
+        "parent_id": "expense-category-service-parent",
+        "posting_account_id": "expense-account-service",
+        "active": true
+      },
+      {
+        "id": "expense-category-inactive",
+        "name": "停用支出分类",
+        "kind": "expense",
+        "parent_id": "expense-category-service-parent",
+        "posting_account_id": "expense-account-inactive",
+        "active": false
+      },
+      {
+        "id": "income-category-general",
+        "name": "收入",
+        "kind": "income",
+        "parent_id": null,
+        "posting_account_id": null,
+        "active": true
+      },
+      {
+        "id": "income-category-other",
+        "name": "其他收入",
+        "kind": "income",
+        "parent_id": "income-category-general",
+        "posting_account_id": "income-account-other",
+        "active": true
+      }
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-rg06",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-opening-bank-rg06",
+            "account_id": "asset-bank-a",
+            "amount": "1000.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-opening-equity-rg06",
+            "account_id": "equity-opening-a",
+            "amount": "-1000.00",
+            "currency": "CNY"
+          }
+        ]
+      }
+    ],
+    "expected_balances": {
+      "asset-bank-a": "1000.00"
+    }
+  },
+  "baselines": {
+    "group_only_manual": {
+      "balances": {
+        "asset-bank-a": "1000.00"
+      },
+      "statistics": {
+        "consumption": "0.00",
+        "cash_outflow": "0.00",
+        "income": "0.00",
+        "net_worth_change": "0.00"
+      },
+      "group_state": {
+        "total_amount": "300.00",
+        "paid_amount": "0.00",
+        "due_amount": "300.00",
+        "payment_progress": "unpaid",
+        "fulfillment_status": "in_progress"
+      },
+      "history_ids": [
+        "history-rg06-manual-created"
+      ],
+      "reconciliation": {
+        "group": "pending",
+        "transactions": {}
+      }
+    },
+    "after_deposit_manual": {
+      "balances": {
+        "asset-bank-a": "920.00"
+      },
+      "statistics": {
+        "consumption": "80.00",
+        "cash_outflow": "80.00",
+        "income": "0.00",
+        "net_worth_change": "-80.00"
+      },
+      "group_state": {
+        "total_amount": "300.00",
+        "paid_amount": "80.00",
+        "due_amount": "220.00",
+        "payment_progress": "partially_paid",
+        "fulfillment_status": "in_progress"
+      },
+      "history_ids": [
+        "history-rg06-manual-created",
+        "history-rg06-manual-deposit"
+      ],
+      "reconciliation": {
+        "group": "pending",
+        "transactions": {
+          "tx-rg06-manual-deposit": "pending"
+        }
+      }
+    },
+    "after_final_manual": {
+      "balances": {
+        "asset-bank-a": "700.00"
+      },
+      "statistics": {
+        "consumption": "300.00",
+        "cash_outflow": "300.00",
+        "income": "0.00",
+        "net_worth_change": "-300.00"
+      },
+      "group_state": {
+        "total_amount": "300.00",
+        "paid_amount": "300.00",
+        "due_amount": "0.00",
+        "payment_progress": "paid_in_full",
+        "fulfillment_status": "fulfilled"
+      },
+      "history_ids": [
+        "history-rg06-manual-created",
+        "history-rg06-manual-deposit",
+        "history-rg06-manual-fulfilled",
+        "history-rg06-manual-final"
+      ],
+      "reconciliation": {
+        "group": "pending",
+        "transactions": {
+          "tx-rg06-manual-deposit": "pending",
+          "tx-rg06-manual-final": "pending"
+        }
+      }
+    },
+    "group_only_import": {
+      "balances": {
+        "asset-bank-a": "1000.00"
+      },
+      "statistics": {
+        "consumption": "0.00",
+        "cash_outflow": "0.00",
+        "income": "0.00",
+        "net_worth_change": "0.00"
+      },
+      "group_state": {
+        "total_amount": "300.00",
+        "paid_amount": "0.00",
+        "due_amount": "300.00",
+        "payment_progress": "unpaid",
+        "fulfillment_status": "in_progress"
+      },
+      "history_ids": [
+        "history-rg06-import-created"
+      ],
+      "reconciliation": {
+        "group": "pending",
+        "transactions": {}
+      }
+    },
+    "after_deposit_import": {
+      "balances": {
+        "asset-bank-a": "920.00"
+      },
+      "statistics": {
+        "consumption": "80.00",
+        "cash_outflow": "80.00",
+        "income": "0.00",
+        "net_worth_change": "-80.00"
+      },
+      "group_state": {
+        "total_amount": "300.00",
+        "paid_amount": "80.00",
+        "due_amount": "220.00",
+        "payment_progress": "partially_paid",
+        "fulfillment_status": "in_progress"
+      },
+      "history_ids": [
+        "history-rg06-import-created",
+        "history-rg06-import-deposit"
+      ],
+      "reconciliation": {
+        "group": "complete",
+        "transactions": {
+          "tx-rg06-import-deposit": "complete"
+        }
+      }
+    }
+  },
+  "manual_path": {
+    "ordered_operations": [
+      {
+        "id": "create-group",
+        "input": {
+          "request_id": "request-rg06-manual-group",
+          "kind": "staged_payment",
+          "total_amount": "300.00",
+          "currency": "CNY",
+          "category_id": "expense-category-service",
+          "created_at": "2026-04-20T09:00:00+08:00"
+        },
+        "expected": {
+          "group": {
+            "id": "association-group-rg06-manual",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "user_labels": {
+              "fulfillment": "履约：履约中",
+              "payment": "付款：待付 300.00"
+            },
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-manual-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 1,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "1000.00"
+            },
+            "statistics": {
+              "consumption": "0.00",
+              "cash_outflow": "0.00",
+              "income": "0.00",
+              "net_worth_change": "0.00"
+            }
+          }
+        }
+      },
+      {
+        "id": "save-deposit",
+        "input": {
+          "request_id": "request-rg06-manual-deposit",
+          "association_group_id": "association-group-rg06-manual",
+          "payment_role": "deposit",
+          "payment_amount": "80.00",
+          "currency": "CNY",
+          "funding_account_id": "asset-bank-a",
+          "actual_payment_at": "2026-04-28T10:00:00+08:00"
+        },
+        "expected": {
+          "transaction": {
+            "id": "tx-rg06-manual-deposit",
+            "current_version_id": "version-rg06-manual-deposit-v1",
+            "posting_set_id": "posting-set-rg06-manual-deposit",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "effective": true,
+            "confirmation_request_id": "request-rg06-manual-deposit",
+            "source_refs": [],
+            "evidence_refs": [],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-manual-deposit",
+                "account_id": "expense-account-service",
+                "amount": "80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-manual-deposit",
+                "account_id": "asset-bank-a",
+                "amount": "-80.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          "payment": {
+            "id": "payment-rg06-manual-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-deposit",
+            "expense_posting_id": "posting-expense-rg06-manual-deposit",
+            "asset_posting_id": "posting-asset-rg06-manual-deposit"
+          },
+          "group": {
+            "id": "association-group-rg06-manual",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "user_labels": {
+              "fulfillment": "履约：履约中",
+              "payment": "付款：待付 220.00"
+            },
+            "payments": [
+              {
+                "id": "payment-rg06-manual-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-deposit",
+                "expense_posting_id": "posting-expense-rg06-manual-deposit",
+                "asset_posting_id": "posting-asset-rg06-manual-deposit"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-manual-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-manual-deposit",
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "balances": {
+            "asset-bank-a": "920.00"
+          },
+          "operation_statistics": {
+            "day": "2026-04-28",
+            "month": "2026-04",
+            "day_consumption": "80.00",
+            "month_consumption": "80.00",
+            "day_cash_outflow": "80.00",
+            "month_cash_outflow": "80.00",
+            "income": "0.00",
+            "net_worth_change": "-80.00",
+            "budget": "not_applicable"
+          },
+          "cumulative_statistics": {
+            "cumulative_consumption": "80.00",
+            "cumulative_cash_outflow": "80.00",
+            "cumulative_income": "0.00",
+            "cumulative_net_worth_change": "-80.00"
+          },
+          "reconciliation": {
+            "postings": {
+              "posting-expense-rg06-manual-deposit": "not_applicable",
+              "posting-asset-rg06-manual-deposit": "pending"
+            },
+            "transactions": {
+              "tx-rg06-manual-deposit": "pending"
+            },
+            "group": "pending"
+          },
+          "unpaid_due_formal_effects": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "unpaid_due_balance_effect": "0.00",
+          "unpaid_due_posting_count": 0,
+          "payable_account_id": null,
+          "liability_account_id": null
+        }
+      },
+      {
+        "id": "mark-fulfilled",
+        "input": {
+          "request_id": "request-rg06-manual-fulfilled",
+          "association_group_id": "association-group-rg06-manual",
+          "fulfillment_status": "fulfilled",
+          "occurred_at": "2026-05-01T12:00:00+08:00"
+        },
+        "expected": {
+          "group": {
+            "id": "association-group-rg06-manual",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "fulfilled",
+            "user_labels": {
+              "fulfillment": "履约：已交付",
+              "payment": "付款：待付 220.00"
+            },
+            "payments": [
+              {
+                "id": "payment-rg06-manual-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-deposit",
+                "expense_posting_id": "posting-expense-rg06-manual-deposit",
+                "asset_posting_id": "posting-asset-rg06-manual-deposit"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-manual-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-manual-deposit",
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-fulfilled",
+                "event": "fulfillment_changed",
+                "occurred_at": "2026-05-01T12:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "new_history_count": 1,
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "920.00"
+            },
+            "statistics": {
+              "consumption": "80.00",
+              "cash_outflow": "80.00",
+              "income": "0.00",
+              "net_worth_change": "-80.00"
+            },
+            "group_state": {
+              "total_amount": "300.00",
+              "paid_amount": "80.00",
+              "due_amount": "220.00",
+              "payment_progress": "partially_paid",
+              "fulfillment_status": "in_progress"
+            },
+            "history_ids": [
+              "history-rg06-manual-created",
+              "history-rg06-manual-deposit"
+            ],
+            "reconciliation": {
+              "group": "pending",
+              "transactions": {
+                "tx-rg06-manual-deposit": "pending"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "save-final",
+        "input": {
+          "request_id": "request-rg06-manual-final",
+          "association_group_id": "association-group-rg06-manual",
+          "payment_role": "final",
+          "payment_amount": "220.00",
+          "currency": "CNY",
+          "funding_account_id": "asset-bank-a",
+          "actual_payment_at": "2026-05-03T16:30:00+08:00"
+        },
+        "expected": {
+          "transaction": {
+            "id": "tx-rg06-manual-final",
+            "current_version_id": "version-rg06-manual-final-v1",
+            "posting_set_id": "posting-set-rg06-manual-final",
+            "occurred_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": null,
+            "effective": true,
+            "confirmation_request_id": "request-rg06-manual-final",
+            "source_refs": [],
+            "evidence_refs": [],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-manual-final",
+                "account_id": "expense-account-service",
+                "amount": "220.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-manual-final",
+                "account_id": "asset-bank-a",
+                "amount": "-220.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          "payment": {
+            "id": "payment-rg06-manual-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-final",
+            "expense_posting_id": "posting-expense-rg06-manual-final",
+            "asset_posting_id": "posting-asset-rg06-manual-final"
+          },
+          "group": {
+            "id": "association-group-rg06-manual",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "fulfilled",
+            "user_labels": {
+              "fulfillment": "履约：已交付",
+              "payment": "付款：已付清"
+            },
+            "payments": [
+              {
+                "id": "payment-rg06-manual-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-deposit",
+                "expense_posting_id": "posting-expense-rg06-manual-deposit",
+                "asset_posting_id": "posting-asset-rg06-manual-deposit"
+              },
+              {
+                "id": "payment-rg06-manual-final",
+                "role": "final",
+                "amount": "220.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-05-03T16:30:00+08:00",
+                "statistics_at": "2026-05-03T16:30:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-final",
+                "expense_posting_id": "posting-expense-rg06-manual-final",
+                "asset_posting_id": "posting-asset-rg06-manual-final"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-manual-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-manual-deposit",
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-fulfilled",
+                "event": "fulfillment_changed",
+                "occurred_at": "2026-05-01T12:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-final",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-05-03T16:30:00+08:00",
+                "payment_progress": "paid_in_full",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "300.00",
+                "due_amount": "0.00",
+                "payment_id": "payment-rg06-manual-final",
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "balances": {
+            "asset-bank-a": "700.00"
+          },
+          "operation_statistics": {
+            "day": "2026-05-03",
+            "month": "2026-05",
+            "day_consumption": "220.00",
+            "month_consumption": "220.00",
+            "day_cash_outflow": "220.00",
+            "month_cash_outflow": "220.00",
+            "income": "0.00",
+            "net_worth_change": "-220.00",
+            "budget": "not_applicable"
+          },
+          "cumulative_statistics": {
+            "cumulative_consumption": "300.00",
+            "cumulative_cash_outflow": "300.00",
+            "cumulative_income": "0.00",
+            "cumulative_net_worth_change": "-300.00"
+          },
+          "effective_payment_transaction_count": 2,
+          "consumption_effect_count": 2,
+          "cash_flow_effect_count": 2,
+          "reconciliation": {
+            "postings": {
+              "posting-expense-rg06-manual-deposit": "not_applicable",
+              "posting-asset-rg06-manual-deposit": "pending",
+              "posting-expense-rg06-manual-final": "not_applicable",
+              "posting-asset-rg06-manual-final": "pending"
+            },
+            "transactions": {
+              "tx-rg06-manual-deposit": "pending",
+              "tx-rg06-manual-final": "pending"
+            },
+            "group": "pending"
+          }
+        }
+      },
+      {
+        "id": "confirm-completion",
+        "input": {
+          "request_id": "request-rg06-manual-completion",
+          "association_group_id": "association-group-rg06-manual",
+          "confirmed": true,
+          "occurred_at": "2026-05-04T09:00:00+08:00"
+        },
+        "expected": {
+          "group": {
+            "id": "association-group-rg06-manual",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "fulfilled",
+            "user_labels": {
+              "fulfillment": "履约：已交付",
+              "payment": "付款：已付清"
+            },
+            "payments": [
+              {
+                "id": "payment-rg06-manual-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-deposit",
+                "expense_posting_id": "posting-expense-rg06-manual-deposit",
+                "asset_posting_id": "posting-asset-rg06-manual-deposit"
+              },
+              {
+                "id": "payment-rg06-manual-final",
+                "role": "final",
+                "amount": "220.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-05-03T16:30:00+08:00",
+                "statistics_at": "2026-05-03T16:30:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-manual-final",
+                "expense_posting_id": "posting-expense-rg06-manual-final",
+                "asset_posting_id": "posting-asset-rg06-manual-final"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-manual-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-manual-deposit",
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-fulfilled",
+                "event": "fulfillment_changed",
+                "occurred_at": "2026-05-01T12:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-final",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-05-03T16:30:00+08:00",
+                "payment_progress": "paid_in_full",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "300.00",
+                "due_amount": "0.00",
+                "payment_id": "payment-rg06-manual-final",
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-manual-completed",
+                "event": "completion_confirmed",
+                "occurred_at": "2026-05-04T09:00:00+08:00",
+                "payment_progress": "paid_in_full",
+                "fulfillment_status": "fulfilled",
+                "total_amount": "300.00",
+                "paid_amount": "300.00",
+                "due_amount": "0.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "new_history_count": 1,
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "700.00"
+            },
+            "statistics": {
+              "consumption": "300.00",
+              "cash_outflow": "300.00",
+              "income": "0.00",
+              "net_worth_change": "-300.00"
+            },
+            "group_state": {
+              "total_amount": "300.00",
+              "paid_amount": "300.00",
+              "due_amount": "0.00",
+              "payment_progress": "paid_in_full",
+              "fulfillment_status": "fulfilled"
+            },
+            "history_ids": [
+              "history-rg06-manual-created",
+              "history-rg06-manual-deposit",
+              "history-rg06-manual-fulfilled",
+              "history-rg06-manual-final"
+            ],
+            "reconciliation": {
+              "group": "pending",
+              "transactions": {
+                "tx-rg06-manual-deposit": "pending",
+                "tx-rg06-manual-final": "pending"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "link-deposit-evidence",
+        "input": {
+          "source_id": "source-rg06-manual-deposit-bank",
+          "evidence_id": "evidence-rg06-manual-deposit",
+          "payment_id": "payment-rg06-manual-deposit",
+          "posting_id": "posting-asset-rg06-manual-deposit"
+        },
+        "expected": {
+          "evidence_links": [
+            {
+              "id": "match-rg06-manual-deposit",
+              "evidence_id": "evidence-rg06-manual-deposit",
+              "payment_id": "payment-rg06-manual-deposit",
+              "posting_id": "posting-asset-rg06-manual-deposit",
+              "status": "matched",
+              "source_id": "source-rg06-manual-deposit-bank",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            }
+          ],
+          "reconciliation": {
+            "postings": {
+              "posting-asset-rg06-manual-deposit": "matched",
+              "posting-asset-rg06-manual-final": "pending"
+            },
+            "transactions": {
+              "tx-rg06-manual-deposit": "complete",
+              "tx-rg06-manual-final": "pending"
+            },
+            "group": "partial"
+          }
+        }
+      },
+      {
+        "id": "link-final-evidence",
+        "input": {
+          "source_id": "source-rg06-manual-final-bank",
+          "evidence_id": "evidence-rg06-manual-final",
+          "payment_id": "payment-rg06-manual-final",
+          "posting_id": "posting-asset-rg06-manual-final"
+        },
+        "expected": {
+          "evidence_links": [
+            {
+              "id": "match-rg06-manual-deposit",
+              "evidence_id": "evidence-rg06-manual-deposit",
+              "payment_id": "payment-rg06-manual-deposit",
+              "posting_id": "posting-asset-rg06-manual-deposit",
+              "status": "matched",
+              "source_id": "source-rg06-manual-deposit-bank",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            },
+            {
+              "id": "match-rg06-manual-final",
+              "evidence_id": "evidence-rg06-manual-final",
+              "payment_id": "payment-rg06-manual-final",
+              "posting_id": "posting-asset-rg06-manual-final",
+              "status": "matched",
+              "source_id": "source-rg06-manual-final-bank",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            }
+          ],
+          "reconciliation": {
+            "postings": {
+              "posting-asset-rg06-manual-deposit": "matched",
+              "posting-asset-rg06-manual-final": "matched"
+            },
+            "transactions": {
+              "tx-rg06-manual-deposit": "complete",
+              "tx-rg06-manual-final": "complete"
+            },
+            "group": "complete"
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 1,
+            "balances": {
+              "asset-bank-a": "700.00"
+            },
+            "statistics": {
+              "consumption": "300.00",
+              "cash_outflow": "300.00",
+              "income": "0.00",
+              "net_worth_change": "-300.00"
+            }
+          }
+        }
+      }
+    ],
+    "canonical_final_state": {
+      "candidates": [],
+      "source_records": [
+        {
+          "id": "source-rg06-manual-deposit-bank",
+          "evidence_id": "evidence-rg06-manual-deposit",
+          "observed_at": "2026-04-28T10:00:00+08:00",
+          "amount": "-80.00",
+          "currency": "CNY",
+          "mirror_of_source_id": null
+        },
+        {
+          "id": "source-rg06-manual-final-bank",
+          "evidence_id": "evidence-rg06-manual-final",
+          "observed_at": "2026-05-03T16:30:00+08:00",
+          "amount": "-220.00",
+          "currency": "CNY",
+          "mirror_of_source_id": null
+        }
+      ],
+      "transactions": [
+        {
+          "id": "tx-rg06-manual-deposit",
+          "current_version_id": "version-rg06-manual-deposit-v1",
+          "posting_set_id": "posting-set-rg06-manual-deposit",
+          "occurred_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": null,
+          "effective": true,
+          "confirmation_request_id": "request-rg06-manual-deposit",
+          "source_refs": [],
+          "evidence_refs": [],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-manual-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-manual-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ]
+        },
+        {
+          "id": "tx-rg06-manual-final",
+          "current_version_id": "version-rg06-manual-final-v1",
+          "posting_set_id": "posting-set-rg06-manual-final",
+          "occurred_at": "2026-05-03T16:30:00+08:00",
+          "statistics_at": "2026-05-03T16:30:00+08:00",
+          "source_payment_at": null,
+          "effective": true,
+          "confirmation_request_id": "request-rg06-manual-final",
+          "source_refs": [],
+          "evidence_refs": [],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-manual-final",
+              "account_id": "expense-account-service",
+              "amount": "220.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-manual-final",
+              "account_id": "asset-bank-a",
+              "amount": "-220.00",
+              "currency": "CNY"
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-rg06-manual-deposit-v1",
+          "transaction_id": "tx-rg06-manual-deposit",
+          "posting_set_id": "posting-set-rg06-manual-deposit",
+          "status": "current"
+        },
+        {
+          "id": "version-rg06-manual-final-v1",
+          "transaction_id": "tx-rg06-manual-final",
+          "posting_set_id": "posting-set-rg06-manual-final",
+          "status": "current"
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-expense-rg06-manual-deposit",
+          "account_id": "expense-account-service",
+          "amount": "80.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-asset-rg06-manual-deposit",
+          "account_id": "asset-bank-a",
+          "amount": "-80.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-expense-rg06-manual-final",
+          "account_id": "expense-account-service",
+          "amount": "220.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-asset-rg06-manual-final",
+          "account_id": "asset-bank-a",
+          "amount": "-220.00",
+          "currency": "CNY"
+        }
+      ],
+      "payments": [
+        {
+          "id": "payment-rg06-manual-deposit",
+          "role": "deposit",
+          "amount": "80.00",
+          "currency": "CNY",
+          "actual_payment_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": null,
+          "funding_account_id": "asset-bank-a",
+          "transaction_id": "tx-rg06-manual-deposit",
+          "expense_posting_id": "posting-expense-rg06-manual-deposit",
+          "asset_posting_id": "posting-asset-rg06-manual-deposit"
+        },
+        {
+          "id": "payment-rg06-manual-final",
+          "role": "final",
+          "amount": "220.00",
+          "currency": "CNY",
+          "actual_payment_at": "2026-05-03T16:30:00+08:00",
+          "statistics_at": "2026-05-03T16:30:00+08:00",
+          "source_payment_at": null,
+          "funding_account_id": "asset-bank-a",
+          "transaction_id": "tx-rg06-manual-final",
+          "expense_posting_id": "posting-expense-rg06-manual-final",
+          "asset_posting_id": "posting-asset-rg06-manual-final"
+        }
+      ],
+      "group": {
+        "id": "association-group-rg06-manual",
+        "type": "staged_payment",
+        "display_name": "分阶段付款",
+        "system_managed": true,
+        "currency": "CNY",
+        "total_amount": "300.00",
+        "paid_amount": "300.00",
+        "due_amount": "0.00",
+        "category_id": "expense-category-service",
+        "payment_progress": "paid_in_full",
+        "fulfillment_status": "fulfilled",
+        "user_labels": {
+          "fulfillment": "履约：已交付",
+          "payment": "付款：已付清"
+        },
+        "payments": [
+          {
+            "id": "payment-rg06-manual-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-deposit",
+            "expense_posting_id": "posting-expense-rg06-manual-deposit",
+            "asset_posting_id": "posting-asset-rg06-manual-deposit"
+          },
+          {
+            "id": "payment-rg06-manual-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-final",
+            "expense_posting_id": "posting-expense-rg06-manual-final",
+            "asset_posting_id": "posting-asset-rg06-manual-final"
+          }
+        ],
+        "state_history": [
+          {
+            "id": "history-rg06-manual-created",
+            "event": "group_created",
+            "occurred_at": "2026-04-20T09:00:00+08:00",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-manual-deposit",
+            "event": "payment_confirmed",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "payment_id": "payment-rg06-manual-deposit",
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-manual-fulfilled",
+            "event": "fulfillment_changed",
+            "occurred_at": "2026-05-01T12:00:00+08:00",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "fulfilled",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-manual-final",
+            "event": "payment_confirmed",
+            "occurred_at": "2026-05-03T16:30:00+08:00",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "fulfilled",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "payment_id": "payment-rg06-manual-final",
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-manual-completed",
+            "event": "completion_confirmed",
+            "occurred_at": "2026-05-04T09:00:00+08:00",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "fulfilled",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          }
+        ],
+        "generic_order_lifecycle": false
+      },
+      "evidence_links": [
+        {
+          "id": "match-rg06-manual-deposit",
+          "evidence_id": "evidence-rg06-manual-deposit",
+          "payment_id": "payment-rg06-manual-deposit",
+          "posting_id": "posting-asset-rg06-manual-deposit",
+          "status": "matched",
+          "source_id": "source-rg06-manual-deposit-bank",
+          "mirror_of_evidence_id": null,
+          "merged_into_evidence_link_id": null
+        },
+        {
+          "id": "match-rg06-manual-final",
+          "evidence_id": "evidence-rg06-manual-final",
+          "payment_id": "payment-rg06-manual-final",
+          "posting_id": "posting-asset-rg06-manual-final",
+          "status": "matched",
+          "source_id": "source-rg06-manual-final-bank",
+          "mirror_of_evidence_id": null,
+          "merged_into_evidence_link_id": null
+        }
+      ],
+      "balances": {
+        "asset-bank-a": "700.00"
+      },
+      "statistics": {
+        "consumption": "300.00",
+        "cash_outflow": "300.00",
+        "income": "0.00",
+        "net_worth_change": "-300.00"
+      },
+      "reconciliation": {
+        "postings": {
+          "posting-asset-rg06-manual-deposit": "matched",
+          "posting-asset-rg06-manual-final": "matched"
+        },
+        "transactions": {
+          "tx-rg06-manual-deposit": "complete",
+          "tx-rg06-manual-final": "complete"
+        },
+        "group": "complete"
+      }
+    }
+  },
+  "import_path": {
+    "group_baseline": {
+      "id": "association-group-rg06-import",
+      "type": "staged_payment",
+      "display_name": "分阶段付款",
+      "system_managed": true,
+      "currency": "CNY",
+      "total_amount": "300.00",
+      "paid_amount": "0.00",
+      "due_amount": "300.00",
+      "category_id": "expense-category-service",
+      "payment_progress": "unpaid",
+      "fulfillment_status": "in_progress",
+      "payments": [],
+      "state_history": [
+        {
+          "id": "history-rg06-import-created",
+          "event": "group_created",
+          "occurred_at": "2026-04-20T09:00:00+08:00",
+          "payment_progress": "unpaid",
+          "fulfillment_status": "in_progress",
+          "total_amount": "300.00",
+          "paid_amount": "0.00",
+          "due_amount": "300.00",
+          "payment_id": null,
+          "state_transition_effect_count": 0
+        }
+      ]
+    },
+    "ordered_operations": [
+      {
+        "id": "import-deposit",
+        "input": {
+          "source_id": "source-rg06-import-deposit",
+          "evidence_id": "evidence-rg06-import-deposit",
+          "source_payment_at": "2026-04-28T10:00:00+08:00",
+          "amount": "80.00",
+          "currency": "CNY",
+          "suggested_payment_role": "deposit"
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-rg06-import-deposit",
+            "status": "pending_confirmation",
+            "kind": "staged_payment",
+            "payment_role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-deposit",
+            "evidence_id": "evidence-rg06-import-deposit",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "immutable_source_fields": [
+              "source_id",
+              "evidence_id",
+              "source_payment_at",
+              "amount",
+              "currency"
+            ],
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "1.00"
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "1000.00"
+            },
+            "statistics": {
+              "consumption": "0.00",
+              "cash_outflow": "0.00",
+              "income": "0.00",
+              "net_worth_change": "0.00"
+            },
+            "group_state": {
+              "total_amount": "300.00",
+              "paid_amount": "0.00",
+              "due_amount": "300.00",
+              "payment_progress": "unpaid",
+              "fulfillment_status": "in_progress"
+            },
+            "history_ids": [
+              "history-rg06-import-created"
+            ],
+            "reconciliation": {
+              "group": "pending",
+              "transactions": {}
+            }
+          }
+        }
+      },
+      {
+        "id": "import-ambiguous-role",
+        "input": {
+          "source_id": "source-rg06-import-ambiguous",
+          "evidence_id": "evidence-rg06-import-ambiguous",
+          "source_payment_at": "2026-04-25T15:00:00+08:00",
+          "amount": "220.00",
+          "currency": "CNY"
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-rg06-import-ambiguous",
+            "status": "pending_confirmation",
+            "kind": "staged_payment",
+            "payment_role": null,
+            "guessed_payment_role": null,
+            "amount": "220.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-ambiguous",
+            "evidence_id": "evidence-rg06-import-ambiguous",
+            "source_payment_at": "2026-04-25T15:00:00+08:00",
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "0.50"
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "1000.00"
+            },
+            "statistics": {
+              "consumption": "0.00",
+              "cash_outflow": "0.00",
+              "income": "0.00",
+              "net_worth_change": "0.00"
+            },
+            "group_state": {
+              "total_amount": "300.00",
+              "paid_amount": "0.00",
+              "due_amount": "300.00",
+              "payment_progress": "unpaid",
+              "fulfillment_status": "in_progress"
+            },
+            "history_ids": [
+              "history-rg06-import-created"
+            ],
+            "reconciliation": {
+              "group": "pending",
+              "transactions": {}
+            }
+          }
+        }
+      },
+      {
+        "id": "confirm-deposit",
+        "input": {
+          "request_id": "request-rg06-confirm-deposit",
+          "candidate_id": "candidate-rg06-import-deposit",
+          "association_group_id": "association-group-rg06-import",
+          "payment_role": "deposit",
+          "category_id": "expense-category-service",
+          "funding_account_id": "asset-bank-a",
+          "exact_binding_confirmed": true
+        },
+        "expected": {
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-rg06-import-deposit",
+            "current_version_id": "version-rg06-import-deposit-v1",
+            "posting_set_id": "posting-set-rg06-import-deposit",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "effective": true,
+            "source_refs": [
+              "source-rg06-import-deposit"
+            ],
+            "evidence_refs": [
+              "evidence-rg06-import-deposit"
+            ],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-import-deposit",
+                "account_id": "expense-account-service",
+                "amount": "80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-deposit",
+                "account_id": "asset-bank-a",
+                "amount": "-80.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          "payment": {
+            "id": "payment-rg06-import-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-deposit",
+            "expense_posting_id": "posting-expense-rg06-import-deposit",
+            "asset_posting_id": "posting-asset-rg06-import-deposit"
+          },
+          "group": {
+            "id": "association-group-rg06-import",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "currency": "CNY",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "payment_ids": [
+              "payment-rg06-import-deposit"
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-import-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-import-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:05:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-import-deposit",
+                "state_transition_effect_count": 0
+              }
+            ]
+          },
+          "evidence_links": [
+            {
+              "id": "match-rg06-import-deposit",
+              "evidence_id": "evidence-rg06-import-deposit",
+              "payment_id": "payment-rg06-import-deposit",
+              "posting_id": "posting-asset-rg06-import-deposit",
+              "status": "matched",
+              "source_id": "source-rg06-import-deposit",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            }
+          ],
+          "balances": {
+            "asset-bank-a": "920.00"
+          },
+          "statistics": {
+            "consumption": "80.00",
+            "cash_outflow": "80.00",
+            "income": "0.00",
+            "net_worth_change": "-80.00"
+          },
+          "reconciliation": {
+            "transactions": {
+              "tx-rg06-import-deposit": "complete"
+            },
+            "group": "complete"
+          }
+        }
+      },
+      {
+        "id": "import-final",
+        "input": {
+          "source_id": "source-rg06-import-final",
+          "evidence_id": "evidence-rg06-import-final",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "amount": "220.00",
+          "currency": "CNY",
+          "suggested_payment_role": "final"
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-rg06-import-final",
+            "status": "pending_confirmation",
+            "kind": "staged_payment",
+            "payment_role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-final",
+            "evidence_id": "evidence-rg06-import-final",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "immutable_source_fields": [
+              "source_id",
+              "evidence_id",
+              "source_payment_at",
+              "amount",
+              "currency"
+            ],
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "1.00"
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_payment_count": 0,
+            "new_association_group_count": 0,
+            "new_history_count": 0,
+            "new_consumption_count": 0,
+            "new_cash_flow_count": 0,
+            "reconciliation_change_count": 0,
+            "balances": {
+              "asset-bank-a": "920.00"
+            },
+            "statistics": {
+              "consumption": "80.00",
+              "cash_outflow": "80.00",
+              "income": "0.00",
+              "net_worth_change": "-80.00"
+            },
+            "group_state": {
+              "total_amount": "300.00",
+              "paid_amount": "80.00",
+              "due_amount": "220.00",
+              "payment_progress": "partially_paid",
+              "fulfillment_status": "in_progress"
+            },
+            "history_ids": [
+              "history-rg06-import-created",
+              "history-rg06-import-deposit"
+            ],
+            "reconciliation": {
+              "group": "complete",
+              "transactions": {
+                "tx-rg06-import-deposit": "complete"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "confirm-final",
+        "input": {
+          "request_id": "request-rg06-confirm-final",
+          "candidate_id": "candidate-rg06-import-final",
+          "association_group_id": "association-group-rg06-import",
+          "payment_role": "final",
+          "category_id": "expense-category-service",
+          "funding_account_id": "asset-bank-a",
+          "exact_binding_confirmed": true
+        },
+        "expected": {
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-rg06-import-final",
+            "current_version_id": "version-rg06-import-final-v1",
+            "posting_set_id": "posting-set-rg06-import-final",
+            "occurred_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "effective": true,
+            "source_refs": [
+              "source-rg06-import-final"
+            ],
+            "evidence_refs": [
+              "evidence-rg06-import-final"
+            ],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-import-final",
+                "account_id": "expense-account-service",
+                "amount": "220.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-final",
+                "account_id": "asset-bank-a",
+                "amount": "-220.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          "payment": {
+            "id": "payment-rg06-import-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-final",
+            "expense_posting_id": "posting-expense-rg06-import-final",
+            "asset_posting_id": "posting-asset-rg06-import-final"
+          },
+          "group": {
+            "id": "association-group-rg06-import",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "currency": "CNY",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "in_progress",
+            "payment_ids": [
+              "payment-rg06-import-deposit",
+              "payment-rg06-import-final"
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-import-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-import-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:05:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-import-deposit",
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-import-final",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-05-03T16:35:00+08:00",
+                "payment_progress": "paid_in_full",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "300.00",
+                "due_amount": "0.00",
+                "payment_id": "payment-rg06-import-final",
+                "state_transition_effect_count": 0
+              }
+            ]
+          },
+          "evidence_links": [
+            {
+              "id": "match-rg06-import-deposit",
+              "evidence_id": "evidence-rg06-import-deposit",
+              "payment_id": "payment-rg06-import-deposit",
+              "posting_id": "posting-asset-rg06-import-deposit",
+              "status": "matched",
+              "source_id": "source-rg06-import-deposit",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            },
+            {
+              "id": "match-rg06-import-final",
+              "evidence_id": "evidence-rg06-import-final",
+              "payment_id": "payment-rg06-import-final",
+              "posting_id": "posting-asset-rg06-import-final",
+              "status": "matched",
+              "source_id": "source-rg06-import-final",
+              "mirror_of_evidence_id": null,
+              "merged_into_evidence_link_id": null
+            }
+          ],
+          "balances": {
+            "asset-bank-a": "700.00"
+          },
+          "statistics": {
+            "consumption": "300.00",
+            "cash_outflow": "300.00",
+            "income": "0.00",
+            "net_worth_change": "-300.00"
+          },
+          "reconciliation": {
+            "transactions": {
+              "tx-rg06-import-deposit": "complete",
+              "tx-rg06-import-final": "complete"
+            },
+            "group": "complete"
+          }
+        }
+      },
+      {
+        "id": "merge-final-mirror-evidence",
+        "input": {
+          "source_id": "source-rg06-import-final-mirror",
+          "evidence_id": "evidence-rg06-import-final-mirror",
+          "payment_id": "payment-rg06-import-final",
+          "posting_id": "posting-asset-rg06-import-final",
+          "amount": "-220.00",
+          "currency": "CNY"
+        },
+        "expected": {
+          "merged_into_payment_id": "payment-rg06-import-final",
+          "merged_into_transaction_id": "tx-rg06-import-final",
+          "target_posting_id": "posting-asset-rg06-import-final",
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_consumption_count": 0,
+          "new_association_group_count": 0,
+          "new_cash_flow_count": 0,
+          "state": {
+            "candidates": [
+              {
+                "id": "candidate-rg06-import-deposit",
+                "status": "confirmed",
+                "kind": "staged_payment",
+                "payment_role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "source_id": "source-rg06-import-deposit",
+                "evidence_id": "evidence-rg06-import-deposit",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "immutable_source_fields": [
+                  "source_id",
+                  "evidence_id",
+                  "source_payment_at",
+                  "amount",
+                  "currency"
+                ],
+                "requires_confirmation": [
+                  "association_group_id",
+                  "payment_role",
+                  "category_id",
+                  "funding_account_id"
+                ],
+                "rule_version": 1,
+                "confidence": "1.00",
+                "source_fact": {
+                  "source_id": "source-rg06-import-deposit",
+                  "evidence_id": "evidence-rg06-import-deposit",
+                  "source_payment_at": "2026-04-28T10:00:00+08:00",
+                  "amount": "80.00",
+                  "currency": "CNY"
+                },
+                "confirmation_provenance": {
+                  "request_id": "request-rg06-confirm-deposit",
+                  "association_group_id": "association-group-rg06-import",
+                  "payment_role": "deposit",
+                  "category_id": "expense-category-service",
+                  "funding_account_id": "asset-bank-a",
+                  "exact_binding_confirmed": true,
+                  "confirmed_at": "2026-04-28T10:05:00+08:00"
+                }
+              },
+              {
+                "id": "candidate-rg06-import-ambiguous",
+                "status": "pending_confirmation",
+                "kind": "staged_payment",
+                "payment_role": null,
+                "guessed_payment_role": null,
+                "amount": "220.00",
+                "currency": "CNY",
+                "source_id": "source-rg06-import-ambiguous",
+                "evidence_id": "evidence-rg06-import-ambiguous",
+                "source_payment_at": "2026-04-25T15:00:00+08:00",
+                "requires_confirmation": [
+                  "association_group_id",
+                  "payment_role",
+                  "category_id",
+                  "funding_account_id"
+                ],
+                "rule_version": 1,
+                "confidence": "0.50",
+                "source_fact": {
+                  "source_id": "source-rg06-import-ambiguous",
+                  "evidence_id": "evidence-rg06-import-ambiguous",
+                  "source_payment_at": "2026-04-25T15:00:00+08:00",
+                  "amount": "220.00",
+                  "currency": "CNY"
+                },
+                "immutable_source_fields": [
+                  "source_id",
+                  "evidence_id",
+                  "source_payment_at",
+                  "amount",
+                  "currency"
+                ],
+                "confirmation_provenance": null
+              },
+              {
+                "id": "candidate-rg06-import-final",
+                "status": "confirmed",
+                "kind": "staged_payment",
+                "payment_role": "final",
+                "amount": "220.00",
+                "currency": "CNY",
+                "source_id": "source-rg06-import-final",
+                "evidence_id": "evidence-rg06-import-final",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+                "immutable_source_fields": [
+                  "source_id",
+                  "evidence_id",
+                  "source_payment_at",
+                  "amount",
+                  "currency"
+                ],
+                "requires_confirmation": [
+                  "association_group_id",
+                  "payment_role",
+                  "category_id",
+                  "funding_account_id"
+                ],
+                "rule_version": 1,
+                "confidence": "1.00",
+                "source_fact": {
+                  "source_id": "source-rg06-import-final",
+                  "evidence_id": "evidence-rg06-import-final",
+                  "source_payment_at": "2026-05-03T16:30:00+08:00",
+                  "amount": "220.00",
+                  "currency": "CNY"
+                },
+                "confirmation_provenance": {
+                  "request_id": "request-rg06-confirm-final",
+                  "association_group_id": "association-group-rg06-import",
+                  "payment_role": "final",
+                  "category_id": "expense-category-service",
+                  "funding_account_id": "asset-bank-a",
+                  "exact_binding_confirmed": true,
+                  "confirmed_at": "2026-05-03T16:35:00+08:00"
+                }
+              }
+            ],
+            "source_records": [
+              {
+                "id": "source-rg06-import-deposit",
+                "evidence_id": "evidence-rg06-import-deposit",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "amount": "80.00",
+                "currency": "CNY",
+                "mirror_of_source_id": null
+              },
+              {
+                "id": "source-rg06-import-ambiguous",
+                "evidence_id": "evidence-rg06-import-ambiguous",
+                "source_payment_at": "2026-04-25T15:00:00+08:00",
+                "amount": "220.00",
+                "currency": "CNY",
+                "mirror_of_source_id": null
+              },
+              {
+                "id": "source-rg06-import-final",
+                "evidence_id": "evidence-rg06-import-final",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+                "amount": "220.00",
+                "currency": "CNY",
+                "mirror_of_source_id": null
+              },
+              {
+                "id": "source-rg06-import-final-mirror",
+                "evidence_id": "evidence-rg06-import-final-mirror",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+                "amount": "-220.00",
+                "currency": "CNY",
+                "mirror_of_source_id": "source-rg06-import-final"
+              }
+            ],
+            "transactions": [
+              {
+                "id": "tx-rg06-import-deposit",
+                "current_version_id": "version-rg06-import-deposit-v1",
+                "posting_set_id": "posting-set-rg06-import-deposit",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "effective": true,
+                "source_refs": [
+                  "source-rg06-import-deposit"
+                ],
+                "evidence_refs": [
+                  "evidence-rg06-import-deposit"
+                ],
+                "postings": [
+                  {
+                    "id": "posting-expense-rg06-import-deposit",
+                    "account_id": "expense-account-service",
+                    "amount": "80.00",
+                    "currency": "CNY"
+                  },
+                  {
+                    "id": "posting-asset-rg06-import-deposit",
+                    "account_id": "asset-bank-a",
+                    "amount": "-80.00",
+                    "currency": "CNY"
+                  }
+                ]
+              },
+              {
+                "id": "tx-rg06-import-final",
+                "current_version_id": "version-rg06-import-final-v1",
+                "posting_set_id": "posting-set-rg06-import-final",
+                "occurred_at": "2026-05-03T16:30:00+08:00",
+                "statistics_at": "2026-05-03T16:30:00+08:00",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+                "effective": true,
+                "source_refs": [
+                  "source-rg06-import-final"
+                ],
+                "evidence_refs": [
+                  "evidence-rg06-import-final"
+                ],
+                "postings": [
+                  {
+                    "id": "posting-expense-rg06-import-final",
+                    "account_id": "expense-account-service",
+                    "amount": "220.00",
+                    "currency": "CNY"
+                  },
+                  {
+                    "id": "posting-asset-rg06-import-final",
+                    "account_id": "asset-bank-a",
+                    "amount": "-220.00",
+                    "currency": "CNY"
+                  }
+                ]
+              }
+            ],
+            "versions": [
+              {
+                "id": "version-rg06-import-deposit-v1",
+                "transaction_id": "tx-rg06-import-deposit",
+                "posting_set_id": "posting-set-rg06-import-deposit",
+                "status": "current"
+              },
+              {
+                "id": "version-rg06-import-final-v1",
+                "transaction_id": "tx-rg06-import-final",
+                "posting_set_id": "posting-set-rg06-import-final",
+                "status": "current"
+              }
+            ],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-import-deposit",
+                "account_id": "expense-account-service",
+                "amount": "80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-deposit",
+                "account_id": "asset-bank-a",
+                "amount": "-80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-expense-rg06-import-final",
+                "account_id": "expense-account-service",
+                "amount": "220.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-final",
+                "account_id": "asset-bank-a",
+                "amount": "-220.00",
+                "currency": "CNY"
+              }
+            ],
+            "payments": [
+              {
+                "id": "payment-rg06-import-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-import-deposit",
+                "expense_posting_id": "posting-expense-rg06-import-deposit",
+                "asset_posting_id": "posting-asset-rg06-import-deposit"
+              },
+              {
+                "id": "payment-rg06-import-final",
+                "role": "final",
+                "amount": "220.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-05-03T16:30:00+08:00",
+                "statistics_at": "2026-05-03T16:30:00+08:00",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-import-final",
+                "expense_posting_id": "posting-expense-rg06-import-final",
+                "asset_posting_id": "posting-asset-rg06-import-final"
+              }
+            ],
+            "group": {
+              "id": "association-group-rg06-import",
+              "type": "staged_payment",
+              "display_name": "分阶段付款",
+              "system_managed": true,
+              "currency": "CNY",
+              "total_amount": "300.00",
+              "paid_amount": "300.00",
+              "due_amount": "0.00",
+              "category_id": "expense-category-service",
+              "payment_progress": "paid_in_full",
+              "fulfillment_status": "in_progress",
+              "user_labels": {
+                "fulfillment": "履约：履约中",
+                "payment": "付款：已付清"
+              },
+              "payments": [
+                {
+                  "id": "payment-rg06-import-deposit",
+                  "role": "deposit",
+                  "amount": "80.00",
+                  "currency": "CNY",
+                  "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                  "statistics_at": "2026-04-28T10:00:00+08:00",
+                  "source_payment_at": "2026-04-28T10:00:00+08:00",
+                  "funding_account_id": "asset-bank-a",
+                  "transaction_id": "tx-rg06-import-deposit",
+                  "expense_posting_id": "posting-expense-rg06-import-deposit",
+                  "asset_posting_id": "posting-asset-rg06-import-deposit"
+                },
+                {
+                  "id": "payment-rg06-import-final",
+                  "role": "final",
+                  "amount": "220.00",
+                  "currency": "CNY",
+                  "actual_payment_at": "2026-05-03T16:30:00+08:00",
+                  "statistics_at": "2026-05-03T16:30:00+08:00",
+                  "source_payment_at": "2026-05-03T16:30:00+08:00",
+                  "funding_account_id": "asset-bank-a",
+                  "transaction_id": "tx-rg06-import-final",
+                  "expense_posting_id": "posting-expense-rg06-import-final",
+                  "asset_posting_id": "posting-asset-rg06-import-final"
+                }
+              ],
+              "state_history": [
+                {
+                  "id": "history-rg06-import-created",
+                  "event": "group_created",
+                  "occurred_at": "2026-04-20T09:00:00+08:00",
+                  "payment_progress": "unpaid",
+                  "fulfillment_status": "in_progress",
+                  "total_amount": "300.00",
+                  "paid_amount": "0.00",
+                  "due_amount": "300.00",
+                  "payment_id": null,
+                  "state_transition_effect_count": 0
+                },
+                {
+                  "id": "history-rg06-import-deposit",
+                  "event": "payment_confirmed",
+                  "occurred_at": "2026-04-28T10:05:00+08:00",
+                  "payment_progress": "partially_paid",
+                  "fulfillment_status": "in_progress",
+                  "total_amount": "300.00",
+                  "paid_amount": "80.00",
+                  "due_amount": "220.00",
+                  "payment_id": "payment-rg06-import-deposit",
+                  "state_transition_effect_count": 0
+                },
+                {
+                  "id": "history-rg06-import-final",
+                  "event": "payment_confirmed",
+                  "occurred_at": "2026-05-03T16:35:00+08:00",
+                  "payment_progress": "paid_in_full",
+                  "fulfillment_status": "in_progress",
+                  "total_amount": "300.00",
+                  "paid_amount": "300.00",
+                  "due_amount": "0.00",
+                  "payment_id": "payment-rg06-import-final",
+                  "state_transition_effect_count": 0
+                }
+              ],
+              "generic_order_lifecycle": false
+            },
+            "evidence_links": [
+              {
+                "id": "match-rg06-import-deposit",
+                "source_id": "source-rg06-import-deposit",
+                "evidence_id": "evidence-rg06-import-deposit",
+                "payment_id": "payment-rg06-import-deposit",
+                "posting_id": "posting-asset-rg06-import-deposit",
+                "status": "matched",
+                "mirror_of_evidence_id": null,
+                "merged_into_evidence_link_id": null
+              },
+              {
+                "id": "match-rg06-import-final",
+                "source_id": "source-rg06-import-final",
+                "evidence_id": "evidence-rg06-import-final",
+                "payment_id": "payment-rg06-import-final",
+                "posting_id": "posting-asset-rg06-import-final",
+                "status": "matched",
+                "mirror_of_evidence_id": null,
+                "merged_into_evidence_link_id": null
+              },
+              {
+                "id": "match-rg06-import-final-mirror",
+                "source_id": "source-rg06-import-final-mirror",
+                "evidence_id": "evidence-rg06-import-final-mirror",
+                "payment_id": "payment-rg06-import-final",
+                "posting_id": "posting-asset-rg06-import-final",
+                "status": "matched",
+                "mirror_of_evidence_id": "evidence-rg06-import-final",
+                "merged_into_evidence_link_id": "match-rg06-import-final"
+              }
+            ],
+            "balances": {
+              "asset-bank-a": "700.00"
+            },
+            "statistics": {
+              "consumption": "300.00",
+              "cash_outflow": "300.00",
+              "income": "0.00",
+              "net_worth_change": "-300.00"
+            },
+            "reconciliation": {
+              "postings": {
+                "posting-asset-rg06-import-deposit": "matched",
+                "posting-asset-rg06-import-final": "matched"
+              },
+              "transactions": {
+                "tx-rg06-import-deposit": "complete",
+                "tx-rg06-import-final": "complete"
+              },
+              "group": "complete"
+            }
+          }
+        }
+      }
+    ],
+    "canonical_final_state": {
+      "candidates": [
+        {
+          "id": "candidate-rg06-import-deposit",
+          "status": "confirmed",
+          "kind": "staged_payment",
+          "payment_role": "deposit",
+          "amount": "80.00",
+          "currency": "CNY",
+          "source_id": "source-rg06-import-deposit",
+          "evidence_id": "evidence-rg06-import-deposit",
+          "source_payment_at": "2026-04-28T10:00:00+08:00",
+          "immutable_source_fields": [
+            "source_id",
+            "evidence_id",
+            "source_payment_at",
+            "amount",
+            "currency"
+          ],
+          "requires_confirmation": [
+            "association_group_id",
+            "payment_role",
+            "category_id",
+            "funding_account_id"
+          ],
+          "rule_version": 1,
+          "confidence": "1.00",
+          "source_fact": {
+            "source_id": "source-rg06-import-deposit",
+            "evidence_id": "evidence-rg06-import-deposit",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "amount": "80.00",
+            "currency": "CNY"
+          },
+          "confirmation_provenance": {
+            "request_id": "request-rg06-confirm-deposit",
+            "association_group_id": "association-group-rg06-import",
+            "payment_role": "deposit",
+            "category_id": "expense-category-service",
+            "funding_account_id": "asset-bank-a",
+            "exact_binding_confirmed": true,
+            "confirmed_at": "2026-04-28T10:05:00+08:00"
+          }
+        },
+        {
+          "id": "candidate-rg06-import-ambiguous",
+          "status": "pending_confirmation",
+          "kind": "staged_payment",
+          "payment_role": null,
+          "guessed_payment_role": null,
+          "amount": "220.00",
+          "currency": "CNY",
+          "source_id": "source-rg06-import-ambiguous",
+          "evidence_id": "evidence-rg06-import-ambiguous",
+          "source_payment_at": "2026-04-25T15:00:00+08:00",
+          "requires_confirmation": [
+            "association_group_id",
+            "payment_role",
+            "category_id",
+            "funding_account_id"
+          ],
+          "rule_version": 1,
+          "confidence": "0.50",
+          "source_fact": {
+            "source_id": "source-rg06-import-ambiguous",
+            "evidence_id": "evidence-rg06-import-ambiguous",
+            "source_payment_at": "2026-04-25T15:00:00+08:00",
+            "amount": "220.00",
+            "currency": "CNY"
+          },
+          "immutable_source_fields": [
+            "source_id",
+            "evidence_id",
+            "source_payment_at",
+            "amount",
+            "currency"
+          ],
+          "confirmation_provenance": null
+        },
+        {
+          "id": "candidate-rg06-import-final",
+          "status": "confirmed",
+          "kind": "staged_payment",
+          "payment_role": "final",
+          "amount": "220.00",
+          "currency": "CNY",
+          "source_id": "source-rg06-import-final",
+          "evidence_id": "evidence-rg06-import-final",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "immutable_source_fields": [
+            "source_id",
+            "evidence_id",
+            "source_payment_at",
+            "amount",
+            "currency"
+          ],
+          "requires_confirmation": [
+            "association_group_id",
+            "payment_role",
+            "category_id",
+            "funding_account_id"
+          ],
+          "rule_version": 1,
+          "confidence": "1.00",
+          "source_fact": {
+            "source_id": "source-rg06-import-final",
+            "evidence_id": "evidence-rg06-import-final",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "amount": "220.00",
+            "currency": "CNY"
+          },
+          "confirmation_provenance": {
+            "request_id": "request-rg06-confirm-final",
+            "association_group_id": "association-group-rg06-import",
+            "payment_role": "final",
+            "category_id": "expense-category-service",
+            "funding_account_id": "asset-bank-a",
+            "exact_binding_confirmed": true,
+            "confirmed_at": "2026-05-03T16:35:00+08:00"
+          }
+        }
+      ],
+      "source_records": [
+        {
+          "id": "source-rg06-import-deposit",
+          "evidence_id": "evidence-rg06-import-deposit",
+          "source_payment_at": "2026-04-28T10:00:00+08:00",
+          "amount": "80.00",
+          "currency": "CNY",
+          "mirror_of_source_id": null
+        },
+        {
+          "id": "source-rg06-import-ambiguous",
+          "evidence_id": "evidence-rg06-import-ambiguous",
+          "source_payment_at": "2026-04-25T15:00:00+08:00",
+          "amount": "220.00",
+          "currency": "CNY",
+          "mirror_of_source_id": null
+        },
+        {
+          "id": "source-rg06-import-final",
+          "evidence_id": "evidence-rg06-import-final",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "amount": "220.00",
+          "currency": "CNY",
+          "mirror_of_source_id": null
+        },
+        {
+          "id": "source-rg06-import-final-mirror",
+          "evidence_id": "evidence-rg06-import-final-mirror",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "amount": "-220.00",
+          "currency": "CNY",
+          "mirror_of_source_id": "source-rg06-import-final"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "tx-rg06-import-deposit",
+          "current_version_id": "version-rg06-import-deposit-v1",
+          "posting_set_id": "posting-set-rg06-import-deposit",
+          "occurred_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": "2026-04-28T10:00:00+08:00",
+          "effective": true,
+          "source_refs": [
+            "source-rg06-import-deposit"
+          ],
+          "evidence_refs": [
+            "evidence-rg06-import-deposit"
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-import-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-import-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ]
+        },
+        {
+          "id": "tx-rg06-import-final",
+          "current_version_id": "version-rg06-import-final-v1",
+          "posting_set_id": "posting-set-rg06-import-final",
+          "occurred_at": "2026-05-03T16:30:00+08:00",
+          "statistics_at": "2026-05-03T16:30:00+08:00",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "effective": true,
+          "source_refs": [
+            "source-rg06-import-final"
+          ],
+          "evidence_refs": [
+            "evidence-rg06-import-final"
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-import-final",
+              "account_id": "expense-account-service",
+              "amount": "220.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-import-final",
+              "account_id": "asset-bank-a",
+              "amount": "-220.00",
+              "currency": "CNY"
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-rg06-import-deposit-v1",
+          "transaction_id": "tx-rg06-import-deposit",
+          "posting_set_id": "posting-set-rg06-import-deposit",
+          "status": "current"
+        },
+        {
+          "id": "version-rg06-import-final-v1",
+          "transaction_id": "tx-rg06-import-final",
+          "posting_set_id": "posting-set-rg06-import-final",
+          "status": "current"
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-expense-rg06-import-deposit",
+          "account_id": "expense-account-service",
+          "amount": "80.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-asset-rg06-import-deposit",
+          "account_id": "asset-bank-a",
+          "amount": "-80.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-expense-rg06-import-final",
+          "account_id": "expense-account-service",
+          "amount": "220.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-asset-rg06-import-final",
+          "account_id": "asset-bank-a",
+          "amount": "-220.00",
+          "currency": "CNY"
+        }
+      ],
+      "payments": [
+        {
+          "id": "payment-rg06-import-deposit",
+          "role": "deposit",
+          "amount": "80.00",
+          "currency": "CNY",
+          "actual_payment_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": "2026-04-28T10:00:00+08:00",
+          "funding_account_id": "asset-bank-a",
+          "transaction_id": "tx-rg06-import-deposit",
+          "expense_posting_id": "posting-expense-rg06-import-deposit",
+          "asset_posting_id": "posting-asset-rg06-import-deposit"
+        },
+        {
+          "id": "payment-rg06-import-final",
+          "role": "final",
+          "amount": "220.00",
+          "currency": "CNY",
+          "actual_payment_at": "2026-05-03T16:30:00+08:00",
+          "statistics_at": "2026-05-03T16:30:00+08:00",
+          "source_payment_at": "2026-05-03T16:30:00+08:00",
+          "funding_account_id": "asset-bank-a",
+          "transaction_id": "tx-rg06-import-final",
+          "expense_posting_id": "posting-expense-rg06-import-final",
+          "asset_posting_id": "posting-asset-rg06-import-final"
+        }
+      ],
+      "group": {
+        "id": "association-group-rg06-import",
+        "type": "staged_payment",
+        "display_name": "分阶段付款",
+        "system_managed": true,
+        "currency": "CNY",
+        "total_amount": "300.00",
+        "paid_amount": "300.00",
+        "due_amount": "0.00",
+        "category_id": "expense-category-service",
+        "payment_progress": "paid_in_full",
+        "fulfillment_status": "in_progress",
+        "user_labels": {
+          "fulfillment": "履约：履约中",
+          "payment": "付款：已付清"
+        },
+        "payments": [
+          {
+            "id": "payment-rg06-import-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-deposit",
+            "expense_posting_id": "posting-expense-rg06-import-deposit",
+            "asset_posting_id": "posting-asset-rg06-import-deposit"
+          },
+          {
+            "id": "payment-rg06-import-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-final",
+            "expense_posting_id": "posting-expense-rg06-import-final",
+            "asset_posting_id": "posting-asset-rg06-import-final"
+          }
+        ],
+        "state_history": [
+          {
+            "id": "history-rg06-import-created",
+            "event": "group_created",
+            "occurred_at": "2026-04-20T09:00:00+08:00",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-import-deposit",
+            "event": "payment_confirmed",
+            "occurred_at": "2026-04-28T10:05:00+08:00",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "payment_id": "payment-rg06-import-deposit",
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-import-final",
+            "event": "payment_confirmed",
+            "occurred_at": "2026-05-03T16:35:00+08:00",
+            "payment_progress": "paid_in_full",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "300.00",
+            "due_amount": "0.00",
+            "payment_id": "payment-rg06-import-final",
+            "state_transition_effect_count": 0
+          }
+        ],
+        "generic_order_lifecycle": false
+      },
+      "evidence_links": [
+        {
+          "id": "match-rg06-import-deposit",
+          "source_id": "source-rg06-import-deposit",
+          "evidence_id": "evidence-rg06-import-deposit",
+          "payment_id": "payment-rg06-import-deposit",
+          "posting_id": "posting-asset-rg06-import-deposit",
+          "status": "matched",
+          "mirror_of_evidence_id": null,
+          "merged_into_evidence_link_id": null
+        },
+        {
+          "id": "match-rg06-import-final",
+          "source_id": "source-rg06-import-final",
+          "evidence_id": "evidence-rg06-import-final",
+          "payment_id": "payment-rg06-import-final",
+          "posting_id": "posting-asset-rg06-import-final",
+          "status": "matched",
+          "mirror_of_evidence_id": null,
+          "merged_into_evidence_link_id": null
+        },
+        {
+          "id": "match-rg06-import-final-mirror",
+          "source_id": "source-rg06-import-final-mirror",
+          "evidence_id": "evidence-rg06-import-final-mirror",
+          "payment_id": "payment-rg06-import-final",
+          "posting_id": "posting-asset-rg06-import-final",
+          "status": "matched",
+          "mirror_of_evidence_id": "evidence-rg06-import-final",
+          "merged_into_evidence_link_id": "match-rg06-import-final"
+        }
+      ],
+      "balances": {
+        "asset-bank-a": "700.00"
+      },
+      "statistics": {
+        "consumption": "300.00",
+        "cash_outflow": "300.00",
+        "income": "0.00",
+        "net_worth_change": "-300.00"
+      },
+      "reconciliation": {
+        "postings": {
+          "posting-asset-rg06-import-deposit": "matched",
+          "posting-asset-rg06-import-final": "matched"
+        },
+        "transactions": {
+          "tx-rg06-import-deposit": "complete",
+          "tx-rg06-import-final": "complete"
+        },
+        "group": "complete"
+      }
+    }
+  },
+  "invalid_baselines": {
+    "group_only": {
+      "candidates": [],
+      "source_records": [],
+      "transactions": [],
+      "versions": [],
+      "postings": [],
+      "payments": [],
+      "group": {
+        "id": "association-group-rg06-invalid",
+        "type": "staged_payment",
+        "display_name": "分阶段付款",
+        "system_managed": true,
+        "currency": "CNY",
+        "total_amount": "300.00",
+        "paid_amount": "0.00",
+        "due_amount": "300.00",
+        "category_id": "expense-category-service",
+        "payment_progress": "unpaid",
+        "fulfillment_status": "in_progress",
+        "payments": [],
+        "state_history": [
+          {
+            "id": "history-rg06-invalid-created",
+            "event": "group_created",
+            "occurred_at": "2026-04-20T09:00:00+08:00",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          }
+        ],
+        "generic_order_lifecycle": false
+      },
+      "evidence_links": [],
+      "balances": {
+        "asset-bank-a": "1000.00"
+      },
+      "statistics": {
+        "consumption": "0.00",
+        "cash_outflow": "0.00",
+        "income": "0.00",
+        "net_worth_change": "0.00"
+      },
+      "reconciliation": {
+        "postings": {},
+        "transactions": {},
+        "group": "pending"
+      }
+    },
+    "after_deposit": {
+      "candidates": [],
+      "source_records": [],
+      "transactions": [
+        {
+          "id": "tx-rg06-invalid-deposit",
+          "current_version_id": "version-rg06-invalid-deposit-v1",
+          "posting_set_id": "posting-set-rg06-invalid-deposit",
+          "occurred_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": null,
+          "effective": true,
+          "confirmation_request_id": "request-rg06-invalid-deposit",
+          "source_refs": [],
+          "evidence_refs": [],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-invalid-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-invalid-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-rg06-invalid-deposit-v1",
+          "transaction_id": "tx-rg06-invalid-deposit",
+          "posting_set_id": "posting-set-rg06-invalid-deposit",
+          "status": "current"
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-expense-rg06-invalid-deposit",
+          "account_id": "expense-account-service",
+          "amount": "80.00",
+          "currency": "CNY"
+        },
+        {
+          "id": "posting-asset-rg06-invalid-deposit",
+          "account_id": "asset-bank-a",
+          "amount": "-80.00",
+          "currency": "CNY"
+        }
+      ],
+      "payments": [
+        {
+          "id": "payment-rg06-invalid-deposit",
+          "role": "deposit",
+          "amount": "80.00",
+          "currency": "CNY",
+          "actual_payment_at": "2026-04-28T10:00:00+08:00",
+          "statistics_at": "2026-04-28T10:00:00+08:00",
+          "source_payment_at": null,
+          "funding_account_id": "asset-bank-a",
+          "transaction_id": "tx-rg06-invalid-deposit",
+          "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+          "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+        }
+      ],
+      "group": {
+        "id": "association-group-rg06-invalid",
+        "type": "staged_payment",
+        "display_name": "分阶段付款",
+        "system_managed": true,
+        "currency": "CNY",
+        "total_amount": "300.00",
+        "paid_amount": "80.00",
+        "due_amount": "220.00",
+        "category_id": "expense-category-service",
+        "payment_progress": "partially_paid",
+        "fulfillment_status": "in_progress",
+        "payments": [
+          {
+            "id": "payment-rg06-invalid-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-invalid-deposit",
+            "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+            "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+          }
+        ],
+        "state_history": [
+          {
+            "id": "history-rg06-invalid-created",
+            "event": "group_created",
+            "occurred_at": "2026-04-20T09:00:00+08:00",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "payment_id": null,
+            "state_transition_effect_count": 0
+          },
+          {
+            "id": "history-rg06-invalid-deposit",
+            "event": "payment_confirmed",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "payment_id": "payment-rg06-invalid-deposit",
+            "state_transition_effect_count": 0
+          }
+        ],
+        "generic_order_lifecycle": false
+      },
+      "evidence_links": [],
+      "balances": {
+        "asset-bank-a": "920.00"
+      },
+      "statistics": {
+        "consumption": "80.00",
+        "cash_outflow": "80.00",
+        "income": "0.00",
+        "net_worth_change": "-80.00"
+      },
+      "reconciliation": {
+        "postings": {
+          "posting-expense-rg06-invalid-deposit": "not_applicable",
+          "posting-asset-rg06-invalid-deposit": "pending"
+        },
+        "transactions": {
+          "tx-rg06-invalid-deposit": "pending"
+        },
+        "group": "pending"
+      }
+    },
+    "opening_only": {
+      "candidates": [],
+      "source_records": [],
+      "transactions": [],
+      "versions": [],
+      "postings": [],
+      "payments": [],
+      "association_groups": [],
+      "history": [],
+      "group": null,
+      "evidence_links": [],
+      "balances": {
+        "asset-bank-a": "1000.00"
+      },
+      "statistics": {
+        "consumption": "0.00",
+        "cash_outflow": "0.00",
+        "income": "0.00",
+        "net_worth_change": "0.00"
+      },
+      "reconciliation": {
+        "postings": {},
+        "transactions": {}
+      }
+    }
+  },
+  "invalid_inputs": [
+    {
+      "id": "zero-total",
+      "input": {
+        "total_amount": "0.00"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "total_amount",
+        "reason": "must_be_positive",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "negative-total",
+      "input": {
+        "total_amount": "-0.01"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "total_amount",
+        "reason": "must_be_positive",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "zero-payment",
+      "input": {
+        "payment_amount": "0.00"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "must_be_positive",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "negative-payment",
+      "input": {
+        "payment_amount": "-0.01"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "must_be_positive",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "deposit-equals-total",
+      "input": {
+        "payment_role": "deposit",
+        "payment_amount": "300.00"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "deposit_must_be_less_than_total",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "deposit-exceeds-total",
+      "input": {
+        "payment_role": "deposit",
+        "payment_amount": "300.01"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "deposit_must_be_less_than_total",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "final-not-remaining",
+      "input": {
+        "payment_role": "final",
+        "payment_amount": "219.99"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "final_must_equal_remaining_due",
+        "state_unchanged": true,
+        "baseline_id": "after_deposit",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [
+            {
+              "id": "tx-rg06-invalid-deposit",
+              "current_version_id": "version-rg06-invalid-deposit-v1",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "occurred_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "effective": true,
+              "confirmation_request_id": "request-rg06-invalid-deposit",
+              "source_refs": [],
+              "evidence_refs": [],
+              "postings": [
+                {
+                  "id": "posting-expense-rg06-invalid-deposit",
+                  "account_id": "expense-account-service",
+                  "amount": "80.00",
+                  "currency": "CNY"
+                },
+                {
+                  "id": "posting-asset-rg06-invalid-deposit",
+                  "account_id": "asset-bank-a",
+                  "amount": "-80.00",
+                  "currency": "CNY"
+                }
+              ]
+            }
+          ],
+          "versions": [
+            {
+              "id": "version-rg06-invalid-deposit-v1",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "status": "current"
+            }
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-invalid-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-invalid-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ],
+          "payments": [
+            {
+              "id": "payment-rg06-invalid-deposit",
+              "role": "deposit",
+              "amount": "80.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+              "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+            }
+          ],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "payments": [
+              {
+                "id": "payment-rg06-invalid-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-invalid-deposit",
+                "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+                "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-invalid-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-invalid-deposit",
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "920.00"
+          },
+          "statistics": {
+            "consumption": "80.00",
+            "cash_outflow": "80.00",
+            "income": "0.00",
+            "net_worth_change": "-80.00"
+          },
+          "reconciliation": {
+            "postings": {
+              "posting-expense-rg06-invalid-deposit": "not_applicable",
+              "posting-asset-rg06-invalid-deposit": "pending"
+            },
+            "transactions": {
+              "tx-rg06-invalid-deposit": "pending"
+            },
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "payment-exceeds-due",
+      "input": {
+        "payment_role": "final",
+        "payment_amount": "220.01"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_amount",
+        "reason": "payment_exceeds_due",
+        "state_unchanged": true,
+        "baseline_id": "after_deposit",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [
+            {
+              "id": "tx-rg06-invalid-deposit",
+              "current_version_id": "version-rg06-invalid-deposit-v1",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "occurred_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "effective": true,
+              "confirmation_request_id": "request-rg06-invalid-deposit",
+              "source_refs": [],
+              "evidence_refs": [],
+              "postings": [
+                {
+                  "id": "posting-expense-rg06-invalid-deposit",
+                  "account_id": "expense-account-service",
+                  "amount": "80.00",
+                  "currency": "CNY"
+                },
+                {
+                  "id": "posting-asset-rg06-invalid-deposit",
+                  "account_id": "asset-bank-a",
+                  "amount": "-80.00",
+                  "currency": "CNY"
+                }
+              ]
+            }
+          ],
+          "versions": [
+            {
+              "id": "version-rg06-invalid-deposit-v1",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "status": "current"
+            }
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-invalid-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-invalid-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ],
+          "payments": [
+            {
+              "id": "payment-rg06-invalid-deposit",
+              "role": "deposit",
+              "amount": "80.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+              "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+            }
+          ],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "payments": [
+              {
+                "id": "payment-rg06-invalid-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-invalid-deposit",
+                "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+                "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-invalid-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-invalid-deposit",
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "920.00"
+          },
+          "statistics": {
+            "consumption": "80.00",
+            "cash_outflow": "80.00",
+            "income": "0.00",
+            "net_worth_change": "-80.00"
+          },
+          "reconciliation": {
+            "postings": {
+              "posting-expense-rg06-invalid-deposit": "not_applicable",
+              "posting-asset-rg06-invalid-deposit": "pending"
+            },
+            "transactions": {
+              "tx-rg06-invalid-deposit": "pending"
+            },
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "mixed-currencies",
+      "input": {
+        "total_currency": "CNY",
+        "payment_currency": "USD"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "currency",
+        "reason": "single_currency_required",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "missing-category",
+      "input": {
+        "category_id": null
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "secondary_category_required",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "primary-category",
+      "input": {
+        "category_id": "expense-category-service-parent"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "secondary_category_required",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "inactive-category",
+      "input": {
+        "category_id": "expense-category-inactive"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "category_inactive",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "wrong-kind-category",
+      "input": {
+        "category_id": "income-category-other"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "category_id",
+        "reason": "expense_category_required",
+        "state_unchanged": true,
+        "baseline_id": "opening_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "association_groups": [],
+          "history": [],
+          "group": null,
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {}
+          }
+        }
+      },
+      "operation_context": "group_creation"
+    },
+    {
+      "id": "unknown-funding-account",
+      "input": {
+        "funding_account_id": "asset-unknown"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "funding_account_id",
+        "reason": "unknown_real_account",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "nonfinancial-funding-account",
+      "input": {
+        "funding_account_id": "expense-account-service"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "funding_account_id",
+        "reason": "real_financial_account_required",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "non-owned-funding-account",
+      "input": {
+        "funding_account_id": "asset-external-x"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "funding_account_id",
+        "reason": "owned_account_required",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "liability-funding-account",
+      "input": {
+        "funding_account_id": "liability-credit-a"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "funding_account_id",
+        "reason": "asset_account_required",
+        "state_unchanged": true,
+        "baseline_id": "group_only",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [],
+          "versions": [],
+          "postings": [],
+          "payments": [],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "0.00",
+            "due_amount": "300.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "unpaid",
+            "fulfillment_status": "in_progress",
+            "payments": [],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "1000.00"
+          },
+          "statistics": {
+            "consumption": "0.00",
+            "cash_outflow": "0.00",
+            "income": "0.00",
+            "net_worth_change": "0.00"
+          },
+          "reconciliation": {
+            "postings": {},
+            "transactions": {},
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_creation"
+    },
+    {
+      "id": "paid-in-full-while-due",
+      "input": {
+        "payment_progress": "paid_in_full"
+      },
+      "expected": {
+        "accepted": false,
+        "field": "payment_progress",
+        "reason": "due_must_be_zero",
+        "state_unchanged": true,
+        "baseline_id": "after_deposit",
+        "effect_counts": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_payment_count": 0,
+          "new_association_group_count": 0,
+          "new_history_count": 0,
+          "new_consumption_count": 0,
+          "new_cash_flow_count": 0,
+          "reconciliation_change_count": 0
+        },
+        "resulting_state": {
+          "candidates": [],
+          "source_records": [],
+          "transactions": [
+            {
+              "id": "tx-rg06-invalid-deposit",
+              "current_version_id": "version-rg06-invalid-deposit-v1",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "occurred_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "effective": true,
+              "confirmation_request_id": "request-rg06-invalid-deposit",
+              "source_refs": [],
+              "evidence_refs": [],
+              "postings": [
+                {
+                  "id": "posting-expense-rg06-invalid-deposit",
+                  "account_id": "expense-account-service",
+                  "amount": "80.00",
+                  "currency": "CNY"
+                },
+                {
+                  "id": "posting-asset-rg06-invalid-deposit",
+                  "account_id": "asset-bank-a",
+                  "amount": "-80.00",
+                  "currency": "CNY"
+                }
+              ]
+            }
+          ],
+          "versions": [
+            {
+              "id": "version-rg06-invalid-deposit-v1",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "posting_set_id": "posting-set-rg06-invalid-deposit",
+              "status": "current"
+            }
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-rg06-invalid-deposit",
+              "account_id": "expense-account-service",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            {
+              "id": "posting-asset-rg06-invalid-deposit",
+              "account_id": "asset-bank-a",
+              "amount": "-80.00",
+              "currency": "CNY"
+            }
+          ],
+          "payments": [
+            {
+              "id": "payment-rg06-invalid-deposit",
+              "role": "deposit",
+              "amount": "80.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-invalid-deposit",
+              "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+              "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+            }
+          ],
+          "group": {
+            "id": "association-group-rg06-invalid",
+            "type": "staged_payment",
+            "display_name": "分阶段付款",
+            "system_managed": true,
+            "currency": "CNY",
+            "total_amount": "300.00",
+            "paid_amount": "80.00",
+            "due_amount": "220.00",
+            "category_id": "expense-category-service",
+            "payment_progress": "partially_paid",
+            "fulfillment_status": "in_progress",
+            "payments": [
+              {
+                "id": "payment-rg06-invalid-deposit",
+                "role": "deposit",
+                "amount": "80.00",
+                "currency": "CNY",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+                "statistics_at": "2026-04-28T10:00:00+08:00",
+                "source_payment_at": null,
+                "funding_account_id": "asset-bank-a",
+                "transaction_id": "tx-rg06-invalid-deposit",
+                "expense_posting_id": "posting-expense-rg06-invalid-deposit",
+                "asset_posting_id": "posting-asset-rg06-invalid-deposit"
+              }
+            ],
+            "state_history": [
+              {
+                "id": "history-rg06-invalid-created",
+                "event": "group_created",
+                "occurred_at": "2026-04-20T09:00:00+08:00",
+                "payment_progress": "unpaid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "0.00",
+                "due_amount": "300.00",
+                "payment_id": null,
+                "state_transition_effect_count": 0
+              },
+              {
+                "id": "history-rg06-invalid-deposit",
+                "event": "payment_confirmed",
+                "occurred_at": "2026-04-28T10:00:00+08:00",
+                "payment_progress": "partially_paid",
+                "fulfillment_status": "in_progress",
+                "total_amount": "300.00",
+                "paid_amount": "80.00",
+                "due_amount": "220.00",
+                "payment_id": "payment-rg06-invalid-deposit",
+                "state_transition_effect_count": 0
+              }
+            ],
+            "generic_order_lifecycle": false
+          },
+          "evidence_links": [],
+          "balances": {
+            "asset-bank-a": "920.00"
+          },
+          "statistics": {
+            "consumption": "80.00",
+            "cash_outflow": "80.00",
+            "income": "0.00",
+            "net_worth_change": "-80.00"
+          },
+          "reconciliation": {
+            "postings": {
+              "posting-expense-rg06-invalid-deposit": "not_applicable",
+              "posting-asset-rg06-invalid-deposit": "pending"
+            },
+            "transactions": {
+              "tx-rg06-invalid-deposit": "pending"
+            },
+            "group": "pending"
+          }
+        }
+      },
+      "operation_context": "payment_progress_transition"
+    }
+  ],
+  "idempotency": {
+    "retried_inputs": [
+      "request-rg06-manual-group",
+      "request-rg06-manual-deposit",
+      "request-rg06-manual-fulfilled",
+      "request-rg06-manual-final",
+      "request-rg06-manual-completion",
+      "source-rg06-import-deposit",
+      "request-rg06-confirm-deposit",
+      "source-rg06-import-final",
+      "request-rg06-confirm-final",
+      "evidence-rg06-import-final-mirror"
+    ],
+    "expected": {
+      "new_candidate_count": 0,
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_version_count": 0,
+      "new_payment_count": 0,
+      "new_association_group_count": 0,
+      "new_history_count": 0,
+      "new_consumption_count": 0,
+      "new_cash_flow_count": 0,
+      "reconciliation_change_count": 0,
+      "new_evidence_link_count": 0,
+      "manual_returned_ids": {
+        "association_group_id": "association-group-rg06-manual",
+        "payment_ids": [
+          "payment-rg06-manual-deposit",
+          "payment-rg06-manual-final"
+        ],
+        "transaction_ids": [
+          "tx-rg06-manual-deposit",
+          "tx-rg06-manual-final"
+        ]
+      },
+      "manual_state": {
+        "candidates": [],
+        "source_records": [
+          {
+            "id": "source-rg06-manual-deposit-bank",
+            "evidence_id": "evidence-rg06-manual-deposit",
+            "observed_at": "2026-04-28T10:00:00+08:00",
+            "amount": "-80.00",
+            "currency": "CNY",
+            "mirror_of_source_id": null
+          },
+          {
+            "id": "source-rg06-manual-final-bank",
+            "evidence_id": "evidence-rg06-manual-final",
+            "observed_at": "2026-05-03T16:30:00+08:00",
+            "amount": "-220.00",
+            "currency": "CNY",
+            "mirror_of_source_id": null
+          }
+        ],
+        "transactions": [
+          {
+            "id": "tx-rg06-manual-deposit",
+            "current_version_id": "version-rg06-manual-deposit-v1",
+            "posting_set_id": "posting-set-rg06-manual-deposit",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "effective": true,
+            "confirmation_request_id": "request-rg06-manual-deposit",
+            "source_refs": [],
+            "evidence_refs": [],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-manual-deposit",
+                "account_id": "expense-account-service",
+                "amount": "80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-manual-deposit",
+                "account_id": "asset-bank-a",
+                "amount": "-80.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          {
+            "id": "tx-rg06-manual-final",
+            "current_version_id": "version-rg06-manual-final-v1",
+            "posting_set_id": "posting-set-rg06-manual-final",
+            "occurred_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": null,
+            "effective": true,
+            "confirmation_request_id": "request-rg06-manual-final",
+            "source_refs": [],
+            "evidence_refs": [],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-manual-final",
+                "account_id": "expense-account-service",
+                "amount": "220.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-manual-final",
+                "account_id": "asset-bank-a",
+                "amount": "-220.00",
+                "currency": "CNY"
+              }
+            ]
+          }
+        ],
+        "versions": [
+          {
+            "id": "version-rg06-manual-deposit-v1",
+            "transaction_id": "tx-rg06-manual-deposit",
+            "posting_set_id": "posting-set-rg06-manual-deposit",
+            "status": "current"
+          },
+          {
+            "id": "version-rg06-manual-final-v1",
+            "transaction_id": "tx-rg06-manual-final",
+            "posting_set_id": "posting-set-rg06-manual-final",
+            "status": "current"
+          }
+        ],
+        "postings": [
+          {
+            "id": "posting-expense-rg06-manual-deposit",
+            "account_id": "expense-account-service",
+            "amount": "80.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-asset-rg06-manual-deposit",
+            "account_id": "asset-bank-a",
+            "amount": "-80.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-expense-rg06-manual-final",
+            "account_id": "expense-account-service",
+            "amount": "220.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-asset-rg06-manual-final",
+            "account_id": "asset-bank-a",
+            "amount": "-220.00",
+            "currency": "CNY"
+          }
+        ],
+        "payments": [
+          {
+            "id": "payment-rg06-manual-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-deposit",
+            "expense_posting_id": "posting-expense-rg06-manual-deposit",
+            "asset_posting_id": "posting-asset-rg06-manual-deposit"
+          },
+          {
+            "id": "payment-rg06-manual-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": null,
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-manual-final",
+            "expense_posting_id": "posting-expense-rg06-manual-final",
+            "asset_posting_id": "posting-asset-rg06-manual-final"
+          }
+        ],
+        "group": {
+          "id": "association-group-rg06-manual",
+          "type": "staged_payment",
+          "display_name": "分阶段付款",
+          "system_managed": true,
+          "currency": "CNY",
+          "total_amount": "300.00",
+          "paid_amount": "300.00",
+          "due_amount": "0.00",
+          "category_id": "expense-category-service",
+          "payment_progress": "paid_in_full",
+          "fulfillment_status": "fulfilled",
+          "user_labels": {
+            "fulfillment": "履约：已交付",
+            "payment": "付款：已付清"
+          },
+          "payments": [
+            {
+              "id": "payment-rg06-manual-deposit",
+              "role": "deposit",
+              "amount": "80.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": null,
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-manual-deposit",
+              "expense_posting_id": "posting-expense-rg06-manual-deposit",
+              "asset_posting_id": "posting-asset-rg06-manual-deposit"
+            },
+            {
+              "id": "payment-rg06-manual-final",
+              "role": "final",
+              "amount": "220.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-05-03T16:30:00+08:00",
+              "statistics_at": "2026-05-03T16:30:00+08:00",
+              "source_payment_at": null,
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-manual-final",
+              "expense_posting_id": "posting-expense-rg06-manual-final",
+              "asset_posting_id": "posting-asset-rg06-manual-final"
+            }
+          ],
+          "state_history": [
+            {
+              "id": "history-rg06-manual-created",
+              "event": "group_created",
+              "occurred_at": "2026-04-20T09:00:00+08:00",
+              "payment_progress": "unpaid",
+              "fulfillment_status": "in_progress",
+              "total_amount": "300.00",
+              "paid_amount": "0.00",
+              "due_amount": "300.00",
+              "payment_id": null,
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-manual-deposit",
+              "event": "payment_confirmed",
+              "occurred_at": "2026-04-28T10:00:00+08:00",
+              "payment_progress": "partially_paid",
+              "fulfillment_status": "in_progress",
+              "total_amount": "300.00",
+              "paid_amount": "80.00",
+              "due_amount": "220.00",
+              "payment_id": "payment-rg06-manual-deposit",
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-manual-fulfilled",
+              "event": "fulfillment_changed",
+              "occurred_at": "2026-05-01T12:00:00+08:00",
+              "payment_progress": "partially_paid",
+              "fulfillment_status": "fulfilled",
+              "total_amount": "300.00",
+              "paid_amount": "80.00",
+              "due_amount": "220.00",
+              "payment_id": null,
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-manual-final",
+              "event": "payment_confirmed",
+              "occurred_at": "2026-05-03T16:30:00+08:00",
+              "payment_progress": "paid_in_full",
+              "fulfillment_status": "fulfilled",
+              "total_amount": "300.00",
+              "paid_amount": "300.00",
+              "due_amount": "0.00",
+              "payment_id": "payment-rg06-manual-final",
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-manual-completed",
+              "event": "completion_confirmed",
+              "occurred_at": "2026-05-04T09:00:00+08:00",
+              "payment_progress": "paid_in_full",
+              "fulfillment_status": "fulfilled",
+              "total_amount": "300.00",
+              "paid_amount": "300.00",
+              "due_amount": "0.00",
+              "payment_id": null,
+              "state_transition_effect_count": 0
+            }
+          ],
+          "generic_order_lifecycle": false
+        },
+        "evidence_links": [
+          {
+            "id": "match-rg06-manual-deposit",
+            "evidence_id": "evidence-rg06-manual-deposit",
+            "payment_id": "payment-rg06-manual-deposit",
+            "posting_id": "posting-asset-rg06-manual-deposit",
+            "status": "matched",
+            "source_id": "source-rg06-manual-deposit-bank",
+            "mirror_of_evidence_id": null,
+            "merged_into_evidence_link_id": null
+          },
+          {
+            "id": "match-rg06-manual-final",
+            "evidence_id": "evidence-rg06-manual-final",
+            "payment_id": "payment-rg06-manual-final",
+            "posting_id": "posting-asset-rg06-manual-final",
+            "status": "matched",
+            "source_id": "source-rg06-manual-final-bank",
+            "mirror_of_evidence_id": null,
+            "merged_into_evidence_link_id": null
+          }
+        ],
+        "balances": {
+          "asset-bank-a": "700.00"
+        },
+        "statistics": {
+          "consumption": "300.00",
+          "cash_outflow": "300.00",
+          "income": "0.00",
+          "net_worth_change": "-300.00"
+        },
+        "reconciliation": {
+          "postings": {
+            "posting-asset-rg06-manual-deposit": "matched",
+            "posting-asset-rg06-manual-final": "matched"
+          },
+          "transactions": {
+            "tx-rg06-manual-deposit": "complete",
+            "tx-rg06-manual-final": "complete"
+          },
+          "group": "complete"
+        }
+      },
+      "import_state": {
+        "candidates": [
+          {
+            "id": "candidate-rg06-import-deposit",
+            "status": "confirmed",
+            "kind": "staged_payment",
+            "payment_role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-deposit",
+            "evidence_id": "evidence-rg06-import-deposit",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "immutable_source_fields": [
+              "source_id",
+              "evidence_id",
+              "source_payment_at",
+              "amount",
+              "currency"
+            ],
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "1.00",
+            "source_fact": {
+              "source_id": "source-rg06-import-deposit",
+              "evidence_id": "evidence-rg06-import-deposit",
+              "source_payment_at": "2026-04-28T10:00:00+08:00",
+              "amount": "80.00",
+              "currency": "CNY"
+            },
+            "confirmation_provenance": {
+              "request_id": "request-rg06-confirm-deposit",
+              "association_group_id": "association-group-rg06-import",
+              "payment_role": "deposit",
+              "category_id": "expense-category-service",
+              "funding_account_id": "asset-bank-a",
+              "exact_binding_confirmed": true,
+              "confirmed_at": "2026-04-28T10:05:00+08:00"
+            }
+          },
+          {
+            "id": "candidate-rg06-import-ambiguous",
+            "status": "pending_confirmation",
+            "kind": "staged_payment",
+            "payment_role": null,
+            "guessed_payment_role": null,
+            "amount": "220.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-ambiguous",
+            "evidence_id": "evidence-rg06-import-ambiguous",
+            "source_payment_at": "2026-04-25T15:00:00+08:00",
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "0.50",
+            "source_fact": {
+              "source_id": "source-rg06-import-ambiguous",
+              "evidence_id": "evidence-rg06-import-ambiguous",
+              "source_payment_at": "2026-04-25T15:00:00+08:00",
+              "amount": "220.00",
+              "currency": "CNY"
+            },
+            "immutable_source_fields": [
+              "source_id",
+              "evidence_id",
+              "source_payment_at",
+              "amount",
+              "currency"
+            ],
+            "confirmation_provenance": null
+          },
+          {
+            "id": "candidate-rg06-import-final",
+            "status": "confirmed",
+            "kind": "staged_payment",
+            "payment_role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "source_id": "source-rg06-import-final",
+            "evidence_id": "evidence-rg06-import-final",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "immutable_source_fields": [
+              "source_id",
+              "evidence_id",
+              "source_payment_at",
+              "amount",
+              "currency"
+            ],
+            "requires_confirmation": [
+              "association_group_id",
+              "payment_role",
+              "category_id",
+              "funding_account_id"
+            ],
+            "rule_version": 1,
+            "confidence": "1.00",
+            "source_fact": {
+              "source_id": "source-rg06-import-final",
+              "evidence_id": "evidence-rg06-import-final",
+              "source_payment_at": "2026-05-03T16:30:00+08:00",
+              "amount": "220.00",
+              "currency": "CNY"
+            },
+            "confirmation_provenance": {
+              "request_id": "request-rg06-confirm-final",
+              "association_group_id": "association-group-rg06-import",
+              "payment_role": "final",
+              "category_id": "expense-category-service",
+              "funding_account_id": "asset-bank-a",
+              "exact_binding_confirmed": true,
+              "confirmed_at": "2026-05-03T16:35:00+08:00"
+            }
+          }
+        ],
+        "source_records": [
+          {
+            "id": "source-rg06-import-deposit",
+            "evidence_id": "evidence-rg06-import-deposit",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "amount": "80.00",
+            "currency": "CNY",
+            "mirror_of_source_id": null
+          },
+          {
+            "id": "source-rg06-import-ambiguous",
+            "evidence_id": "evidence-rg06-import-ambiguous",
+            "source_payment_at": "2026-04-25T15:00:00+08:00",
+            "amount": "220.00",
+            "currency": "CNY",
+            "mirror_of_source_id": null
+          },
+          {
+            "id": "source-rg06-import-final",
+            "evidence_id": "evidence-rg06-import-final",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "amount": "220.00",
+            "currency": "CNY",
+            "mirror_of_source_id": null
+          },
+          {
+            "id": "source-rg06-import-final-mirror",
+            "evidence_id": "evidence-rg06-import-final-mirror",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "amount": "-220.00",
+            "currency": "CNY",
+            "mirror_of_source_id": "source-rg06-import-final"
+          }
+        ],
+        "transactions": [
+          {
+            "id": "tx-rg06-import-deposit",
+            "current_version_id": "version-rg06-import-deposit-v1",
+            "posting_set_id": "posting-set-rg06-import-deposit",
+            "occurred_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "effective": true,
+            "source_refs": [
+              "source-rg06-import-deposit"
+            ],
+            "evidence_refs": [
+              "evidence-rg06-import-deposit"
+            ],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-import-deposit",
+                "account_id": "expense-account-service",
+                "amount": "80.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-deposit",
+                "account_id": "asset-bank-a",
+                "amount": "-80.00",
+                "currency": "CNY"
+              }
+            ]
+          },
+          {
+            "id": "tx-rg06-import-final",
+            "current_version_id": "version-rg06-import-final-v1",
+            "posting_set_id": "posting-set-rg06-import-final",
+            "occurred_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "effective": true,
+            "source_refs": [
+              "source-rg06-import-final"
+            ],
+            "evidence_refs": [
+              "evidence-rg06-import-final"
+            ],
+            "postings": [
+              {
+                "id": "posting-expense-rg06-import-final",
+                "account_id": "expense-account-service",
+                "amount": "220.00",
+                "currency": "CNY"
+              },
+              {
+                "id": "posting-asset-rg06-import-final",
+                "account_id": "asset-bank-a",
+                "amount": "-220.00",
+                "currency": "CNY"
+              }
+            ]
+          }
+        ],
+        "versions": [
+          {
+            "id": "version-rg06-import-deposit-v1",
+            "transaction_id": "tx-rg06-import-deposit",
+            "posting_set_id": "posting-set-rg06-import-deposit",
+            "status": "current"
+          },
+          {
+            "id": "version-rg06-import-final-v1",
+            "transaction_id": "tx-rg06-import-final",
+            "posting_set_id": "posting-set-rg06-import-final",
+            "status": "current"
+          }
+        ],
+        "postings": [
+          {
+            "id": "posting-expense-rg06-import-deposit",
+            "account_id": "expense-account-service",
+            "amount": "80.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-asset-rg06-import-deposit",
+            "account_id": "asset-bank-a",
+            "amount": "-80.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-expense-rg06-import-final",
+            "account_id": "expense-account-service",
+            "amount": "220.00",
+            "currency": "CNY"
+          },
+          {
+            "id": "posting-asset-rg06-import-final",
+            "account_id": "asset-bank-a",
+            "amount": "-220.00",
+            "currency": "CNY"
+          }
+        ],
+        "payments": [
+          {
+            "id": "payment-rg06-import-deposit",
+            "role": "deposit",
+            "amount": "80.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            "statistics_at": "2026-04-28T10:00:00+08:00",
+            "source_payment_at": "2026-04-28T10:00:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-deposit",
+            "expense_posting_id": "posting-expense-rg06-import-deposit",
+            "asset_posting_id": "posting-asset-rg06-import-deposit"
+          },
+          {
+            "id": "payment-rg06-import-final",
+            "role": "final",
+            "amount": "220.00",
+            "currency": "CNY",
+            "actual_payment_at": "2026-05-03T16:30:00+08:00",
+            "statistics_at": "2026-05-03T16:30:00+08:00",
+            "source_payment_at": "2026-05-03T16:30:00+08:00",
+            "funding_account_id": "asset-bank-a",
+            "transaction_id": "tx-rg06-import-final",
+            "expense_posting_id": "posting-expense-rg06-import-final",
+            "asset_posting_id": "posting-asset-rg06-import-final"
+          }
+        ],
+        "group": {
+          "id": "association-group-rg06-import",
+          "type": "staged_payment",
+          "display_name": "分阶段付款",
+          "system_managed": true,
+          "currency": "CNY",
+          "total_amount": "300.00",
+          "paid_amount": "300.00",
+          "due_amount": "0.00",
+          "category_id": "expense-category-service",
+          "payment_progress": "paid_in_full",
+          "fulfillment_status": "in_progress",
+          "user_labels": {
+            "fulfillment": "履约：履约中",
+            "payment": "付款：已付清"
+          },
+          "payments": [
+            {
+              "id": "payment-rg06-import-deposit",
+              "role": "deposit",
+              "amount": "80.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-04-28T10:00:00+08:00",
+              "statistics_at": "2026-04-28T10:00:00+08:00",
+              "source_payment_at": "2026-04-28T10:00:00+08:00",
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-import-deposit",
+              "expense_posting_id": "posting-expense-rg06-import-deposit",
+              "asset_posting_id": "posting-asset-rg06-import-deposit"
+            },
+            {
+              "id": "payment-rg06-import-final",
+              "role": "final",
+              "amount": "220.00",
+              "currency": "CNY",
+              "actual_payment_at": "2026-05-03T16:30:00+08:00",
+              "statistics_at": "2026-05-03T16:30:00+08:00",
+              "source_payment_at": "2026-05-03T16:30:00+08:00",
+              "funding_account_id": "asset-bank-a",
+              "transaction_id": "tx-rg06-import-final",
+              "expense_posting_id": "posting-expense-rg06-import-final",
+              "asset_posting_id": "posting-asset-rg06-import-final"
+            }
+          ],
+          "state_history": [
+            {
+              "id": "history-rg06-import-created",
+              "event": "group_created",
+              "occurred_at": "2026-04-20T09:00:00+08:00",
+              "payment_progress": "unpaid",
+              "fulfillment_status": "in_progress",
+              "total_amount": "300.00",
+              "paid_amount": "0.00",
+              "due_amount": "300.00",
+              "payment_id": null,
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-import-deposit",
+              "event": "payment_confirmed",
+              "occurred_at": "2026-04-28T10:05:00+08:00",
+              "payment_progress": "partially_paid",
+              "fulfillment_status": "in_progress",
+              "total_amount": "300.00",
+              "paid_amount": "80.00",
+              "due_amount": "220.00",
+              "payment_id": "payment-rg06-import-deposit",
+              "state_transition_effect_count": 0
+            },
+            {
+              "id": "history-rg06-import-final",
+              "event": "payment_confirmed",
+              "occurred_at": "2026-05-03T16:35:00+08:00",
+              "payment_progress": "paid_in_full",
+              "fulfillment_status": "in_progress",
+              "total_amount": "300.00",
+              "paid_amount": "300.00",
+              "due_amount": "0.00",
+              "payment_id": "payment-rg06-import-final",
+              "state_transition_effect_count": 0
+            }
+          ],
+          "generic_order_lifecycle": false
+        },
+        "evidence_links": [
+          {
+            "id": "match-rg06-import-deposit",
+            "source_id": "source-rg06-import-deposit",
+            "evidence_id": "evidence-rg06-import-deposit",
+            "payment_id": "payment-rg06-import-deposit",
+            "posting_id": "posting-asset-rg06-import-deposit",
+            "status": "matched",
+            "mirror_of_evidence_id": null,
+            "merged_into_evidence_link_id": null
+          },
+          {
+            "id": "match-rg06-import-final",
+            "source_id": "source-rg06-import-final",
+            "evidence_id": "evidence-rg06-import-final",
+            "payment_id": "payment-rg06-import-final",
+            "posting_id": "posting-asset-rg06-import-final",
+            "status": "matched",
+            "mirror_of_evidence_id": null,
+            "merged_into_evidence_link_id": null
+          },
+          {
+            "id": "match-rg06-import-final-mirror",
+            "source_id": "source-rg06-import-final-mirror",
+            "evidence_id": "evidence-rg06-import-final-mirror",
+            "payment_id": "payment-rg06-import-final",
+            "posting_id": "posting-asset-rg06-import-final",
+            "status": "matched",
+            "mirror_of_evidence_id": "evidence-rg06-import-final",
+            "merged_into_evidence_link_id": "match-rg06-import-final"
+          }
+        ],
+        "balances": {
+          "asset-bank-a": "700.00"
+        },
+        "statistics": {
+          "consumption": "300.00",
+          "cash_outflow": "300.00",
+          "income": "0.00",
+          "net_worth_change": "-300.00"
+        },
+        "reconciliation": {
+          "postings": {
+            "posting-asset-rg06-import-deposit": "matched",
+            "posting-asset-rg06-import-final": "matched"
+          },
+          "transactions": {
+            "tx-rg06-import-deposit": "complete",
+            "tx-rg06-import-final": "complete"
+          },
+          "group": "complete"
+        }
+      }
+    }
+  },
+  "out_of_scope": {
+    "cancellation_refund_deposit_forfeiture": "RG-07",
+    "later_corrections": "RG-12",
+    "mixed_funding_per_stage": "RG-04",
+    "merged_items": "RG-05",
+    "full_payment_allocation": "RG-11",
+    "combined_variants": "not_in_v1"
+  },
+  "forbidden_side_effects": [
+    "create_payable_or_liability_for_due",
+    "create_hidden_clearing_account",
+    "create_hidden_balancing_posting",
+    "create_generic_order_lifecycle",
+    "auto_confirm_import_candidate",
+    "guess_payment_role",
+    "status_change_creates_accounting_effect",
+    "duplicate_transaction",
+    "duplicate_posting",
+    "duplicate_payment",
+    "duplicate_consumption",
+    "duplicate_association_group",
+    "duplicate_cash_flow",
+    "invoke_network",
+    "invoke_sync",
+    "invoke_intelligent_suggestion"
+  ]
+}
