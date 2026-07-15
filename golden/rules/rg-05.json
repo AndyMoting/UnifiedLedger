@@ -1,0 +1,440 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-05",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a"
+  },
+  "catalog": {
+    "accounts": [
+      {"id": "asset-bank-a", "name": "资产账户 A", "kind": "asset", "real_account": true, "owned_by_user": true},
+      {"id": "liability-credit-a", "name": "信用负债 A", "kind": "liability", "real_account": true, "owned_by_user": true},
+      {"id": "asset-external-x", "name": "外部资产账户 X", "kind": "asset", "real_account": true, "owned_by_user": false},
+      {"id": "equity-opening-a", "name": "期初权益 A", "kind": "equity", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-daily", "name": "日常用品费用", "kind": "expense", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-service", "name": "生活服务费用", "kind": "expense", "real_account": false, "owned_by_user": false},
+      {"id": "expense-account-inactive", "name": "停用费用", "kind": "expense", "real_account": false, "owned_by_user": false},
+      {"id": "income-account-other", "name": "其他收入", "kind": "income", "real_account": false, "owned_by_user": false}
+    ],
+    "categories": [
+      {"id": "expense-category-living", "name": "生活", "kind": "expense", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "expense-category-daily", "name": "日常用品", "kind": "expense", "parent_id": "expense-category-living", "posting_account_id": "expense-account-daily", "active": true},
+      {"id": "expense-category-service-parent", "name": "服务", "kind": "expense", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "expense-category-service", "name": "生活服务", "kind": "expense", "parent_id": "expense-category-service-parent", "posting_account_id": "expense-account-service", "active": true},
+      {"id": "expense-category-inactive", "name": "停用支出分类", "kind": "expense", "parent_id": "expense-category-living", "posting_account_id": "expense-account-inactive", "active": false},
+      {"id": "income-category-general", "name": "收入", "kind": "income", "parent_id": null, "posting_account_id": null, "active": true},
+      {"id": "income-category-other", "name": "其他收入", "kind": "income", "parent_id": "income-category-general", "posting_account_id": "income-account-other", "active": true}
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "tx-opening-rg05",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {"id": "posting-opening-bank-rg05", "account_id": "asset-bank-a", "amount": "1000.00", "currency": "CNY"},
+          {"id": "posting-opening-equity-rg05", "account_id": "equity-opening-a", "amount": "-1000.00", "currency": "CNY"}
+        ]
+      }
+    ],
+    "expected_balances": {"asset-bank-a": "1000.00"}
+  },
+  "manual_path": {
+    "confirmation": {"mode": "explicit_manual_save", "confirmed": true},
+    "candidate": null,
+    "input": {
+      "request_id": "request-rg05-manual",
+      "kind": "merged_payment",
+      "payment_at": "2026-04-10T18:30:00+08:00",
+      "total_amount": "100.00",
+      "currency": "CNY",
+      "funding_account_id": "asset-bank-a",
+      "items": [
+        {"id": "item-rg05-manual-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "source_observed_at": "2026-04-08T10:00:00+08:00"},
+        {"id": "item-rg05-manual-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "source_observed_at": "2026-04-09T15:00:00+08:00"}
+      ]
+    },
+    "expected": {
+      "transaction": {
+        "id": "tx-merged-rg05-manual",
+        "current_version_id": "version-merged-rg05-manual-v1",
+        "posting_set_id": "posting-set-merged-rg05-manual",
+        "occurred_at": "2026-04-10T18:30:00+08:00",
+        "effective": true,
+        "confirmation_request_id": "request-rg05-manual",
+        "source_refs": [],
+        "evidence_refs": [],
+        "postings": [
+          {"id": "posting-expense-a-rg05-manual", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"},
+          {"id": "posting-expense-b-rg05-manual", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"},
+          {"id": "posting-asset-rg05-manual", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}
+        ]
+      },
+      "effective_transaction_count": 1,
+      "asset_payment_posting_count": 1,
+      "cash_flow_count": 1,
+      "consumption_record_count": 2,
+      "association_group_count": 1,
+      "balances": {"asset-bank-a": "900.00"},
+      "statistics": {"day": "2026-04-10", "month": "2026-04", "day_consumption": "100.00", "month_consumption": "100.00", "day_cash_outflow": "100.00", "month_cash_outflow": "100.00", "income": "0.00", "net_worth_change": "-100.00", "budget": "not_applicable"},
+      "category_consumption": {"expense-category-daily": "40.00", "expense-category-service": "60.00"},
+      "common_statistics_at": "2026-04-10T18:30:00+08:00",
+      "item_statistics_time_override_allowed": false,
+      "consumption_records": [
+        {"id": "consumption-rg05-manual-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-08T10:00:00+08:00", "expense_posting_id": "posting-expense-a-rg05-manual"},
+        {"id": "consumption-rg05-manual-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-09T15:00:00+08:00", "expense_posting_id": "posting-expense-b-rg05-manual"}
+      ],
+      "association_group": {
+        "id": "association-group-rg05-manual",
+        "type": "merged_payment",
+        "display_name": "合并付款",
+        "system_managed": true,
+        "formal_transaction_id": "tx-merged-rg05-manual",
+        "asset_posting_id": "posting-asset-rg05-manual",
+        "payment_total": "100.00",
+        "currency": "CNY",
+        "item_allocations": [
+          {"id": "allocation-rg05-manual-a", "consumption_record_id": "consumption-rg05-manual-a", "expense_posting_id": "posting-expense-a-rg05-manual", "category_id": "expense-category-daily", "amount": "40.00", "currency": "CNY"},
+          {"id": "allocation-rg05-manual-b", "consumption_record_id": "consumption-rg05-manual-b", "expense_posting_id": "posting-expense-b-rg05-manual", "category_id": "expense-category-service", "amount": "60.00", "currency": "CNY"}
+        ],
+        "generic_order_lifecycle": false
+      },
+      "user_view": {"consumption_line_count": 2, "shared_payment_relation_count": 1, "merged_consumption_line": false},
+      "settlement_explanation": {"original_amount": "112.00", "discount_amount": "12.00", "settled_amount": "100.00", "discount_accounting_effect_count": 0},
+      "reconciliation": {"posting-expense-a-rg05-manual": "not_applicable", "posting-expense-b-rg05-manual": "not_applicable", "posting-asset-rg05-manual": "pending", "transaction": "pending"},
+      "item_evidence_completeness": "none",
+      "financial_evidence_links": [],
+      "item_evidence_links": [],
+      "provenance": {"confirmation_mode": "explicit_manual_save", "confirmation_request_id": "request-rg05-manual", "source_refs": [], "evidence_refs": []}
+    }
+  },
+  "import_path": {
+    "ordered_operations": [
+      {
+        "id": "import-merged-payment-facts",
+        "input": {
+          "bank_fact": {
+            "source_id": "source-bank-debit-rg05",
+            "evidence_id": "evidence-bank-debit-rg05",
+            "observed_at": "2026-04-10T18:30:00+08:00",
+            "details": "资产账户扣款",
+            "amount": "-100.00",
+            "currency": "CNY"
+          },
+          "item_facts": [
+            {
+              "item_id": "item-rg05-imported-a",
+              "source_id": "source-item-a-rg05",
+              "evidence_id": "evidence-item-a-rg05",
+              "evidence_kind": "item_receipt",
+              "observed_at": "2026-04-08T10:00:00+08:00",
+              "details": "项目 A",
+              "amount": "40.00",
+              "currency": "CNY",
+              "suggested_category_id": "expense-category-daily"
+            },
+            {
+              "item_id": "item-rg05-imported-b",
+              "source_id": "source-item-b-rg05",
+              "evidence_id": "evidence-item-b-summary-rg05",
+              "evidence_kind": "item_summary",
+              "observed_at": "2026-04-09T15:00:00+08:00",
+              "details": "项目 B",
+              "amount": "60.00",
+              "currency": "CNY",
+              "suggested_category_id": "expense-category-service"
+            }
+          ]
+        },
+        "expected": {
+          "candidate": {
+            "id": "candidate-rg05-imported",
+            "status": "pending_confirmation",
+            "kind": "merged_payment",
+            "rule_version": 1,
+            "confidence": "1.00",
+            "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"],
+            "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"],
+            "bank_fact": {
+              "source_id": "source-bank-debit-rg05",
+              "evidence_id": "evidence-bank-debit-rg05",
+              "observed_at": "2026-04-10T18:30:00+08:00",
+              "details": "资产账户扣款",
+              "amount": "-100.00",
+              "currency": "CNY"
+            },
+            "item_facts": [
+              {"item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "evidence_kind": "item_receipt", "observed_at": "2026-04-08T10:00:00+08:00", "details": "项目 A", "amount": "40.00", "currency": "CNY", "suggested_category_id": "expense-category-daily"},
+              {"item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "evidence_kind": "item_summary", "observed_at": "2026-04-09T15:00:00+08:00", "details": "项目 B", "amount": "60.00", "currency": "CNY", "suggested_category_id": "expense-category-service"}
+            ],
+            "provenance": {
+              "source_fact_count": 3,
+              "immutable_source_fields": ["source_id", "evidence_id", "observed_at", "details", "amount", "currency"],
+              "category_values_are_suggestions": true
+            }
+          },
+          "formal_effects": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_version_count": 0,
+            "new_consumption_count": 0,
+            "new_item_allocation_count": 0,
+            "new_association_group_count": 0,
+            "balances": {"asset-bank-a": "1000.00"},
+            "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"},
+            "reconciliation_change_count": 0
+          }
+        }
+      },
+      {
+        "id": "explicitly-confirm-candidate",
+        "input": {
+          "request_id": "request-rg05-confirm-candidate",
+          "candidate_id": "candidate-rg05-imported",
+          "confirmed": true,
+          "create_formal_transaction": true,
+          "funding_account_id": "asset-bank-a",
+          "payment_at": "2026-04-10T18:30:00+08:00",
+          "common_statistics_at": "2026-04-10T18:30:00+08:00",
+          "items": [
+            {"item_id": "item-rg05-imported-a", "category_id": "expense-category-daily", "allocation_amount": "40.00", "currency": "CNY"},
+            {"item_id": "item-rg05-imported-b", "category_id": "expense-category-service", "allocation_amount": "60.00", "currency": "CNY"}
+          ]
+        },
+        "expected": {
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-merged-rg05-imported",
+            "current_version_id": "version-merged-rg05-imported-v1",
+            "posting_set_id": "posting-set-merged-rg05-imported",
+            "occurred_at": "2026-04-10T18:30:00+08:00",
+            "effective": true,
+            "confirmation_request_id": "request-rg05-confirm-candidate",
+            "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"],
+            "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"],
+            "postings": [
+              {"id": "posting-expense-a-rg05-imported", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"},
+              {"id": "posting-expense-b-rg05-imported", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"},
+              {"id": "posting-asset-rg05-imported", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}
+            ]
+          },
+          "effective_transaction_count": 1,
+          "asset_payment_posting_count": 1,
+          "cash_flow_count": 1,
+          "consumption_record_count": 2,
+          "item_allocation_count": 2,
+          "association_group_count": 1,
+          "balances": {"asset-bank-a": "900.00"},
+          "statistics": {"day": "2026-04-10", "month": "2026-04", "day_consumption": "100.00", "month_consumption": "100.00", "day_cash_outflow": "100.00", "month_cash_outflow": "100.00", "income": "0.00", "net_worth_change": "-100.00", "budget": "not_applicable"},
+          "category_consumption": {"expense-category-daily": "40.00", "expense-category-service": "60.00"},
+          "common_statistics_at": "2026-04-10T18:30:00+08:00",
+          "item_statistics_time_override_allowed": false,
+          "consumption_records": [
+            {"id": "consumption-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-08T10:00:00+08:00", "expense_posting_id": "posting-expense-a-rg05-imported"},
+            {"id": "consumption-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-09T15:00:00+08:00", "expense_posting_id": "posting-expense-b-rg05-imported"}
+          ],
+          "association_group": {
+            "id": "association-group-rg05-imported",
+            "type": "merged_payment",
+            "display_name": "合并付款",
+            "system_managed": true,
+            "formal_transaction_id": "tx-merged-rg05-imported",
+            "asset_posting_id": "posting-asset-rg05-imported",
+            "payment_total": "100.00",
+            "currency": "CNY",
+            "item_allocations": [
+              {"id": "allocation-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "expense_posting_id": "posting-expense-a-rg05-imported", "category_id": "expense-category-daily", "amount": "40.00", "currency": "CNY"},
+              {"id": "allocation-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "expense_posting_id": "posting-expense-b-rg05-imported", "category_id": "expense-category-service", "amount": "60.00", "currency": "CNY"}
+            ],
+            "generic_order_lifecycle": false
+          },
+          "provenance": {
+            "confirmation_request_id": "request-rg05-confirm-candidate",
+            "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"],
+            "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"],
+            "bank_posting_binding": {"source_id": "source-bank-debit-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported"},
+            "item_bindings": [
+              {"item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "allocation_id": "allocation-rg05-imported-a"},
+              {"item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "allocation_id": "allocation-rg05-imported-b"}
+            ]
+          },
+          "financial_evidence_links": [{"id": "match-bank-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported", "status": "matched"}],
+          "item_evidence_links": [{"id": "match-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "item_allocation_id": "allocation-rg05-imported-a", "status": "matched"}],
+          "reconciliation": {"posting-expense-a-rg05-imported": "not_applicable", "posting-expense-b-rg05-imported": "not_applicable", "posting-asset-rg05-imported": "matched", "transaction": "complete"},
+          "item_evidence_completeness": "partial",
+          "matched_item_allocation_count": 1,
+          "required_item_allocation_count": 2
+        }
+      },
+      {
+        "id": "merge-item-b-mirror-evidence",
+        "input": {"source_id": "source-item-b-receipt-rg05", "evidence_id": "evidence-item-b-receipt-rg05", "observed_at": "2026-04-09T15:00:00+08:00", "details": "项目 B", "amount": "60.00", "currency": "CNY", "item_allocation_id": "allocation-rg05-imported-b"},
+        "expected": {
+          "merged_into_transaction_id": "tx-merged-rg05-imported",
+          "current_version_id": "version-merged-rg05-imported-v1",
+          "posting_set_id": "posting-set-merged-rg05-imported",
+          "association_group_id": "association-group-rg05-imported",
+          "candidate_id": "candidate-rg05-imported",
+          "candidate_status": "confirmed",
+          "transaction": {
+            "id": "tx-merged-rg05-imported",
+            "current_version_id": "version-merged-rg05-imported-v1",
+            "posting_set_id": "posting-set-merged-rg05-imported",
+            "occurred_at": "2026-04-10T18:30:00+08:00",
+            "effective": true,
+            "confirmation_request_id": "request-rg05-confirm-candidate",
+            "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"],
+            "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"],
+            "postings": [
+              {"id": "posting-expense-a-rg05-imported", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"},
+              {"id": "posting-expense-b-rg05-imported", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"},
+              {"id": "posting-asset-rg05-imported", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}
+            ]
+          },
+          "consumption_records": [
+            {"id": "consumption-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-08T10:00:00+08:00", "expense_posting_id": "posting-expense-a-rg05-imported"},
+            {"id": "consumption-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-09T15:00:00+08:00", "expense_posting_id": "posting-expense-b-rg05-imported"}
+          ],
+          "association_group": {
+            "id": "association-group-rg05-imported", "type": "merged_payment", "display_name": "合并付款", "system_managed": true, "formal_transaction_id": "tx-merged-rg05-imported", "asset_posting_id": "posting-asset-rg05-imported", "payment_total": "100.00", "currency": "CNY",
+            "item_allocations": [
+              {"id": "allocation-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "expense_posting_id": "posting-expense-a-rg05-imported", "category_id": "expense-category-daily", "amount": "40.00", "currency": "CNY"},
+              {"id": "allocation-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "expense_posting_id": "posting-expense-b-rg05-imported", "category_id": "expense-category-service", "amount": "60.00", "currency": "CNY"}
+            ],
+            "generic_order_lifecycle": false
+          },
+          "provenance": {
+            "confirmation_request_id": "request-rg05-confirm-candidate",
+            "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"],
+            "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"],
+            "bank_posting_binding": {"source_id": "source-bank-debit-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported"},
+            "item_bindings": [
+              {"item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "allocation_id": "allocation-rg05-imported-a"},
+              {"item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "allocation_id": "allocation-rg05-imported-b"}
+            ]
+          },
+          "posting_ids": ["posting-expense-a-rg05-imported", "posting-expense-b-rg05-imported", "posting-asset-rg05-imported"],
+          "consumption_ids": ["consumption-rg05-imported-a", "consumption-rg05-imported-b"],
+          "item_allocation_ids": ["allocation-rg05-imported-a", "allocation-rg05-imported-b"],
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_version_count": 0,
+          "new_consumption_count": 0,
+          "new_item_allocation_count": 0,
+          "new_association_group_count": 0,
+          "new_cash_flow_count": 0,
+          "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05", "source-item-b-receipt-rg05"],
+          "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05", "evidence-item-b-receipt-rg05"],
+          "financial_evidence_links": [{"id": "match-bank-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported", "status": "matched"}],
+          "reconciliation": {"posting-expense-a-rg05-imported": "not_applicable", "posting-expense-b-rg05-imported": "not_applicable", "posting-asset-rg05-imported": "matched", "transaction": "complete"},
+          "item_evidence_completeness": "complete",
+          "matched_item_allocation_count": 2,
+          "item_evidence_links": [
+            {"id": "match-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "item_allocation_id": "allocation-rg05-imported-a", "status": "matched"},
+            {"id": "match-item-b-rg05", "evidence_id": "evidence-item-b-receipt-rg05", "item_allocation_id": "allocation-rg05-imported-b", "status": "matched"}
+          ],
+          "balances": {"asset-bank-a": "900.00"},
+          "statistics": {"day": "2026-04-10", "month": "2026-04", "day_consumption": "100.00", "month_consumption": "100.00", "day_cash_outflow": "100.00", "month_cash_outflow": "100.00", "income": "0.00", "net_worth_change": "-100.00", "budget": "not_applicable"}
+        }
+      }
+    ]
+  },
+  "allocation_failures": [
+    {
+      "id": "incomplete-allocation",
+      "input": {"payment_total": "100.00", "allocation_total": "90.00", "currency": "CNY"},
+      "expected": {"candidate_status": "pending_confirmation", "allocation_gap_amount": "10.00", "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "new_cash_flow_count": 0, "reconciliation_change_count": 0, "guessed_item_id": null, "balancing_account_id": null, "hidden_posting_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}
+    },
+    {
+      "id": "over-allocation",
+      "input": {"payment_total": "100.00", "allocation_total": "110.00", "currency": "CNY"},
+      "expected": {"candidate_status": "conflict", "over_allocation_amount": "10.00", "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "new_cash_flow_count": 0, "reconciliation_change_count": 0, "guessed_item_id": null, "balancing_account_id": null, "hidden_posting_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}
+    }
+  ],
+  "idempotency": {
+    "retried_inputs": ["request-rg05-manual", "source-bank-debit-rg05", "request-rg05-confirm-candidate", "evidence-item-b-receipt-rg05"],
+    "expected": {
+      "new_candidate_count": 0,
+      "new_transaction_count": 0,
+      "new_posting_count": 0,
+      "new_version_count": 0,
+      "new_consumption_count": 0,
+      "new_item_allocation_count": 0,
+      "new_association_group_count": 0,
+      "new_financial_evidence_link_count": 0,
+      "new_item_evidence_link_count": 0,
+      "duplicate_cash_flow_count": 0,
+      "manual_returned_ids": {"transaction_id": "tx-merged-rg05-manual", "consumption_ids": ["consumption-rg05-manual-a", "consumption-rg05-manual-b"], "item_allocation_ids": ["allocation-rg05-manual-a", "allocation-rg05-manual-b"], "association_group_id": "association-group-rg05-manual", "financial_evidence_link_ids": [], "item_evidence_link_ids": []},
+      "import_returned_ids": {"candidate_id": "candidate-rg05-imported", "transaction_id": "tx-merged-rg05-imported", "consumption_ids": ["consumption-rg05-imported-a", "consumption-rg05-imported-b"], "item_allocation_ids": ["allocation-rg05-imported-a", "allocation-rg05-imported-b"], "association_group_id": "association-group-rg05-imported", "financial_evidence_link_ids": ["match-bank-rg05"], "item_evidence_link_ids": ["match-item-a-rg05", "match-item-b-rg05"]},
+      "manual_state": {
+        "candidate": null,
+        "transaction": {"id": "tx-merged-rg05-manual", "current_version_id": "version-merged-rg05-manual-v1", "posting_set_id": "posting-set-merged-rg05-manual", "occurred_at": "2026-04-10T18:30:00+08:00", "effective": true, "confirmation_request_id": "request-rg05-manual", "source_refs": [], "evidence_refs": [], "postings": [{"id": "posting-expense-a-rg05-manual", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"}, {"id": "posting-expense-b-rg05-manual", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"}, {"id": "posting-asset-rg05-manual", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}]},
+        "current_version": {"id": "version-merged-rg05-manual-v1", "transaction_id": "tx-merged-rg05-manual", "posting_set_id": "posting-set-merged-rg05-manual", "status": "current"},
+        "postings": [{"id": "posting-expense-a-rg05-manual", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"}, {"id": "posting-expense-b-rg05-manual", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"}, {"id": "posting-asset-rg05-manual", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}],
+        "consumption_records": [{"id": "consumption-rg05-manual-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-08T10:00:00+08:00", "expense_posting_id": "posting-expense-a-rg05-manual"}, {"id": "consumption-rg05-manual-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-09T15:00:00+08:00", "expense_posting_id": "posting-expense-b-rg05-manual"}],
+        "association_group": {"id": "association-group-rg05-manual", "type": "merged_payment", "display_name": "合并付款", "system_managed": true, "formal_transaction_id": "tx-merged-rg05-manual", "asset_posting_id": "posting-asset-rg05-manual", "payment_total": "100.00", "currency": "CNY", "item_allocations": [{"id": "allocation-rg05-manual-a", "consumption_record_id": "consumption-rg05-manual-a", "expense_posting_id": "posting-expense-a-rg05-manual", "category_id": "expense-category-daily", "amount": "40.00", "currency": "CNY"}, {"id": "allocation-rg05-manual-b", "consumption_record_id": "consumption-rg05-manual-b", "expense_posting_id": "posting-expense-b-rg05-manual", "category_id": "expense-category-service", "amount": "60.00", "currency": "CNY"}], "generic_order_lifecycle": false},
+        "provenance": {"confirmation_mode": "explicit_manual_save", "confirmation_request_id": "request-rg05-manual", "source_refs": [], "evidence_refs": []}, "balances": {"asset-bank-a": "900.00"}, "statistics": {"day": "2026-04-10", "month": "2026-04", "day_consumption": "100.00", "month_consumption": "100.00", "day_cash_outflow": "100.00", "month_cash_outflow": "100.00", "income": "0.00", "net_worth_change": "-100.00", "budget": "not_applicable"}, "category_consumption": {"expense-category-daily": "40.00", "expense-category-service": "60.00"}, "reconciliation": {"posting-expense-a-rg05-manual": "not_applicable", "posting-expense-b-rg05-manual": "not_applicable", "posting-asset-rg05-manual": "pending", "transaction": "pending"}, "source_refs": [], "evidence_refs": [], "financial_evidence_links": [], "item_evidence_links": [], "item_evidence_completeness": "none"
+      },
+      "import_state": {
+        "candidate": {"id": "candidate-rg05-imported", "status": "confirmed", "kind": "merged_payment", "rule_version": 1, "confidence": "1.00", "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"], "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"], "bank_fact": {"source_id": "source-bank-debit-rg05", "evidence_id": "evidence-bank-debit-rg05", "observed_at": "2026-04-10T18:30:00+08:00", "details": "资产账户扣款", "amount": "-100.00", "currency": "CNY"}, "item_facts": [{"item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "evidence_kind": "item_receipt", "observed_at": "2026-04-08T10:00:00+08:00", "details": "项目 A", "amount": "40.00", "currency": "CNY", "suggested_category_id": "expense-category-daily"}, {"item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "evidence_kind": "item_summary", "observed_at": "2026-04-09T15:00:00+08:00", "details": "项目 B", "amount": "60.00", "currency": "CNY", "suggested_category_id": "expense-category-service"}], "provenance": {"source_fact_count": 3, "immutable_source_fields": ["source_id", "evidence_id", "observed_at", "details", "amount", "currency"], "category_values_are_suggestions": true}},
+        "transaction": {"id": "tx-merged-rg05-imported", "current_version_id": "version-merged-rg05-imported-v1", "posting_set_id": "posting-set-merged-rg05-imported", "occurred_at": "2026-04-10T18:30:00+08:00", "effective": true, "confirmation_request_id": "request-rg05-confirm-candidate", "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"], "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"], "postings": [{"id": "posting-expense-a-rg05-imported", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"}, {"id": "posting-expense-b-rg05-imported", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"}, {"id": "posting-asset-rg05-imported", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}]},
+        "current_version": {"id": "version-merged-rg05-imported-v1", "transaction_id": "tx-merged-rg05-imported", "posting_set_id": "posting-set-merged-rg05-imported", "status": "current"},
+        "postings": [{"id": "posting-expense-a-rg05-imported", "account_id": "expense-account-daily", "amount": "40.00", "currency": "CNY"}, {"id": "posting-expense-b-rg05-imported", "account_id": "expense-account-service", "amount": "60.00", "currency": "CNY"}, {"id": "posting-asset-rg05-imported", "account_id": "asset-bank-a", "amount": "-100.00", "currency": "CNY"}],
+        "consumption_records": [{"id": "consumption-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily", "details": "项目 A", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-08T10:00:00+08:00", "expense_posting_id": "posting-expense-a-rg05-imported"}, {"id": "consumption-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service", "details": "项目 B", "statistics_at": "2026-04-10T18:30:00+08:00", "source_observed_at": "2026-04-09T15:00:00+08:00", "expense_posting_id": "posting-expense-b-rg05-imported"}],
+        "association_group": {"id": "association-group-rg05-imported", "type": "merged_payment", "display_name": "合并付款", "system_managed": true, "formal_transaction_id": "tx-merged-rg05-imported", "asset_posting_id": "posting-asset-rg05-imported", "payment_total": "100.00", "currency": "CNY", "item_allocations": [{"id": "allocation-rg05-imported-a", "source_item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "expense_posting_id": "posting-expense-a-rg05-imported", "category_id": "expense-category-daily", "amount": "40.00", "currency": "CNY"}, {"id": "allocation-rg05-imported-b", "source_item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "expense_posting_id": "posting-expense-b-rg05-imported", "category_id": "expense-category-service", "amount": "60.00", "currency": "CNY"}], "generic_order_lifecycle": false},
+        "provenance": {"confirmation_request_id": "request-rg05-confirm-candidate", "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05"], "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05"], "bank_posting_binding": {"source_id": "source-bank-debit-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported"}, "item_bindings": [{"item_id": "item-rg05-imported-a", "source_id": "source-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "consumption_record_id": "consumption-rg05-imported-a", "allocation_id": "allocation-rg05-imported-a"}, {"item_id": "item-rg05-imported-b", "source_id": "source-item-b-rg05", "evidence_id": "evidence-item-b-summary-rg05", "consumption_record_id": "consumption-rg05-imported-b", "allocation_id": "allocation-rg05-imported-b"}]},
+        "balances": {"asset-bank-a": "900.00"}, "statistics": {"day": "2026-04-10", "month": "2026-04", "day_consumption": "100.00", "month_consumption": "100.00", "day_cash_outflow": "100.00", "month_cash_outflow": "100.00", "income": "0.00", "net_worth_change": "-100.00", "budget": "not_applicable"}, "category_consumption": {"expense-category-daily": "40.00", "expense-category-service": "60.00"}, "reconciliation": {"posting-expense-a-rg05-imported": "not_applicable", "posting-expense-b-rg05-imported": "not_applicable", "posting-asset-rg05-imported": "matched", "transaction": "complete"}, "source_refs": ["source-bank-debit-rg05", "source-item-a-rg05", "source-item-b-rg05", "source-item-b-receipt-rg05"], "evidence_refs": ["evidence-bank-debit-rg05", "evidence-item-a-rg05", "evidence-item-b-summary-rg05", "evidence-item-b-receipt-rg05"], "financial_evidence_links": [{"id": "match-bank-rg05", "evidence_id": "evidence-bank-debit-rg05", "posting_id": "posting-asset-rg05-imported", "status": "matched"}], "item_evidence_links": [{"id": "match-item-a-rg05", "evidence_id": "evidence-item-a-rg05", "item_allocation_id": "allocation-rg05-imported-a", "status": "matched"}, {"id": "match-item-b-rg05", "evidence_id": "evidence-item-b-receipt-rg05", "item_allocation_id": "allocation-rg05-imported-b", "status": "matched"}], "item_evidence_completeness": "complete"
+      }
+    }
+  },
+  "invalid_manual_inputs": [
+    {"id": "missing-secondary-category", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": null}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "secondary_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "primary-category", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-living"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "secondary_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "inactive-secondary-category", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-inactive"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "category_inactive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "wrong-kind-income-category", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "income-category-other"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "expense_category_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "zero-total", "input": {"total_amount": "0.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "total_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "negative-total", "input": {"total_amount": "-0.01", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "total_amount", "reason": "must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "zero-item-amount", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "0.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "100.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "item_amount_must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "negative-item-amount", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "-0.01", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "100.01", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "item_amount_must_be_positive", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "allocation-total-mismatch", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "50.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "allocation_total_must_equal_payment", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "duplicate-item-ids", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-duplicate", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-duplicate", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "duplicate_item_id", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "unknown-funding-account", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-unknown", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "funding_account_id", "reason": "unknown_real_account", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "known-nonfinancial-account", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "expense-account-daily", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "funding_account_id", "reason": "real_financial_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "known-owned-liability-account", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "liability-credit-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "funding_account_id", "reason": "asset_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "known-non-owned-account", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-external-x", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "CNY", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "funding_account_id", "reason": "owned_account_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}},
+    {"id": "mixed-currencies", "input": {"total_amount": "100.00", "currency": "CNY", "funding_account_id": "asset-bank-a", "items": [{"id": "item-a", "amount": "40.00", "currency": "CNY", "category_id": "expense-category-daily"}, {"id": "item-b", "amount": "60.00", "currency": "USD", "category_id": "expense-category-service"}]}, "expected": {"accepted": false, "field": "items", "reason": "single_currency_required", "state_unchanged": true, "new_transaction_count": 0, "new_posting_count": 0, "new_version_count": 0, "new_consumption_count": 0, "new_item_allocation_count": 0, "new_association_group_count": 0, "reconciliation_change_count": 0, "balances": {"asset-bank-a": "1000.00"}, "statistics": {"consumption": "0.00", "cash_outflow": "0.00", "income": "0.00", "net_worth_change": "0.00"}}}
+  ],
+  "out_of_scope": {
+    "one_item_multiple_funding_legs": "RG-04",
+    "staged_or_unpaid_amounts": "RG-06",
+    "refunds": "RG-07",
+    "later_corrections": "RG-12",
+    "discounts": "explanatory_only",
+    "many_items_many_funding_legs": "future_version"
+  },
+  "forbidden_side_effects": [
+    "create_second_asset_debit",
+    "create_hidden_clearing_account",
+    "create_hidden_balancing_posting",
+    "merge_consumption_records",
+    "create_generic_order_lifecycle",
+    "auto_confirm_import_candidate",
+    "guess_allocation_gap",
+    "duplicate_transaction",
+    "duplicate_posting",
+    "duplicate_consumption",
+    "duplicate_item_allocation",
+    "duplicate_association_group",
+    "duplicate_cash_flow",
+    "create_discount_posting",
+    "item_evidence_changes_financial_reconciliation",
+    "invoke_network",
+    "invoke_sync",
+    "invoke_intelligent_suggestion"
+  ]
+}
