@@ -1,6 +1,19 @@
 {
+  "artifact_type": "golden_v2_path_map",
+  "artifact_version": 1,
   "case_id": "RG-05",
-  "source_file": "golden/rules/rg-05.json",
+  "source": "golden/rules/rg-05.json",
+  "source_schema_version": 1,
+  "target_contract_version": "2.0.0",
+  "status": "needs_contract_amendment",
+  "expected_output_gate": "closed",
+  "normalization": {
+    "root": "$",
+    "object_member": ".key",
+    "array_index": "[*]",
+    "leaf_rule": "scalar, null, empty array, and empty object values are leaves",
+    "aggregation": "one entry per unique normalized path; source_value_kinds and occurrence_count aggregate all occurrences"
+  },
   "source_path_count": 549,
   "source_leaf_occurrence_count": 1407,
   "classified_path_count": 549,
@@ -16,8 +29,6 @@
     "requires_contract_amendment": 242,
     "test_only_exclusion": 7
   },
-  "status": "needs_contract_amendment",
-  "expected_output_gate": "closed",
   "contract_gap_count": 5,
   "unresolved_contract_gaps": [
     {
