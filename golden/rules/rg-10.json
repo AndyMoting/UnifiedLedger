@@ -1,0 +1,2442 @@
+{
+  "schema_version": 1,
+  "case": {
+    "id": "RG-10",
+    "level": "core_required",
+    "rule_version": 1,
+    "timezone": "Asia/Shanghai",
+    "currency": "CNY",
+    "precision": 2,
+    "ledger_id": "ledger-a"
+  },
+  "catalog": {
+    "accounts": [
+      {
+        "id": "asset-bank-a",
+        "ledger_id": "ledger-a",
+        "name": "Bank A",
+        "type": "asset",
+        "currency": "CNY",
+        "owned_by_user": true,
+        "financial": true,
+        "reconciliation_eligible": true
+      },
+      {
+        "id": "asset-bank-external",
+        "ledger_id": "ledger-a",
+        "name": "External bank",
+        "type": "asset",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": true,
+        "reconciliation_eligible": false
+      },
+      {
+        "id": "asset-stored-value-x",
+        "ledger_id": "ledger-a",
+        "name": "Merchant X stored value",
+        "type": "asset",
+        "currency": "CNY",
+        "owned_by_user": true,
+        "financial": true,
+        "reconciliation_eligible": true,
+        "restricted": true,
+        "stored_value": true,
+        "enabled": true,
+        "merchant_id": "merchant-x"
+      },
+      {
+        "id": "asset-stored-value-disabled",
+        "ledger_id": "ledger-a",
+        "name": "Disabled stored value",
+        "type": "asset",
+        "currency": "CNY",
+        "owned_by_user": true,
+        "financial": true,
+        "reconciliation_eligible": true,
+        "restricted": true,
+        "stored_value": true,
+        "enabled": false,
+        "merchant_id": "merchant-y"
+      },
+      {
+        "id": "income-special-bonus-rg10",
+        "ledger_id": "ledger-a",
+        "name": "Special non-cash bonus rights income",
+        "type": "income",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": false,
+        "reconciliation_eligible": false,
+        "system_role": "stored_value_bonus_right_income"
+      },
+      {
+        "id": "expense-consumption-rg10",
+        "ledger_id": "ledger-a",
+        "name": "Stored value consumption category",
+        "type": "expense",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": false,
+        "reconciliation_eligible": false
+      },
+      {
+        "id": "expense-expiry-loss-rg10",
+        "ledger_id": "ledger-a",
+        "name": "Stored value expiry loss",
+        "type": "expense",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": false,
+        "reconciliation_eligible": false,
+        "system_role": "stored_value_expiry_loss"
+      },
+      {
+        "id": "equity-opening",
+        "ledger_id": "ledger-a",
+        "name": "Opening equity",
+        "type": "equity",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": false,
+        "reconciliation_eligible": false
+      },
+      {
+        "id": "equity-stored-value-adjustment-rg10",
+        "ledger_id": "ledger-a",
+        "name": "Stored value pre-management adjustments",
+        "type": "equity",
+        "currency": "CNY",
+        "owned_by_user": false,
+        "financial": false,
+        "reconciliation_eligible": false,
+        "system_role": "stored_value_pre_activation_adjustment",
+        "system_managed": true,
+        "hidden": true
+      }
+    ],
+    "categories": [
+      {
+        "id": "expense-category-meal-rg10",
+        "name": "Meal",
+        "kind": "expense",
+        "level": 2,
+        "active": true,
+        "account_id": "expense-consumption-rg10"
+      }
+    ]
+  },
+  "opening": {
+    "transactions": [
+      {
+        "id": "transaction-opening-rg10",
+        "current_version_id": "version-opening-rg10-v1",
+        "posting_set_id": "posting-set-opening-rg10",
+        "type": "opening_balance",
+        "occurred_at": "2026-01-01T00:00:00+08:00",
+        "statistics_at": "2026-01-01T00:00:00+08:00",
+        "effective_at": "2026-01-01T00:00:00+08:00",
+        "created_at": "2026-01-01T00:00:00+08:00",
+        "effective": true,
+        "postings": [
+          {
+            "id": "posting-opening-bank-rg10",
+            "account_id": "asset-bank-a",
+            "amount": "5000.00",
+            "currency": "CNY",
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "posting-opening-equity-rg10",
+            "account_id": "equity-opening",
+            "amount": "-5000.00",
+            "currency": "CNY",
+            "reconciliation_eligible": false
+          }
+        ]
+      }
+    ]
+  },
+  "request_registry": [
+    "request-recharge-rg10",
+    "request-spend-rg10",
+    "request-expiry-rg10",
+    "request-reminder-rg10",
+    "source-bank-payment-rg10",
+    "source-merchant-credit-rg10",
+    "request-import-recharge-rg10",
+    "request-import-spend-rg10",
+    "request-activation-rg10",
+    "request-merchant-allocation-rg10"
+  ],
+  "canonical_states": {
+    "opening": {
+      "id": "state-rg10-opening",
+      "transactions": [],
+      "versions": [],
+      "lots": [],
+      "adjustments": [],
+      "candidates": [],
+      "confirmations": [],
+      "source_records": [],
+      "evidence": [],
+      "evidence_links": [],
+      "audit_links": [],
+      "balances": {
+        "asset-bank-a": "5000.00",
+        "asset-bank-external": "0.00",
+        "asset-stored-value-x": "0.00",
+        "income-special-bonus-rg10": "0.00",
+        "expense-consumption-rg10": "0.00",
+        "expense-expiry-loss-rg10": "0.00",
+        "equity-opening": "-5000.00",
+        "equity-stored-value-adjustment-rg10": "0.00"
+      },
+      "reports": {
+        "cumulative": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "0.00",
+          "ordinary_expense": "0.00",
+          "expiry_loss": "0.00",
+          "consumption": "0.00",
+          "budget_effect": "0.00",
+          "category_effect": "0.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "0.00",
+          "net_worth_change": "0.00"
+        }
+      },
+      "reconciliation": {
+        "transaction-recharge-rg10": "not_present",
+        "posting-bank-recharge-rg10": "not_present",
+        "posting-stored-recharge-rg10": "not_present"
+      }
+    },
+    "activation_boundary": {
+      "id": "state-rg10-activation-boundary",
+      "transactions": [
+        {
+          "id": "transaction-activation-adjustment-rg10",
+          "current_version_id": "version-activation-adjustment-rg10-v1",
+          "posting_set_id": "posting-set-activation-adjustment-rg10",
+          "type": "stored_value_pre_activation_balance_adjustment",
+          "occurred_at": "2026-02-01T00:00:00+08:00",
+          "statistics_at": "2026-02-01T00:00:00+08:00",
+          "effective_at": "2026-02-01T00:00:00+08:00",
+          "created_at": "2026-02-01T00:05:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "existing_balance": "600.00",
+          "composition_status": "unknown",
+          "adjustment_id": "adjustment-pre-activation-rg10",
+          "postings": [
+            {
+              "id": "posting-stored-activation-adjustment-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "600.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-equity-activation-adjustment-rg10",
+              "account_id": "equity-stored-value-adjustment-rg10",
+              "amount": "-600.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-activation-adjustment-rg10-v1",
+          "transaction_id": "transaction-activation-adjustment-rg10",
+          "posting_set_id": "posting-set-activation-adjustment-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-02-01T00:05:00+08:00"
+        }
+      ],
+      "lots": [],
+      "adjustments": [
+        {
+          "id": "adjustment-pre-activation-rg10",
+          "transaction_id": "transaction-activation-adjustment-rg10",
+          "activation_at": "2026-02-01T00:00:00+08:00",
+          "existing_balance": "600.00",
+          "composition_status": "unknown",
+          "replacement_status": "active_until_replaced",
+          "history": [
+            {
+              "id": "adjustment-history-created-rg10",
+              "event": "created",
+              "transaction_id": "transaction-activation-adjustment-rg10",
+              "occurred_at": "2026-02-01T00:00:00+08:00",
+              "created_at": "2026-02-01T00:05:00+08:00"
+            }
+          ]
+        }
+      ],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "confirmation-activation-rg10",
+          "request_id": "request-activation-rg10",
+          "role": "stored_value_activation_balance_confirmation",
+          "transaction_id": "transaction-activation-adjustment-rg10",
+          "source_id": "source-activation-balance-rg10",
+          "evidence_id": "evidence-activation-balance-rg10",
+          "audit_link_id": "audit-link-activation-confirmation-rg10",
+          "confirmed_at": "2026-02-01T00:05:00+08:00",
+          "explicit_confirmation": true
+        }
+      ],
+      "source_records": [
+        {
+          "id": "source-activation-balance-rg10",
+          "source_type": "user_confirmed_merchant_balance",
+          "observed_at": "2026-02-01T00:00:00+08:00",
+          "account_id": "asset-stored-value-x",
+          "amount": "600.00",
+          "currency": "CNY",
+          "immutable_payload_digest": "sha256:rg10-activation-balance"
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-activation-balance-rg10",
+          "source_id": "source-activation-balance-rg10",
+          "evidence_type": "confirmed_activation_balance",
+          "observed_at": "2026-02-01T00:00:00+08:00"
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-activation-balance-rg10",
+          "source_id": "source-activation-balance-rg10",
+          "evidence_id": "evidence-activation-balance-rg10",
+          "role": "stored_value_activation_balance_fact",
+          "target_id": "transaction-activation-adjustment-rg10",
+          "status": "confirmed_business_fact"
+        }
+      ],
+      "audit_links": [
+        {
+          "id": "audit-link-activation-confirmation-rg10",
+          "role": "explicit_confirmation_provenance",
+          "source_id": "source-activation-balance-rg10",
+          "evidence_id": "evidence-activation-balance-rg10",
+          "confirmation_id": "confirmation-activation-rg10",
+          "transaction_id": "transaction-activation-adjustment-rg10"
+        }
+      ],
+      "balances": {
+        "asset-bank-a": "5000.00",
+        "asset-bank-external": "0.00",
+        "asset-stored-value-x": "600.00",
+        "income-special-bonus-rg10": "0.00",
+        "expense-consumption-rg10": "0.00",
+        "expense-expiry-loss-rg10": "0.00",
+        "equity-opening": "-5000.00",
+        "equity-stored-value-adjustment-rg10": "-600.00"
+      },
+      "reports": {
+        "cumulative": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "0.00",
+          "ordinary_expense": "0.00",
+          "expiry_loss": "0.00",
+          "consumption": "0.00",
+          "budget_effect": "0.00",
+          "category_effect": "0.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "0.00",
+          "net_worth_change": "600.00"
+        }
+      },
+      "reconciliation": {
+        "transaction-activation-adjustment-rg10": "pending_financial_evidence",
+        "posting-stored-activation-adjustment-rg10": "pending"
+      }
+    },
+    "recharge_confirmed": {
+      "id": "state-rg10-recharge-confirmed",
+      "transactions": [
+        {
+          "id": "transaction-recharge-rg10",
+          "current_version_id": "version-recharge-rg10-v1",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "type": "stored_value_recharge",
+          "occurred_at": "2026-01-10T10:00:00+08:00",
+          "statistics_at": "2026-01-10T10:00:00+08:00",
+          "effective_at": "2026-01-10T10:00:00+08:00",
+          "created_at": "2026-01-10T10:05:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "payment_account_id": "asset-bank-a",
+          "paid_amount": "1000.00",
+          "credited_amount": "1200.00",
+          "bonus_amount": "200.00",
+          "lot_id": "lot-rg10-20260110-a",
+          "postings": [
+            {
+              "id": "posting-stored-recharge-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "1200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bank-recharge-rg10",
+              "account_id": "asset-bank-a",
+              "amount": "-1000.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bonus-income-rg10",
+              "account_id": "income-special-bonus-rg10",
+              "amount": "-200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-recharge-rg10-v1",
+          "transaction_id": "transaction-recharge-rg10",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-01-10T10:05:00+08:00"
+        }
+      ],
+      "lots": [
+        {
+          "id": "lot-rg10-20260110-a",
+          "recharge_transaction_id": "transaction-recharge-rg10",
+          "loaded_at": "2026-01-10T10:00:00+08:00",
+          "expires_at": "2026-03-31T23:59:59+08:00",
+          "face_value": "1200.00",
+          "remaining_face_value": "1200.00",
+          "paid_amount": "1000.00",
+          "bonus_amount": "200.00",
+          "remaining_paid_amount": "1000.00",
+          "remaining_bonus_amount": "200.00",
+          "composition_status": "known",
+          "history": [
+            {
+              "id": "lot-history-loaded-rg10",
+              "event": "loaded",
+              "transaction_id": "transaction-recharge-rg10",
+              "amount": "1200.00",
+              "remaining_face_value": "1200.00",
+              "occurred_at": "2026-01-10T10:00:00+08:00",
+              "created_at": "2026-01-10T10:05:00+08:00"
+            }
+          ],
+          "merchant_id": "merchant-x"
+        }
+      ],
+      "adjustments": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "confirmation-recharge-rg10",
+          "request_id": "request-recharge-rg10",
+          "role": "stored_value_recharge_confirmation",
+          "transaction_id": "transaction-recharge-rg10",
+          "confirmed_at": "2026-01-10T10:05:00+08:00"
+        }
+      ],
+      "source_records": [
+        {
+          "id": "source-bank-payment-rg10",
+          "source_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "immutable_payload_digest": "sha256:rg10-bank-payment"
+        },
+        {
+          "id": "source-merchant-credit-rg10",
+          "source_type": "merchant_stored_value_credit",
+          "observed_at": "2026-01-10T10:01:00+08:00",
+          "account_id": "asset-stored-value-x",
+          "amount": "1200.00",
+          "currency": "CNY",
+          "lot_id": "lot-rg10-20260110-a",
+          "immutable_payload_digest": "sha256:rg10-merchant-credit"
+        }
+      ],
+      "preserved_source_record_ids": ["source-bank-payment-rg10", "source-merchant-credit-rg10"],
+      "evidence": [
+        {
+          "id": "evidence-bank-payment-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00"
+        },
+        {
+          "id": "evidence-merchant-credit-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_type": "merchant_credit_and_lot",
+          "observed_at": "2026-01-10T10:01:00+08:00"
+        }
+      ],
+      "preserved_evidence_ids": ["evidence-bank-payment-rg10", "evidence-merchant-credit-rg10"],
+      "evidence_links": [
+        {
+          "id": "evidence-link-bank-recharge-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_id": "evidence-bank-payment-rg10",
+          "role": "bank_payment_posting",
+          "target_id": "posting-bank-recharge-rg10",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-merchant-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_credit_lot",
+          "target_id": "posting-stored-recharge-rg10",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-bonus-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_bonus_component",
+          "target_id": "lot-rg10-20260110-a",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        }
+      ],
+      "audit_links": [],
+      "balances": {
+        "asset-bank-a": "4000.00",
+        "asset-bank-external": "0.00",
+        "asset-stored-value-x": "1200.00",
+        "income-special-bonus-rg10": "-200.00",
+        "expense-consumption-rg10": "0.00",
+        "expense-expiry-loss-rg10": "0.00",
+        "equity-opening": "-5000.00",
+        "equity-stored-value-adjustment-rg10": "0.00"
+      },
+      "reports": {
+        "cumulative": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "200.00",
+          "ordinary_expense": "0.00",
+          "expiry_loss": "0.00",
+          "consumption": "0.00",
+          "budget_effect": "0.00",
+          "category_effect": "0.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "1000.00",
+          "net_worth_change": "200.00"
+        }
+      },
+      "reconciliation": {
+        "transaction-recharge-rg10": "pending",
+        "posting-bank-recharge-rg10": "pending",
+        "posting-stored-recharge-rg10": "pending"
+      }
+    },
+    "spend_confirmed": {
+      "id": "state-rg10-spend-confirmed",
+      "transactions": [
+        {
+          "id": "transaction-recharge-rg10",
+          "current_version_id": "version-recharge-rg10-v1",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "type": "stored_value_recharge",
+          "occurred_at": "2026-01-10T10:00:00+08:00",
+          "statistics_at": "2026-01-10T10:00:00+08:00",
+          "effective_at": "2026-01-10T10:00:00+08:00",
+          "created_at": "2026-01-10T10:05:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "payment_account_id": "asset-bank-a",
+          "paid_amount": "1000.00",
+          "credited_amount": "1200.00",
+          "bonus_amount": "200.00",
+          "lot_id": "lot-rg10-20260110-a",
+          "postings": [
+            {
+              "id": "posting-stored-recharge-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "1200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bank-recharge-rg10",
+              "account_id": "asset-bank-a",
+              "amount": "-1000.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bonus-income-rg10",
+              "account_id": "income-special-bonus-rg10",
+              "amount": "-200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            }
+          ]
+        },
+        {
+          "id": "transaction-spend-rg10",
+          "current_version_id": "version-spend-rg10-v1",
+          "posting_set_id": "posting-set-spend-rg10",
+          "type": "stored_value_spend",
+          "occurred_at": "2026-01-20T12:00:00+08:00",
+          "statistics_at": "2026-01-20T12:00:00+08:00",
+          "effective_at": "2026-01-20T12:00:00+08:00",
+          "created_at": "2026-01-20T12:03:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "category_id": "expense-category-meal-rg10",
+          "amount": "300.00",
+          "allocation_source": "default_expiry_load_id_order",
+          "composition_status": "unknown",
+          "lot_consumptions": [
+            {
+              "lot_id": "lot-rg10-20260110-a",
+              "amount": "300.00",
+              "paid_bonus_composition": "unknown",
+              "evidence_id": null
+            }
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-spend-rg10",
+              "account_id": "expense-consumption-rg10",
+              "amount": "300.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            },
+            {
+              "id": "posting-stored-spend-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "-300.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-recharge-rg10-v1",
+          "transaction_id": "transaction-recharge-rg10",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-01-10T10:05:00+08:00"
+        },
+        {
+          "id": "version-spend-rg10-v1",
+          "transaction_id": "transaction-spend-rg10",
+          "posting_set_id": "posting-set-spend-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-01-20T12:03:00+08:00"
+        }
+      ],
+      "lots": [
+        {
+          "id": "lot-rg10-20260110-a",
+          "recharge_transaction_id": "transaction-recharge-rg10",
+          "loaded_at": "2026-01-10T10:00:00+08:00",
+          "expires_at": "2026-03-31T23:59:59+08:00",
+          "face_value": "1200.00",
+          "remaining_face_value": "900.00",
+          "paid_amount": "1000.00",
+          "bonus_amount": "200.00",
+          "remaining_paid_amount": null,
+          "remaining_bonus_amount": null,
+          "composition_status": "unknown_after_unallocated_consumption",
+          "history": [
+            {
+              "id": "lot-history-loaded-rg10",
+              "event": "loaded",
+              "transaction_id": "transaction-recharge-rg10",
+              "amount": "1200.00",
+              "remaining_face_value": "1200.00",
+              "occurred_at": "2026-01-10T10:00:00+08:00",
+              "created_at": "2026-01-10T10:05:00+08:00"
+            },
+            {
+              "id": "lot-history-spend-rg10",
+              "event": "spent",
+              "transaction_id": "transaction-spend-rg10",
+              "amount": "-300.00",
+              "remaining_face_value": "900.00",
+              "occurred_at": "2026-01-20T12:00:00+08:00",
+              "created_at": "2026-01-20T12:03:00+08:00",
+              "composition_status": "unknown"
+            }
+          ],
+          "merchant_id": "merchant-x"
+        }
+      ],
+      "adjustments": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "confirmation-recharge-rg10",
+          "request_id": "request-recharge-rg10",
+          "role": "stored_value_recharge_confirmation",
+          "transaction_id": "transaction-recharge-rg10",
+          "confirmed_at": "2026-01-10T10:05:00+08:00"
+        },
+        {
+          "id": "confirmation-spend-rg10",
+          "request_id": "request-spend-rg10",
+          "role": "stored_value_spend_confirmation",
+          "transaction_id": "transaction-spend-rg10",
+          "confirmed_at": "2026-01-20T12:03:00+08:00"
+        }
+      ],
+      "source_records": [
+        {
+          "id": "source-bank-payment-rg10",
+          "source_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "immutable_payload_digest": "sha256:rg10-bank-payment"
+        },
+        {
+          "id": "source-merchant-credit-rg10",
+          "source_type": "merchant_stored_value_credit",
+          "observed_at": "2026-01-10T10:01:00+08:00",
+          "account_id": "asset-stored-value-x",
+          "amount": "1200.00",
+          "currency": "CNY",
+          "lot_id": "lot-rg10-20260110-a",
+          "immutable_payload_digest": "sha256:rg10-merchant-credit"
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-bank-payment-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00"
+        },
+        {
+          "id": "evidence-merchant-credit-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_type": "merchant_credit_and_lot",
+          "observed_at": "2026-01-10T10:01:00+08:00"
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-bank-recharge-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_id": "evidence-bank-payment-rg10",
+          "role": "bank_payment_posting",
+          "target_id": "posting-bank-recharge-rg10",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-merchant-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_credit_lot",
+          "target_id": "posting-stored-recharge-rg10",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-bonus-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_bonus_component",
+          "target_id": "lot-rg10-20260110-a",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        }
+      ],
+      "audit_links": [],
+      "balances": {
+        "asset-bank-a": "4000.00",
+        "asset-bank-external": "0.00",
+        "asset-stored-value-x": "900.00",
+        "income-special-bonus-rg10": "-200.00",
+        "expense-consumption-rg10": "300.00",
+        "expense-expiry-loss-rg10": "0.00",
+        "equity-opening": "-5000.00",
+        "equity-stored-value-adjustment-rg10": "0.00"
+      },
+      "reports": {
+        "cumulative": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "200.00",
+          "ordinary_expense": "300.00",
+          "expiry_loss": "0.00",
+          "consumption": "300.00",
+          "budget_effect": "0.00",
+          "category_effect": "300.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "1000.00",
+          "net_worth_change": "-100.00"
+        }
+      },
+      "reconciliation": {
+        "transaction-recharge-rg10": "pending",
+        "posting-bank-recharge-rg10": "pending",
+        "posting-stored-recharge-rg10": "pending",
+        "transaction-spend-rg10": "pending",
+        "posting-stored-spend-rg10": "pending"
+      }
+    },
+    "expiry_confirmed": {
+      "id": "state-rg10-expiry-confirmed",
+      "transactions": [
+        {
+          "id": "transaction-recharge-rg10",
+          "current_version_id": "version-recharge-rg10-v1",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "type": "stored_value_recharge",
+          "occurred_at": "2026-01-10T10:00:00+08:00",
+          "statistics_at": "2026-01-10T10:00:00+08:00",
+          "effective_at": "2026-01-10T10:00:00+08:00",
+          "created_at": "2026-01-10T10:05:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "payment_account_id": "asset-bank-a",
+          "paid_amount": "1000.00",
+          "credited_amount": "1200.00",
+          "bonus_amount": "200.00",
+          "lot_id": "lot-rg10-20260110-a",
+          "postings": [
+            {
+              "id": "posting-stored-recharge-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "1200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bank-recharge-rg10",
+              "account_id": "asset-bank-a",
+              "amount": "-1000.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            },
+            {
+              "id": "posting-bonus-income-rg10",
+              "account_id": "income-special-bonus-rg10",
+              "amount": "-200.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            }
+          ]
+        },
+        {
+          "id": "transaction-spend-rg10",
+          "current_version_id": "version-spend-rg10-v1",
+          "posting_set_id": "posting-set-spend-rg10",
+          "type": "stored_value_spend",
+          "occurred_at": "2026-01-20T12:00:00+08:00",
+          "statistics_at": "2026-01-20T12:00:00+08:00",
+          "effective_at": "2026-01-20T12:00:00+08:00",
+          "created_at": "2026-01-20T12:03:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "category_id": "expense-category-meal-rg10",
+          "amount": "300.00",
+          "allocation_source": "default_expiry_load_id_order",
+          "composition_status": "unknown",
+          "lot_consumptions": [
+            {
+              "lot_id": "lot-rg10-20260110-a",
+              "amount": "300.00",
+              "paid_bonus_composition": "unknown",
+              "evidence_id": null
+            }
+          ],
+          "postings": [
+            {
+              "id": "posting-expense-spend-rg10",
+              "account_id": "expense-consumption-rg10",
+              "amount": "300.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            },
+            {
+              "id": "posting-stored-spend-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "-300.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            }
+          ]
+        },
+        {
+          "id": "transaction-expiry-rg10",
+          "current_version_id": "version-expiry-rg10-v1",
+          "posting_set_id": "posting-set-expiry-rg10",
+          "type": "stored_value_expiry_loss",
+          "occurred_at": "2026-02-01T09:00:00+08:00",
+          "statistics_at": "2026-02-01T09:00:00+08:00",
+          "effective_at": "2026-02-01T09:00:00+08:00",
+          "created_at": "2026-02-01T09:05:00+08:00",
+          "effective": true,
+          "stored_value_account_id": "asset-stored-value-x",
+          "lot_id": "lot-rg10-20260110-a",
+          "confirmed_expired_amount": "100.00",
+          "postings": [
+            {
+              "id": "posting-expiry-loss-rg10",
+              "account_id": "expense-expiry-loss-rg10",
+              "amount": "100.00",
+              "currency": "CNY",
+              "reconciliation_eligible": false
+            },
+            {
+              "id": "posting-stored-expiry-rg10",
+              "account_id": "asset-stored-value-x",
+              "amount": "-100.00",
+              "currency": "CNY",
+              "reconciliation_eligible": true
+            }
+          ]
+        }
+      ],
+      "versions": [
+        {
+          "id": "version-recharge-rg10-v1",
+          "transaction_id": "transaction-recharge-rg10",
+          "posting_set_id": "posting-set-recharge-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-01-10T10:05:00+08:00"
+        },
+        {
+          "id": "version-spend-rg10-v1",
+          "transaction_id": "transaction-spend-rg10",
+          "posting_set_id": "posting-set-spend-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-01-20T12:03:00+08:00"
+        },
+        {
+          "id": "version-expiry-rg10-v1",
+          "transaction_id": "transaction-expiry-rg10",
+          "posting_set_id": "posting-set-expiry-rg10",
+          "version_number": 1,
+          "effective": true,
+          "created_at": "2026-02-01T09:05:00+08:00"
+        }
+      ],
+      "lots": [
+        {
+          "id": "lot-rg10-20260110-a",
+          "recharge_transaction_id": "transaction-recharge-rg10",
+          "loaded_at": "2026-01-10T10:00:00+08:00",
+          "expires_at": "2026-03-31T23:59:59+08:00",
+          "face_value": "1200.00",
+          "remaining_face_value": "800.00",
+          "paid_amount": "1000.00",
+          "bonus_amount": "200.00",
+          "remaining_paid_amount": null,
+          "remaining_bonus_amount": null,
+          "composition_status": "unknown_after_unallocated_consumption",
+          "history": [
+            {
+              "id": "lot-history-loaded-rg10",
+              "event": "loaded",
+              "transaction_id": "transaction-recharge-rg10",
+              "amount": "1200.00",
+              "remaining_face_value": "1200.00",
+              "occurred_at": "2026-01-10T10:00:00+08:00",
+              "created_at": "2026-01-10T10:05:00+08:00"
+            },
+            {
+              "id": "lot-history-spend-rg10",
+              "event": "spent",
+              "transaction_id": "transaction-spend-rg10",
+              "amount": "-300.00",
+              "remaining_face_value": "900.00",
+              "occurred_at": "2026-01-20T12:00:00+08:00",
+              "created_at": "2026-01-20T12:03:00+08:00",
+              "composition_status": "unknown"
+            },
+            {
+              "id": "lot-history-expiry-rg10",
+              "event": "expired",
+              "transaction_id": "transaction-expiry-rg10",
+              "amount": "-100.00",
+              "remaining_face_value": "800.00",
+              "occurred_at": "2026-02-01T09:00:00+08:00",
+              "created_at": "2026-02-01T09:05:00+08:00"
+            }
+          ],
+          "merchant_id": "merchant-x"
+        }
+      ],
+      "adjustments": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "confirmation-recharge-rg10",
+          "request_id": "request-recharge-rg10",
+          "role": "stored_value_recharge_confirmation",
+          "transaction_id": "transaction-recharge-rg10",
+          "confirmed_at": "2026-01-10T10:05:00+08:00"
+        },
+        {
+          "id": "confirmation-spend-rg10",
+          "request_id": "request-spend-rg10",
+          "role": "stored_value_spend_confirmation",
+          "transaction_id": "transaction-spend-rg10",
+          "confirmed_at": "2026-01-20T12:03:00+08:00"
+        },
+        {
+          "id": "confirmation-expiry-rg10",
+          "request_id": "request-expiry-rg10",
+          "role": "stored_value_expiry_confirmation",
+          "transaction_id": "transaction-expiry-rg10",
+          "confirmed_at": "2026-02-01T09:05:00+08:00",
+          "confirms_actual_expiry": true
+        }
+      ],
+      "source_records": [
+        {
+          "id": "source-bank-payment-rg10",
+          "source_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "immutable_payload_digest": "sha256:rg10-bank-payment"
+        },
+        {
+          "id": "source-merchant-credit-rg10",
+          "source_type": "merchant_stored_value_credit",
+          "observed_at": "2026-01-10T10:01:00+08:00",
+          "account_id": "asset-stored-value-x",
+          "amount": "1200.00",
+          "currency": "CNY",
+          "lot_id": "lot-rg10-20260110-a",
+          "immutable_payload_digest": "sha256:rg10-merchant-credit"
+        },
+        {
+          "id": "source-expiry-confirmation-rg10",
+          "source_type": "user_expiry_confirmation",
+          "observed_at": "2026-02-01T09:05:00+08:00",
+          "lot_id": "lot-rg10-20260110-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "immutable_payload_digest": "sha256:rg10-expiry"
+        }
+      ],
+      "preserved_source_record_ids": ["source-bank-payment-rg10", "source-merchant-credit-rg10"],
+      "evidence": [
+        {
+          "id": "evidence-bank-payment-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_type": "bank_payment",
+          "observed_at": "2026-01-10T10:00:00+08:00"
+        },
+        {
+          "id": "evidence-merchant-credit-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_type": "merchant_credit_and_lot",
+          "observed_at": "2026-01-10T10:01:00+08:00"
+        },
+        {
+          "id": "evidence-expiry-confirmation-rg10",
+          "source_id": "source-expiry-confirmation-rg10",
+          "evidence_type": "confirmed_actual_expiry",
+          "observed_at": "2026-02-01T09:05:00+08:00"
+        }
+      ],
+      "preserved_evidence_ids": ["evidence-bank-payment-rg10", "evidence-merchant-credit-rg10"],
+      "evidence_links": [
+        {
+          "id": "evidence-link-bank-recharge-rg10",
+          "source_id": "source-bank-payment-rg10",
+          "evidence_id": "evidence-bank-payment-rg10",
+          "role": "bank_payment_posting",
+          "target_id": "posting-bank-recharge-rg10",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-merchant-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_credit_lot",
+          "target_id": "posting-stored-recharge-rg10",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-bonus-recharge-rg10",
+          "source_id": "source-merchant-credit-rg10",
+          "evidence_id": "evidence-merchant-credit-rg10",
+          "role": "stored_value_bonus_component",
+          "target_id": "lot-rg10-20260110-a",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        },
+        {
+          "id": "evidence-link-expiry-rg10",
+          "source_id": "source-expiry-confirmation-rg10",
+          "evidence_id": "evidence-expiry-confirmation-rg10",
+          "role": "stored_value_expiry_confirmation",
+          "target_id": "transaction-expiry-rg10",
+          "lot_id": "lot-rg10-20260110-a",
+          "status": "pending"
+        }
+      ],
+      "audit_links": [],
+      "balances": {
+        "asset-bank-a": "4000.00",
+        "asset-bank-external": "0.00",
+        "asset-stored-value-x": "800.00",
+        "income-special-bonus-rg10": "-200.00",
+        "expense-consumption-rg10": "300.00",
+        "expense-expiry-loss-rg10": "100.00",
+        "equity-opening": "-5000.00",
+        "equity-stored-value-adjustment-rg10": "0.00"
+      },
+      "reports": {
+        "cumulative": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "200.00",
+          "ordinary_expense": "300.00",
+          "expiry_loss": "100.00",
+          "consumption": "300.00",
+          "budget_effect": "0.00",
+          "category_effect": "300.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "1000.00",
+          "net_worth_change": "-200.00"
+        }
+      },
+      "reconciliation": {
+        "transaction-recharge-rg10": "pending",
+        "posting-bank-recharge-rg10": "pending",
+        "posting-stored-recharge-rg10": "pending",
+        "transaction-spend-rg10": "pending",
+        "posting-stored-spend-rg10": "pending",
+        "transaction-expiry-rg10": "pending_financial_evidence",
+        "posting-stored-expiry-rg10": "pending"
+      }
+    }
+  },
+  "main_path": {
+    "recharge": {
+      "input": {
+        "request_id": "request-recharge-rg10",
+        "model": "stored_value_asset",
+        "payment_account_id": "asset-bank-a",
+        "stored_value_account_id": "asset-stored-value-x",
+        "paid_amount": "1000.00",
+        "credited_amount": "1200.00",
+        "bonus_amount": "200.00",
+        "currency": "CNY",
+        "occurred_at": "2026-01-10T10:00:00+08:00",
+        "created_at": "2026-01-10T10:05:00+08:00",
+        "explicit_confirmation": true,
+        "confirms_model": true,
+        "confirms_payment_account": true,
+        "confirms_stored_value_account": true,
+        "confirms_paid_amount": true,
+        "confirms_credited_amount": true,
+        "confirms_bonus_amount": true,
+        "confirms_actual_time": true,
+        "confirms_lot_facts": true
+      },
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {
+        "accepted": true,
+        "status": "confirmed",
+        "resulting_state_id": "state-rg10-recharge-confirmed",
+        "formal_deltas": {
+          "new_transaction_count": 1,
+          "new_posting_count": 3,
+          "new_version_count": 1,
+          "new_lot_count": 1,
+          "new_candidate_count": 0,
+          "new_confirmation_count": 1,
+          "new_report_effect_count": 1
+        },
+        "intake_deltas": {
+          "new_source_record_count": 2,
+          "new_evidence_count": 2,
+          "new_evidence_link_count": 3
+        },
+        "report_delta": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "200.00",
+          "ordinary_expense": "0.00",
+          "consumption": "0.00",
+          "budget_effect": "0.00",
+          "category_effect": "0.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "1000.00",
+          "net_worth_change": "200.00"
+        }
+      },
+      "operation_context": {
+        "operation_type": "confirm_stored_value_recharge",
+        "operation_id": "request-recharge-rg10",
+        "baseline_id": "state-rg10-opening",
+        "result_id": "state-rg10-recharge-confirmed"
+      }
+    },
+    "spend": {
+      "input": {
+        "request_id": "request-spend-rg10",
+        "model": "stored_value_asset",
+        "behavior": "stored_value_spend",
+        "stored_value_account_id": "asset-stored-value-x",
+        "category_id": "expense-category-meal-rg10",
+        "amount": "300.00",
+        "currency": "CNY",
+        "occurred_at": "2026-01-20T12:00:00+08:00",
+        "created_at": "2026-01-20T12:03:00+08:00",
+        "explicit_confirmation": true,
+        "confirms_model": true,
+        "confirms_behavior": true,
+        "confirms_stored_value_account": true,
+        "confirms_amount": true,
+        "confirms_actual_time": true,
+        "confirms_category": true,
+        "merchant_allocation_provided": false,
+        "confirms_lot_allocation": true
+      },
+      "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+      "expected": {
+        "accepted": true,
+        "status": "confirmed",
+        "resulting_state_id": "state-rg10-spend-confirmed",
+        "formal_deltas": {
+          "new_transaction_count": 1,
+          "new_posting_count": 2,
+          "new_version_count": 1,
+          "new_lot_consumption_count": 1,
+          "new_confirmation_count": 1,
+          "new_report_effect_count": 1
+        },
+        "consumption": [
+          {
+            "lot_id": "lot-rg10-20260110-a",
+            "amount": "300.00",
+            "paid_bonus_composition": "unknown"
+          }
+        ],
+        "report_delta": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "0.00",
+          "ordinary_expense": "300.00",
+          "consumption": "300.00",
+          "budget_effect": "0.00",
+          "category_effect": "300.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "0.00",
+          "net_worth_change": "-300.00"
+        }
+      },
+      "operation_context": {
+        "operation_type": "confirm_stored_value_spend",
+        "operation_id": "request-spend-rg10",
+        "baseline_id": "state-rg10-recharge-confirmed",
+        "result_id": "state-rg10-spend-confirmed"
+      }
+    },
+    "expiry_reminder": {
+      "input": {
+        "request_id": "request-reminder-rg10",
+        "lot_id": "lot-rg10-20260110-a",
+        "reminder_status": "expired_date_reached",
+        "explicit_confirmation": false
+      },
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {
+        "accepted": true,
+        "status": "reminder_only",
+        "resulting_state_id": "state-rg10-spend-confirmed",
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_report_effect_count": 0
+        }
+      },
+      "operation_context": {
+        "operation_type": "record_expiry_reminder",
+        "operation_id": "request-reminder-rg10",
+        "baseline_id": "state-rg10-spend-confirmed",
+        "result_id": "state-rg10-spend-confirmed"
+      }
+    },
+    "expiry_confirmation": {
+      "input": {
+        "request_id": "request-expiry-rg10",
+        "lot_id": "lot-rg10-20260110-a",
+        "amount": "100.00",
+        "currency": "CNY",
+        "occurred_at": "2026-02-01T09:00:00+08:00",
+        "explicit_confirmation": true,
+        "confirms_actual_expiry": true,
+        "confirms_lot": true,
+        "confirms_amount": true
+      },
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {
+        "accepted": true,
+        "status": "confirmed",
+        "resulting_state_id": "state-rg10-expiry-confirmed",
+        "formal_deltas": {
+          "new_transaction_count": 1,
+          "new_posting_count": 2,
+          "new_version_count": 1,
+          "new_confirmation_count": 1,
+          "new_report_effect_count": 1
+        },
+        "cashflow": "0.00",
+        "net_worth_change": "-100.00",
+        "report_delta": {
+          "ordinary_income": "0.00",
+          "special_non_cash_bonus_income": "0.00",
+          "ordinary_expense": "0.00",
+          "expiry_loss": "100.00",
+          "consumption": "0.00",
+          "budget_effect": "0.00",
+          "category_effect": "0.00",
+          "cash_inflow": "0.00",
+          "cash_outflow": "0.00",
+          "net_worth_change": "-100.00"
+        }
+      },
+      "operation_context": {
+        "operation_type": "confirm_stored_value_expiry_loss",
+        "operation_id": "request-expiry-rg10",
+        "baseline_id": "state-rg10-spend-confirmed",
+        "result_id": "state-rg10-expiry-confirmed"
+      }
+    }
+  },
+  "reconciliation_states": {
+    "state-rg10-recharge-merchant-reconciled": {
+      "id": "state-rg10-recharge-merchant-reconciled",
+      "derived_from": "state-rg10-recharge-confirmed",
+      "transactions_ref": ["transaction-recharge-rg10"],
+      "lots_ref": ["lot-rg10-20260110-a"],
+      "balances_unchanged": true,
+      "reports_unchanged": true,
+      "reconciliation": {
+        "transaction-recharge-rg10": "partial",
+        "posting-bank-recharge-rg10": "pending",
+        "posting-stored-recharge-rg10": "matched"
+      }
+    },
+    "state-rg10-recharge-fully-reconciled": {
+      "id": "state-rg10-recharge-fully-reconciled",
+      "derived_from": "state-rg10-recharge-merchant-reconciled",
+      "transactions_ref": ["transaction-recharge-rg10"],
+      "lots_ref": ["lot-rg10-20260110-a"],
+      "balances_unchanged": true,
+      "reports_unchanged": true,
+      "reconciliation": {
+        "transaction-recharge-rg10": "complete",
+        "posting-bank-recharge-rg10": "matched",
+        "posting-stored-recharge-rg10": "matched"
+      }
+    }
+  },
+  "reconciliation_path": {
+    "merchant_evidence": {
+      "input": {
+        "source_id": "source-merchant-credit-rg10",
+        "evidence_id": "evidence-merchant-credit-rg10",
+        "role": "stored_value_credit_lot",
+        "target_posting_id": "posting-stored-recharge-rg10",
+        "explicit_confirmation": true
+      },
+      "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-recharge-merchant-reconciled",
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_balance_change_count": 0,
+          "new_report_effect_count": 0,
+          "new_reconciliation_change_count": 1
+        }
+      },
+      "operation_context": {
+        "operation_type": "reconcile_merchant_credit",
+        "operation_id": "source-merchant-credit-rg10",
+        "baseline_id": "state-rg10-recharge-confirmed",
+        "result_id": "state-rg10-recharge-merchant-reconciled"
+      }
+    },
+    "bank_evidence": {
+      "input": {
+        "source_id": "source-bank-payment-rg10",
+        "evidence_id": "evidence-bank-payment-rg10",
+        "role": "bank_payment_posting",
+        "target_posting_id": "posting-bank-recharge-rg10",
+        "explicit_confirmation": true
+      },
+      "pre_operation_baseline_id": "state-rg10-recharge-merchant-reconciled",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-recharge-fully-reconciled",
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_balance_change_count": 0,
+          "new_report_effect_count": 0,
+          "new_reconciliation_change_count": 1
+        }
+      },
+      "operation_context": {
+        "operation_type": "reconcile_bank_payment",
+        "operation_id": "source-bank-payment-rg10",
+        "baseline_id": "state-rg10-recharge-merchant-reconciled",
+        "result_id": "state-rg10-recharge-fully-reconciled"
+      }
+    }
+  },
+  "import_path": {
+    "pending_states": {
+      "recharge": {
+        "id": "state-rg10-import-recharge-pending",
+        "formal_state_id": "state-rg10-opening",
+        "candidates": [
+          {
+            "id": "candidate-import-recharge-rg10",
+            "request_id": "request-import-recharge-rg10",
+            "candidate_type": "stored_value_recharge",
+            "status": "pending_confirmation",
+            "paid_amount": "1000.00",
+            "credited_amount": "1200.00",
+            "bonus_amount": "200.00",
+            "currency": "CNY"
+          }
+        ],
+        "source_records": [
+          {
+            "id": "source-import-recharge-rg10",
+            "source_type": "imported_stored_value_recharge",
+            "observed_at": "2026-01-10T10:00:00+08:00",
+            "amount": "1200.00",
+            "currency": "CNY",
+            "immutable_payload_digest": "sha256:rg10-import-recharge"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "evidence-import-recharge-rg10",
+            "source_id": "source-import-recharge-rg10",
+            "evidence_type": "imported_recharge_candidate",
+            "observed_at": "2026-01-10T10:00:00+08:00"
+          }
+        ],
+        "evidence_links": [],
+        "audit_links": [],
+        "reconciliation": {}
+      },
+      "spend": {
+        "id": "state-rg10-import-spend-pending",
+        "formal_state_id": "state-rg10-recharge-confirmed",
+        "candidates": [
+          {
+            "id": "candidate-import-spend-rg10",
+            "request_id": "request-import-spend-rg10",
+            "candidate_type": "stored_value_spend",
+            "status": "pending_confirmation",
+            "amount": "300.00",
+            "currency": "CNY"
+          }
+        ],
+        "source_records": [
+          {
+            "id": "source-import-spend-rg10",
+            "source_type": "imported_stored_value_spend",
+            "observed_at": "2026-01-20T12:00:00+08:00",
+            "amount": "300.00",
+            "currency": "CNY",
+            "immutable_payload_digest": "sha256:rg10-import-spend"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "evidence-import-spend-rg10",
+            "source_id": "source-import-spend-rg10",
+            "evidence_type": "imported_spend_candidate",
+            "observed_at": "2026-01-20T12:00:00+08:00"
+          }
+        ],
+        "evidence_links": [],
+        "audit_links": [],
+        "reconciliation": {}
+      }
+    },
+    "complete_unconfirmed": [
+      {
+        "id": "import-recharge-complete-unconfirmed-rg10",
+        "input": {
+          "request_id": "request-import-recharge-rg10",
+          "model": "stored_value_asset",
+          "payment_account_id": "asset-bank-a",
+          "stored_value_account_id": "asset-stored-value-x",
+          "paid_amount": "1000.00",
+          "credited_amount": "1200.00",
+          "bonus_amount": "200.00",
+          "currency": "CNY",
+          "occurred_at": "2026-01-10T10:00:00+08:00",
+          "lot_id": "lot-rg10-import-recharge",
+          "all_facts_complete": true,
+          "explicit_confirmation": false
+        },
+        "pre_operation_baseline_id": "state-rg10-opening",
+        "expected": {
+          "accepted": true,
+          "status": "pending_confirmation",
+          "pending_candidate_id": "candidate-import-recharge-rg10",
+          "resulting_state_id": "state-rg10-import-recharge-pending",
+          "formal_deltas": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_lot_count": 0,
+            "new_lot_consumption_count": 0,
+            "new_version_count": 0,
+            "new_adjustment_count": 0,
+            "new_confirmation_count": 0,
+            "new_report_effect_count": 0
+          },
+          "intake_deltas": {
+            "new_candidate_count": 1,
+            "new_source_record_count": 1,
+            "new_evidence_count": 1,
+            "new_evidence_link_count": 0,
+            "new_audit_link_count": 0
+          },
+          "reconciliation_deltas": {
+            "new_reconciliation_change_count": 0
+          }
+        }
+      },
+      {
+        "id": "import-spend-complete-unconfirmed-rg10",
+        "input": {
+          "request_id": "request-import-spend-rg10",
+          "model": "stored_value_asset",
+          "behavior": "stored_value_spend",
+          "stored_value_account_id": "asset-stored-value-x",
+          "category_id": "expense-category-meal-rg10",
+          "amount": "300.00",
+          "currency": "CNY",
+          "occurred_at": "2026-01-20T12:00:00+08:00",
+          "lot_allocations": [
+            {
+              "lot_id": "lot-rg10-20260110-a",
+              "amount": "300.00"
+            }
+          ],
+          "all_facts_complete": true,
+          "explicit_confirmation": false
+        },
+        "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+        "expected": {
+          "accepted": true,
+          "status": "pending_confirmation",
+          "pending_candidate_id": "candidate-import-spend-rg10",
+          "resulting_state_id": "state-rg10-import-spend-pending",
+          "formal_deltas": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_lot_count": 0,
+            "new_lot_consumption_count": 0,
+            "new_version_count": 0,
+            "new_adjustment_count": 0,
+            "new_confirmation_count": 0,
+            "new_report_effect_count": 0
+          },
+          "intake_deltas": {
+            "new_candidate_count": 1,
+            "new_source_record_count": 1,
+            "new_evidence_count": 1,
+            "new_evidence_link_count": 0,
+            "new_audit_link_count": 0
+          },
+          "reconciliation_deltas": {
+            "new_reconciliation_change_count": 0
+          }
+        }
+      }
+    ],
+    "incomplete_confirmations": [
+      {
+        "id": "import-recharge-only-merchant-rg10",
+        "input": {
+          "request_id": "request-import-recharge-rg10",
+          "merchant_credit_amount": "1200.00",
+          "merchant_source_id": "source-merchant-credit-rg10",
+          "bank_payment_confirmed": false,
+          "model_confirmed": false,
+          "explicit_confirmation": false
+        },
+        "pre_operation_baseline_id": "state-rg10-opening",
+        "expected": {
+          "accepted": false,
+          "status": "pending_confirmation",
+          "reason": "bank_payment_model_and_all_recharge_facts_required",
+          "resulting_state_id": "state-rg10-opening",
+          "state_unchanged": true,
+          "formal_deltas": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_lot_count": 0,
+            "new_lot_consumption_count": 0,
+            "new_version_count": 0,
+            "new_adjustment_count": 0,
+            "new_confirmation_count": 0,
+            "new_report_effect_count": 0
+          },
+          "intake_deltas": {
+            "new_candidate_count": 0,
+            "new_source_record_count": 0,
+            "new_evidence_count": 0,
+            "new_evidence_link_count": 0,
+            "new_audit_link_count": 0
+          },
+          "reconciliation_deltas": {
+            "new_reconciliation_change_count": 0
+          }
+        }
+      },
+      {
+        "id": "import-spend-without-category-rg10",
+        "input": {
+          "request_id": "request-import-spend-rg10",
+          "stored_value_account_id": "asset-stored-value-x",
+          "amount": "300.00",
+          "actual_time": "2026-01-20T12:00:00+08:00",
+          "category_confirmed": false,
+          "lot_allocation_confirmed": false,
+          "explicit_confirmation": false
+        },
+        "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+        "expected": {
+          "accepted": false,
+          "status": "pending_confirmation",
+          "reason": "spend_category_and_behavior_confirmation_required",
+          "resulting_state_id": "state-rg10-recharge-confirmed",
+          "state_unchanged": true,
+          "formal_deltas": {
+            "new_transaction_count": 0,
+            "new_posting_count": 0,
+            "new_lot_count": 0,
+            "new_lot_consumption_count": 0,
+            "new_version_count": 0,
+            "new_adjustment_count": 0,
+            "new_confirmation_count": 0,
+            "new_report_effect_count": 0
+          },
+          "intake_deltas": {
+            "new_candidate_count": 0,
+            "new_source_record_count": 0,
+            "new_evidence_count": 0,
+            "new_evidence_link_count": 0,
+            "new_audit_link_count": 0
+          },
+          "reconciliation_deltas": {
+            "new_reconciliation_change_count": 0
+          }
+        }
+      }
+    ]
+  },
+  "secondary_cases": {
+    "multi_lot_allocation": {
+      "base": {
+        "stored_value_account_id": "asset-stored-value-x",
+        "lots": [
+          {
+            "id": "lot-rg10-expiring-first",
+            "expires_at": "2026-02-01T23:59:59+08:00",
+            "loaded_at": "2026-01-01T09:00:00+08:00",
+            "face_value": "500.00",
+            "remaining_face_value": "500.00",
+            "paid_amount": "400.00",
+            "bonus_amount": "100.00"
+          },
+          {
+            "id": "lot-rg10-loaded-first",
+            "expires_at": "2026-03-01T23:59:59+08:00",
+            "loaded_at": "2026-01-02T09:00:00+08:00",
+            "face_value": "100.00",
+            "remaining_face_value": "100.00",
+            "paid_amount": "100.00",
+            "bonus_amount": "0.00"
+          },
+          {
+            "id": "lot-rg10-stable-first",
+            "expires_at": "2026-03-01T23:59:59+08:00",
+            "loaded_at": "2026-01-03T09:00:00+08:00",
+            "face_value": "100.00",
+            "remaining_face_value": "100.00",
+            "paid_amount": "100.00",
+            "bonus_amount": "0.00"
+          },
+          {
+            "id": "lot-rg10-stable-second",
+            "expires_at": "2026-03-01T23:59:59+08:00",
+            "loaded_at": "2026-01-03T09:00:00+08:00",
+            "face_value": "100.00",
+            "remaining_face_value": "100.00",
+            "paid_amount": "100.00",
+            "bonus_amount": "0.00"
+          }
+        ],
+        "effective_balance": "800.00"
+      },
+      "input": {
+        "amount": "800.00",
+        "merchant_allocation_provided": false,
+        "explicit_confirmation": true
+      },
+      "expected": {
+        "accepted": true,
+        "allocation_order": [
+          "lot-rg10-expiring-first",
+          "lot-rg10-loaded-first",
+          "lot-rg10-stable-first",
+          "lot-rg10-stable-second"
+        ],
+        "consumptions": [
+          {
+            "lot_id": "lot-rg10-expiring-first",
+            "amount": "500.00",
+            "paid_bonus_composition": "unknown"
+          },
+          {
+            "lot_id": "lot-rg10-loaded-first",
+            "amount": "100.00",
+            "paid_bonus_composition": "unknown"
+          },
+          {
+            "lot_id": "lot-rg10-stable-first",
+            "amount": "100.00",
+            "paid_bonus_composition": "unknown"
+          },
+          {
+            "lot_id": "lot-rg10-stable-second",
+            "amount": "100.00",
+            "paid_bonus_composition": "unknown"
+          }
+        ],
+        "remaining_face_values": {
+          "lot-rg10-expiring-first": "0.00",
+          "lot-rg10-loaded-first": "0.00",
+          "lot-rg10-stable-first": "0.00",
+          "lot-rg10-stable-second": "0.00"
+        },
+        "remaining_effective_balance": "0.00",
+        "forbidden_inference": [
+          "paid_first",
+          "bonus_first"
+        ]
+      }
+    },
+    "merchant_evidenced_allocation": {
+      "states": {
+        "baseline": {
+          "id": "state-rg10-merchant-allocation-baseline",
+          "source_records": [
+            {
+              "id": "source-merchant-allocation-rg10",
+              "source_type": "merchant_lot_allocation",
+              "observed_at": "2026-01-20T12:01:00+08:00",
+              "account_id": "asset-stored-value-x",
+              "amount": "100.00",
+              "currency": "CNY",
+              "immutable_payload_digest": "sha256:rg10-merchant-allocation"
+            }
+          ],
+          "evidence": [
+            {
+              "id": "evidence-merchant-allocation-rg10",
+              "source_id": "source-merchant-allocation-rg10",
+              "evidence_type": "merchant_lot_allocation",
+              "observed_at": "2026-01-20T12:01:00+08:00"
+            }
+          ],
+          "lots": [
+            {
+              "id": "lot-rg10-expiring-first",
+              "expires_at": "2026-02-01T23:59:59+08:00",
+              "loaded_at": "2026-01-01T09:00:00+08:00",
+              "face_value": "500.00",
+              "remaining_face_value": "500.00"
+            },
+            {
+              "id": "lot-rg10-loaded-first",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-02T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "100.00"
+            },
+            {
+              "id": "lot-rg10-stable-first",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-03T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "100.00"
+            },
+            {
+              "id": "lot-rg10-stable-second",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-03T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "100.00"
+            }
+          ],
+          "allocations": [],
+          "consumptions": []
+        },
+        "allocated": {
+          "id": "state-rg10-merchant-allocation-allocated",
+          "source_records": [
+            {
+              "id": "source-merchant-allocation-rg10",
+              "source_type": "merchant_lot_allocation",
+              "observed_at": "2026-01-20T12:01:00+08:00",
+              "account_id": "asset-stored-value-x",
+              "amount": "100.00",
+              "currency": "CNY",
+              "immutable_payload_digest": "sha256:rg10-merchant-allocation"
+            }
+          ],
+          "evidence": [
+            {
+              "id": "evidence-merchant-allocation-rg10",
+              "source_id": "source-merchant-allocation-rg10",
+              "evidence_type": "merchant_lot_allocation",
+              "observed_at": "2026-01-20T12:01:00+08:00"
+            }
+          ],
+          "lots": [
+            {
+              "id": "lot-rg10-expiring-first",
+              "expires_at": "2026-02-01T23:59:59+08:00",
+              "loaded_at": "2026-01-01T09:00:00+08:00",
+              "face_value": "500.00",
+              "remaining_face_value": "500.00"
+            },
+            {
+              "id": "lot-rg10-loaded-first",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-02T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "0.00"
+            },
+            {
+              "id": "lot-rg10-stable-first",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-03T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "100.00"
+            },
+            {
+              "id": "lot-rg10-stable-second",
+              "expires_at": "2026-03-01T23:59:59+08:00",
+              "loaded_at": "2026-01-03T09:00:00+08:00",
+              "face_value": "100.00",
+              "remaining_face_value": "100.00"
+            }
+          ],
+          "allocations": [
+            {
+              "id": "allocation-merchant-rg10",
+              "request_id": "request-merchant-allocation-rg10",
+              "source_id": "source-merchant-allocation-rg10",
+              "evidence_id": "evidence-merchant-allocation-rg10",
+              "lot_id": "lot-rg10-loaded-first",
+              "consumption_id": "consumption-merchant-rg10",
+              "amount": "100.00",
+              "allocation_source": "merchant_evidence"
+            }
+          ],
+          "consumptions": [
+            {
+              "id": "consumption-merchant-rg10",
+              "allocation_id": "allocation-merchant-rg10",
+              "source_id": "source-merchant-allocation-rg10",
+              "evidence_id": "evidence-merchant-allocation-rg10",
+              "lot_id": "lot-rg10-loaded-first",
+              "amount": "100.00",
+              "paid_bonus_composition": "unknown"
+            }
+          ]
+        }
+      },
+      "input": {
+        "request_id": "request-merchant-allocation-rg10",
+        "amount": "100.00",
+        "merchant_allocation_provided": true,
+        "merchant_evidence_id": "evidence-merchant-allocation-rg10",
+        "allocations": [
+          {
+            "lot_id": "lot-rg10-loaded-first",
+            "amount": "100.00"
+          }
+        ],
+        "explicit_confirmation": true
+      },
+      "pre_operation_baseline_id": "state-rg10-merchant-allocation-baseline",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-merchant-allocation-allocated",
+        "allocation_id": "allocation-merchant-rg10",
+        "allocation_source": "merchant_evidence",
+        "returned_stable_ids": ["allocation-merchant-rg10", "consumption-merchant-rg10"],
+        "consumptions": [
+          {
+            "id": "consumption-merchant-rg10",
+            "allocation_id": "allocation-merchant-rg10",
+            "source_id": "source-merchant-allocation-rg10",
+            "lot_id": "lot-rg10-loaded-first",
+            "amount": "100.00",
+            "paid_bonus_composition": "unknown",
+            "evidence_id": "evidence-merchant-allocation-rg10"
+          }
+        ],
+        "default_order_overridden": true,
+        "remaining_effective_balance": "700.00"
+      },
+      "operation_context": {
+        "operation_type": "apply_merchant_lot_allocation",
+        "operation_id": "request-merchant-allocation-rg10",
+        "baseline_id": "state-rg10-merchant-allocation-baseline",
+        "result_id": "state-rg10-merchant-allocation-allocated"
+      }
+    },
+    "rename_zero_effect": {
+      "input": {
+        "account_id": "asset-stored-value-x",
+        "new_account_name": "Merchant X stored value renamed",
+        "lot_id": "lot-rg10-20260110-a",
+        "new_lot_label": "Synthetic lot renamed"
+      },
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {
+        "resulting_state_id": "state-rg10-spend-confirmed",
+        "stable_account_id": "asset-stored-value-x",
+        "stable_lot_id": "lot-rg10-20260110-a",
+        "new_transaction_count": 0,
+        "new_posting_count": 0,
+        "balance_change_count": 0,
+        "report_change_count": 0,
+        "reconciliation_change_count": 0
+      }
+    },
+    "activation_boundary": {
+      "input": {
+        "request_id": "request-activation-rg10",
+        "stored_value_account_id": "asset-stored-value-x",
+        "existing_balance": "600.00",
+        "currency": "CNY",
+        "activation_at": "2026-02-01T00:00:00+08:00",
+        "created_at": "2026-02-01T00:05:00+08:00",
+        "explicit_confirmation": true,
+        "composition_confirmed": false
+      },
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {
+        "accepted": true,
+        "status": "confirmed",
+        "resulting_state_id": "state-rg10-activation-boundary",
+        "adjustment_transaction_type": "stored_value_pre_activation_balance_adjustment",
+        "stored_value_posting": "600.00",
+        "adjustment_equity_posting": "-600.00",
+        "is_recharge": false,
+        "is_ordinary_income": false,
+        "composition_status": "unknown",
+        "pre_activation_events_unchanged": true,
+        "reconstructed_history_replaces_adjustment": true,
+        "double_counting": false,
+        "formal_deltas": {
+          "new_transaction_count": 1,
+          "new_posting_count": 2,
+          "new_version_count": 1,
+          "new_adjustment_count": 1,
+          "new_confirmation_count": 1,
+          "new_report_effect_count": 1
+        },
+        "intake_deltas": {
+          "new_source_record_count": 1,
+          "new_evidence_count": 1,
+          "new_evidence_link_count": 1,
+          "new_audit_link_count": 1
+        },
+        "replacement_semantics": {
+          "adjustment_id": "adjustment-pre-activation-rg10",
+          "replacement_group_id": "replacement-group-pre-activation-rg10",
+          "mode": "replace_not_append",
+          "active_effect_rule": "exactly_one_of_adjustment_or_reconstructed_history",
+          "preserve_adjustment_transaction_and_version": true,
+          "full_reconstruction_algorithm": "out_of_scope"
+        }
+      },
+      "operation_context": {
+        "operation_type": "confirm_stored_value_activation_balance",
+        "operation_id": "request-activation-rg10",
+        "baseline_id": "state-rg10-opening",
+        "result_id": "state-rg10-activation-boundary"
+      }
+    }
+  },
+  "idempotency": {
+    "recharge_retry": {
+      "input_id": "request-recharge-rg10",
+      "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-recharge-confirmed",
+        "returned_stable_ids": ["transaction-recharge-rg10", "lot-rg10-20260110-a"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "spend_retry": {
+      "input_id": "request-spend-rg10",
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-spend-confirmed",
+        "returned_stable_ids": ["transaction-spend-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "expiry_retry": {
+      "input_id": "request-expiry-rg10",
+      "pre_operation_baseline_id": "state-rg10-expiry-confirmed",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-expiry-confirmed",
+        "returned_stable_ids": ["transaction-expiry-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "reminder_retry": {
+      "input_id": "request-reminder-rg10",
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-spend-confirmed",
+        "returned_stable_ids": ["request-reminder-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "merchant_reconciliation_retry": {
+      "input_id": "source-merchant-credit-rg10",
+      "pre_operation_baseline_id": "state-rg10-recharge-merchant-reconciled",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-recharge-merchant-reconciled",
+        "returned_stable_ids": ["evidence-link-merchant-recharge-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "bank_reconciliation_retry": {
+      "input_id": "source-bank-payment-rg10",
+      "pre_operation_baseline_id": "state-rg10-recharge-fully-reconciled",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-recharge-fully-reconciled",
+        "returned_stable_ids": ["evidence-link-bank-recharge-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "import_recharge_retry": {
+      "input_id": "request-import-recharge-rg10",
+      "pre_operation_baseline_id": "state-rg10-import-recharge-pending",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-import-recharge-pending",
+        "returned_stable_ids": ["candidate-import-recharge-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "import_spend_retry": {
+      "input_id": "request-import-spend-rg10",
+      "pre_operation_baseline_id": "state-rg10-import-spend-pending",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-import-spend-pending",
+        "returned_stable_ids": ["candidate-import-spend-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "activation_retry": {
+      "input_id": "request-activation-rg10",
+      "pre_operation_baseline_id": "state-rg10-activation-boundary",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-activation-boundary",
+        "returned_stable_ids": [
+          "transaction-activation-adjustment-rg10",
+          "adjustment-pre-activation-rg10",
+          "confirmation-activation-rg10"
+        ],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    },
+    "merchant_allocation_retry": {
+      "input_id": "request-merchant-allocation-rg10",
+      "pre_operation_baseline_id": "state-rg10-merchant-allocation-allocated",
+      "expected": {
+        "accepted": true,
+        "resulting_state_id": "state-rg10-merchant-allocation-allocated",
+        "returned_stable_ids": ["allocation-merchant-rg10", "consumption-merchant-rg10"],
+        "formal_deltas": {
+          "new_transaction_count": 0,
+          "new_posting_count": 0,
+          "new_lot_count": 0,
+          "new_lot_consumption_count": 0,
+          "new_version_count": 0,
+          "new_adjustment_count": 0,
+          "new_confirmation_count": 0,
+          "new_report_effect_count": 0
+        },
+        "intake_deltas": {
+          "new_candidate_count": 0,
+          "new_source_record_count": 0,
+          "new_evidence_count": 0,
+          "new_evidence_link_count": 0,
+          "new_audit_link_count": 0
+        },
+        "reconciliation_deltas": {
+          "new_reconciliation_change_count": 0
+        }
+      }
+    }
+  },
+  "invalid_inputs": [
+    {
+      "id": "float-amount",
+      "input": {"paid_amount": 1000.0},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "exact_decimal_string_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "numeric-credited-amount",
+      "input": {"credited_amount": 1200.0},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "exact_decimal_string_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "numeric-bonus-amount",
+      "input": {"bonus_amount": 200.0},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "exact_decimal_string_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "nonpositive-amount",
+      "input": {"paid_amount": "0.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "must_be_positive", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "nonpositive-credited-amount",
+      "input": {"credited_amount": "0.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "credited_amount_must_be_positive", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "negative-bonus-amount",
+      "input": {"paid_amount": "1000.00", "credited_amount": "999.00", "bonus_amount": "-1.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "bonus_amount_must_be_zero_or_positive", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "credited-less-than-paid",
+      "input": {"paid_amount": "1000.00", "credited_amount": "900.00", "bonus_amount": "0.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "credited_must_equal_paid_plus_bonus", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "component-mismatch",
+      "input": {"paid_amount": "1000.00", "credited_amount": "1200.00", "bonus_amount": "100.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "component_sum_mismatch", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "disabled-stored-account",
+      "input": {"stored_value_account_id": "asset-stored-value-disabled"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "stored_value_account_not_enabled", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "model-overlap",
+      "input": {"model": "immediate_expense", "stored_value_account_id": "asset-stored-value-x"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "stored_value_models_must_not_overlap", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "spend-over-balance",
+      "input": {"stored_value_account_id": "asset-stored-value-x", "amount": "1201.00"},
+      "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+      "expected": {"accepted": false, "reason": "insufficient_effective_stored_balance", "resulting_state_id": "state-rg10-recharge-confirmed", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "invalid-lot-allocation",
+      "input": {"lot_id": "lot-rg10-20260110-a", "amount": "901.00", "merchant_allocation_provided": true},
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {"accepted": false, "reason": "lot_allocation_exceeds_remaining_face_value", "resulting_state_id": "state-rg10-spend-confirmed", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "unconfirmed-expiry",
+      "input": {"lot_id": "lot-rg10-20260110-a", "amount": "100.00", "explicit_confirmation": false},
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {"accepted": false, "reason": "actual_expiry_requires_explicit_confirmation", "resulting_state_id": "state-rg10-spend-confirmed", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "guessed-composition",
+      "input": {"lot_id": "lot-rg10-20260110-a", "paid_bonus_composition": "paid_first"},
+      "pre_operation_baseline_id": "state-rg10-spend-confirmed",
+      "expected": {"accepted": false, "reason": "paid_bonus_composition_must_be_evidenced", "resulting_state_id": "state-rg10-spend-confirmed", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "unknown-category",
+      "input": {"category_id": "category-unknown-rg10", "amount": "10.00"},
+      "pre_operation_baseline_id": "state-rg10-recharge-confirmed",
+      "expected": {"accepted": false, "reason": "active_secondary_category_required", "resulting_state_id": "state-rg10-recharge-confirmed", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "unknown-payment-account",
+      "input": {"payment_account_id": "asset-unknown-rg10"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "unknown_payment_account", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "unowned-payment-account",
+      "input": {"payment_account_id": "asset-bank-external"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "owned_payment_asset_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "wrong-payment-account-kind",
+      "input": {"payment_account_id": "expense-consumption-rg10"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "owned_payment_asset_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "wrong-stored-account-kind",
+      "input": {"stored_value_account_id": "asset-bank-a"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "enabled_restricted_stored_value_asset_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    },
+    {
+      "id": "wrong-currency",
+      "input": {"currency": "USD", "paid_amount": "1000.00"},
+      "pre_operation_baseline_id": "state-rg10-opening",
+      "expected": {"accepted": false, "reason": "same_cny_currency_required", "resulting_state_id": "state-rg10-opening", "state_unchanged": true, "formal_deltas": {"new_transaction_count": 0, "new_posting_count": 0, "new_lot_count": 0, "new_lot_consumption_count": 0, "new_version_count": 0, "new_adjustment_count": 0, "new_confirmation_count": 0, "new_report_effect_count": 0}, "intake_deltas": {"new_candidate_count": 0, "new_source_record_count": 0, "new_evidence_count": 0, "new_evidence_link_count": 0, "new_audit_link_count": 0}, "reconciliation_deltas": {"new_reconciliation_change_count": 0}}
+    }
+  ],
+  "forbidden_side_effects": [
+    "immediate_expense_when_stored_value_model_enabled",
+    "duplicate_consumption_at_recharge",
+    "ordinary_cash_income_for_bonus",
+    "split_formal_asset_into_paid_and_bonus_accounts",
+    "paid_first_or_bonus_first_inference",
+    "negative_stored_value_asset",
+    "hidden_clearing_posting",
+    "expiry_loss_from_date_or_reminder_alone",
+    "bank_evidence_proves_merchant_credit",
+    "merchant_evidence_proves_bank_payment",
+    "automatic_import_confirmation",
+    "reconciliation_changes_balance",
+    "duplicate_effect_on_retry"
+  ]
+}
