@@ -247,7 +247,7 @@ class GoldenV2Rg01ExpectedTests(unittest.TestCase):
                 "id": self.v1["case"]["id"],
                 "level": self.v1["case"]["level"],
                 "rule_version": self.v1["case"]["rule_version"],
-                "approval_status": "draft_for_review",
+                "approval_status": "approved",
                 "ledger_id": self.v1["case"]["ledger_id"],
                 "timezone": self.v1["case"]["timezone"],
                 "currencies": [
