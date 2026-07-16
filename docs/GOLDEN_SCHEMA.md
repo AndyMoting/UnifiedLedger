@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-This document is the proposed Golden Schema v2 data contract for final review. It is a design artifact, not a JSON Schema, validator, adapter, migration implementation, or approval to rewrite a frozen fixture. The examples in `docs/examples/golden-schema-v2/` are anonymous representative drafts and are not migrated expected outputs.
+This document is the approved Golden Schema v2 data contract. The JSON Schema and semantic validator implement this contract, but this document does not authorize an adapter, a frozen-fixture rewrite, or publication of migrated output. The examples in `docs/examples/golden-schema-v2/` are anonymous representative drafts and are not migrated expected outputs.
 
 The signed-in frozen specification, tests, and v1 fixture for each current RG remain the migration authority. Historical external RG numbering does not override current repository RG identities.
 
@@ -19,7 +19,7 @@ Every document is one JSON object with these required members:
 | `states` | Complete state snapshots owned by roots. |
 | `operations` | Ordered assertions that connect baseline and result states. |
 
-`case` requires `id`, `level`, `rule_version`, `approval_status`, `ledger_id`, `timezone`, and `currencies`. `approval_status` is `draft_for_review` for the representative examples. `currencies` is a set-like array of `{code, precision}` records. Currency code and precision determine every decimal amount in the case.
+`case` requires `id`, `level`, `rule_version`, `approval_status`, `ledger_id`, `timezone`, and `currencies`. `approval_status` is `draft_for_review` or `approved`; the representative examples remain `draft_for_review`. `approved` means only that the expected output received independent review and explicit user approval. It does not replace `rule_version`, does not mean the governing business rule is newly frozen, and does not authorize an adapter or fixture rewrite. `currencies` is a set-like array of `{code, precision}` records. Currency code and precision determine every formal amount in the case.
 
 Each root requires `id`, `purpose`, `initial_state_id`, and ordered `operation_ids`. A state and every entity it owns belongs to exactly one root. References across roots are invalid. A root never inherits catalog entries, entities, balances, reports, or status from another root. Variants and independent baselines therefore use separate roots instead of being appended to the main path.
 
@@ -51,7 +51,7 @@ The scalar aliases used below are: `id` = non-empty stable ID string; `decimal` 
 | Object | Required fields | Optional fields and enums | References |
 | --- | --- | --- | --- |
 | envelope | `contract:string`, `contract_version:string`, `case:object`, `roots:array`, `states:array`, `operations:array` | none | roots, states, and operations are internally linked |
-| case | `id:id`, `level`, `rule_version:integer >= 1`, `approval_status`, `ledger_id:id`, `timezone:string`, `currencies:array` | `level`: `core_required`, `core_reserved`, `future_draft`; `approval_status`: currently only `draft_for_review` | none |
+| case | `id:id`, `level`, `rule_version:integer >= 1`, `approval_status`, `ledger_id:id`, `timezone:string`, `currencies:array` | `level`: `core_required`, `core_reserved`, `future_draft`; `approval_status`: `draft_for_review`, `approved` | none |
 | currency declaration | `code:currency`, `precision:integer 0..18` | none | none |
 | root | `id:id`, `purpose:string`, `initial_state_id:id`, `operation_ids:id[]` | none | initial state and operations in same root |
 | state | all fields listed in Complete states | `as_of_operation_id` is `id` or `null`; all collection fields are required | same-root entities only |
@@ -153,7 +153,7 @@ The RG-09 verification-status registry used here is `balanced_with_unexplained_a
 
 ### Action registry
 
-Operation `input` is closed per `action_type`. These are the only actions registered by this contract:
+For `accepted` and `no_change`, operation `input` is closed per `action_type` and `attempted_input` is forbidden. These are the strict action inputs registered by this contract:
 
 | Action type | Operation class | Required input fields |
 | --- | --- | --- |
@@ -165,6 +165,34 @@ Operation `input` is closed per `action_type`. These are the only actions regist
 | `confirm_explanation_allocation` | `reversal` | `request_id`, `adjustment_id`, `transaction_id`, `target_account_id`, `actual_occurred_at`, `real_transaction_amount`, `currency`, `target_observed_at`, `allocation_direction`, `explanation_amount`, all seven `confirms_*:true` fields shown in the representative sample, `explicit_confirmation:true`, `confirmed_at` |
 
 For `confirm_explanation_allocation`, `allocation_direction` is currently `same_as_original_adjustment`; required booleans are `confirms_target_account`, `confirms_actual_occurred_at`, `confirms_real_transaction_amount`, `confirms_currency`, `confirms_target_observed_at`, `confirms_allocation_direction`, and `confirms_explanation_amount`. None of these facts may be inherited from the transaction, candidate, or prior operation.
+
+The only registered rejected action is `manual_expense`. It uses `operation_class=rejection`, forbids strict `input`, and requires a closed sparse `attempted_input`:
+
+| Field | Presence and type |
+| --- | --- |
+| `request_id` | required non-empty ID |
+| `amount` | optional decimal string or `null` |
+| `category_id` | optional ID or `null` |
+| `payment_account_id` | optional ID or `null` |
+| `currency` | optional non-empty declared currency string |
+| `occurred_at` | optional strict timestamp |
+| `note` | optional string |
+| `explicit_confirmation` | optional boolean |
+
+`null` records explicit absence; omission means the field was not submitted. Migration and validation must not synthesize omitted currency, time, note, or confirmation facts. Any non-null currency, timestamp, category reference, or account reference that is present must pass lexical, timezone, declaration, and catalog-reference validation before the business rejection is evaluated. Unknown attempted fields are rejected.
+
+A rejected outcome requires both `reason_code` and `field_path`. The path is rooted at the attempted payload and has the form `$.attempted_input.<field>`. RG-01 rejected `manual_expense` validation uses this stable first-failure precedence:
+
+| Precedence | Attempted failure | `field_path` | `reason_code` |
+| ---: | --- | --- | --- |
+| 1 | amount omitted or `null` | `$.attempted_input.amount` | `missing_required_field` |
+| 2 | payment account omitted or `null` | `$.attempted_input.payment_account_id` | `missing_required_field` |
+| 3 | category omitted or `null` | `$.attempted_input.category_id` | `missing_required_field` |
+| 4 | amount is zero or negative | `$.attempted_input.amount` | `must_be_positive` |
+| 5 | category is a primary category | `$.attempted_input.category_id` | `secondary_category_required` |
+| 6 | secondary category is inactive | `$.attempted_input.category_id` | `category_inactive` |
+
+The validator recomputes the first failure and requires exact agreement with both outcome fields. A sparse payload that does not match one of these registered failures is invalid; sparse accepted/no-change input never becomes valid through this branch.
 
 All other RG actions require an independent contract amendment that freezes their operation class and closed input before Schema, validator, adapter, or migration implementation.
 
@@ -183,7 +211,9 @@ The single formal chain is:
 - Historical versions remain present. Whether a version is current or superseded is derived from `current_version_id`; an immutable old version is not rewritten to carry a new status.
 - Every posting set balances exactly to zero per currency. Binary floating-point values are forbidden.
 
-`occurred_at` is the economic occurrence time, `statistics_at` controls report period attribution, and `effective_at` controls balance replay. `created_at` is an optional actual creation or confirmation time. These fields are not interchangeable.
+`occurred_at` is the economic occurrence time, `statistics_at` controls report period attribution, and `effective_at` controls balance replay. `created_at` is an optional actual creation or confirmation time. These fields are not generally interchangeable.
+
+A legacy source timestamp may expand into more than one economic-time role only when an approved per-RG mapping identifies that exact source field as a collapsed fact carrying those roles. The exact source timestamp text is preserved in each approved target role. This is not a general default, does not permit copying an arbitrary available time, and never permits generation of `created_at` or `confirmed_at`. RG-01 v1 is explicitly approved to expand its collapsed `occurred_at` into transaction-version `occurred_at`, `statistics_at`, and `effective_at`; its note-only replacement reuses the prior version's three economic times.
 
 Canonical transaction types include `opening_balance`, `expense`, `income`, `account_transfer`, `credit_repayment`, `refund_receipt`, `lending_disbursement`, `lending_collection`, `balance_adjustment`, `balance_adjustment_reversal`, `stored_value_recharge`, `stored_value_spend`, `stored_value_expiry_loss`, and `stored_value_pre_activation_balance_adjustment`. The last token is preserved as a canonical type; migration must not alias or replace it silently.
 
@@ -212,12 +242,12 @@ No state may contain a redundant entity registry or nested projection that dupli
 
 ## Operations
 
-An operation requires:
+Every operation requires:
 
 - `id`, `root_id`, and integer `sequence` unique within the root.
 - `operation_class` and `action_type` as separate fields.
 - `baseline_state_id` and `result_state_id`.
-- `input`, containing all facts required by that action. Missing values are not inherited from a candidate or earlier operation.
+- Exactly one outcome-appropriate payload: strict `input` for `accepted` and `no_change`, or the registered sparse `attempted_input` for `rejected`. Missing values are not inherited from a candidate or earlier operation.
 - `outcome`, `status_changes`, `deltas`, and `returned_ids`.
 
 Canonical operation classes are `creation`, `update`, `read`, `rejection`, `reconciliation`, `status_transition`, `reversal`, and `adjustment`. Candidate confirmation uses the class of its actual effect: for example, transaction creation is `creation`, evidence binding is `reconciliation`, and RG-09 explanation allocation plus its counter-adjustment is `reversal`.
@@ -227,7 +257,7 @@ Canonical operation classes are `creation`, `update`, `read`, `rejection`, `reco
 | Status | Meaning |
 | --- | --- |
 | `accepted` | The requested action completed and its declared result state is authoritative. It may have zero financial deltas but must have the declared state or intake effect. |
-| `rejected` | Validation or business rules denied the action atomically. `reason_code` is required; baseline and result states are byte-equivalent after canonicalization. |
+| `rejected` | Validation or business rules denied the action atomically. `reason_code` and `field_path` are required; baseline and result states are byte-equivalent after canonicalization, all deltas and status changes are empty, and `returned_ids` is empty. |
 | `no_change` | The request was valid but intentionally produced no new state, normally an idempotent replay. `reason_code` is required; baseline and result states are byte-equivalent and returned IDs identify the prior result. |
 
 Candidate states such as `pending_confirmation`, `confirmed`, and `rejected` are entity statuses, not operation outcomes. Incomplete intake that successfully saves a pending candidate is an `accepted` operation with intake deltas and zero formal ledger deltas.
@@ -276,7 +306,7 @@ Reports are derived from current transaction versions in the complete target sta
 
 ### Decimal and currency
 
-Amounts are JSON strings in canonical fixed precision. For precision `p`, the form is `0` or a non-zero integer part followed by exactly `p` fractional digits, with an optional leading `-`; leading `+`, exponent notation, leading zeroes, `.5`, `1.`, and negative zero are invalid. For CNY precision 2, examples are `0.00`, `35.80`, and `-20.00`.
+Formal and strict accepted/no-change amounts are JSON strings in canonical fixed precision. For precision `p`, the form is `0` or a non-zero integer part followed by exactly `p` fractional digits, with an optional leading `-`; leading `+`, exponent notation, leading zeroes, `.5`, `1.`, and negative zero are invalid. For CNY precision 2, examples are `0.00`, `35.80`, and `-20.00`. A rejected `manual_expense.attempted_input.amount` additionally permits a negative-zero integer part such as `-0.01` so the failed submission can be represented; it is never a valid formal amount.
 
 Python semantic validation verifies that every amount uses the declared currency precision and that arithmetic uses exact decimal or integer minor units.
 
@@ -286,9 +316,27 @@ Timestamps use RFC 3339 date-time strings with seconds and an explicit `Z` or nu
 
 An absent time property means the source did not provide that time. Timestamp properties may not be `null`, copied from another semantic time, derived from file order, or filled with migration/runtime current time. Required economic times must instead cause preserve/map/derive/reject classification to reject an unresolvable record. Representative sample times are included only where the governing fixture or sample input explicitly defines their semantics.
 
+The sole migration exception is an explicit per-RG collapsed-time approval as defined under Formal ledger ownership. Such an approval names the source field and every target role; it is evidence that the one legacy fact already carried those meanings, not permission to invent missing times. RG-01 has this approval for `occurred_at`, `statistics_at`, and `effective_at` only.
+
 ### IDs and canonicalization
 
-Existing valid stable IDs are preserved. A missing ID is generated deterministically with UUIDv5 using namespace `cfad3f84-edb1-5838-ae53-aae49684cf1a`. The UUID name is the UTF-8 string `case-id + "\n" + root-id + "\n" + entity-kind + "\n" + semantic-key`. For migration, `semantic-key` is the approved source JSON Pointer plus any approved occurrence discriminator; for authored fixtures it is an explicit stable semantic key. Traversal order, display names, current time, machine paths, and private data are forbidden inputs. A collision between different canonical identity inputs is a hard rejection.
+Existing valid stable IDs are preserved. A missing ID is generated deterministically with UUIDv5 using namespace `cfad3f84-edb1-5838-ae53-aae49684cf1a`.
+
+Migration identity uses a normalized source locator, not JSON Pointer. Its grammar is root `$`, object member `.key`, and array wildcard `[*]`. A concrete array index, slash pointer, traversal position, control character, or empty stable occurrence discriminator is invalid. The semantic key is exactly:
+
+`source-locator + "\noccurrence=" + stable-occurrence-discriminator`
+
+`migration_semantic_key(source_locator, occurrence_discriminator)` constructs that key. A root is bootstrapped without a root-ID dependency by `deterministic_v2_root_id`; its UUIDv5 name is exactly:
+
+`case-id + "\n@root\nroot\n" + semantic-key`
+
+After the root exists, `deterministic_v2_migration_id` generates descendants with the exact UUIDv5 name:
+
+`case-id + "\n" + root-id + "\n" + entity-kind + "\n" + semantic-key`
+
+The existing `deterministic_v2_id(case_id, root_id, entity_kind, semantic_key)` remains the authored-fixture-compatible helper. Stable occurrence discriminators prefer source stable IDs, request IDs, case IDs, or approved semantic occurrence IDs. Array index, traversal order, display names, current time, machine paths, and private data are forbidden inputs. A collision between different canonical identity inputs is a hard rejection.
+
+The base case validator cannot infer source locators or occurrence discriminators from v2 output alone and therefore cannot prove migration IDs by reverse inspection. An adapter or semantic-equivalence validator must read the approved path map, call the migration helpers with the approved locator/discriminator inputs, and compare every generated ID. It must not claim that ordinary v2 case validation performed this migration check.
 
 JSON input follows RFC 8259 and duplicate object member names are rejected. Before hashing or byte comparison, set-like arrays are sorted by their declared key, then the document is serialized using RFC 8785 JSON Canonicalization Scheme without Unicode normalization. Fingerprints are lowercase `sha256:<hex>` over canonical UTF-8 bytes.
 
@@ -315,7 +363,7 @@ Posting order is not accounting semantics; `posting_ids` and `postings` are set-
 
 JSON Schema Draft 2020-12 is responsible for envelope shape, required members, primitive types, enums, conditional field presence, decimal/time/ID lexical patterns, array item shape, and closed objects where specified.
 
-Python validation is responsible for cross-reference existence and target kind, root isolation, stable-ID uniqueness, deterministic ID checks, catalog ownership, complete balance membership, currency precision, per-currency posting-set balance, transaction/version/posting-set ownership, append-only history, current-version replay, exact balances, reports, posting reconciliation eligibility, derived business status, operation delta recomputation, idempotency, canonical fingerprints, and migration mapping completeness.
+Base Python case validation is responsible for cross-reference existence and target kind, root isolation, stable-ID uniqueness, catalog ownership, complete balance membership, currency precision, per-currency posting-set balance, transaction/version/posting-set ownership, append-only history, current-version replay, exact balances, reports, posting reconciliation eligibility, derived business status, operation delta recomputation, and idempotency. Canonical fingerprints remain a publication-layer check. Deterministic migration-ID and mapping-completeness checks belong to adapter/equivalence validation because only that layer has the approved source locator and occurrence discriminator inputs.
 
 Neither layer may auto-correct an invalid fixture. Validation failure reports the path and rule and leaves the input unchanged.
 
@@ -323,9 +371,9 @@ Neither layer may auto-correct an invalid fixture. Validation failure reports th
 
 The gates are independent and sequential:
 
-1. **Contract and representative examples:** this document and the RG-01/RG-09 examples receive independent specification and quality review, then explicit final approval. Until then, this draft authorizes no implementation.
-2. **Schema and validator:** only final approval of gate 1 authorizes a JSON Schema 2020-12 and semantic validator prototype. Passing this gate does not authorize adapters or fixture rewrites.
-3. **Adapter:** every RG receives an approved normalized JSON-path inventory and a path-by-path `preserve`, `map`, `derive`, or `reject` decision. The unclassified path count must be zero. Alias and replacement decisions must be explicit. Only then may that RG's adapter be implemented.
-4. **Fixture migration:** each RG receives an independently reviewed expected v2 output and semantic-equivalence decision. Migration must be deterministic, resumable, case-isolated, atomic on publication, and auditable by pre/post object counts and content hashes. Only explicit approval opens fixture rewrite or publication.
+1. **Contract:** the data contract requires independent specification and quality review followed by explicit final approval. This contract has passed that gate. Representative examples remain anonymous non-output drafts and do not acquire migration approval from the contract gate.
+2. **Schema and validator:** contract approval authorizes the JSON Schema 2020-12 and semantic validator implementation. Passing this gate does not authorize adapters or fixture rewrites.
+3. **Per-RG mapping:** every RG receives an approved normalized-source-locator inventory and a path-by-path `preserve`, `map`, `derive`, or `reject` decision. The unclassified path count must be zero, and alias/replacement decisions must be explicit. Passing this gate authorizes generation of a `draft_for_review` expected output, not adapter implementation or fixture rewrite.
+4. **Expected output, adapter, and fixture migration:** each RG receives an independently reviewed expected v2 output and semantic-equivalence decision, followed by explicit user approval. Only then may adapter implementation or fixture migration be separately authorized. Migration must be deterministic, resumable, case-isolated, atomic on publication, and auditable by pre/post object counts and content hashes. Publication still requires explicit approval.
 
 Migration never mutates v1 input in place. Failure cannot expose a partial v2 case as successful. Recovery cannot mix old and new outputs. Representative examples in this directory are not migration baselines, approved release artifacts, or expected outputs for any gate after gate 1.

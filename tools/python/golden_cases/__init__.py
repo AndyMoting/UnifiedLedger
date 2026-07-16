@@ -13,7 +13,10 @@ from .validator import (
 
 _V2_EXPORTS = {
     "deterministic_v2_id",
+    "deterministic_v2_migration_id",
+    "deterministic_v2_root_id",
     "load_golden_case_v2",
+    "migration_semantic_key",
     "validate_golden_case_v2",
 }
 
@@ -35,8 +38,11 @@ __all__ = [
     "GoldenCaseError",
     "assert_expected_balances",
     "deterministic_v2_id",
+    "deterministic_v2_migration_id",
+    "deterministic_v2_root_id",
     "load_golden_case",
     "load_golden_case_v2",
+    "migration_semantic_key",
     "replay_balances",
     "validate_case_envelope",
     "validate_golden_case_v2",

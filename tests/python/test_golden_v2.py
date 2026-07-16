@@ -13,8 +13,11 @@ from jsonschema import Draft202012Validator
 from golden_cases import (
     GoldenCaseError,
     deterministic_v2_id,
+    deterministic_v2_migration_id,
+    deterministic_v2_root_id,
     load_golden_case,
     load_golden_case_v2,
+    migration_semantic_key,
     validate_golden_case_v2,
 )
 
@@ -25,6 +28,7 @@ SCHEMA_PATH = REPOSITORY_ROOT / "schemas" / "golden-case-v2.schema.json"
 RG01_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-01.json"
 RG09_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-09.json"
 RG01_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-01.json"
+RG01_PATH_MAP = REPOSITORY_ROOT / "docs" / "migrations" / "golden-v2" / "rg-01-path-map.json"
 
 
 def load_rg01() -> dict:
@@ -76,6 +80,48 @@ def add_rg01_no_change_retry(case: dict | None = None) -> dict:
     }
     case["operations"].append(retry)
     case["roots"][0]["operation_ids"].append(retry["id"])
+    return case
+
+
+def add_rg01_rejected_attempt(
+    attempted_input: dict,
+    field: str,
+    reason_code: str,
+    case: dict | None = None,
+) -> dict:
+    case = deepcopy(case) if case is not None else load_rg01()
+    baseline = case["states"][-1]
+    result = deepcopy(baseline)
+    result["id"] = "state-rg01-rejected"
+    result["as_of_operation_id"] = "operation-rg01-rejected"
+    case["states"].append(result)
+
+    operation = deepcopy(case["operations"][0])
+    operation["id"] = "operation-rg01-rejected"
+    operation["sequence"] = 3
+    operation["operation_class"] = "rejection"
+    operation["baseline_state_id"] = baseline["id"]
+    operation["result_state_id"] = result["id"]
+    operation.pop("input")
+    operation["attempted_input"] = deepcopy(attempted_input)
+    operation["outcome"] = {
+        "status": "rejected",
+        "reason_code": reason_code,
+        "field_path": f"$.attempted_input.{field}",
+    }
+    operation["status_changes"] = []
+    for changes in operation["deltas"]["entity_changes"].values():
+        changes["added_ids"] = []
+        changes["changed_ids"] = []
+        changes["removed_ids"] = []
+    operation["deltas"]["value_changes"] = {
+        "balances": [],
+        "reports": [],
+        "derived_statuses": [],
+    }
+    operation["returned_ids"] = []
+    case["operations"].append(operation)
+    case["roots"][0]["operation_ids"].append(operation["id"])
     return case
 
 
@@ -228,6 +274,123 @@ class GoldenV2SchemaTests(unittest.TestCase):
         for path in (RG01_V2_PATH, RG09_V2_PATH):
             with self.subTest(path=path.name):
                 validate_golden_case_v2(load_golden_case_v2(path))
+
+    def test_rg01_path_map_records_resolved_contract_gap_counts(self):
+        path_map = json.loads(RG01_PATH_MAP.read_text(encoding="utf-8"))
+        self.assertEqual(path_map["contract_gap_count"], 0)
+        self.assertEqual(path_map["resolved_contract_gap_count"], 4)
+        self.assertEqual(len(path_map["resolved_contract_gaps"]), 4)
+
+        entries = {item["source_path"]: item for item in path_map["entries"]}
+        expected_count_targets = {
+            "$.distinct_reentry.expected.effective_transaction_count": [
+                "$.states[*].transactions",
+                "$.states[*].transactions[*].current_version_id",
+            ],
+            "$.distinct_reentry.expected.new_transaction_count": [
+                "$.operations[*].deltas.entity_changes.transactions.added_ids"
+            ],
+            "$.idempotency.expected.funding_effect_count": [
+                "$.states[*].postings",
+                "$.operations[*].deltas.entity_changes.postings.added_ids",
+            ],
+            "$.idempotency.expected.new_posting_set_count": [
+                "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+            ],
+            "$.idempotency.expected.new_transaction_count": [
+                "$.operations[*].deltas.entity_changes.transactions.added_ids"
+            ],
+            "$.idempotency.expected.new_version_count": [
+                "$.operations[*].deltas.entity_changes.transaction_versions.added_ids"
+            ],
+            "$.invalid_inputs[*].expected.new_posting_count": [
+                "$.operations[*].deltas.entity_changes.postings.added_ids"
+            ],
+            "$.invalid_inputs[*].expected.new_transaction_count": [
+                "$.operations[*].deltas.entity_changes.transactions.added_ids"
+            ],
+            "$.invalid_inputs[*].expected.state_changes.new_version_count": [
+                "$.operations[*].deltas.entity_changes.transaction_versions.added_ids"
+            ],
+            "$.note_update.expected.effective_transaction_count": [
+                "$.states[*].transactions",
+                "$.states[*].transactions[*].current_version_id",
+            ],
+            "$.note_update.expected.funding_effect_count": [
+                "$.states[*].postings",
+                "$.operations[*].deltas.entity_changes.postings.added_ids",
+            ],
+        }
+        for source_path, target_paths in expected_count_targets.items():
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entries[source_path]["target_paths"], target_paths)
+
+    def test_approval_status_allows_only_review_draft_or_explicit_approval(self):
+        approved = load_rg01()
+        approved["case"]["approval_status"] = "approved"
+        validate_golden_case_v2(approved)
+
+        invalid = load_rg01()
+        invalid["case"]["approval_status"] = "frozen"
+        assert_invalid(self, invalid, r"\$\.case\.approval_status")
+
+    def test_operation_input_shape_is_outcome_conditional(self):
+        accepted_sparse = load_rg01()
+        del accepted_sparse["operations"][0]["input"]["currency"]
+        assert_invalid(self, accepted_sparse, r"\$\.operations\[0\].*input")
+
+        accepted_with_attempt = load_rg01()
+        accepted_with_attempt["operations"][0]["attempted_input"] = {
+            "request_id": "unexpected-attempt"
+        }
+        assert_invalid(
+            self, accepted_with_attempt, r"\$\.operations\[0\].*attempted_input"
+        )
+
+        rejected = add_rg01_rejected_attempt(
+            {
+                "request_id": "request-rg01-rejected",
+                "amount": None,
+                "category_id": "expense-category-breakfast",
+                "payment_account_id": "asset-bank-a",
+            },
+            "amount",
+            "missing_required_field",
+        )
+        validate_golden_case_v2(rejected)
+
+        with_strict_input = deepcopy(rejected)
+        with_strict_input["operations"][-1]["input"] = deepcopy(
+            load_rg01()["operations"][0]["input"]
+        )
+        assert_invalid(self, with_strict_input, r"\$\.operations\[2\].*input")
+
+        unknown_attempted_field = deepcopy(rejected)
+        unknown_attempted_field["operations"][-1]["attempted_input"]["unexpected"] = True
+        assert_invalid(
+            self,
+            unknown_attempted_field,
+            r"\$\.operations\[2\].*attempted_input.*unexpected",
+        )
+
+    def test_rejected_operation_requires_rejection_class_and_located_reason(self):
+        base = add_rg01_rejected_attempt(
+            {"request_id": "request-rg01-rejected", "amount": None},
+            "amount",
+            "missing_required_field",
+        )
+
+        wrong_class = deepcopy(base)
+        wrong_class["operations"][-1]["operation_class"] = "creation"
+        assert_invalid(self, wrong_class, r"\$\.operations\[2\]")
+
+        missing_field_path = deepcopy(base)
+        del missing_field_path["operations"][-1]["outcome"]["field_path"]
+        assert_invalid(self, missing_field_path, r"\$\.operations\[2\].*outcome")
+
+        bad_field_path = deepcopy(base)
+        bad_field_path["operations"][-1]["outcome"]["field_path"] = "$.input.amount"
+        assert_invalid(self, bad_field_path, r"\$\.operations\[2\].*outcome.*field_path")
 
     def test_loader_rejects_duplicate_object_keys(self):
         with TemporaryDirectory() as directory:
@@ -512,11 +675,11 @@ class GoldenV2OperationTests(unittest.TestCase):
         )
 
     def test_rejected_and_no_change_operations_are_atomic(self):
-        rejected = add_rg01_no_change_retry()
-        rejected["operations"][-1]["outcome"] = {
-            "status": "rejected",
-            "reason_code": "test_reason",
-        }
+        rejected = add_rg01_rejected_attempt(
+            {"request_id": "request-rg01-rejected", "amount": None},
+            "amount",
+            "missing_required_field",
+        )
         rejected_source = {
             "id": "source-rejected-side-effect",
             "type": "explicit_balance_observation",
@@ -532,6 +695,16 @@ class GoldenV2OperationTests(unittest.TestCase):
             "added_ids"
         ] = [rejected_source["id"]]
         assert_invalid(self, rejected, r"\$\.operations\[2\].*contract-equivalent")
+
+        returned = add_rg01_rejected_attempt(
+            {"request_id": "request-rg01-returned", "amount": None},
+            "amount",
+            "missing_required_field",
+        )
+        returned["operations"][-1]["returned_ids"] = [
+            {"kind": "transaction", "id": "tx-expense-rg01"}
+        ]
+        assert_invalid(self, returned, r"\$\.operations\[2\]\.returned_ids")
 
         no_change = add_rg01_no_change_retry()
         no_change_source = deepcopy(rejected_source)
@@ -639,17 +812,157 @@ class GoldenV2OperationTests(unittest.TestCase):
         assert_invalid(self, incomplete, r"\$\.operations\[2\]\.returned_ids.*exact")
 
     def test_non_accepted_operations_still_validate_action_inputs(self):
-        rejected = add_rg01_no_change_retry()
-        rejected["operations"][-1]["outcome"] = {
-            "status": "rejected",
-            "reason_code": "invalid_request",
-        }
-        rejected["operations"][-1]["input"]["category_id"] = "missing-category"
-        assert_invalid(self, rejected, r"\$\.operations\[2\]\.input\.category_id")
+        rejected = add_rg01_rejected_attempt(
+            {
+                "request_id": "request-rg01-rejected",
+                "amount": None,
+                "category_id": "missing-category",
+            },
+            "amount",
+            "missing_required_field",
+        )
+        assert_invalid(
+            self,
+            rejected,
+            r"\$\.operations\[2\]\.attempted_input\.category_id",
+        )
 
         no_change = add_rg01_no_change_retry()
         no_change["operations"][-1]["input"]["payment_account_id"] = "missing-account"
         assert_invalid(self, no_change, r"\$\.operations\[2\]\.input\.payment_account_id")
+
+    def test_rejected_manual_expense_represents_all_v1_invalid_attempts(self):
+        v1 = load_golden_case(RG01_V1_PATH)
+        invalid_inputs = v1["invalid_inputs"]
+        for invalid in invalid_inputs:
+            attempted = {"request_id": f"request-{invalid['id']}"}
+            attempted.update(invalid["input"])
+            field = invalid["expected"]["field"]
+            reason = invalid["expected"].get("reason", "missing_required_field")
+            case = load_rg01()
+            category_ids = {
+                item["id"] for item in case["states"][0]["catalog"]["categories"]
+            }
+            for category in v1["catalog"]["categories"]:
+                if category["id"] not in category_ids:
+                    for state in case["states"]:
+                        state["catalog"]["categories"].append(deepcopy(category))
+            with self.subTest(invalid=invalid["id"]):
+                validate_golden_case_v2(
+                    add_rg01_rejected_attempt(attempted, field, reason, case)
+                )
+
+    def test_rejected_manual_expense_distinguishes_omitted_from_explicit_absence(self):
+        attempts = [
+            ({"request_id": "missing-amount"}, "amount"),
+            (
+                {"request_id": "missing-account", "amount": "35.80"},
+                "payment_account_id",
+            ),
+            (
+                {
+                    "request_id": "missing-category",
+                    "amount": "35.80",
+                    "payment_account_id": "asset-bank-a",
+                },
+                "category_id",
+            ),
+        ]
+        for attempted, field in attempts:
+            with self.subTest(field=field):
+                validate_golden_case_v2(
+                    add_rg01_rejected_attempt(
+                        attempted, field, "missing_required_field"
+                    )
+                )
+
+    def test_rejected_manual_expense_uses_stable_failure_precedence(self):
+        cases = [
+            (
+                {
+                    "request_id": "all-missing",
+                    "amount": None,
+                    "payment_account_id": None,
+                    "category_id": None,
+                },
+                "amount",
+            ),
+            (
+                {
+                    "request_id": "account-and-category-missing",
+                    "amount": "35.80",
+                    "payment_account_id": None,
+                    "category_id": None,
+                },
+                "payment_account_id",
+            ),
+        ]
+        for attempted, field in cases:
+            with self.subTest(field=field):
+                validate_golden_case_v2(
+                    add_rg01_rejected_attempt(
+                        attempted, field, "missing_required_field"
+                    )
+                )
+
+    def test_rejected_manual_expense_reason_and_field_must_match_failure(self):
+        base = add_rg01_rejected_attempt(
+            {
+                "request_id": "request-zero",
+                "amount": "0.00",
+                "payment_account_id": "asset-bank-a",
+                "category_id": "expense-category-breakfast",
+            },
+            "amount",
+            "must_be_positive",
+        )
+
+        wrong_field = deepcopy(base)
+        wrong_field["operations"][-1]["outcome"]["field_path"] = (
+            "$.attempted_input.category_id"
+        )
+        assert_invalid(self, wrong_field, r"\$\.operations\[2\]\.outcome\.field_path")
+
+        wrong_reason = deepcopy(base)
+        wrong_reason["operations"][-1]["outcome"]["reason_code"] = (
+            "missing_required_field"
+        )
+        assert_invalid(self, wrong_reason, r"\$\.operations\[2\]\.outcome\.reason_code")
+
+    def test_rejected_manual_expense_validates_present_optional_facts(self):
+        base_attempt = {
+            "request_id": "request-invalid-optional",
+            "amount": None,
+            "category_id": "expense-category-breakfast",
+            "payment_account_id": "asset-bank-a",
+        }
+        cases = []
+
+        bad_currency = deepcopy(base_attempt)
+        bad_currency["currency"] = "USD"
+        cases.append((bad_currency, r"attempted_input\.currency"))
+
+        bad_time = deepcopy(base_attempt)
+        bad_time["occurred_at"] = "2026-01-15T08:30:00+07:00"
+        cases.append((bad_time, r"attempted_input\.occurred_at"))
+
+        bad_category = deepcopy(base_attempt)
+        bad_category["category_id"] = "missing-category"
+        cases.append((bad_category, r"attempted_input\.category_id"))
+
+        bad_account = deepcopy(base_attempt)
+        bad_account["payment_account_id"] = "missing-account"
+        cases.append((bad_account, r"attempted_input\.payment_account_id"))
+
+        for attempted, path in cases:
+            with self.subTest(path=path):
+                assert_invalid(
+                    self,
+                    add_rg01_rejected_attempt(
+                        attempted, "amount", "missing_required_field"
+                    ),
+                    path,
+                )
 
     def test_action_registry_validates_all_input_scalars(self):
         expense = load_rg01()
@@ -984,6 +1297,94 @@ class GoldenV2IdTests(unittest.TestCase):
                 with self.assertRaisesRegex(GoldenCaseError, "control characters"):
                     deterministic_v2_id(*values)
 
+    def test_migration_ids_use_normalized_locator_and_stable_occurrence(self):
+        locator = "$.invalid_inputs[*].input.amount"
+        discriminator = "invalid-id=zero-amount"
+        semantic_key = locator + "\noccurrence=" + discriminator
+        expected_root = str(
+            uuid5(
+                UUID("cfad3f84-edb1-5838-ae53-aae49684cf1a"),
+                "RG-01\n@root\nroot\n" + semantic_key,
+            )
+        )
+        expected_transaction = str(
+            uuid5(
+                UUID("cfad3f84-edb1-5838-ae53-aae49684cf1a"),
+                "RG-01\n" + expected_root + "\ntransaction\n" + semantic_key,
+            )
+        )
+
+        self.assertEqual(
+            migration_semantic_key(locator, discriminator), semantic_key
+        )
+        self.assertEqual(
+            deterministic_v2_root_id("RG-01", locator, discriminator),
+            expected_root,
+        )
+        self.assertEqual(
+            deterministic_v2_migration_id(
+                "RG-01",
+                expected_root,
+                "transaction",
+                locator,
+                discriminator,
+            ),
+            expected_transaction,
+        )
+
+    def test_migration_locator_is_reorder_insensitive_without_array_indexes(self):
+        locator = "$.invalid_inputs[*].input.category_id"
+        first = deterministic_v2_root_id(
+            "RG-01", locator, "invalid-id=primary-category"
+        )
+        reordered = deterministic_v2_root_id(
+            "RG-01", locator, "invalid-id=primary-category"
+        )
+        other_occurrence = deterministic_v2_root_id(
+            "RG-01", locator, "invalid-id=inactive-secondary-category"
+        )
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, other_occurrence)
+
+    def test_migration_locator_and_occurrence_reject_unstable_forms(self):
+        invalid_locators = [
+            "case/invalid_inputs/0",
+            "/invalid_inputs/0/input",
+            "$.invalid_inputs[0].input",
+            "$.invalid_inputs[].input",
+            "$..input",
+            "$.invalid_inputs[*]/input",
+            "$.invalid_inputs[*].in\nput",
+        ]
+        for locator in invalid_locators:
+            with self.subTest(locator=locator):
+                with self.assertRaisesRegex(GoldenCaseError, "source locator"):
+                    migration_semantic_key(locator, "stable")
+
+        for discriminator in ("", "row\n2", "row\x002"):
+            with self.subTest(discriminator=discriminator):
+                with self.assertRaisesRegex(GoldenCaseError, "occurrence discriminator"):
+                    migration_semantic_key("$.create", discriminator)
+
+    def test_root_bootstrap_is_non_circular(self):
+        root_id = deterministic_v2_root_id(
+            "RG-01", "$.create", "request-id=request-rg01-create"
+        )
+        descendant_id = deterministic_v2_migration_id(
+            "RG-01",
+            root_id,
+            "operation",
+            "$.create",
+            "request-id=request-rg01-create",
+        )
+        self.assertNotEqual(root_id, descendant_id)
+        self.assertEqual(
+            root_id,
+            deterministic_v2_root_id(
+                "RG-01", "$.create", "request-id=request-rg01-create"
+            ),
+        )
+
 
 class GoldenV2DependencyIsolationTests(unittest.TestCase):
     def run_isolated(self, source: str) -> subprocess.CompletedProcess[str]:
@@ -1033,6 +1434,9 @@ class GoldenV2DependencyIsolationTests(unittest.TestCase):
         self.assertTrue(callable(golden_cases.load_golden_case_v2))
         self.assertTrue(callable(golden_cases.validate_golden_case_v2))
         self.assertTrue(callable(golden_cases.deterministic_v2_id))
+        self.assertTrue(callable(golden_cases.migration_semantic_key))
+        self.assertTrue(callable(golden_cases.deterministic_v2_root_id))
+        self.assertTrue(callable(golden_cases.deterministic_v2_migration_id))
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
   "source": "golden/rules/rg-01.json",
   "source_schema_version": 1,
   "target_contract_version": "2.0.0",
-  "status": "draft_for_review",
+  "status": "approved",
   "normalization": {
     "root": "$",
     "object_member": ".key",
@@ -23,16 +23,17 @@
     "reject": 1
   },
   "disposition_counts": {
-    "ready": 121,
-    "requires_contract_amendment": 27,
+    "ready": 148,
     "test_only_exclusion": 1
   },
-  "contract_gap_count": 4,
-  "contract_gaps": [
+  "contract_gap_count": 0,
+  "resolved_contract_gap_count": 4,
+  "unresolved_contract_gaps": [],
+  "resolved_contract_gaps": [
     {
       "id": "GAP-01",
       "title": "Outcome-conditional sparse rejected manual-expense operations",
-      "status": "requires_contract_amendment",
+      "status": "approved_implemented",
       "affected_source_paths": [
         "$.invalid_inputs[*].expected.accepted",
         "$.invalid_inputs[*].expected.field",
@@ -51,18 +52,19 @@
         "$.invalid_inputs[*].input.category_id",
         "$.invalid_inputs[*].input.payment_account_id"
       ],
-      "recommended_change": "Add an outcome-conditional rejected manual_expense branch: accepted and no_change retain the current strict input; rejected uses the proposed closed $.operations[*].attempted_input object, stores only actually submitted fields plus explicit absence, does not synthesize currency/time/note, permits operation_class=rejection, adds optional $.operations[*].outcome.field_path, and preserves the original reason token in $.operations[*].outcome.reason_code.",
+      "implemented_change": "Implemented outcome-conditional manual_expense operations: accepted and no_change retain the strict closed input; rejected requires operation_class=rejection, forbids input, requires the closed sparse attempted_input with request_id, and requires outcome.field_path plus reason_code. Missing currency, time, and note remain absent rather than being synthesized.",
       "alternatives": [
         "Add a separate manual_expense_attempt action type with its own closed sparse input and rejection class.",
         "Keep invalid attempts outside the v2 operation graph as test-only data, losing unified complete-state atomic-rejection evidence.",
         "Encode field and reason into one field-qualified reason_code, losing structured field_path semantics."
       ],
-      "risk": "A non-conditional sparse input could weaken accepted/no_change validation; an open-ended attempted_input would break the closed-contract invariant; collapsing field and reason would reduce machine-readable validation detail."
+      "risk": "A non-conditional sparse input could weaken accepted/no_change validation; an open-ended attempted_input would break the closed-contract invariant; collapsing field and reason would reduce machine-readable validation detail.",
+      "decision_date": "2026-07-16"
     },
     {
       "id": "GAP-02",
       "title": "Approval of collapsed v1 economic-time expansion",
-      "status": "requires_contract_amendment",
+      "status": "approved_implemented",
       "affected_source_paths": [
         "$.opening.transactions[*].occurred_at",
         "$.create.request.occurred_at",
@@ -70,17 +72,18 @@
         "$.distinct_reentry.request.occurred_at",
         "$.distinct_reentry.expected.transaction.occurred_at"
       ],
-      "recommended_change": "Amend the migration contract to state that RG-01 v1 occurred_at is a frozen collapsed economic-time fact and, only after explicit approval, may expand to transaction_version.occurred_at, statistics_at, and effective_at with the exact source timestamp text. created_at and confirmed_at remain absent when not supplied.",
+      "implemented_change": "Implemented the approved RG-01-only collapsed-time mapping: each mapped v1 occurred_at exact timestamp text expands to transaction_version.occurred_at, statistics_at, and effective_at. This is not a general migration default, and created_at or confirmed_at are not generated.",
       "alternatives": [
         "Reject RG-01 migration until independent occurred_at, statistics_at, and effective_at facts are supplied.",
         "Preserve only occurred_at and amend the v2 contract to make the other economic-time roles optional for migrated RG-01 records."
       ],
-      "risk": "Unapproved expansion could silently invent report attribution or balance-effective semantics; rejection delays migration but avoids semantic overclaiming."
+      "risk": "Unapproved expansion could silently invent report attribution or balance-effective semantics; rejection delays migration but avoids semantic overclaiming.",
+      "decision_date": "2026-07-16"
     },
     {
       "id": "GAP-03",
       "title": "Deterministic normalized migration locator",
-      "status": "requires_contract_amendment",
+      "status": "approved_implemented",
       "affected_source_paths": [
         "$.case.id",
         "$.opening.transactions[*].id",
@@ -90,24 +93,26 @@
         "$.distinct_reentry.request.request_id",
         "$.invalid_inputs[*].id"
       ],
-      "recommended_change": "Change GOLDEN_SCHEMA migration-ID wording and helper/validator strategy to use this artifact's normalized source locator syntax ($.key and [*]) plus a stable occurrence discriminator. Prefer existing source stable ID, request ID, case ID, or invalid-case ID; never use actual array index, traversal order, display name, runtime time, or machine path.",
+      "implemented_change": "Implemented normalized source locator grammar using $, .key, and [*], plus stable occurrence discriminators. Root UUIDv5 names use case-id + newline + @root + newline + root + newline + semantic-key; descendant names use case-id, root-id, entity-kind, and semantic-key. Public helpers validate and generate both forms.",
       "alternatives": [
         "Require every v1 structural object to be pre-enriched with an explicit stable ID before migration.",
         "Freeze authored human-readable IDs for every generated root/state/operation/entity, increasing manual mapping surface and collision review."
       ],
-      "risk": "Calling wildcard locators JSON Pointer is incorrect; using real array indexes or traversal order makes IDs unstable under semantically irrelevant reordering; changing helper rules can affect all future adapters."
+      "risk": "Calling wildcard locators JSON Pointer is incorrect; using real array indexes or traversal order makes IDs unstable under semantically irrelevant reordering; changing helper rules can affect all future adapters.",
+      "decision_date": "2026-07-16"
     },
     {
       "id": "GAP-04",
       "title": "Approved expected-output status",
-      "status": "requires_contract_amendment",
+      "status": "approved_implemented",
       "affected_source_paths": [],
-      "recommended_change": "Extend case.approval_status from the current draft_for_review constant to an enum containing draft_for_review and approved. Generated expected output starts as draft_for_review and changes to approved only after independent review and explicit user approval. Do not use frozen because rule_version already identifies the frozen business rule.",
+      "implemented_change": "Implemented approval_status as draft_for_review or approved. approved is used only after independent expected-output review and explicit user approval and is distinct from rule_version or frozen business-rule status.",
       "alternatives": [
         "Keep expected outputs permanently draft_for_review and record approval only outside the case document.",
         "Add a separate reviewed manifest that references the draft case hash, increasing publication and integrity machinery."
       ],
-      "risk": "Without an approved status the serialized expected output cannot express its gate state; changing status without review would falsely authorize migration output."
+      "risk": "Without an approved status the serialized expected output cannot express its gate state; changing status without review would falsely authorize migration output.",
+      "decision_date": "2026-07-16"
     }
   ],
   "entries": [
@@ -139,11 +144,12 @@
       "target_paths": [
         "$.case.id"
       ],
-      "transform": "Preserve the exact case ID. Pending GAP-03, use it only as the case namespace component for generated structural IDs under the approved normalized-locator strategy.",
+      "transform": "Preserve the exact case ID. Under implemented GAP-03, use it only as the case namespace component for generated structural IDs under the approved normalized-locator strategy.",
       "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The value and business meaning are unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The value and business meaning are unchanged. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -737,11 +743,12 @@
         "$.states[*].transaction_versions[*].statistics_at",
         "$.states[*].transaction_versions[*].effective_at"
       ],
-      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "transform": "Implemented GAP-02: expand the approved collapsed RG-01 economic-time fact exact text to occurred_at, statistics_at, and effective_at; never emit created_at or confirmed_at from this value.",
       "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The approved RG-01 collapsed-time rule preserves the exact source text in transaction occurrence, report attribution, and balance replay roles.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-02"
       ]
     },
@@ -921,11 +928,12 @@
       "target_paths": [
         "$.operations[*].input.occurred_at"
       ],
-      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "transform": "Implemented GAP-02: expand the approved collapsed RG-01 economic-time fact exact text to occurred_at, statistics_at, and effective_at; never emit created_at or confirmed_at from this value.",
       "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The approved RG-01 collapsed-time rule preserves the exact source text in transaction occurrence, report attribution, and balance replay roles.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-02"
       ]
     },
@@ -955,11 +963,12 @@
       "target_paths": [
         "$.operations[*].input.request_id"
       ],
-      "transform": "Preserve the request ID. Pending GAP-03, use it as the stable occurrence discriminator for create operation/state/confirmation/reconciliation IDs without array indexes.",
+      "transform": "Preserve the request ID. Under implemented GAP-03, use it as the stable occurrence discriminator for create operation/state/confirmation/reconciliation IDs without array indexes.",
       "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The idempotency identity is unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The idempotency identity is unchanged. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -1211,11 +1220,12 @@
         "$.states[*].transaction_versions[*].statistics_at",
         "$.states[*].transaction_versions[*].effective_at"
       ],
-      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "transform": "Implemented GAP-02: expand the approved collapsed RG-01 economic-time fact exact text to occurred_at, statistics_at, and effective_at; never emit created_at or confirmed_at from this value.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The approved RG-01 collapsed-time rule preserves the exact source text in transaction occurrence, report attribution, and balance replay roles.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-02"
       ]
     },
@@ -1395,11 +1405,12 @@
       "target_paths": [
         "$.operations[*].input.occurred_at"
       ],
-      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "transform": "Implemented GAP-02: expand the approved collapsed RG-01 economic-time fact exact text to occurred_at, statistics_at, and effective_at; never emit created_at or confirmed_at from this value.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The approved RG-01 collapsed-time rule preserves the exact source text in transaction occurrence, report attribution, and balance replay roles.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-02"
       ]
     },
@@ -1429,11 +1440,12 @@
       "target_paths": [
         "$.operations[*].input.request_id"
       ],
-      "transform": "Preserve the distinct request ID. Pending GAP-03, use it as the stable occurrence discriminator for distinct operation/state/confirmation/reconciliation IDs without array indexes.",
+      "transform": "Preserve the distinct request ID. Under implemented GAP-03, use it as the stable occurrence discriminator for distinct operation/state/confirmation/reconciliation IDs without array indexes.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The independent request identity is unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The independent request identity is unchanged. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -1493,11 +1505,9 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.operations[*].deltas.entity_changes.transactions.added_ids",
-        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
         "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
       ],
-      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "transform": "Assert the posting-set added_ids array is empty for the no_change operation.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
       "disposition": "ready",
       "rationale": "No-change effects are recomputed from equivalent complete states.",
@@ -1511,11 +1521,9 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.operations[*].deltas.entity_changes.transactions.added_ids",
-        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
-        "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+        "$.operations[*].deltas.entity_changes.transactions.added_ids"
       ],
-      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "transform": "Assert the transaction added_ids array is empty for the no_change operation.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
       "disposition": "ready",
       "rationale": "No-change effects are recomputed from equivalent complete states.",
@@ -1529,11 +1537,9 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.operations[*].deltas.entity_changes.transactions.added_ids",
-        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
-        "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids"
       ],
-      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "transform": "Assert the transaction-version added_ids array is empty for the no_change operation.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
       "disposition": "ready",
       "rationale": "No-change effects are recomputed from equivalent complete states.",
@@ -1769,11 +1775,12 @@
         "$.operations[*].outcome.status",
         "$.operations[*].outcome.reason_code"
       ],
-      "transform": "Join the prior accepted manual_expense by the same request ID and emit no_change semantics. Pending GAP-03, use the request ID as the stable occurrence discriminator for retry operation/state IDs.",
+      "transform": "Join the prior accepted manual_expense by the same request ID and emit no_change semantics. Under implemented GAP-03, use the request ID as the stable occurrence discriminator for retry operation/state IDs.",
       "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "v2 idempotency is the same action plus equivalent input, not a separate retry action. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "v2 idempotency is the same action plus equivalent input, not a separate retry action. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -1790,11 +1797,12 @@
         "$.operations[*].baseline_state_id",
         "$.operations[*].result_state_id"
       ],
-      "transform": "Proposed by GAP-01: map false to outcome.status='rejected', operation_class='rejection', and complete canonical-equivalent baseline/result states.",
+      "transform": "Implemented by GAP-01: map false to outcome.status='rejected', operation_class='rejection', and complete canonical-equivalent baseline/result states.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1808,11 +1816,12 @@
       "target_paths": [
         "$.operations[*].outcome.field_path"
       ],
-      "transform": "Proposed by GAP-01: preserve the validation field as outcome.field_path, using the attempted_input-relative field location defined by the amendment.",
+      "transform": "Implemented by GAP-01: preserve the validation field as outcome.field_path, using the attempted_input-relative field location defined by the approved contract.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; preserving only reason_code would lose the source field semantic.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The required outcome.field_path now preserves the source field semantic separately from reason_code.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1824,14 +1833,14 @@
       "occurrence_count": 7,
       "classification": "derive",
       "target_paths": [
-        "$.operations[*].deltas.entity_changes.postings.added_ids",
-        "$.operations[*].deltas.entity_changes.transactions.added_ids"
+        "$.operations[*].deltas.entity_changes.postings.added_ids"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: assert the rejected operation posting added_ids array is empty.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1843,14 +1852,14 @@
       "occurrence_count": 7,
       "classification": "derive",
       "target_paths": [
-        "$.operations[*].deltas.entity_changes.postings.added_ids",
         "$.operations[*].deltas.entity_changes.transactions.added_ids"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: assert the rejected operation transaction added_ids array is empty.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1864,11 +1873,12 @@
       "target_paths": [
         "$.operations[*].outcome.reason_code"
       ],
-      "transform": "Proposed by GAP-01: preserve the original reason token in outcome.reason_code; derive missing_required_field only for the three cases whose source reason is absent and whose field has explicit absence.",
+      "transform": "Implemented by GAP-01: preserve the original reason token in outcome.reason_code; derive missing_required_field only for the three cases whose source reason is absent and whose field has explicit absence.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "reason_code exists in the current outcome, but the complete rejected branch remains blocked until GAP-01 also adds attempted_input and field_path.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves reason_code together with the required attempted_input-relative field_path.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1883,11 +1893,12 @@
         "$.operations[*].deltas.value_changes.balances",
         "$.states[*].balances[*].amount"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1901,11 +1912,12 @@
       "target_paths": [
         "$.operations[*].deltas.entity_changes.transaction_versions.added_ids"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1921,11 +1933,12 @@
         "$.operations[*].status_changes",
         "$.operations[*].deltas.value_changes.derived_statuses"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1940,11 +1953,12 @@
         "$.operations[*].deltas.value_changes.reports",
         "$.states[*].reports[*].metrics[*].amount"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1959,11 +1973,12 @@
         "$.operations[*].deltas.value_changes.reports",
         "$.states[*].reports[*].metrics[*].amount"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1978,11 +1993,12 @@
         "$.operations[*].deltas.value_changes.reports",
         "$.states[*].reports[*].metrics[*].amount"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -1997,11 +2013,12 @@
         "$.operations[*].deltas.value_changes.reports",
         "$.states[*].reports[*].metrics[*].amount"
       ],
-      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "transform": "Implemented GAP-01: derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The implemented rejected branch preserves this invalid-attempt fact and proves its zero-effect assertions with complete canonical-equivalent states and exhaustive empty deltas.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -2022,11 +2039,12 @@
         "$.states[*].id",
         "$.states[*].root_id"
       ],
-      "transform": "Proposed by GAP-01 and pending GAP-03: use the invalid-case ID as the stable occurrence discriminator for the isolated root ID, rejected operation ID, attempted_input.request_id, and complete baseline/result state IDs; never use the array index.",
+      "transform": "Implemented by GAP-01 and GAP-03: use the invalid-case ID as the stable occurrence discriminator for the isolated root ID, rejected operation ID, attempted_input.request_id, and complete baseline/result state IDs; never use the array index.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The attempted_input.request_id path is proposed by GAP-01; deterministic root/operation/state identity also requires the GAP-03 normalized-locator amendment.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The attempted_input.request_id path and GAP-03 normalized-locator helpers together provide stable isolated root, operation, and state identity.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01",
         "GAP-03"
       ]
@@ -2042,11 +2060,12 @@
       "target_paths": [
         "$.operations[*].attempted_input.amount"
       ],
-      "transform": "Proposed by GAP-01: preserve only the actually submitted amount value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "transform": "Implemented by GAP-01: preserve only the actually submitted amount value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The target path exists in the closed rejected attempted_input schema while strict accepted/no_change input remains unchanged.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -2061,11 +2080,12 @@
       "target_paths": [
         "$.operations[*].attempted_input.category_id"
       ],
-      "transform": "Proposed by GAP-01: preserve only the actually submitted category_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "transform": "Implemented by GAP-01: preserve only the actually submitted category_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The target path exists in the closed rejected attempted_input schema while strict accepted/no_change input remains unchanged.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -2080,11 +2100,12 @@
       "target_paths": [
         "$.operations[*].attempted_input.payment_account_id"
       ],
-      "transform": "Proposed by GAP-01: preserve only the actually submitted payment_account_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "transform": "Implemented by GAP-01: preserve only the actually submitted payment_account_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
       "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The target path exists in the closed rejected attempted_input schema while strict accepted/no_change input remains unchanged.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-01"
       ]
     },
@@ -2148,10 +2169,9 @@
       "classification": "derive",
       "target_paths": [
         "$.states[*].transactions",
-        "$.states[*].posting_sets",
-        "$.operations[*].deltas.entity_changes.postings.added_ids"
+        "$.states[*].transactions[*].current_version_id"
       ],
-      "transform": "Use as an equivalence assertion over the complete state and zero posting additions.",
+      "transform": "Assert one current effective transaction identity after the note-only replacement.",
       "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
       "disposition": "ready",
       "rationale": "The v1 count is a projection, not a serialized entity.",
@@ -2182,11 +2202,10 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.states[*].transactions",
-        "$.states[*].posting_sets",
+        "$.states[*].postings",
         "$.operations[*].deltas.entity_changes.postings.added_ids"
       ],
-      "transform": "Use as an equivalence assertion over the complete state and zero posting additions.",
+      "transform": "Assert the original funding effect remains singular and no posting is added by the note update.",
       "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
       "disposition": "ready",
       "rationale": "The v1 count is a projection, not a serialized entity.",
@@ -2486,11 +2505,12 @@
         "$.operations[*].operation_class",
         "$.operations[*].input.explicit_confirmation"
       ],
-      "transform": "Preserve the request ID and section action semantics. Pending GAP-03, use it as the stable occurrence discriminator for note-update operation/state/confirmation IDs without array indexes.",
+      "transform": "Preserve the request ID and section action semantics. Under implemented GAP-03, use it as the stable occurrence discriminator for note-update operation/state/confirmation IDs without array indexes.",
       "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "v1 omits action and confirmation fields that the signed design fixes for this operation. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "v1 omits action and confirmation fields that the signed design fixes for this operation. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -2559,11 +2579,12 @@
         "$.states[*].transaction_versions[*].version_number",
         "$.states[*].posting_sets[*].id"
       ],
-      "transform": "Preserve the opening transaction ID and type mapping. Pending GAP-03, generate the missing opening version and posting-set IDs from normalized locator $.opening.transactions[*] plus stable occurrence tx-opening-a.",
+      "transform": "Preserve the opening transaction ID and type mapping. Under implemented GAP-03, generate the missing opening version and posting-set IDs from normalized locator $.opening.transactions[*] plus stable occurrence tx-opening-a.",
       "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "v1 lacks the formal version/posting-set chain required by v2, while the opening section and deterministic-ID contract fully determine it. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "v1 lacks the formal version/posting-set chain required by v2, while the opening section and deterministic-ID contract fully determine it. Generated IDs use the implemented normalized source locator and stable occurrence helper strategy.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-03"
       ]
     },
@@ -2579,11 +2600,12 @@
         "$.states[*].transaction_versions[*].statistics_at",
         "$.states[*].transaction_versions[*].effective_at"
       ],
-      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "transform": "Implemented GAP-02: expand the approved collapsed RG-01 economic-time fact exact text to occurred_at, statistics_at, and effective_at; never emit created_at or confirmed_at from this value.",
       "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
-      "contract_gap_ids": [
+      "disposition": "ready",
+      "rationale": "The approved RG-01 collapsed-time rule preserves the exact source text in transaction occurrence, report attribution, and balance replay roles.",
+      "contract_gap_ids": [],
+      "resolved_contract_gap_ids": [
         "GAP-02"
       ]
     },

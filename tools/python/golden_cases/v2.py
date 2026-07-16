@@ -27,6 +27,9 @@ _TIMESTAMP_PATTERN = re.compile(
     r"(?:\.[0-9]+)?(?:Z|\+(?:[01][0-9]|2[0-3]):[0-5][0-9]"
     r"|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
 )
+_MIGRATION_SOURCE_LOCATOR_PATTERN = re.compile(
+    r"^\$(?:\.[^.\[\]/\x00-\x1f\x7f]+|\[\*\])*$"
+)
 _ENTITY_COLLECTIONS = {
     "catalog_accounts": ("catalog", "accounts"),
     "catalog_categories": ("catalog", "categories"),
@@ -240,23 +243,84 @@ def load_golden_case_v2(path: str | Path) -> dict[str, Any]:
     return value
 
 
+def _validate_identity_component(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise GoldenCaseError(f"$.{name} must be non-empty")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise GoldenCaseError(f"$.{name} must not contain control characters")
+
+
 def deterministic_v2_id(
     case_id: str,
     root_id: str,
     entity_kind: str,
     semantic_key: str,
 ) -> str:
-    values = {
+    for name, value in {
         "case_id": case_id,
         "root_id": root_id,
         "entity_kind": entity_kind,
         "semantic_key": semantic_key,
-    }
-    for name, value in values.items():
-        if not isinstance(value, str) or not value:
-            raise GoldenCaseError(f"$.{name} must be non-empty")
-        if any(ord(character) < 32 or ord(character) == 127 for character in value):
-            raise GoldenCaseError(f"$.{name} must not contain control characters")
+    }.items():
+        _validate_identity_component(name, value)
+    name = f"{case_id}\n{root_id}\n{entity_kind}\n{semantic_key}"
+    return str(uuid5(_UUID_NAMESPACE, name))
+
+
+def migration_semantic_key(
+    source_locator: str,
+    occurrence_discriminator: str,
+) -> str:
+    if (
+        not isinstance(source_locator, str)
+        or not _MIGRATION_SOURCE_LOCATOR_PATTERN.fullmatch(source_locator)
+    ):
+        raise GoldenCaseError(
+            "$.source_locator must be a normalized source locator using $, .key, and [*]"
+        )
+    if not isinstance(occurrence_discriminator, str) or not occurrence_discriminator:
+        raise GoldenCaseError(
+            "$.occurrence_discriminator: occurrence discriminator must be non-empty"
+        )
+    if any(
+        ord(character) < 32 or ord(character) == 127
+        for character in occurrence_discriminator
+    ):
+        raise GoldenCaseError(
+            "$.occurrence_discriminator: occurrence discriminator must not contain control characters"
+        )
+    return f"{source_locator}\noccurrence={occurrence_discriminator}"
+
+
+def deterministic_v2_root_id(
+    case_id: str,
+    source_locator: str,
+    occurrence_discriminator: str,
+) -> str:
+    _validate_identity_component("case_id", case_id)
+    semantic_key = migration_semantic_key(
+        source_locator, occurrence_discriminator
+    )
+    name = f"{case_id}\n@root\nroot\n{semantic_key}"
+    return str(uuid5(_UUID_NAMESPACE, name))
+
+
+def deterministic_v2_migration_id(
+    case_id: str,
+    root_id: str,
+    entity_kind: str,
+    source_locator: str,
+    occurrence_discriminator: str,
+) -> str:
+    for name, value in {
+        "case_id": case_id,
+        "root_id": root_id,
+        "entity_kind": entity_kind,
+    }.items():
+        _validate_identity_component(name, value)
+    semantic_key = migration_semantic_key(
+        source_locator, occurrence_discriminator
+    )
     name = f"{case_id}\n{root_id}\n{entity_kind}\n{semantic_key}"
     return str(uuid5(_UUID_NAMESPACE, name))
 
@@ -310,6 +374,24 @@ def _amount(
         pattern = r"^(?:0|-?[1-9][0-9]*)$"
     else:
         pattern = rf"^(?:0|-?[1-9][0-9]*)\.[0-9]{{{precision}}}$"
+    if not re.fullmatch(pattern, value):
+        _fail(path, f"must use exactly {precision} decimal places for {currency}")
+    return _decimal(value, path)
+
+
+def _attempted_amount(
+    value: str,
+    currency: str,
+    path: str,
+    precisions: dict[str, int],
+) -> Decimal:
+    if currency not in precisions:
+        _fail(path.rsplit(".", 1)[0] + ".currency", f"unknown currency {currency!r}")
+    precision = precisions[currency]
+    if precision == 0:
+        pattern = r"^-?(?:0|[1-9][0-9]*)$"
+    else:
+        pattern = rf"^-?(?:0|[1-9][0-9]*)\.[0-9]{{{precision}}}$"
     if not re.fullmatch(pattern, value):
         _fail(path, f"must use exactly {precision} decimal places for {currency}")
     return _decimal(value, path)
@@ -1289,6 +1371,95 @@ def _validate_returned_ids(
             )
 
 
+def _validate_rejected_manual_expense_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+
+    category_id = attempted.get("category_id")
+    category = None
+    if category_id is not None:
+        category = categories.get(category_id)
+        if category is None:
+            _fail(attempted_path + ".category_id", "dangling category reference")
+
+    payment_account_id = attempted.get("payment_account_id")
+    payment_account = None
+    if payment_account_id is not None:
+        payment_account = accounts.get(payment_account_id)
+        if payment_account is None:
+            _fail(attempted_path + ".payment_account_id", "dangling account reference")
+
+    currency = attempted.get("currency")
+    amount = attempted.get("amount")
+    if currency is not None:
+        if currency not in precisions:
+            _fail(attempted_path + ".currency", "undeclared currency")
+        if payment_account is not None and payment_account["currency"] != currency:
+            _fail(
+                attempted_path + ".currency",
+                "must match the attempted payment account",
+            )
+        if category is not None and category["posting_account_id"] is not None:
+            posting_account = accounts.get(category["posting_account_id"])
+            if posting_account is None or posting_account["currency"] != currency:
+                _fail(
+                    attempted_path + ".currency",
+                    "must match the attempted category posting account",
+                )
+        if amount is not None:
+            _attempted_amount(
+                amount, currency, attempted_path + ".amount", precisions
+            )
+
+    if "occurred_at" in attempted:
+        _timestamp(
+            attempted["occurred_at"],
+            attempted_path + ".occurred_at",
+            timezone,
+        )
+
+    failure: tuple[str, str]
+    if amount is None:
+        failure = ("amount", "missing_required_field")
+    elif payment_account_id is None:
+        failure = ("payment_account_id", "missing_required_field")
+    elif category_id is None:
+        failure = ("category_id", "missing_required_field")
+    elif Decimal(amount) <= 0:
+        failure = ("amount", "must_be_positive")
+    elif category is not None and category["parent_id"] is None:
+        failure = ("category_id", "secondary_category_required")
+    elif category is not None and not category["active"]:
+        failure = ("category_id", "category_inactive")
+    else:
+        _fail(
+            attempted_path,
+            "does not match a registered rejected manual_expense failure",
+        )
+
+    expected_field, expected_reason = failure
+    outcome = operation["outcome"]
+    expected_path = f"$.attempted_input.{expected_field}"
+    if outcome["field_path"] != expected_path:
+        _fail(
+            operation_path + ".outcome.field_path",
+            f"must be {expected_path!r} for the first failing attempted field",
+        )
+    if outcome["reason_code"] != expected_reason:
+        _fail(
+            operation_path + ".outcome.reason_code",
+            f"must be {expected_reason!r} for the first failing attempted field",
+        )
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -1297,6 +1468,13 @@ def _validate_action_input(
     timezone: ZoneInfo,
 ) -> None:
     action = operation["action_type"]
+    if operation["outcome"]["status"] == "rejected":
+        if action != "manual_expense":
+            _fail(operation_path + ".action_type", "unregistered rejected action")
+        _validate_rejected_manual_expense_attempt(
+            operation, operation_path, baseline, precisions, timezone
+        )
+        return
     input_value = operation["input"]
     input_path = operation_path + ".input"
     accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
@@ -2181,6 +2359,15 @@ def _validate_operations(
                 _fail(
                     operation_path + ".outcome",
                     "accepted operation must declare a state or intake effect; use no_change for a valid replay",
+                )
+
+            if (
+                operation["outcome"]["status"] == "rejected"
+                and operation["returned_ids"]
+            ):
+                _fail(
+                    operation_path + ".returned_ids",
+                    "rejected operation must return no IDs",
                 )
 
             result_indexes = state_indexes[result["id"]]
