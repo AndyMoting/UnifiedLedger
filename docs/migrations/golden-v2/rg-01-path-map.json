@@ -1,0 +1,2675 @@
+{
+  "artifact_type": "golden_v2_path_map",
+  "artifact_version": 1,
+  "case_id": "RG-01",
+  "source": "golden/rules/rg-01.json",
+  "source_schema_version": 1,
+  "target_contract_version": "2.0.0",
+  "status": "draft_for_review",
+  "normalization": {
+    "root": "$",
+    "object_member": ".key",
+    "array_index": "[*]",
+    "leaf_rule": "scalar, null, empty array, and empty object values are leaves",
+    "aggregation": "one entry per unique normalized path; source_value_kinds and occurrence_count aggregate all occurrences"
+  },
+  "source_path_count": 149,
+  "classified_path_count": 149,
+  "unclassified_path_count": 0,
+  "classification_counts": {
+    "preserve": 56,
+    "map": 40,
+    "derive": 52,
+    "reject": 1
+  },
+  "disposition_counts": {
+    "ready": 121,
+    "requires_contract_amendment": 27,
+    "test_only_exclusion": 1
+  },
+  "contract_gap_count": 4,
+  "contract_gaps": [
+    {
+      "id": "GAP-01",
+      "title": "Outcome-conditional sparse rejected manual-expense operations",
+      "status": "requires_contract_amendment",
+      "affected_source_paths": [
+        "$.invalid_inputs[*].expected.accepted",
+        "$.invalid_inputs[*].expected.field",
+        "$.invalid_inputs[*].expected.new_posting_count",
+        "$.invalid_inputs[*].expected.new_transaction_count",
+        "$.invalid_inputs[*].expected.reason",
+        "$.invalid_inputs[*].expected.state_changes.balance.asset-bank-a",
+        "$.invalid_inputs[*].expected.state_changes.new_version_count",
+        "$.invalid_inputs[*].expected.state_changes.reconciliation_change_count",
+        "$.invalid_inputs[*].expected.state_changes.statistics.cash_outflow",
+        "$.invalid_inputs[*].expected.state_changes.statistics.consumption",
+        "$.invalid_inputs[*].expected.state_changes.statistics.income",
+        "$.invalid_inputs[*].expected.state_changes.statistics.net_worth",
+        "$.invalid_inputs[*].id",
+        "$.invalid_inputs[*].input.amount",
+        "$.invalid_inputs[*].input.category_id",
+        "$.invalid_inputs[*].input.payment_account_id"
+      ],
+      "recommended_change": "Add an outcome-conditional rejected manual_expense branch: accepted and no_change retain the current strict input; rejected uses the proposed closed $.operations[*].attempted_input object, stores only actually submitted fields plus explicit absence, does not synthesize currency/time/note, permits operation_class=rejection, adds optional $.operations[*].outcome.field_path, and preserves the original reason token in $.operations[*].outcome.reason_code.",
+      "alternatives": [
+        "Add a separate manual_expense_attempt action type with its own closed sparse input and rejection class.",
+        "Keep invalid attempts outside the v2 operation graph as test-only data, losing unified complete-state atomic-rejection evidence.",
+        "Encode field and reason into one field-qualified reason_code, losing structured field_path semantics."
+      ],
+      "risk": "A non-conditional sparse input could weaken accepted/no_change validation; an open-ended attempted_input would break the closed-contract invariant; collapsing field and reason would reduce machine-readable validation detail."
+    },
+    {
+      "id": "GAP-02",
+      "title": "Approval of collapsed v1 economic-time expansion",
+      "status": "requires_contract_amendment",
+      "affected_source_paths": [
+        "$.opening.transactions[*].occurred_at",
+        "$.create.request.occurred_at",
+        "$.create.expected.transaction.occurred_at",
+        "$.distinct_reentry.request.occurred_at",
+        "$.distinct_reentry.expected.transaction.occurred_at"
+      ],
+      "recommended_change": "Amend the migration contract to state that RG-01 v1 occurred_at is a frozen collapsed economic-time fact and, only after explicit approval, may expand to transaction_version.occurred_at, statistics_at, and effective_at with the exact source timestamp text. created_at and confirmed_at remain absent when not supplied.",
+      "alternatives": [
+        "Reject RG-01 migration until independent occurred_at, statistics_at, and effective_at facts are supplied.",
+        "Preserve only occurred_at and amend the v2 contract to make the other economic-time roles optional for migrated RG-01 records."
+      ],
+      "risk": "Unapproved expansion could silently invent report attribution or balance-effective semantics; rejection delays migration but avoids semantic overclaiming."
+    },
+    {
+      "id": "GAP-03",
+      "title": "Deterministic normalized migration locator",
+      "status": "requires_contract_amendment",
+      "affected_source_paths": [
+        "$.case.id",
+        "$.opening.transactions[*].id",
+        "$.create.request.request_id",
+        "$.note_update.request.request_id",
+        "$.idempotency.repeated_request_id",
+        "$.distinct_reentry.request.request_id",
+        "$.invalid_inputs[*].id"
+      ],
+      "recommended_change": "Change GOLDEN_SCHEMA migration-ID wording and helper/validator strategy to use this artifact's normalized source locator syntax ($.key and [*]) plus a stable occurrence discriminator. Prefer existing source stable ID, request ID, case ID, or invalid-case ID; never use actual array index, traversal order, display name, runtime time, or machine path.",
+      "alternatives": [
+        "Require every v1 structural object to be pre-enriched with an explicit stable ID before migration.",
+        "Freeze authored human-readable IDs for every generated root/state/operation/entity, increasing manual mapping surface and collision review."
+      ],
+      "risk": "Calling wildcard locators JSON Pointer is incorrect; using real array indexes or traversal order makes IDs unstable under semantically irrelevant reordering; changing helper rules can affect all future adapters."
+    },
+    {
+      "id": "GAP-04",
+      "title": "Approved expected-output status",
+      "status": "requires_contract_amendment",
+      "affected_source_paths": [],
+      "recommended_change": "Extend case.approval_status from the current draft_for_review constant to an enum containing draft_for_review and approved. Generated expected output starts as draft_for_review and changes to approved only after independent review and explicit user approval. Do not use frozen because rule_version already identifies the frozen business rule.",
+      "alternatives": [
+        "Keep expected outputs permanently draft_for_review and record approval only outside the case document.",
+        "Add a separate reviewed manifest that references the draft case hash, increasing publication and integrity machinery."
+      ],
+      "risk": "Without an approved status the serialized expected output cannot express its gate state; changing status without review would falsely authorize migration output."
+    }
+  ],
+  "entries": [
+    {
+      "source_path": "$.case.currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.case.currencies[*].code",
+        "$.states[*].catalog.accounts[*].currency",
+        "$.states[*].balances[*].currency"
+      ],
+      "transform": "Create the single declared currency record and use the same declared code for catalog accounts and complete balances.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "v1 has one case currency; v2 normalizes currency declarations and requires currency on every account and balance.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.case.id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.case.id"
+      ],
+      "transform": "Preserve the exact case ID. Pending GAP-03, use it only as the case namespace component for generated structural IDs under the approved normalized-locator strategy.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The value and business meaning are unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.case.ledger_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.case.ledger_id"
+      ],
+      "transform": "Copy the exact scalar value.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "The value and business meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.case.level",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.case.level"
+      ],
+      "transform": "Copy the exact scalar value.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "The value and business meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.case.precision",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.case.currencies[*].precision"
+      ],
+      "transform": "Move the integer precision into the case currency declaration.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "Precision belongs to each declared currency in v2.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.case.rule_version",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.case.rule_version"
+      ],
+      "transform": "Copy the exact scalar value.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "The value and business meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.case.timezone",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.case.timezone"
+      ],
+      "transform": "Copy the exact scalar value.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "The value and business meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.accounts[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].catalog.accounts[*].id",
+        "$.states[*].catalog.accounts[*].owned_by_user",
+        "$.states[*].catalog.accounts[*].reconciliation_eligible"
+      ],
+      "transform": "Preserve each stable account ID in every complete state; derive required ownership and reconciliation flags from the frozen RG-01 account role table keyed by ID (asset-bank-a=true/true, other two=false/false).",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "v1 omits two required flags, but the signed RG-01 fixed-data roles determine them without using display names.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.accounts[*].kind",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.accounts[*].kind"
+      ],
+      "transform": "Copy each account value keyed by its stable account ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "The catalog value and meaning are unchanged; state snapshots repeat the complete catalog.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.accounts[*].name",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.accounts[*].name"
+      ],
+      "transform": "Copy each account value keyed by its stable account ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "The catalog value and meaning are unchanged; state snapshots repeat the complete catalog.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.accounts[*].real_account",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.accounts[*].real_account"
+      ],
+      "transform": "Copy each account value keyed by its stable account ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "The catalog value and meaning are unchanged; state snapshots repeat the complete catalog.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.categories[*].active",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.categories[*].active"
+      ],
+      "transform": "Copy each category value keyed by stable category ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "Category identity, hierarchy, posting-account link, active state, and display value are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.categories[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.categories[*].id"
+      ],
+      "transform": "Copy each category value keyed by stable category ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "Category identity, hierarchy, posting-account link, active state, and display value are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.categories[*].name",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.categories[*].name"
+      ],
+      "transform": "Copy each category value keyed by stable category ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "Category identity, hierarchy, posting-account link, active state, and display value are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.categories[*].parent_id",
+      "source_value_kinds": [
+        "null",
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.categories[*].parent_id"
+      ],
+      "transform": "Copy each category value keyed by stable category ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "Category identity, hierarchy, posting-account link, active state, and display value are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.catalog.categories[*].posting_account_id",
+      "source_value_kinds": [
+        "null",
+        "string"
+      ],
+      "occurrence_count": 3,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].catalog.categories[*].posting_account_id"
+      ],
+      "transform": "Copy each category value keyed by stable category ID into every complete state.",
+      "authority": "RG-01 design §§3-4; ACCOUNTING_RULES core structure and classification rules; GOLDEN_SCHEMA catalog contract.",
+      "disposition": "ready",
+      "rationale": "Category identity, hierarchy, posting-account link, active state, and display value are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.candidate",
+      "source_value_kinds": [
+        "null"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].candidates"
+      ],
+      "transform": "Represent null candidate as an explicitly empty candidates collection in every affected complete state.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Canonical absence is an empty required collection, not a serialized null candidate.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.confirmation.confirmed",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].input.explicit_confirmation",
+        "$.states[*].confirmations"
+      ],
+      "transform": "Map true to explicit_confirmation=true and require one explicit_manual_save confirmation owned by the create operation; omit confirmed_at because no time was supplied.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The confirmation fact is preserved without inventing a timestamp.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.confirmation.mode",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].confirmations[*].type"
+      ],
+      "transform": "Map explicit_manual_save to the registered confirmation type of the same token.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The v1 mode becomes a canonical confirmation discriminator.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.accepted",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].outcome.status"
+      ],
+      "transform": "Map true to outcome.status='accepted'.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 uses an outcome enum instead of an accepted boolean.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.balances.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].balances[*].amount",
+        "$.operations[*].deltas.value_changes.balances[*].after"
+      ],
+      "transform": "Use as a replay assertion and emit complete all-account balances plus exact balance deltas.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The v1 expected map is partial and cannot be copied as a complete state.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.evidence_refs",
+      "source_value_kinds": [
+        "array"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].evidence",
+        "$.states[*].evidence_links"
+      ],
+      "transform": "Map the empty reference array to empty evidence and evidence_links collections.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "RG-01 has no external evidence; canonical complete states make that absence explicit.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.reconciliation.posting-bank-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].posting_reconciliations[*].status"
+      ],
+      "transform": "Copy pending to the reconciliation record for posting-bank-rg01.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The real-account posting reconciliation state is already canonical.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.reconciliation.posting-expense-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_reconciliations"
+      ],
+      "transform": "Map not_applicable to reconciliation_eligible=false and absence of a posting_reconciliations record.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 stores canonical absence; not_applicable is display-only.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.reconciliation.transaction",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].derived_statuses[*].value"
+      ],
+      "transform": "Recompute transaction reconciliation_summary='pending' from the eligible posting reconciliation.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Transaction reconciliation is a derived status.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.budget",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].metric",
+        "$.states[*].reports[*].metrics[*].applicability"
+      ],
+      "transform": "Map budget='not_applicable' to metric='budget', applicability='not_applicable', omitting currency and amount.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 distinguishes inapplicability from numeric zero.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.day",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact day or month period label to the corresponding report record.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The report period value is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.day_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.day_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.income",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.month",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact day or month period label to the corresponding report record.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The report period value is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.month_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.month_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.statistics.net_worth_change",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute the applicable day/month metric from current formal postings and time roles.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "Expected report aggregates are derived projections, not independent facts.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.current_version_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].transaction_versions[*].id"
+      ],
+      "transform": "Copy the current version ID and use it as the ID of version 1.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The source already supplies the canonical version identity.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.effective",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].balances[*].amount",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Replace the v1 effective flag with the current-version chain and replay-derived projections.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 derives effectiveness and financial projections rather than serializing a flag.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].id"
+      ],
+      "transform": "Copy the stable transaction ID into post-create complete states.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The economic identity is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.occurred_at",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].occurred_at",
+        "$.states[*].transaction_versions[*].statistics_at",
+        "$.states[*].transaction_versions[*].effective_at"
+      ],
+      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
+      "contract_gap_ids": [
+        "GAP-02"
+      ]
+    },
+    {
+      "source_path": "$.create.expected.transaction.posting_set_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].posting_set_id",
+        "$.states[*].posting_sets[*].id"
+      ],
+      "transform": "Move the posting-set ID from the v1 transaction projection to the v2 version and posting-set objects.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 formal ownership places posting_set_id on transaction_versions.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.postings[*].account_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].account_id"
+      ],
+      "transform": "Copy each exact posting fact keyed by its stable posting ID.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The posting value and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.postings[*].amount",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].amount"
+      ],
+      "transform": "Copy each exact posting fact keyed by its stable posting ID.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The posting value and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.postings[*].currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].currency"
+      ],
+      "transform": "Copy each exact posting fact keyed by its stable posting ID.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The posting value and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.expected.transaction.postings[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].id",
+        "$.states[*].postings[*].posting_set_id",
+        "$.states[*].postings[*].role",
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_sets[*].posting_ids[*]"
+      ],
+      "transform": "Preserve posting IDs; attach them to the supplied posting set; assign role expense/payment_asset and eligibility false/true by stable posting ID and account role.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v1 embeds postings and omits required ownership, role, and eligibility fields.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.amount",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.amount"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.category_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.category_id"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.currency"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.kind",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].action_type",
+        "$.operations[*].operation_class"
+      ],
+      "transform": "Map manual_expense to action_type='manual_expense' and operation_class='creation'.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "v2 separates action identity from operation class.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.note",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.note"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.occurred_at",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.occurred_at"
+      ],
+      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
+      "contract_gap_ids": [
+        "GAP-02"
+      ]
+    },
+    {
+      "source_path": "$.create.request.payment_account_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.payment_account_id"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.create.request.request_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.request_id"
+      ],
+      "transform": "Preserve the request ID. Pending GAP-03, use it as the stable occurrence discriminator for create operation/state/confirmation/reconciliation IDs without array indexes.",
+      "authority": "RG-01 design §§5-7 and §10; GOLDEN_TESTS RG-01; GOLDEN_SCHEMA operation, state, report, and reconciliation contracts.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The idempotency identity is unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.accepted",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].outcome.status"
+      ],
+      "transform": "Map true to outcome.status='accepted'.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The independent manual expense is a successful creation.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.balances.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].balances[*].amount",
+        "$.operations[*].deltas.value_changes.balances[*].after"
+      ],
+      "transform": "Use as a replay assertion; recompute complete balances after the second accepted expense.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "v1 provides only the focus-account aggregate.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.effective_transaction_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions",
+        "$.states[*].transactions[*].current_version_id"
+      ],
+      "transform": "Assert two current expense transaction identities after re-entry.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Counts are recomputed from complete formal state.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.new_transaction_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.transactions.added_ids"
+      ],
+      "transform": "Assert exactly one added transaction ID in the accepted operation delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Counts are recomputed from canonical entity deltas.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.budget",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].metric",
+        "$.states[*].reports[*].metrics[*].applicability"
+      ],
+      "transform": "Map not_applicable to the canonical budget metric shape.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "No budget is configured.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.day_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.day_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.income",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.month_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.month_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.statistics.net_worth_change",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports[*].after"
+      ],
+      "transform": "Use as an equivalence assertion; recompute cumulative day/month results from both current expense transactions.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "Expected aggregates are projections.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.current_version_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].transaction_versions[*].id"
+      ],
+      "transform": "Copy the supplied version-1 ID and current pointer.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The version identity is already explicit.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.effective",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].balances[*].amount",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Replace the flag with the current-version chain and replay-derived projections.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "v2 derives transaction effectiveness.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].id"
+      ],
+      "transform": "Copy the distinct stable transaction ID.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The second user action creates a separate economic identity.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.occurred_at",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].occurred_at",
+        "$.states[*].transaction_versions[*].statistics_at",
+        "$.states[*].transaction_versions[*].effective_at"
+      ],
+      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
+      "contract_gap_ids": [
+        "GAP-02"
+      ]
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.posting_set_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].posting_set_id",
+        "$.states[*].posting_sets[*].id"
+      ],
+      "transform": "Move the supplied posting-set identity to the canonical version and posting-set objects.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "v2 formal ownership differs from the v1 projection.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.postings[*].account_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].account_id"
+      ],
+      "transform": "Copy each exact posting fact.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The posting value and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.postings[*].amount",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].amount"
+      ],
+      "transform": "Copy each exact posting fact.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The posting value and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.postings[*].currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].currency"
+      ],
+      "transform": "Copy each exact posting fact.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The posting value and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.expected.transaction.postings[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].id",
+        "$.states[*].postings[*].posting_set_id",
+        "$.states[*].postings[*].role",
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_sets[*].posting_ids[*]"
+      ],
+      "transform": "Preserve IDs, attach the supplied posting set, and assign expense/payment_asset roles and eligibility by account role.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The v1 projection omits canonical posting metadata.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.amount",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.amount"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.category_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.category_id"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.currency"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.kind",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].action_type",
+        "$.operations[*].operation_class"
+      ],
+      "transform": "Map manual_expense to the registered creation action.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The repeated values belong to a new accepted action, not an idempotent replay.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.note",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.note"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.occurred_at",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.occurred_at"
+      ],
+      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
+      "contract_gap_ids": [
+        "GAP-02"
+      ]
+    },
+    {
+      "source_path": "$.distinct_reentry.request.payment_account_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.payment_account_id"
+      ],
+      "transform": "Copy the exact manual-expense input value.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.distinct_reentry.request.request_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.request_id"
+      ],
+      "transform": "Preserve the distinct request ID. Pending GAP-03, use it as the stable occurrence discriminator for distinct operation/state/confirmation/reconciliation IDs without array indexes.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 distinct re-entry requirement; GOLDEN_SCHEMA manual_expense contract.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The independent request identity is unchanged. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.forbidden_side_effects[*]",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "reject",
+      "target_paths": [],
+      "transform": "Exclude these tokens from serialized v2 output and retain all seven as negative semantic-equivalence assertions.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "test_only_exclusion",
+      "rationale": "They describe prohibited behavior, not ledger entities or operation data.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.balances.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].balances[*].amount",
+        "$.operations[*].deltas.value_changes.balances"
+      ],
+      "transform": "Assert byte-equivalent normalized states and an empty balance delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "no_change cannot alter balances.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.funding_effect_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].postings",
+        "$.operations[*].deltas.entity_changes.postings.added_ids"
+      ],
+      "transform": "Assert the original funding effect remains singular and no posting is added.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay returns prior effects without duplication.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.new_posting_set_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.transactions.added_ids",
+        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
+        "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+      ],
+      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "No-change effects are recomputed from equivalent complete states.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.new_transaction_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.transactions.added_ids",
+        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
+        "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+      ],
+      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "No-change effects are recomputed from equivalent complete states.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.new_version_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.transactions.added_ids",
+        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids",
+        "$.operations[*].deltas.entity_changes.posting_sets.added_ids"
+      ],
+      "transform": "Assert all canonical entity delta ID arrays are empty for the no_change operation.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "No-change effects are recomputed from equivalent complete states.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.reconciliation.posting-bank-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].posting_reconciliations[*].status"
+      ],
+      "transform": "Keep the original pending posting reconciliation.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "No-change replay preserves the prior record.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.reconciliation.posting-expense-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_reconciliations"
+      ],
+      "transform": "Keep canonical absence for the non-eligible expense posting.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "not_applicable is not serialized as a reconciliation fact.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.reconciliation.transaction",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].derived_statuses[*].value",
+        "$.operations[*].status_changes"
+      ],
+      "transform": "Assert the pending summary remains derived and status_changes is empty.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "No-change replay cannot alter reconciliation.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.returned_transaction_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].returned_ids[*].id"
+      ],
+      "transform": "Return the prior transaction ID and also the prior confirmation ID required by exact returned-ID replay.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "The known transaction ID is unchanged; v2 requires the complete prior returned-ID set.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.budget",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].metric",
+        "$.states[*].reports[*].metrics[*].applicability"
+      ],
+      "transform": "Keep the canonical inapplicable budget metric.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Budget remains inapplicable.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.day",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact report period label in the unchanged state.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "The period value is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.day_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.day_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.income",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.month",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact report period label in the unchanged state.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "The period value is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.month_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.month_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.expected.statistics.net_worth_change",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert unchanged reports and an empty report delta.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "ready",
+      "rationale": "Idempotent replay has zero report effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.idempotency.repeated_request_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].action_type",
+        "$.operations[*].input.request_id",
+        "$.operations[*].outcome.status",
+        "$.operations[*].outcome.reason_code"
+      ],
+      "transform": "Join the prior accepted manual_expense by the same request ID and emit no_change semantics. Pending GAP-03, use the request ID as the stable occurrence discriminator for retry operation/state IDs.",
+      "authority": "RG-01 design §9; GOLDEN_TESTS RG-01 idempotency requirements; GOLDEN_SCHEMA no_change contract.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "v2 idempotency is the same action plus equivalent input, not a separate retry action. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.accepted",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].outcome.status",
+        "$.operations[*].operation_class",
+        "$.operations[*].baseline_state_id",
+        "$.operations[*].result_state_id"
+      ],
+      "transform": "Proposed by GAP-01: map false to outcome.status='rejected', operation_class='rejection', and complete canonical-equivalent baseline/result states.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.field",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].outcome.field_path"
+      ],
+      "transform": "Proposed by GAP-01: preserve the validation field as outcome.field_path, using the attempted_input-relative field location defined by the amendment.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; preserving only reason_code would lose the source field semantic.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.new_posting_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.postings.added_ids",
+        "$.operations[*].deltas.entity_changes.transactions.added_ids"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.new_transaction_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.postings.added_ids",
+        "$.operations[*].deltas.entity_changes.transactions.added_ids"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.reason",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 4,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].outcome.reason_code"
+      ],
+      "transform": "Proposed by GAP-01: preserve the original reason token in outcome.reason_code; derive missing_required_field only for the three cases whose source reason is absent and whose field has explicit absence.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "reason_code exists in the current outcome, but the complete rejected branch remains blocked until GAP-01 also adds attempted_input and field_path.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.balance.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.value_changes.balances",
+        "$.states[*].balances[*].amount"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.new_version_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.transaction_versions.added_ids"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.reconciliation_change_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.entity_changes.posting_reconciliations.changed_ids",
+        "$.operations[*].status_changes",
+        "$.operations[*].deltas.value_changes.derived_statuses"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.statistics.cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.value_changes.reports",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.statistics.consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.value_changes.reports",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.statistics.income",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.value_changes.reports",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].expected.state_changes.statistics.net_worth",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "derive",
+      "target_paths": [
+        "$.operations[*].deltas.value_changes.reports",
+        "$.states[*].reports[*].metrics[*].amount"
+      ],
+      "transform": "Pending GAP-01: after the rejected operation is representable, derive this zero-effect assertion from complete canonical-equivalent states and exhaustive empty operation deltas.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "GAP-01 blocks serialization of the complete rejected operation: current v2 validates strict manual_expense input before it can preserve this invalid-attempt fact and its zero-effect assertions.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.roots[*].id",
+        "$.roots[*].purpose",
+        "$.roots[*].initial_state_id",
+        "$.roots[*].operation_ids[*]",
+        "$.operations[*].id",
+        "$.operations[*].attempted_input.request_id",
+        "$.states[*].id",
+        "$.states[*].root_id"
+      ],
+      "transform": "Proposed by GAP-01 and pending GAP-03: use the invalid-case ID as the stable occurrence discriminator for the isolated root ID, rejected operation ID, attempted_input.request_id, and complete baseline/result state IDs; never use the array index.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The attempted_input.request_id path is proposed by GAP-01; deterministic root/operation/state identity also requires the GAP-03 normalized-locator amendment.",
+      "contract_gap_ids": [
+        "GAP-01",
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].input.amount",
+      "source_value_kinds": [
+        "null",
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].attempted_input.amount"
+      ],
+      "transform": "Proposed by GAP-01: preserve only the actually submitted amount value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].input.category_id",
+      "source_value_kinds": [
+        "null",
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].attempted_input.category_id"
+      ],
+      "transform": "Proposed by GAP-01: preserve only the actually submitted category_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.invalid_inputs[*].input.payment_account_id",
+      "source_value_kinds": [
+        "null",
+        "string"
+      ],
+      "occurrence_count": 7,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].attempted_input.payment_account_id"
+      ],
+      "transform": "Proposed by GAP-01: preserve only the actually submitted payment_account_id value or explicit absence in the closed $.operations[*].attempted_input object; do not synthesize currency, occurred_at, note, or any other unsubmitted field.",
+      "authority": "RG-01 design §11; GOLDEN_TESTS negative-side-effect requirements; ARCHITECTURE offline core boundaries.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The target path is proposed by GAP-01 and does not exist in the current schema; current strict operation input cannot represent this rejected-attempt fact.",
+      "contract_gap_ids": [
+        "GAP-01"
+      ]
+    },
+    {
+      "source_path": "$.note_update.expected.balances.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].balances[*].amount",
+        "$.operations[*].deltas.value_changes.balances"
+      ],
+      "transform": "Assert unchanged complete balances and an empty balance delta.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The note change has no financial effect.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.current_version_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].transaction_versions[*].id"
+      ],
+      "transform": "Copy the supplied v2 current-version ID and append that version.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The source already fixes the replacement identity.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.effective_posting_set_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].posting_set_id",
+        "$.states[*].posting_sets[*].id"
+      ],
+      "transform": "Require both expense versions to reference the same existing posting set.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement reuses postings and has zero financial effects.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.effective_transaction_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions",
+        "$.states[*].posting_sets",
+        "$.operations[*].deltas.entity_changes.postings.added_ids"
+      ],
+      "transform": "Use as an equivalence assertion over the complete state and zero posting additions.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The v1 count is a projection, not a serialized entity.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.evidence_refs",
+      "source_value_kinds": [
+        "array"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].evidence",
+        "$.states[*].evidence_links"
+      ],
+      "transform": "Keep evidence and evidence_links empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The note edit neither creates nor removes external evidence.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.funding_effect_count",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions",
+        "$.states[*].posting_sets",
+        "$.operations[*].deltas.entity_changes.postings.added_ids"
+      ],
+      "transform": "Use as an equivalence assertion over the complete state and zero posting additions.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The v1 count is a projection, not a serialized entity.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.reconciliation.posting-bank-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].posting_reconciliations[*].status"
+      ],
+      "transform": "Keep the existing pending posting reconciliation unchanged.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Unchanged funding postings retain reconciliation state.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.reconciliation.posting-expense-rg01",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_reconciliations"
+      ],
+      "transform": "Keep canonical non-eligibility and absence of a reconciliation record.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "not_applicable remains display-only.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.reconciliation.transaction",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].derived_statuses[*].value",
+        "$.operations[*].status_changes"
+      ],
+      "transform": "Recompute the unchanged pending summary and require no status change.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The summary remains derived from the same eligible posting.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.budget",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].metric",
+        "$.states[*].reports[*].metrics[*].applicability"
+      ],
+      "transform": "Map not_applicable to the canonical budget metric shape.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Budget remains inapplicable.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.day",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact report period label.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The period remains unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.day_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.day_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.income",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.month",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].reports[*].period"
+      ],
+      "transform": "Copy the exact report period label.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The period remains unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.month_cash_outflow",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.month_consumption",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.statistics.net_worth_change",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].reports[*].metrics[*].amount",
+        "$.operations[*].deltas.value_changes.reports"
+      ],
+      "transform": "Assert reports remain equal and the operation report delta is empty.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Metadata-only replacement cannot alter reports.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.transaction_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transactions[*].id"
+      ],
+      "transform": "Keep the same transaction identity across the metadata replacement.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "A note edit does not create a new economic transaction.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.versions[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].id"
+      ],
+      "transform": "Copy both immutable version IDs.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Version identities are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.versions[*].note",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].note"
+      ],
+      "transform": "Copy each version note keyed by version ID.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "Versioned metadata is unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.expected.versions[*].status",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id"
+      ],
+      "transform": "Replace superseded/current labels with the canonical current_version_id pointer; historical versions remain present without a status field.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "v2 derives current versus superseded from the transaction pointer.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.request.note",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.note"
+      ],
+      "transform": "Copy the exact note-update input value.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.note_update.request.request_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.operations[*].input.request_id",
+        "$.operations[*].action_type",
+        "$.operations[*].operation_class",
+        "$.operations[*].input.explicit_confirmation"
+      ],
+      "transform": "Preserve the request ID and section action semantics. Pending GAP-03, use it as the stable occurrence discriminator for note-update operation/state/confirmation IDs without array indexes.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "v1 omits action and confirmation fields that the signed design fixes for this operation. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.note_update.request.transaction_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "preserve",
+      "target_paths": [
+        "$.operations[*].input.transaction_id"
+      ],
+      "transform": "Copy the exact note-update input value.",
+      "authority": "RG-01 design §8; ACCOUNTING_RULES correction rules; GOLDEN_SCHEMA metadata-only version replacement contract.",
+      "disposition": "ready",
+      "rationale": "The submitted fact and semantics are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.expected_balances.asset-bank-a",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].balances[*].amount"
+      ],
+      "transform": "Use as an equivalence assertion; recompute complete balances for all three catalog accounts from current postings.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "v1 lists only the focus account, while v2 requires one exact balance per catalog account.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.transactions[*].effective",
+      "source_value_kinds": [
+        "boolean"
+      ],
+      "occurrence_count": 1,
+      "classification": "derive",
+      "target_paths": [
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].balances[*].amount"
+      ],
+      "transform": "Replace the v1 effective flag with the canonical current-version chain and replay only the current posting set.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "v2 has no effective boolean; effectiveness is derived from the current version.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.transactions[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transactions[*].id",
+        "$.states[*].transactions[*].type",
+        "$.states[*].transactions[*].current_version_id",
+        "$.states[*].transaction_versions[*].id",
+        "$.states[*].transaction_versions[*].transaction_id",
+        "$.states[*].transaction_versions[*].version_number",
+        "$.states[*].posting_sets[*].id"
+      ],
+      "transform": "Preserve the opening transaction ID and type mapping. Pending GAP-03, generate the missing opening version and posting-set IDs from normalized locator $.opening.transactions[*] plus stable occurrence tx-opening-a.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "v1 lacks the formal version/posting-set chain required by v2, while the opening section and deterministic-ID contract fully determine it. Generated IDs remain blocked until the normalized migration locator is part of the approved contract/helper strategy.",
+      "contract_gap_ids": [
+        "GAP-03"
+      ]
+    },
+    {
+      "source_path": "$.opening.transactions[*].occurred_at",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].transaction_versions[*].occurred_at",
+        "$.states[*].transaction_versions[*].statistics_at",
+        "$.states[*].transaction_versions[*].effective_at"
+      ],
+      "transform": "Pending GAP-02: retain the exact source timestamp as a collapsed RG-01 economic-time fact. Expand it to occurred_at, statistics_at, and effective_at only after explicit contract approval; never emit created_at or confirmed_at from this value.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "requires_contract_amendment",
+      "rationale": "The frozen v1 field simultaneously supports transaction occurrence, report attribution, and balance replay, but that three-role expansion is not yet an approved migration rule.",
+      "contract_gap_ids": [
+        "GAP-02"
+      ]
+    },
+    {
+      "source_path": "$.opening.transactions[*].postings[*].account_id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].account_id"
+      ],
+      "transform": "Copy the exact posting value into the generated formal posting.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "The posting fact and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.transactions[*].postings[*].amount",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].amount"
+      ],
+      "transform": "Copy the exact posting value into the generated formal posting.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "The posting fact and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.transactions[*].postings[*].currency",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "preserve",
+      "target_paths": [
+        "$.states[*].postings[*].currency"
+      ],
+      "transform": "Copy the exact posting value into the generated formal posting.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "The posting fact and meaning are unchanged.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.opening.transactions[*].postings[*].id",
+      "source_value_kinds": [
+        "string"
+      ],
+      "occurrence_count": 2,
+      "classification": "map",
+      "target_paths": [
+        "$.states[*].postings[*].id",
+        "$.states[*].postings[*].posting_set_id",
+        "$.states[*].postings[*].reconciliation_eligible",
+        "$.states[*].posting_sets[*].posting_ids[*]"
+      ],
+      "transform": "Preserve posting IDs, attach them to the generated opening posting set, and set reconciliation_eligible=false; omit role because v2 permits absent role only for opening_balance.",
+      "authority": "RG-01 design §4; ACCOUNTING_RULES balance replay and balanced-posting invariants; GOLDEN_SCHEMA formal ledger ownership.",
+      "disposition": "ready",
+      "rationale": "v1 postings are embedded and omit posting-set ownership and eligibility.",
+      "contract_gap_ids": []
+    },
+    {
+      "source_path": "$.schema_version",
+      "source_value_kinds": [
+        "number"
+      ],
+      "occurrence_count": 1,
+      "classification": "map",
+      "target_paths": [
+        "$.contract",
+        "$.contract_version"
+      ],
+      "transform": "Replace the v1 schema discriminator with contract='unifiedledger.golden-case' and contract_version='2.0.0'.",
+      "authority": "GOLDEN_SCHEMA; schemas/golden-case-v2.schema.json; golden/rules/rg-01.json; RG-01 design §§3 and 10.",
+      "disposition": "ready",
+      "rationale": "The v1 integer identifies the source dialect; the v2 envelope uses a named contract and semantic version.",
+      "contract_gap_ids": []
+    }
+  ]
+}
