@@ -1,0 +1,996 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unifiedledger.local/schemas/golden-case-v2.schema.json",
+  "title": "UnifiedLedger Golden Case v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "contract_version", "case", "roots", "states", "operations"],
+  "properties": {
+    "contract": {"const": "unifiedledger.golden-case"},
+    "contract_version": {"const": "2.0.0"},
+    "case": {"$ref": "#/$defs/case"},
+    "roots": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/root"}},
+    "states": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/state"}},
+    "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}}
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|-?[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|\\+(?:[01][0-9]|2[0-3]):[0-5][0-9]|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+    },
+    "refKind": {
+      "enum": [
+        "operation", "transaction", "transaction_version", "posting_set", "posting",
+        "source", "candidate", "confirmation", "evidence", "evidence_link",
+        "relation", "domain_entity", "observation"
+      ]
+    },
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/refKind"},
+        "id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "level", "rule_version", "approval_status", "ledger_id", "timezone", "currencies"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "level": {"enum": ["core_required", "core_reserved", "future_draft"]},
+        "rule_version": {"type": "integer", "minimum": 1},
+        "approval_status": {"const": "draft_for_review"},
+        "ledger_id": {"$ref": "#/$defs/id"},
+        "timezone": {"type": "string", "minLength": 1},
+        "currencies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/currencyDeclaration"}
+        }
+      }
+    },
+    "currencyDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "precision"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "precision": {"type": "integer", "minimum": 0, "maximum": 18}
+      }
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "purpose", "initial_state_id", "operation_ids"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "purpose": {"type": "string"},
+        "initial_state_id": {"$ref": "#/$defs/id"},
+        "operation_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accounts", "categories"],
+      "properties": {
+        "accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
+        "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}}
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "kind", "currency", "owned_by_user", "real_account", "reconciliation_eligible"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string"},
+        "kind": {"enum": ["asset", "liability", "equity", "income", "expense"]},
+        "currency": {"type": "string", "minLength": 1},
+        "owned_by_user": {"type": "boolean"},
+        "real_account": {"type": "boolean"},
+        "reconciliation_eligible": {"type": "boolean"},
+        "system_role": {"enum": ["opening_balance", "balance_adjustments"]},
+        "system_managed": {"type": "boolean"},
+        "hidden": {"type": "boolean"}
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "parent_id", "posting_account_id", "active"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string"},
+        "parent_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "posting_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "active": {"type": "boolean"}
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "current_version_id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {
+          "enum": [
+            "opening_balance", "expense", "income", "account_transfer", "credit_repayment",
+            "refund_receipt", "lending_disbursement", "lending_collection", "balance_adjustment",
+            "balance_adjustment_reversal", "stored_value_recharge", "stored_value_spend",
+            "stored_value_expiry_loss", "stored_value_pre_activation_balance_adjustment"
+          ]
+        },
+        "current_version_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "transactionVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "transaction_id", "version_number", "posting_set_id", "occurred_at", "statistics_at", "effective_at"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "transaction_id": {"$ref": "#/$defs/id"},
+        "version_number": {"type": "integer", "minimum": 1},
+        "posting_set_id": {"$ref": "#/$defs/id"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "statistics_at": {"$ref": "#/$defs/timestamp"},
+        "effective_at": {"$ref": "#/$defs/timestamp"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "note": {"type": "string"},
+        "confirmation_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "postingSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "posting_ids"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "posting_ids": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      }
+    },
+    "posting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "posting_set_id", "account_id", "amount", "currency", "reconciliation_eligible"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "posting_set_id": {"$ref": "#/$defs/id"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "role": {
+          "enum": [
+            "expense", "payment_asset", "transfer_principal_in", "transfer_principal_out",
+            "transfer_fee", "destination_asset", "funding_asset", "bank_payment",
+            "lending_receivable", "lending_principal_in", "lending_principal_out",
+            "lending_interest", "lending_fee", "balance_adjustment_target",
+            "balance_adjustment_counterpart", "balance_adjustment_reversal_target",
+            "balance_adjustment_reversal_counterpart", "stored_value_asset",
+            "stored_value_bonus_income", "stored_value_expiry_loss"
+          ]
+        },
+        "reconciliation_eligible": {"type": "boolean"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "explicit_balance_observation"},
+        "payload": {"$ref": "#/$defs/explicitBalanceObservationPayload"}
+      }
+    },
+    "explicitBalanceObservationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "target_amount", "currency", "target_observed_at"],
+      "properties": {
+        "account_id": {"$ref": "#/$defs/id"},
+        "target_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "target_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "balance_adjustment"},
+        "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/balanceAdjustmentCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "candidateStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sequence", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["pending_confirmation", "confirmed", "rejected", "incomplete"]}
+      }
+    },
+    "balanceAdjustmentCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "replayed_amount", "target_amount", "delta", "currency", "effective_at"],
+      "properties": {
+        "account_id": {"$ref": "#/$defs/id"},
+        "replayed_amount": {"$ref": "#/$defs/decimal"},
+        "target_amount": {"$ref": "#/$defs/decimal"},
+        "delta": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "effective_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmation": {
+      "oneOf": [
+        {"$ref": "#/$defs/explicitManualSaveConfirmation"},
+        {"$ref": "#/$defs/candidateConfirmation"},
+        {"$ref": "#/$defs/explicitOperationConfirmation"}
+      ]
+    },
+    "explicitManualSaveConfirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "operation_id", "subject", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "explicit_manual_save"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "subject": {"$ref": "#/$defs/operationSubject"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"},
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
+    "candidateConfirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "operation_id", "subject", "confirmed_at", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "candidate_confirmation"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "subject": {"$ref": "#/$defs/candidateSubject"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"},
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
+    "explicitOperationConfirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "operation_id", "subject", "confirmed_at", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "explicit_operation_confirmation"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "subject": {"$ref": "#/$defs/operationSubject"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"},
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
+    "operationSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {"kind": {"const": "operation"}, "id": {"$ref": "#/$defs/id"}}
+    },
+    "candidateSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {"kind": {"const": "candidate"}, "id": {"$ref": "#/$defs/id"}}
+    },
+    "emptyPayload": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "user_balance_observation"},
+        "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at"],
+          "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      }
+    },
+    "evidenceLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "evidence_id", "target_kind", "target_id", "role"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "target_kind": {"enum": ["posting", "observation", "relation", "domain_entity"]},
+        "target_id": {"$ref": "#/$defs/id"},
+        "role": {
+          "enum": [
+            "target_balance_observation", "real_account_posting", "payment_asset_posting",
+            "destination_asset_posting", "funding_asset_posting", "bank_payment_posting",
+            "refund_relationship", "counterparty_lending_relationship",
+            "stored_value_activation_balance_fact"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"role": {"const": "target_balance_observation"}}, "required": ["role"]},
+          "then": {"properties": {"target_kind": {"const": "observation"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "real_account_posting", "payment_asset_posting", "destination_asset_posting",
+                  "funding_asset_posting", "bank_payment_posting"
+                ]
+              }
+            },
+            "required": ["role"]
+          },
+          "then": {"properties": {"target_kind": {"const": "posting"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {"enum": ["refund_relationship", "counterparty_lending_relationship"]}
+            },
+            "required": ["role"]
+          },
+          "then": {"properties": {"target_kind": {"const": "relation"}}}
+        },
+        {
+          "if": {
+            "properties": {"role": {"const": "stored_value_activation_balance_fact"}},
+            "required": ["role"]
+          },
+          "then": {"properties": {"target_kind": {"const": "domain_entity"}}}
+        }
+      ]
+    },
+    "relation": false,
+    "domainEntity": {
+      "oneOf": [
+        {"$ref": "#/$defs/targetBalanceObservation"},
+        {"$ref": "#/$defs/balanceAdjustmentEntity"},
+        {"$ref": "#/$defs/explanationAllocation"}
+      ]
+    },
+    "targetBalanceObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "target_balance_observation"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["account_id", "target_amount", "currency", "observed_at", "source_id"],
+          "properties": {
+            "account_id": {"$ref": "#/$defs/id"},
+            "target_amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "observed_at": {"$ref": "#/$defs/timestamp"},
+            "source_id": {"$ref": "#/$defs/id"}
+          }
+        }
+      }
+    },
+    "balanceAdjustmentEntity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "balance_adjustment"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observation_id", "original_delta", "currency", "transaction_id"],
+          "properties": {
+            "observation_id": {"$ref": "#/$defs/id"},
+            "original_delta": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "transaction_id": {"$ref": "#/$defs/id"}
+          }
+        }
+      }
+    },
+    "explanationAllocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "explanation_allocation"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adjustment_id", "explanation_transaction_id", "reversal_transaction_id",
+            "amount", "currency", "confirmed_at"
+          ],
+          "properties": {
+            "adjustment_id": {"$ref": "#/$defs/id"},
+            "explanation_transaction_id": {"$ref": "#/$defs/id"},
+            "reversal_transaction_id": {"$ref": "#/$defs/id"},
+            "amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "confirmed_at": {"$ref": "#/$defs/timestamp"}
+          }
+        }
+      }
+    },
+    "auditLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "from", "to", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["adjustment_transaction", "explanation_transaction", "allocation_reversal"]},
+        "from": {"$ref": "#/$defs/ref"},
+        "to": {"$ref": "#/$defs/ref"},
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
+    "postingReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "posting_id", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "posting_id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["pending", "matched", "has_difference"]}
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "currency", "amount"],
+      "properties": {
+        "account_id": {"$ref": "#/$defs/id"},
+        "currency": {"type": "string", "minLength": 1},
+        "amount": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period_type", "period", "metrics"],
+      "properties": {
+        "period_type": {"enum": ["day", "month", "cumulative"]},
+        "period": {"type": "string", "minLength": 1},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/reportMetric"}}
+      }
+    },
+    "reportMetricName": {
+      "enum": [
+        "consumption", "cash_outflow", "cash_inflow", "income", "ordinary_income",
+        "ordinary_expense", "expense", "special_income", "expiry_loss", "net_worth_change",
+        "principal_consumption", "principal_external_cash_flow",
+        "balance_adjustment_net_worth_change", "internal_transfer_amount", "budget", "category_effect"
+      ]
+    },
+    "reportMetric": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metric", "applicability", "currency", "amount"],
+          "properties": {
+            "metric": {"$ref": "#/$defs/reportMetricName"},
+            "applicability": {"const": "applicable"},
+            "currency": {"type": "string", "minLength": 1},
+            "amount": {"$ref": "#/$defs/decimal"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metric", "applicability"],
+          "properties": {
+            "metric": {"$ref": "#/$defs/reportMetricName"},
+            "applicability": {"const": "not_applicable"}
+          }
+        }
+      ]
+    },
+    "derivedStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target_kind", "target_id", "status_name", "value"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "target_kind": {"$ref": "#/$defs/refKind"},
+        "target_id": {"$ref": "#/$defs/id"},
+        "status_name": {"type": "string"},
+        "value": {"type": "string"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "explanation_status"},
+            "value": {"enum": ["open", "partially_explained", "fully_explained"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "observation"},
+            "status_name": {"const": "verification_status"},
+            "value": {
+              "enum": [
+                "balanced_with_unexplained_adjustment",
+                "difference_pending_explanation_confirmation",
+                "evidence_incomplete",
+                "fully_reconciled"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "transaction"},
+            "status_name": {"const": "reconciliation_summary"},
+            "value": {"enum": ["pending", "partial", "matched", "has_difference"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "candidate"},
+            "status_name": {"const": "confirmation_status"},
+            "value": {"enum": ["pending_confirmation", "confirmed", "rejected", "incomplete"]}
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "root_id", "as_of_operation_id", "catalog", "transactions", "transaction_versions",
+        "posting_sets", "postings", "sources", "candidates", "confirmations", "evidence",
+        "evidence_links", "relations", "domain_entities", "audit_links", "posting_reconciliations",
+        "balances", "reports", "derived_statuses"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "root_id": {"$ref": "#/$defs/id"},
+        "as_of_operation_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "catalog": {"$ref": "#/$defs/catalog"},
+        "transactions": {"type": "array", "items": {"$ref": "#/$defs/transaction"}},
+        "transaction_versions": {"type": "array", "items": {"$ref": "#/$defs/transactionVersion"}},
+        "posting_sets": {"type": "array", "items": {"$ref": "#/$defs/postingSet"}},
+        "postings": {"type": "array", "items": {"$ref": "#/$defs/posting"}},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+        "confirmations": {"type": "array", "items": {"$ref": "#/$defs/confirmation"}},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+        "evidence_links": {"type": "array", "items": {"$ref": "#/$defs/evidenceLink"}},
+        "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+        "domain_entities": {"type": "array", "items": {"$ref": "#/$defs/domainEntity"}},
+        "audit_links": {"type": "array", "items": {"$ref": "#/$defs/auditLink"}},
+        "posting_reconciliations": {"type": "array", "items": {"$ref": "#/$defs/postingReconciliation"}},
+        "balances": {"type": "array", "items": {"$ref": "#/$defs/balance"}},
+        "reports": {"type": "array", "items": {"$ref": "#/$defs/report"}},
+        "derived_statuses": {"type": "array", "items": {"$ref": "#/$defs/derivedStatus"}}
+      }
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {"status": {"const": "accepted"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason_code"],
+          "properties": {
+            "status": {"enum": ["rejected", "no_change"]},
+            "reason_code": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "statusChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_kind", "target_id", "status_name", "before", "after"],
+      "properties": {
+        "target_kind": {"$ref": "#/$defs/refKind"},
+        "target_id": {"$ref": "#/$defs/id"},
+        "status_name": {"type": "string", "minLength": 1},
+        "before": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "after": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+      }
+    },
+    "idChanges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["added_ids", "changed_ids", "removed_ids"],
+      "properties": {
+        "added_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "changed_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "removed_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "entityChanges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_accounts", "catalog_categories", "transactions", "transaction_versions",
+        "posting_sets", "postings", "sources", "candidates", "confirmations", "evidence",
+        "evidence_links", "relations", "domain_entities", "audit_links", "posting_reconciliations"
+      ],
+      "properties": {
+        "catalog_accounts": {"$ref": "#/$defs/idChanges"},
+        "catalog_categories": {"$ref": "#/$defs/idChanges"},
+        "transactions": {"$ref": "#/$defs/idChanges"},
+        "transaction_versions": {"$ref": "#/$defs/idChanges"},
+        "posting_sets": {"$ref": "#/$defs/idChanges"},
+        "postings": {"$ref": "#/$defs/idChanges"},
+        "sources": {"$ref": "#/$defs/idChanges"},
+        "candidates": {"$ref": "#/$defs/idChanges"},
+        "confirmations": {"$ref": "#/$defs/idChanges"},
+        "evidence": {"$ref": "#/$defs/idChanges"},
+        "evidence_links": {"$ref": "#/$defs/idChanges"},
+        "relations": {"$ref": "#/$defs/idChanges"},
+        "domain_entities": {"$ref": "#/$defs/idChanges"},
+        "audit_links": {"$ref": "#/$defs/idChanges"},
+        "posting_reconciliations": {"$ref": "#/$defs/idChanges"}
+      }
+    },
+    "balanceChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "before", "after"],
+      "properties": {
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["account_id", "currency"],
+          "properties": {
+            "account_id": {"$ref": "#/$defs/id"},
+            "currency": {"type": "string", "minLength": 1}
+          }
+        },
+        "before": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]},
+        "after": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]}
+      }
+    },
+    "reportChangeValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applicability", "currency", "amount"],
+          "properties": {
+            "applicability": {"const": "applicable"},
+            "currency": {"type": "string", "minLength": 1},
+            "amount": {"$ref": "#/$defs/decimal"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applicability"],
+          "properties": {"applicability": {"const": "not_applicable"}}
+        }
+      ]
+    },
+    "reportChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "before", "after"],
+      "properties": {
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["period_type", "period", "metric"],
+          "properties": {
+            "period_type": {"enum": ["day", "month", "cumulative"]},
+            "period": {"type": "string", "minLength": 1},
+            "metric": {"$ref": "#/$defs/reportMetricName"},
+            "currency": {"type": "string", "minLength": 1}
+          }
+        },
+        "before": {"anyOf": [{"$ref": "#/$defs/reportChangeValue"}, {"type": "null"}]},
+        "after": {"anyOf": [{"$ref": "#/$defs/reportChangeValue"}, {"type": "null"}]}
+      }
+    },
+    "derivedStatusChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "before", "after"],
+      "properties": {
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target_id", "status_name"],
+          "properties": {
+            "kind": {"$ref": "#/$defs/refKind"},
+            "target_id": {"$ref": "#/$defs/id"},
+            "status_name": {"type": "string", "minLength": 1}
+          }
+        },
+        "before": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "after": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+      }
+    },
+    "deltas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity_changes", "value_changes"],
+      "properties": {
+        "entity_changes": {"$ref": "#/$defs/entityChanges"},
+        "value_changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["balances", "reports", "derived_statuses"],
+          "properties": {
+            "balances": {"type": "array", "items": {"$ref": "#/$defs/balanceChange"}},
+            "reports": {"type": "array", "items": {"$ref": "#/$defs/reportChange"}},
+            "derived_statuses": {"type": "array", "items": {"$ref": "#/$defs/derivedStatusChange"}}
+          }
+        }
+      }
+    },
+    "manualExpenseInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "amount", "currency", "category_id", "payment_account_id",
+        "occurred_at", "note", "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "category_id": {"$ref": "#/$defs/id"},
+        "payment_account_id": {"$ref": "#/$defs/id"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "note": {"type": "string"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "transactionNoteUpdateInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "transaction_id", "note", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "transaction_id": {"$ref": "#/$defs/id"},
+        "note": {"type": "string"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "previewTargetBalanceInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "account_id", "target_amount", "currency", "target_observed_at", "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "target_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "target_observed_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": false}
+      }
+    },
+    "confirmBalanceAdjustmentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "candidate_id", "account_id", "target_amount", "replayed_amount", "delta",
+        "currency", "effective_at", "explicit_confirmation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "candidate_id": {"$ref": "#/$defs/id"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "target_amount": {"$ref": "#/$defs/decimal"},
+        "replayed_amount": {"$ref": "#/$defs/decimal"},
+        "delta": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "effective_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmRealTransferInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "target_account_id", "counter_account_id", "amount", "currency",
+        "actual_occurred_at", "discovered_at", "explicit_confirmation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "discovered_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmExplanationAllocationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "adjustment_id", "transaction_id", "target_account_id", "actual_occurred_at",
+        "real_transaction_amount", "currency", "target_observed_at", "allocation_direction",
+        "explanation_amount", "confirms_target_account", "confirms_actual_occurred_at",
+        "confirms_real_transaction_amount", "confirms_currency", "confirms_target_observed_at",
+        "confirms_allocation_direction", "confirms_explanation_amount", "explicit_confirmation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "adjustment_id": {"$ref": "#/$defs/id"},
+        "transaction_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "real_transaction_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "target_observed_at": {"$ref": "#/$defs/timestamp"},
+        "allocation_direction": {"const": "same_as_original_adjustment"},
+        "explanation_amount": {"$ref": "#/$defs/decimal"},
+        "confirms_target_account": {"const": true},
+        "confirms_actual_occurred_at": {"const": true},
+        "confirms_real_transaction_amount": {"const": true},
+        "confirms_currency": {"const": true},
+        "confirms_target_observed_at": {"const": true},
+        "confirms_allocation_direction": {"const": true},
+        "confirms_explanation_amount": {"const": true},
+        "explicit_confirmation": {"const": true},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "operationBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "root_id", "sequence", "operation_class", "action_type", "baseline_state_id",
+        "result_state_id", "input", "outcome", "status_changes", "deltas", "returned_ids"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "root_id": {"$ref": "#/$defs/id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "operation_class": {
+          "enum": [
+            "creation", "update", "read", "rejection", "reconciliation",
+            "status_transition", "reversal", "adjustment"
+          ]
+        },
+        "action_type": {
+          "enum": [
+            "manual_expense", "transaction_note_update", "preview_target_balance",
+            "confirm_balance_adjustment", "confirm_real_transfer", "confirm_explanation_allocation"
+          ]
+        },
+        "baseline_state_id": {"$ref": "#/$defs/id"},
+        "result_state_id": {"$ref": "#/$defs/id"},
+        "input": {"type": "object"},
+        "outcome": {"$ref": "#/$defs/outcome"},
+        "status_changes": {"type": "array", "items": {"$ref": "#/$defs/statusChange"}},
+        "deltas": {"$ref": "#/$defs/deltas"},
+        "returned_ids": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "operation": {
+      "allOf": [
+        {"$ref": "#/$defs/operationBase"},
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "action_type": {"const": "manual_expense"},
+                "operation_class": {"const": "creation"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "transaction_note_update"},
+                "operation_class": {"const": "update"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "preview_target_balance"},
+                "operation_class": {"const": "read"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_balance_adjustment"},
+                "operation_class": {"const": "adjustment"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_real_transfer"},
+                "operation_class": {"const": "creation"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_explanation_allocation"},
+                "operation_class": {"const": "reversal"}
+              }
+            }
+          ]
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "manual_expense"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/manualExpenseInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "transaction_note_update"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/transactionNoteUpdateInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "preview_target_balance"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/previewTargetBalanceInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_balance_adjustment"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmBalanceAdjustmentInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_real_transfer"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmRealTransferInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_explanation_allocation"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmExplanationAllocationInput"}}}
+        }
+      ]
+    }
+  }
+}

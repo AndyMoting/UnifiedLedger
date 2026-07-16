@@ -1,0 +1,2290 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from copy import deepcopy
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+import json
+from pathlib import Path
+import re
+from typing import Any, Iterable
+from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
+
+from .loader import GoldenCaseError
+
+
+_UUID_NAMESPACE = UUID("cfad3f84-edb1-5838-ae53-aae49684cf1a")
+_DEFAULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3] / "schemas" / "golden-case-v2.schema.json"
+)
+_DECIMAL_PATTERN = re.compile(r"^(?:0|-?[1-9][0-9]*)(?:\.[0-9]+)?$")
+_TIMESTAMP_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|\+(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+    r"|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+)
+_ENTITY_COLLECTIONS = {
+    "catalog_accounts": ("catalog", "accounts"),
+    "catalog_categories": ("catalog", "categories"),
+    "transactions": ("transactions",),
+    "transaction_versions": ("transaction_versions",),
+    "posting_sets": ("posting_sets",),
+    "postings": ("postings",),
+    "sources": ("sources",),
+    "candidates": ("candidates",),
+    "confirmations": ("confirmations",),
+    "evidence": ("evidence",),
+    "evidence_links": ("evidence_links",),
+    "relations": ("relations",),
+    "domain_entities": ("domain_entities",),
+    "audit_links": ("audit_links",),
+    "posting_reconciliations": ("posting_reconciliations",),
+}
+_ENTITY_CHANGE_FIELDS = ("added_ids", "changed_ids", "removed_ids")
+_ACCEPTED_ACTION_ENTITY_COUNTS = {
+    "manual_expense": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "transaction_note_update": {
+        "transactions": (0, 1, 0),
+        "transaction_versions": (1, 0, 0),
+        "confirmations": (1, 0, 0),
+    },
+    "preview_target_balance": {
+        "sources": (1, 0, 0),
+        "candidates": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+    },
+    "confirm_balance_adjustment": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "candidates": (0, 1, 0),
+        "confirmations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "audit_links": (1, 0, 0),
+    },
+    "confirm_real_transfer": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "posting_reconciliations": (2, 0, 0),
+    },
+    "confirm_explanation_allocation": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "audit_links": (2, 0, 0),
+    },
+}
+_SET_LIKE_ARRAY_KEYS = {
+    "accounts",
+    "categories",
+    "transactions",
+    "transaction_versions",
+    "posting_sets",
+    "postings",
+    "sources",
+    "candidates",
+    "confirmations",
+    "evidence",
+    "evidence_links",
+    "relations",
+    "domain_entities",
+    "audit_links",
+    "posting_reconciliations",
+    "balances",
+    "reports",
+    "metrics",
+    "derived_statuses",
+    "posting_ids",
+    "source_ids",
+    "member_refs",
+    "returned_ids",
+    "added_ids",
+    "changed_ids",
+    "removed_ids",
+}
+_SCHEMA_CACHE: dict[Path, tuple[int, dict[str, Any], Draft202012Validator]] = {}
+
+
+class _DuplicateKeyError(ValueError):
+    def __init__(self, key: str):
+        super().__init__(key)
+        self.key = key
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKeyError(key)
+        result[key] = value
+    return result
+
+
+def _json_path(parts: Iterable[Any]) -> str:
+    path = "$"
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(part)):
+            path += f".{part}"
+        else:
+            path += f"[{json.dumps(str(part), ensure_ascii=True)}]"
+    return path
+
+
+def _load_schema(
+    schema_path: str | Path | None,
+) -> tuple[dict[str, Any], Draft202012Validator]:
+    path = (Path(schema_path) if schema_path is not None else _DEFAULT_SCHEMA_PATH).resolve()
+    try:
+        modified = path.stat().st_mtime_ns
+        cached = _SCHEMA_CACHE.get(path)
+        if cached is not None and cached[0] == modified:
+            return cached[1], cached[2]
+        schema = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+        )
+        Draft202012Validator.check_schema(schema)
+    except _DuplicateKeyError as error:
+        raise GoldenCaseError(f"$.{error.key}: duplicate object key in schema") from error
+    except (OSError, json.JSONDecodeError, SchemaError) as error:
+        raise GoldenCaseError(f"$: cannot load valid Golden Schema v2 from {path}: {error}") from error
+    validator = Draft202012Validator(schema)
+    _SCHEMA_CACHE[path] = (modified, schema, validator)
+    return schema, validator
+
+
+def _schema_error(error: ValidationError) -> GoldenCaseError:
+    path = _json_path(error.absolute_path)
+    if error.validator == "required":
+        missing = re.search(r"'([^']+)' is a required property", error.message)
+        if missing:
+            path += f".{missing.group(1)}"
+    elif error.validator in {"additionalProperties", "unevaluatedProperties"}:
+        unexpected = re.search(r"'([^']+)' was unexpected", error.message)
+        if unexpected:
+            path += f".{unexpected.group(1)}"
+    return GoldenCaseError(f"{path}: {error.message}")
+
+
+def _specific_schema_errors(error: ValidationError) -> list[ValidationError]:
+    if not error.context:
+        return [error]
+    result: list[ValidationError] = []
+    for child in error.context:
+        result.extend(_specific_schema_errors(child))
+    return result
+
+
+def _validate_schema(case: Any, schema_path: str | Path | None = None) -> None:
+    _, validator = _load_schema(schema_path)
+    errors = sorted(
+        validator.iter_errors(case),
+        key=lambda item: (list(item.absolute_path), item.message),
+    )
+    if errors:
+        candidates = _specific_schema_errors(errors[0])
+
+        def error_score(item: ValidationError) -> tuple[int, int, int]:
+            if item.validator == "additionalProperties":
+                unexpected_count = item.message.count("'") // 2
+                return (4, -unexpected_count, len(item.absolute_path))
+            if item.validator == "required":
+                return (3, 0, len(item.absolute_path))
+            if item.validator == "const":
+                return (1, 0, len(item.absolute_path))
+            return (2, 0, len(item.absolute_path))
+
+        selected = max(
+            candidates,
+            key=error_score,
+        )
+        raise _schema_error(selected)
+
+
+def load_golden_case_v2(path: str | Path) -> dict[str, Any]:
+    case_path = Path(path)
+    try:
+        value = json.loads(
+            case_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except _DuplicateKeyError as error:
+        raise GoldenCaseError(f"$.{error.key}: duplicate JSON object key") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise GoldenCaseError(f"$: cannot load golden case {case_path}: {error}") from error
+
+    if not isinstance(value, dict):
+        raise GoldenCaseError("$: golden case root must be an object")
+    _validate_schema(value)
+    return value
+
+
+def deterministic_v2_id(
+    case_id: str,
+    root_id: str,
+    entity_kind: str,
+    semantic_key: str,
+) -> str:
+    values = {
+        "case_id": case_id,
+        "root_id": root_id,
+        "entity_kind": entity_kind,
+        "semantic_key": semantic_key,
+    }
+    for name, value in values.items():
+        if not isinstance(value, str) or not value:
+            raise GoldenCaseError(f"$.{name} must be non-empty")
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise GoldenCaseError(f"$.{name} must not contain control characters")
+    name = f"{case_id}\n{root_id}\n{entity_kind}\n{semantic_key}"
+    return str(uuid5(_UUID_NAMESPACE, name))
+
+
+def _fail(path: str, message: str) -> None:
+    raise GoldenCaseError(f"{path}: {message}")
+
+
+def _unique_index(items: list[dict[str, Any]], path: str) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(items):
+        item_id = item["id"]
+        if item_id in result:
+            _fail(f"{path}[{index}].id", f"duplicate stable id {item_id!r}")
+        result[item_id] = item
+    return result
+
+
+def _unique_compound(
+    items: list[dict[str, Any]],
+    path: str,
+    key_fields: tuple[str, ...],
+) -> None:
+    seen: set[tuple[Any, ...]] = set()
+    for index, item in enumerate(items):
+        key = tuple(item.get(field) for field in key_fields)
+        if key in seen:
+            _fail(f"{path}[{index}]", f"duplicate stable key {key!r}")
+        seen.add(key)
+
+
+def _decimal(value: str, path: str) -> Decimal:
+    if not _DECIMAL_PATTERN.fullmatch(value):
+        _fail(path, "must be a canonical decimal string")
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        _fail(path, "must be a valid decimal")
+
+
+def _amount(
+    value: str,
+    currency: str,
+    path: str,
+    precisions: dict[str, int],
+) -> Decimal:
+    if currency not in precisions:
+        _fail(path.rsplit(".", 1)[0] + ".currency", f"unknown currency {currency!r}")
+    precision = precisions[currency]
+    if precision == 0:
+        pattern = r"^(?:0|-?[1-9][0-9]*)$"
+    else:
+        pattern = rf"^(?:0|-?[1-9][0-9]*)\.[0-9]{{{precision}}}$"
+    if not re.fullmatch(pattern, value):
+        _fail(path, f"must use exactly {precision} decimal places for {currency}")
+    return _decimal(value, path)
+
+
+def _timestamp(value: str, path: str, timezone: ZoneInfo) -> datetime:
+    if not _TIMESTAMP_PATTERN.fullmatch(value):
+        _fail(path, "must be a strict RFC 3339 timestamp with seconds and an explicit offset")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        _fail(path, "must be a valid RFC 3339 timestamp")
+    expected_offset = parsed.astimezone(timezone).utcoffset()
+    if parsed.utcoffset() != expected_offset:
+        _fail(path, "offset does not match case.timezone at that instant")
+    return parsed
+
+
+def _timestamp_instant(value: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized)
+
+
+def _normalize_contract_value(value: Any, parent_key: str | None = None) -> Any:
+    """Normalize only the contract's declared set-like arrays for equality checks."""
+    if isinstance(value, dict):
+        return {
+            key: _normalize_contract_value(value[key], key) for key in sorted(value)
+        }
+    if isinstance(value, list):
+        normalized = [_normalize_contract_value(item) for item in value]
+        if parent_key in _SET_LIKE_ARRAY_KEYS:
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(
+                    item, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                ),
+            )
+        return normalized
+    return value
+
+
+def _contract_equivalent(left: Any, right: Any) -> bool:
+    return _normalize_contract_value(left) == _normalize_contract_value(right)
+
+
+def _state_payload(state: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(state)
+    result.pop("id", None)
+    result.pop("as_of_operation_id", None)
+    return result
+
+
+def _collection(state: dict[str, Any], parts: tuple[str, ...]) -> list[dict[str, Any]]:
+    value: Any = state
+    for part in parts:
+        value = value[part]
+    return value
+
+
+def _state_indexes(state: dict[str, Any], path: str) -> dict[str, dict[str, dict[str, Any]]]:
+    indexes: dict[str, dict[str, dict[str, Any]]] = {}
+    for name, parts in _ENTITY_COLLECTIONS.items():
+        collection_path = path + "." + ".".join(parts)
+        indexes[name] = _unique_index(_collection(state, parts), collection_path)
+    return indexes
+
+
+def _resolve_ref(
+    state: dict[str, Any],
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+    kind: str,
+    target_id: str,
+    path: str,
+) -> dict[str, Any]:
+    mapping = {
+        "transaction": "transactions",
+        "transaction_version": "transaction_versions",
+        "posting_set": "posting_sets",
+        "posting": "postings",
+        "source": "sources",
+        "candidate": "candidates",
+        "confirmation": "confirmations",
+        "evidence": "evidence",
+        "evidence_link": "evidence_links",
+        "relation": "relations",
+        "domain_entity": "domain_entities",
+    }
+    if kind == "operation":
+        target = operations.get(target_id)
+        if target is None or target["root_id"] != state["root_id"]:
+            _fail(path, f"dangling or cross-root operation reference {target_id!r}")
+        return target
+    if kind == "observation":
+        target = indexes["domain_entities"].get(target_id)
+        if target is None or target["type"] != "target_balance_observation":
+            _fail(path, f"dangling or mistyped observation reference {target_id!r}")
+        return target
+    collection = mapping[kind]
+    target = indexes[collection].get(target_id)
+    if target is None:
+        _fail(path, f"dangling {kind} reference {target_id!r}")
+    return target
+
+
+def _validate_catalog(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    precisions: dict[str, int],
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    categories = indexes["catalog_categories"]
+    for index, account in enumerate(state["catalog"]["accounts"]):
+        if account["currency"] not in precisions:
+            _fail(f"{path}.catalog.accounts[{index}].currency", "currency is not declared")
+        if account["reconciliation_eligible"] and not (
+            account["owned_by_user"]
+            and account["real_account"]
+            and account["kind"] in {"asset", "liability"}
+        ):
+            _fail(
+                f"{path}.catalog.accounts[{index}].reconciliation_eligible",
+                "eligible accounts must be owned real asset or liability accounts",
+            )
+    for index, category in enumerate(state["catalog"]["categories"]):
+        parent_id = category["parent_id"]
+        if parent_id is not None and parent_id not in categories:
+            _fail(f"{path}.catalog.categories[{index}].parent_id", "dangling category reference")
+        posting_account_id = category["posting_account_id"]
+        if posting_account_id is not None and posting_account_id not in accounts:
+            _fail(
+                f"{path}.catalog.categories[{index}].posting_account_id",
+                "dangling account reference",
+            )
+
+
+def _validate_formal_ledger(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> tuple[dict[str, Decimal], dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]]:
+    transactions = indexes["transactions"]
+    versions = indexes["transaction_versions"]
+    posting_sets = indexes["posting_sets"]
+    postings = indexes["postings"]
+    accounts = indexes["catalog_accounts"]
+    confirmations = indexes["confirmations"]
+
+    versions_by_transaction: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    posting_set_owners: dict[str, set[str]] = defaultdict(set)
+    for index, version in enumerate(state["transaction_versions"]):
+        version_path = f"{path}.transaction_versions[{index}]"
+        transaction = transactions.get(version["transaction_id"])
+        if transaction is None:
+            _fail(version_path + ".transaction_id", "dangling transaction reference")
+        if version["posting_set_id"] not in posting_sets:
+            _fail(version_path + ".posting_set_id", "dangling posting-set reference")
+        if "confirmation_id" in version and version["confirmation_id"] not in confirmations:
+            _fail(version_path + ".confirmation_id", "dangling confirmation reference")
+        for field in ("occurred_at", "statistics_at", "effective_at", "created_at"):
+            if field in version:
+                _timestamp(version[field], version_path + f".{field}", timezone)
+        versions_by_transaction[version["transaction_id"]].append(version)
+        posting_set_owners[version["posting_set_id"]].add(version["transaction_id"])
+
+    current: dict[
+        str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]
+    ] = {}
+    for index, transaction in enumerate(state["transactions"]):
+        transaction_path = f"{path}.transactions[{index}]"
+        current_version = versions.get(transaction["current_version_id"])
+        if current_version is None:
+            _fail(transaction_path + ".current_version_id", "dangling current version reference")
+        if current_version["transaction_id"] != transaction["id"]:
+            _fail(transaction_path + ".current_version_id", "current version belongs to another transaction")
+        owned_versions = versions_by_transaction[transaction["id"]]
+        numbers = [item["version_number"] for item in owned_versions]
+        if len(numbers) != len(set(numbers)):
+            _fail(transaction_path + ".current_version_id", "transaction has duplicate version numbers")
+        ordered_numbers = sorted(numbers)
+        expected_numbers = list(range(1, len(owned_versions) + 1))
+        if ordered_numbers != expected_numbers:
+            _fail(
+                transaction_path,
+                f"transaction version numbers must start at 1 and remain unique and continuous; got {ordered_numbers}",
+            )
+        if current_version["version_number"] != ordered_numbers[-1]:
+            _fail(
+                transaction_path + ".current_version_id",
+                "must point to the highest transaction version_number; non-current ghost versions are forbidden",
+            )
+        posting_set = posting_sets[current_version["posting_set_id"]]
+        current_postings: list[dict[str, Any]] = []
+        posting_set_index = state["posting_sets"].index(posting_set)
+        for posting_index, posting_id in enumerate(posting_set["posting_ids"]):
+            posting = postings.get(posting_id)
+            if posting is None:
+                _fail(
+                    f"{path}.posting_sets[{posting_set_index}].posting_ids[{posting_index}]",
+                    "dangling posting reference",
+                )
+            current_postings.append(posting)
+        current[transaction["id"]] = (
+            transaction,
+            current_version,
+            current_postings,
+        )
+
+    referenced_postings: dict[str, str] = {}
+    for index, posting_set in enumerate(state["posting_sets"]):
+        set_path = f"{path}.posting_sets[{index}]"
+        if posting_set["id"] not in posting_set_owners:
+            _fail(set_path + ".id", "posting set is not owned by a transaction version")
+        if len(posting_set_owners[posting_set["id"]]) != 1:
+            _fail(set_path + ".id", "posting set is shared by different transactions")
+        if len(posting_set["posting_ids"]) != len(set(posting_set["posting_ids"])):
+            _fail(set_path + ".posting_ids", "contains duplicate posting references")
+        totals: dict[str, Decimal] = defaultdict(Decimal)
+        for posting_index, posting_id in enumerate(posting_set["posting_ids"]):
+            posting = postings.get(posting_id)
+            posting_path = f"{set_path}.posting_ids[{posting_index}]"
+            if posting is None:
+                _fail(posting_path, "dangling posting reference")
+            if posting["posting_set_id"] != posting_set["id"]:
+                _fail(posting_path, "posting points to another posting set")
+            if posting_id in referenced_postings:
+                _fail(posting_path, "posting is owned by more than one posting set")
+            referenced_postings[posting_id] = posting_set["id"]
+            totals[posting["currency"]] += _amount(
+                posting["amount"],
+                posting["currency"],
+                f"{path}.postings[{list(postings).index(posting_id)}].amount",
+                precisions,
+            )
+        for currency, total in totals.items():
+            if total != 0:
+                _fail(set_path, f"posting set is not balanced for {currency}: {total}")
+
+    if set(postings) != set(referenced_postings):
+        orphan = sorted(set(postings) - set(referenced_postings))[0]
+        _fail(path + ".postings", f"posting {orphan!r} is not owned by a posting set")
+
+    for index, posting in enumerate(state["postings"]):
+        posting_path = f"{path}.postings[{index}]"
+        account = accounts.get(posting["account_id"])
+        if account is None:
+            _fail(posting_path + ".account_id", "dangling account reference")
+        if posting["currency"] != account["currency"]:
+            _fail(posting_path + ".currency", "posting currency differs from account currency")
+        if posting["reconciliation_eligible"] and not account["reconciliation_eligible"]:
+            _fail(posting_path + ".reconciliation_eligible", "account is not reconciliation eligible")
+        owner_id = next(iter(posting_set_owners[posting["posting_set_id"]]))
+        owner_type = transactions[owner_id]["type"]
+        if owner_type != "opening_balance" and "role" not in posting:
+            _fail(posting_path + ".role", "role is required outside opening_balance")
+
+    replay: dict[str, Decimal] = defaultdict(Decimal)
+    for _, _, current_postings in current.values():
+        for posting in current_postings:
+            replay[posting["account_id"]] += _amount(
+                posting["amount"], posting["currency"], path + ".postings.amount", precisions
+            )
+    return replay, current
+
+
+def _validate_balances(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    replay: dict[str, Decimal],
+    precisions: dict[str, int],
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    _unique_compound(state["balances"], path + ".balances", ("account_id", "currency"))
+    for index, balance in enumerate(state["balances"]):
+        account = accounts.get(balance["account_id"])
+        if account is None:
+            _fail(f"{path}.balances[{index}].account_id", "dangling account reference")
+        if balance["currency"] != account["currency"]:
+            _fail(f"{path}.balances[{index}].currency", "must match account currency")
+    expected_keys = {(account_id, account["currency"]) for account_id, account in accounts.items()}
+    actual_keys = {(item["account_id"], item["currency"]) for item in state["balances"]}
+    if actual_keys != expected_keys:
+        missing = sorted(expected_keys - actual_keys)
+        extra = sorted(actual_keys - expected_keys)
+        _fail(path + ".balances", f"must exactly cover catalog accounts; missing={missing}, extra={extra}")
+    for index, balance in enumerate(state["balances"]):
+        balance_path = f"{path}.balances[{index}]"
+        actual = _amount(
+            balance["amount"], balance["currency"], balance_path + ".amount", precisions
+        )
+        expected = replay.get(balance["account_id"], Decimal(0))
+        if actual != expected:
+            _fail(balance_path + ".amount", f"must replay to {expected}, got {actual}")
+
+
+def _validate_references(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    sources = indexes["sources"]
+    transactions = indexes["transactions"]
+    domain_entities = indexes["domain_entities"]
+
+    for index, source in enumerate(state["sources"]):
+        payload = source["payload"]
+        source_path = f"{path}.sources[{index}].payload"
+        account = accounts.get(payload["account_id"])
+        if account is None:
+            _fail(source_path + ".account_id", "dangling account reference")
+        if payload["currency"] != account["currency"]:
+            _fail(source_path + ".currency", "must match the observed account currency")
+        _amount(payload["target_amount"], payload["currency"], source_path + ".target_amount", precisions)
+        _timestamp(payload["target_observed_at"], source_path + ".target_observed_at", timezone)
+
+    for index, candidate in enumerate(state["candidates"]):
+        candidate_path = f"{path}.candidates[{index}]"
+        if len(candidate["source_ids"]) != len(set(candidate["source_ids"])):
+            _fail(candidate_path + ".source_ids", "contains duplicate source references")
+        for source_index, source_id in enumerate(candidate["source_ids"]):
+            if source_id not in sources:
+                _fail(f"{candidate_path}.source_ids[{source_index}]", "dangling source reference")
+        history = candidate["status_history"]
+        _unique_index(history, candidate_path + ".status_history")
+        sequences = [item["sequence"] for item in history]
+        if sequences != list(range(1, len(history) + 1)):
+            _fail(candidate_path + ".status_history", "sequence must be contiguous and ordered from 1")
+        _decimal(candidate["confidence"], candidate_path + ".confidence")
+        payload = candidate["payload"]
+        account = accounts.get(payload["account_id"])
+        if account is None:
+            _fail(candidate_path + ".payload.account_id", "dangling account reference")
+        if payload["currency"] != account["currency"]:
+            _fail(candidate_path + ".payload.currency", "must match the candidate account currency")
+        replayed = _amount(
+            payload["replayed_amount"], payload["currency"], candidate_path + ".payload.replayed_amount", precisions
+        )
+        target = _amount(
+            payload["target_amount"], payload["currency"], candidate_path + ".payload.target_amount", precisions
+        )
+        delta = _amount(payload["delta"], payload["currency"], candidate_path + ".payload.delta", precisions)
+        if target - replayed != delta:
+            _fail(candidate_path + ".payload.delta", "must equal target_amount - replayed_amount")
+        _timestamp(payload["effective_at"], candidate_path + ".payload.effective_at", timezone)
+
+    for index, confirmation in enumerate(state["confirmations"]):
+        confirmation_path = f"{path}.confirmations[{index}]"
+        operation = operations.get(confirmation["operation_id"])
+        if operation is None or operation["root_id"] != state["root_id"]:
+            _fail(confirmation_path + ".operation_id", "dangling or cross-root operation reference")
+        subject = confirmation["subject"]
+        _resolve_ref(
+            state,
+            indexes,
+            operations,
+            subject["kind"],
+            subject["id"],
+            confirmation_path + ".subject.id",
+        )
+        if "confirmed_at" in confirmation:
+            _timestamp(confirmation["confirmed_at"], confirmation_path + ".confirmed_at", timezone)
+
+    for index, evidence in enumerate(state["evidence"]):
+        evidence_path = f"{path}.evidence[{index}]"
+        if len(evidence["source_ids"]) != len(set(evidence["source_ids"])):
+            _fail(evidence_path + ".source_ids", "contains duplicate source references")
+        for source_index, source_id in enumerate(evidence["source_ids"]):
+            if source_id not in sources:
+                _fail(f"{evidence_path}.source_ids[{source_index}]", "dangling source reference")
+        _timestamp(evidence["payload"]["observed_at"], evidence_path + ".payload.observed_at", timezone)
+
+    for index, link in enumerate(state["evidence_links"]):
+        link_path = f"{path}.evidence_links[{index}]"
+        if link["evidence_id"] not in indexes["evidence"]:
+            _fail(link_path + ".evidence_id", "dangling evidence reference")
+        role_target_kinds = {
+            "target_balance_observation": "observation",
+            "real_account_posting": "posting",
+            "payment_asset_posting": "posting",
+            "destination_asset_posting": "posting",
+            "funding_asset_posting": "posting",
+            "bank_payment_posting": "posting",
+            "refund_relationship": "relation",
+            "counterparty_lending_relationship": "relation",
+            "stored_value_activation_balance_fact": "domain_entity",
+        }
+        expected_kind = role_target_kinds[link["role"]]
+        if link["target_kind"] != expected_kind:
+            _fail(
+                link_path + ".target_kind",
+                f"role {link['role']} requires target_kind {expected_kind}",
+            )
+        target = _resolve_ref(
+            state,
+            indexes,
+            operations,
+            link["target_kind"],
+            link["target_id"],
+            link_path + ".target_id",
+        )
+        posting_role_targets = {
+            "payment_asset_posting": "payment_asset",
+            "destination_asset_posting": "destination_asset",
+            "funding_asset_posting": "funding_asset",
+            "bank_payment_posting": "bank_payment",
+        }
+        posting_roles = {"real_account_posting", *posting_role_targets}
+        if link["role"] in posting_roles:
+            account = accounts[target["account_id"]]
+            if not (
+                target["reconciliation_eligible"]
+                and account["reconciliation_eligible"]
+                and account["real_account"]
+                and account["owned_by_user"]
+                and account["kind"] in {"asset", "liability"}
+            ):
+                _fail(
+                    link_path + ".target_id",
+                    f"{link['role']} must target an eligible owned real posting",
+                )
+        if link["role"] in posting_role_targets and target.get("role") != posting_role_targets[link["role"]]:
+            _fail(link_path + ".target_id", f"must target posting role {posting_role_targets[link['role']]}")
+        if link["role"] in {"refund_relationship", "counterparty_lending_relationship"}:
+            if target.get("type") != link["role"]:
+                _fail(
+                    link_path + ".target_id",
+                    f"requires the reserved {link['role']} relation subtype, which is not implemented by this prototype",
+                )
+        if link["role"] == "stored_value_activation_balance_fact":
+            if target.get("type") != "activation_adjustment":
+                _fail(
+                    link_path + ".target_id",
+                    "requires the reserved activation_adjustment domain subtype, which is not implemented by this prototype",
+                )
+
+    for index, entity in enumerate(state["domain_entities"]):
+        entity_path = f"{path}.domain_entities[{index}].payload"
+        payload = entity["payload"]
+        if entity["type"] == "target_balance_observation":
+            if payload["account_id"] not in accounts:
+                _fail(entity_path + ".account_id", "dangling account reference")
+            if payload["source_id"] not in sources:
+                _fail(entity_path + ".source_id", "dangling source reference")
+            _amount(payload["target_amount"], payload["currency"], entity_path + ".target_amount", precisions)
+            _timestamp(payload["observed_at"], entity_path + ".observed_at", timezone)
+        elif entity["type"] == "balance_adjustment":
+            observation = domain_entities.get(payload["observation_id"])
+            if observation is None or observation["type"] != "target_balance_observation":
+                _fail(entity_path + ".observation_id", "dangling or mistyped observation reference")
+            transaction = transactions.get(payload["transaction_id"])
+            if transaction is None or transaction["type"] != "balance_adjustment":
+                _fail(entity_path + ".transaction_id", "dangling or mistyped adjustment transaction")
+            _amount(payload["original_delta"], payload["currency"], entity_path + ".original_delta", precisions)
+        elif entity["type"] == "explanation_allocation":
+            adjustment = domain_entities.get(payload["adjustment_id"])
+            if adjustment is None or adjustment["type"] != "balance_adjustment":
+                _fail(entity_path + ".adjustment_id", "dangling or mistyped adjustment reference")
+            explanation = transactions.get(payload["explanation_transaction_id"])
+            if explanation is None or explanation["type"] != "account_transfer":
+                _fail(entity_path + ".explanation_transaction_id", "must reference an account transfer")
+            reversal = transactions.get(payload["reversal_transaction_id"])
+            if reversal is None or reversal["type"] != "balance_adjustment_reversal":
+                _fail(entity_path + ".reversal_transaction_id", "must reference an adjustment reversal")
+            amount = _amount(payload["amount"], payload["currency"], entity_path + ".amount", precisions)
+            if amount <= 0:
+                _fail(entity_path + ".amount", "must be positive")
+            _timestamp(payload["confirmed_at"], entity_path + ".confirmed_at", timezone)
+
+    audit_rules = {
+        "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),
+        "explanation_transaction": ("explanation_allocation", "account_transfer"),
+        "allocation_reversal": ("explanation_allocation", "balance_adjustment_reversal"),
+    }
+    for index, link in enumerate(state["audit_links"]):
+        link_path = f"{path}.audit_links[{index}]"
+        from_type, to_type = audit_rules[link["type"]]
+        if link["from"]["kind"] != "domain_entity":
+            _fail(link_path + ".from.kind", "audit source must be a domain_entity")
+        source = domain_entities.get(link["from"]["id"])
+        if source is None or source["type"] != from_type:
+            _fail(link_path + ".from.id", "dangling or mistyped audit source")
+        if link["to"]["kind"] != "transaction":
+            _fail(link_path + ".to.kind", "audit target must be a transaction")
+        target = transactions.get(link["to"]["id"])
+        if target is None or target["type"] != to_type:
+            _fail(link_path + ".to.id", "dangling or mistyped audit target")
+        if link["type"] == "adjustment_transaction":
+            expected_target_id = source["payload"]["transaction_id"]
+        elif link["type"] == "explanation_transaction":
+            expected_target_id = source["payload"]["explanation_transaction_id"]
+        else:
+            expected_target_id = source["payload"]["reversal_transaction_id"]
+        if link["to"]["id"] != expected_target_id:
+            _fail(link_path + ".to.id", "audit target does not match the domain entity payload")
+
+
+def _validate_reconciliations(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, str]:
+    postings = indexes["postings"]
+    accounts = indexes["catalog_accounts"]
+    by_posting: dict[str, str] = {}
+    for index, reconciliation in enumerate(state["posting_reconciliations"]):
+        reconciliation_path = f"{path}.posting_reconciliations[{index}]"
+        posting = postings.get(reconciliation["posting_id"])
+        if posting is None:
+            _fail(reconciliation_path + ".posting_id", "dangling posting reference")
+        account = accounts[posting["account_id"]]
+        if not (
+            posting["reconciliation_eligible"]
+            and account["reconciliation_eligible"]
+            and account["owned_by_user"]
+            and account["real_account"]
+            and account["kind"] in {"asset", "liability"}
+        ):
+            _fail(
+                reconciliation_path + ".posting_id",
+                "reconciliation requires an eligible owned real account posting",
+            )
+        if posting["id"] in by_posting:
+            _fail(reconciliation_path + ".posting_id", "posting has duplicate reconciliation records")
+        by_posting[posting["id"]] = reconciliation["status"]
+    eligible = {posting["id"] for posting in postings.values() if posting["reconciliation_eligible"]}
+    if set(by_posting) != eligible:
+        _fail(
+            path + ".posting_reconciliations",
+            f"must exactly cover eligible postings; missing={sorted(eligible - set(by_posting))}, extra={sorted(set(by_posting) - eligible)}",
+        )
+    return by_posting
+
+
+def _in_period(version: dict[str, Any], report: dict[str, Any]) -> bool:
+    timestamp = version["statistics_at"]
+    if report["period_type"] == "day":
+        return timestamp[:10] == report["period"]
+    if report["period_type"] == "month":
+        return timestamp[:7] == report["period"]
+    return True
+
+
+def _report_values(
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    accounts: dict[str, dict[str, Any]],
+    report: dict[str, Any],
+    currency: str,
+) -> dict[str, Decimal]:
+    values: dict[str, Decimal] = defaultdict(Decimal)
+    for transaction, version, postings in current.values():
+        if transaction["type"] == "opening_balance" or not _in_period(version, report):
+            continue
+        selected = [posting for posting in postings if posting["currency"] == currency]
+        transaction_type = transaction["type"]
+        if transaction_type == "expense":
+            expense = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "expense"),
+                Decimal(0),
+            )
+            values["consumption"] += expense
+            values["ordinary_expense"] += expense
+            values["expense"] += expense
+            values["net_worth_change"] -= expense
+            values["cash_outflow"] += sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["real_account"] and _decimal(item["amount"], "$.postings.amount") < 0),
+                Decimal(0),
+            )
+        elif transaction_type == "income":
+            income = sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["kind"] == "income"),
+                Decimal(0),
+            )
+            values["income"] += income
+            values["ordinary_income"] += income
+            values["net_worth_change"] += income
+            values["cash_inflow"] += sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["real_account"] and _decimal(item["amount"], "$.postings.amount") > 0),
+                Decimal(0),
+            )
+        elif transaction_type == "account_transfer":
+            principal = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "transfer_principal_in" and _decimal(item["amount"], "$.postings.amount") > 0),
+                Decimal(0),
+            )
+            fee = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "transfer_fee"),
+                Decimal(0),
+            )
+            values["internal_transfer_amount"] += principal
+            values["consumption"] += fee
+            values["ordinary_expense"] += fee
+            values["expense"] += fee
+            values["cash_outflow"] += fee
+            values["net_worth_change"] -= fee
+        elif transaction_type in {"balance_adjustment", "balance_adjustment_reversal"}:
+            target_roles = {
+                "balance_adjustment_target",
+                "balance_adjustment_reversal_target",
+            }
+            change = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") in target_roles),
+                Decimal(0),
+            )
+            values["balance_adjustment_net_worth_change"] += change
+            values["net_worth_change"] += change
+        elif transaction_type == "refund_receipt":
+            correction = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["kind"] == "expense"),
+                Decimal(0),
+            )
+            values["consumption"] += correction
+            values["cash_inflow"] += -correction
+            values["net_worth_change"] -= correction
+        elif transaction_type == "credit_repayment":
+            values["cash_outflow"] += sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["kind"] == "asset" and _decimal(item["amount"], "$.postings.amount") < 0),
+                Decimal(0),
+            )
+    values["budget"] += Decimal(0)
+    return values
+
+
+def _validate_reports(
+    case_id: str,
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    precisions: dict[str, int],
+) -> None:
+    _unique_compound(state["reports"], path + ".reports", ("period_type", "period"))
+    expected_metric_sets = {
+        "RG-01": {"cash_outflow", "consumption", "income", "net_worth_change", "budget"},
+        "RG-09": {
+            "balance_adjustment_net_worth_change",
+            "budget",
+            "cash_inflow",
+            "cash_outflow",
+            "consumption",
+            "internal_transfer_amount",
+            "net_worth_change",
+            "ordinary_expense",
+            "ordinary_income",
+        },
+    }
+    for report_index, report in enumerate(state["reports"]):
+        report_path = f"{path}.reports[{report_index}]"
+        _unique_compound(report["metrics"], report_path + ".metrics", ("metric", "currency"))
+        if case_id in expected_metric_sets:
+            actual_names = {metric["metric"] for metric in report["metrics"]}
+            if actual_names != expected_metric_sets[case_id]:
+                _fail(report_path + ".metrics", "does not match the representative metric registry")
+        for metric_index, metric in enumerate(report["metrics"]):
+            metric_path = f"{report_path}.metrics[{metric_index}]"
+            expected_applicability = (
+                "not_applicable" if case_id == "RG-01" and metric["metric"] == "budget" else "applicable"
+            )
+            if metric["applicability"] != expected_applicability:
+                _fail(metric_path + ".applicability", f"must be {expected_applicability}")
+            if expected_applicability == "not_applicable":
+                continue
+            currency = metric["currency"]
+            actual = _amount(metric["amount"], currency, metric_path + ".amount", precisions)
+            expected = _report_values(
+                current, indexes["catalog_accounts"], report, currency
+            )[metric["metric"]]
+            if actual != expected:
+                _fail(metric_path + ".amount", f"must recompute to {expected}, got {actual}")
+
+
+def _transaction_reconciliation_status(statuses: list[str]) -> str:
+    if any(status == "has_difference" for status in statuses):
+        return "has_difference"
+    if all(status == "matched" for status in statuses):
+        return "matched"
+    if all(status == "pending" for status in statuses):
+        return "pending"
+    return "partial"
+
+
+def _expected_derived_statuses(
+    state: dict[str, Any],
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    reconciliation_by_posting: dict[str, str],
+) -> dict[tuple[str, str, str], str]:
+    expected: dict[tuple[str, str, str], str] = {}
+    for candidate in state["candidates"]:
+        expected[("candidate", candidate["id"], "confirmation_status")] = candidate[
+            "status_history"
+        ][-1]["status"]
+
+    for transaction, _, postings in current.values():
+        eligible = [item for item in postings if item["reconciliation_eligible"]]
+        if eligible:
+            statuses = [reconciliation_by_posting[item["id"]] for item in eligible]
+            expected[("transaction", transaction["id"], "reconciliation_summary")] = (
+                _transaction_reconciliation_status(statuses)
+            )
+
+    entities = indexes["domain_entities"]
+    transactions = indexes["transactions"]
+    allocations_by_adjustment: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entity in state["domain_entities"]:
+        if entity["type"] == "explanation_allocation":
+            allocations_by_adjustment[entity["payload"]["adjustment_id"]].append(entity)
+
+    for adjustment in state["domain_entities"]:
+        if adjustment["type"] != "balance_adjustment":
+            continue
+        original = abs(_decimal(adjustment["payload"]["original_delta"], "$.original_delta"))
+        allocations = allocations_by_adjustment[adjustment["id"]]
+        explained = sum(
+            (abs(_decimal(item["payload"]["amount"], "$.amount")) for item in allocations),
+            Decimal(0),
+        )
+        if explained > original:
+            _fail("$.states.domain_entities", "explanation allocations exceed original adjustment")
+        if explained == 0:
+            explanation_status = "open"
+        elif explained == original:
+            explanation_status = "fully_explained"
+        else:
+            explanation_status = "partially_explained"
+        expected[("domain_entity", adjustment["id"], "explanation_status")] = explanation_status
+
+        observation_id = adjustment["payload"]["observation_id"]
+        observation = entities[observation_id]
+        target_account = observation["payload"]["account_id"]
+        allocated_transactions = {
+            item["payload"]["explanation_transaction_id"] for item in allocations
+        }
+        unexplained_transfers = []
+        for transaction_id, (transaction, version, postings) in current.items():
+            if transaction["type"] != "account_transfer" or transaction_id in allocated_transactions:
+                continue
+            if any(item["account_id"] == target_account for item in postings) and (
+                _timestamp_instant(version["effective_at"])
+                <= _timestamp_instant(observation["payload"]["observed_at"])
+            ):
+                unexplained_transfers.append(transaction_id)
+        remaining = original - explained
+        if remaining != 0:
+            verification = (
+                "difference_pending_explanation_confirmation"
+                if unexplained_transfers
+                else "balanced_with_unexplained_adjustment"
+            )
+        else:
+            relevant_transactions = {
+                item["payload"]["explanation_transaction_id"] for item in allocations
+            }
+            relevant_postings = []
+            for transaction_id in relevant_transactions:
+                _, _, postings = current[transaction_id]
+                relevant_postings.extend(
+                    item for item in postings if item["reconciliation_eligible"]
+                )
+            fully_matched = bool(relevant_postings) and all(
+                reconciliation_by_posting[item["id"]] == "matched" for item in relevant_postings
+            )
+            evidence_targets = {
+                link["target_id"]
+                for link in state["evidence_links"]
+                if link["role"] == "real_account_posting"
+            }
+            fully_evidenced = bool(relevant_postings) and all(
+                item["id"] in evidence_targets for item in relevant_postings
+            )
+            verification = "fully_reconciled" if fully_matched and fully_evidenced else "evidence_incomplete"
+        expected[("observation", observation_id, "verification_status")] = verification
+    return expected
+
+
+def _validate_derived_statuses(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    reconciliation_by_posting: dict[str, str],
+) -> None:
+    status_rules = {
+        "explanation_status": (
+            "domain_entity",
+            {"open", "partially_explained", "fully_explained"},
+        ),
+        "verification_status": (
+            "observation",
+            {
+                "balanced_with_unexplained_adjustment",
+                "difference_pending_explanation_confirmation",
+                "evidence_incomplete",
+                "fully_reconciled",
+            },
+        ),
+        "reconciliation_summary": (
+            "transaction",
+            {"pending", "partial", "matched", "has_difference"},
+        ),
+        "confirmation_status": (
+            "candidate",
+            {"pending_confirmation", "confirmed", "rejected", "incomplete"},
+        ),
+    }
+    _unique_compound(
+        state["derived_statuses"],
+        path + ".derived_statuses",
+        ("target_kind", "target_id", "status_name"),
+    )
+    actual: dict[tuple[str, str, str], str] = {}
+    for index, status in enumerate(state["derived_statuses"]):
+        status_path = f"{path}.derived_statuses[{index}]"
+        rule = status_rules.get(status["status_name"])
+        if rule is None:
+            _fail(status_path + ".status_name", "is not registered")
+        expected_kind, allowed_values = rule
+        if status["target_kind"] != expected_kind:
+            _fail(
+                status_path + ".target_kind",
+                f"{status['status_name']} requires target_kind {expected_kind}",
+            )
+        if status["value"] not in allowed_values:
+            _fail(
+                status_path + ".value",
+                f"is not registered for {status['status_name']}",
+            )
+        _resolve_ref(
+            state,
+            indexes,
+            operations,
+            status["target_kind"],
+            status["target_id"],
+            status_path + ".target_id",
+        )
+        actual[(status["target_kind"], status["target_id"], status["status_name"])] = status[
+            "value"
+        ]
+    expected = _expected_derived_statuses(state, indexes, current, reconciliation_by_posting)
+    if actual != expected:
+        _fail(path + ".derived_statuses", f"must exactly recompute to {expected}, got {actual}")
+
+
+def _balance_map(state: dict[str, Any]) -> dict[tuple[str, str], str]:
+    return {(item["account_id"], item["currency"]): item["amount"] for item in state["balances"]}
+
+
+def _report_map(state: dict[str, Any]) -> dict[tuple[str, str, str, str | None], dict[str, Any]]:
+    result: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
+    for report in state["reports"]:
+        for metric in report["metrics"]:
+            currency = metric.get("currency")
+            key = (report["period_type"], report["period"], metric["metric"], currency)
+            result[key] = {key: value for key, value in metric.items() if key != "metric"}
+    return result
+
+
+def _status_map(state: dict[str, Any]) -> dict[tuple[str, str, str], str]:
+    return {
+        (item["target_kind"], item["target_id"], item["status_name"]): item["value"]
+        for item in state["derived_statuses"]
+    }
+
+
+def _changes(before: dict[Any, Any], after: dict[Any, Any]) -> dict[Any, tuple[Any, Any]]:
+    result: dict[Any, tuple[Any, Any]] = {}
+    for key in set(before) | set(after):
+        old = before.get(key)
+        new = after.get(key)
+        if not _contract_equivalent(old, new):
+            result[key] = (old, new)
+    return result
+
+
+def _expected_entity_changes(
+    baseline: dict[str, Any], result: dict[str, Any]
+) -> dict[str, dict[str, list[str]]]:
+    changes: dict[str, dict[str, list[str]]] = {}
+    for name, parts in _ENTITY_COLLECTIONS.items():
+        before = {item["id"]: item for item in _collection(baseline, parts)}
+        after = {item["id"]: item for item in _collection(result, parts)}
+        changes[name] = {
+            "added_ids": sorted(set(after) - set(before)),
+            "changed_ids": sorted(
+                item_id
+                for item_id in set(before) & set(after)
+                if not _contract_equivalent(before[item_id], after[item_id])
+            ),
+            "removed_ids": sorted(set(before) - set(after)),
+        }
+    return changes
+
+
+def _declared_id_changes(value: dict[str, Any], path: str) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for name in ("added_ids", "changed_ids", "removed_ids"):
+        ids = value[name]
+        if len(ids) != len(set(ids)):
+            _fail(path + f".{name}", "contains duplicate IDs")
+        result[name] = sorted(ids)
+    return result
+
+
+def _declared_balance_changes(items: list[dict[str, Any]], path: str) -> dict[Any, tuple[Any, Any]]:
+    result = {}
+    for index, item in enumerate(items):
+        key = (item["key"]["account_id"], item["key"]["currency"])
+        if key in result:
+            _fail(f"{path}[{index}].key", "duplicate balance change key")
+        result[key] = (item["before"], item["after"])
+    return result
+
+
+def _declared_report_changes(items: list[dict[str, Any]], path: str) -> dict[Any, tuple[Any, Any]]:
+    result = {}
+    for index, item in enumerate(items):
+        key_object = item["key"]
+        key = (
+            key_object["period_type"],
+            key_object["period"],
+            key_object["metric"],
+            key_object.get("currency"),
+        )
+        if key in result:
+            _fail(f"{path}[{index}].key", "duplicate report change key")
+        result[key] = (item["before"], item["after"])
+    return result
+
+
+def _declared_status_changes(items: list[dict[str, Any]], path: str) -> dict[Any, tuple[Any, Any]]:
+    result = {}
+    for index, item in enumerate(items):
+        key_object = item["key"]
+        key = (key_object["kind"], key_object["target_id"], key_object["status_name"])
+        if key in result:
+            _fail(f"{path}[{index}].key", "duplicate derived-status change key")
+        result[key] = (item["before"], item["after"])
+    return result
+
+
+def _validate_returned_ids(
+    operation: dict[str, Any],
+    operation_path: str,
+    result: dict[str, Any],
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+) -> None:
+    seen: set[tuple[str, str]] = set()
+    for index, reference in enumerate(operation["returned_ids"]):
+        returned_path = f"{operation_path}.returned_ids[{index}]"
+        key = (reference["kind"], reference["id"])
+        if key in seen:
+            _fail(returned_path, "duplicate returned ID")
+        seen.add(key)
+        if reference["kind"] == "operation":
+            target = operations.get(reference["id"])
+            if target is None or target["root_id"] != operation["root_id"] or target["sequence"] > operation["sequence"]:
+                _fail(returned_path + ".id", "must reference this or a prior same-root operation")
+        else:
+            _resolve_ref(
+                result,
+                indexes,
+                operations,
+                reference["kind"],
+                reference["id"],
+                returned_path + ".id",
+            )
+
+
+def _validate_action_input(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    action = operation["action_type"]
+    input_value = operation["input"]
+    input_path = operation_path + ".input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    transactions = {item["id"]: item for item in baseline["transactions"]}
+    candidates = {item["id"]: item for item in baseline["candidates"]}
+    entities = {item["id"]: item for item in baseline["domain_entities"]}
+
+    if action == "manual_expense":
+        category = categories.get(input_value["category_id"])
+        if category is None:
+            _fail(input_path + ".category_id", "dangling category reference")
+        payment_account = accounts.get(input_value["payment_account_id"])
+        if payment_account is None:
+            _fail(input_path + ".payment_account_id", "dangling account reference")
+        posting_account = accounts.get(category["posting_account_id"])
+        if payment_account["currency"] != input_value["currency"] or (
+            posting_account is not None
+            and posting_account["currency"] != input_value["currency"]
+        ):
+            _fail(input_path + ".currency", "must match payment and category posting accounts")
+        _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        _timestamp(input_value["occurred_at"], input_path + ".occurred_at", timezone)
+    elif action == "transaction_note_update":
+        if input_value["transaction_id"] not in transactions:
+            _fail(input_path + ".transaction_id", "dangling transaction reference")
+    elif action == "preview_target_balance":
+        account = accounts.get(input_value["account_id"])
+        if account is None:
+            _fail(input_path + ".account_id", "dangling account reference")
+        if account["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match the observed account")
+        _amount(
+            input_value["target_amount"],
+            input_value["currency"],
+            input_path + ".target_amount",
+            precisions,
+        )
+        _timestamp(
+            input_value["target_observed_at"],
+            input_path + ".target_observed_at",
+            timezone,
+        )
+    elif action == "confirm_balance_adjustment":
+        candidate = candidates.get(input_value["candidate_id"])
+        if candidate is None:
+            _fail(input_path + ".candidate_id", "dangling candidate reference")
+        account = accounts.get(input_value["account_id"])
+        if account is None:
+            _fail(input_path + ".account_id", "dangling account reference")
+        if (
+            account["currency"] != input_value["currency"]
+            or candidate["payload"]["currency"] != input_value["currency"]
+        ):
+            _fail(input_path + ".currency", "must match the account and candidate currency")
+        for field in ("target_amount", "replayed_amount", "delta"):
+            _amount(
+                input_value[field],
+                input_value["currency"],
+                input_path + f".{field}",
+                precisions,
+            )
+        for field in ("effective_at", "confirmed_at"):
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+    elif action == "confirm_real_transfer":
+        for field in ("target_account_id", "counter_account_id"):
+            if input_value[field] not in accounts:
+                _fail(input_path + f".{field}", "dangling account reference")
+            if accounts[input_value[field]]["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match both transfer accounts")
+        _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        for field in ("actual_occurred_at", "discovered_at", "confirmed_at"):
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+    elif action == "confirm_explanation_allocation":
+        adjustment = entities.get(input_value["adjustment_id"])
+        if adjustment is None or adjustment["type"] != "balance_adjustment":
+            _fail(input_path + ".adjustment_id", "dangling or mistyped adjustment reference")
+        transaction = transactions.get(input_value["transaction_id"])
+        if transaction is None or transaction["type"] != "account_transfer":
+            _fail(input_path + ".transaction_id", "dangling or mistyped transfer reference")
+        if input_value["target_account_id"] not in accounts:
+            _fail(input_path + ".target_account_id", "dangling account reference")
+        if accounts[input_value["target_account_id"]]["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match the target account")
+        for field in ("real_transaction_amount", "explanation_amount"):
+            _amount(
+                input_value[field],
+                input_value["currency"],
+                input_path + f".{field}",
+                precisions,
+            )
+        for field in ("actual_occurred_at", "target_observed_at", "confirmed_at"):
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+
+
+def _validate_history_prefix(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    path: str,
+    history_field: str,
+) -> None:
+    before_without_history = {key: value for key, value in before.items() if key != history_field}
+    after_without_history = {key: value for key, value in after.items() if key != history_field}
+    if not _contract_equivalent(before_without_history, after_without_history):
+        _fail(path, "non-history fields are immutable")
+    before_history = before[history_field]
+    after_history = after[history_field]
+    if before_history == after_history:
+        return
+    if len(after_history) <= len(before_history) or after_history[: len(before_history)] != before_history:
+        _fail(path + f".{history_field}", "existing history must remain an exact prefix and only append")
+
+
+def _validate_append_only_transition(
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+    operation_path: str,
+) -> None:
+    immutable_collections = {
+        "transaction_versions",
+        "posting_sets",
+        "postings",
+        "sources",
+        "confirmations",
+        "evidence",
+        "evidence_links",
+        "relations",
+        "audit_links",
+        "posting_reconciliations",
+    }
+    for collection_name, parts in _ENTITY_COLLECTIONS.items():
+        before = {item["id"]: item for item in _collection(baseline, parts)}
+        after = {item["id"]: item for item in _collection(result, parts)}
+        removed = sorted(set(before) - set(after))
+        if removed:
+            _fail(
+                operation_path + f".append_only.{collection_name}",
+                f"append-only state forbids removals: {removed}",
+            )
+        for item_id in set(before) & set(after):
+            item_path = operation_path + f".append_only.{collection_name}[{item_id}]"
+            if collection_name in immutable_collections:
+                if not _contract_equivalent(before[item_id], after[item_id]):
+                    _fail(item_path, f"existing {collection_name} entities are immutable")
+            elif collection_name == "candidates":
+                _validate_history_prefix(
+                    before[item_id], after[item_id], item_path, "status_history"
+                )
+            elif collection_name == "domain_entities":
+                old_payload = before[item_id].get("payload", {})
+                new_payload = after[item_id].get("payload", {})
+                if "status_history" in old_payload and "status_history" in new_payload:
+                    old_outer = {key: value for key, value in before[item_id].items() if key != "payload"}
+                    new_outer = {key: value for key, value in after[item_id].items() if key != "payload"}
+                    if not _contract_equivalent(old_outer, new_outer):
+                        _fail(item_path, "domain entity stable identity is immutable")
+                    _validate_history_prefix(
+                        old_payload, new_payload, item_path + ".payload", "status_history"
+                    )
+                elif not _contract_equivalent(before[item_id], after[item_id]):
+                    _fail(item_path, "existing domain_entities entities are immutable")
+            elif collection_name == "transactions":
+                old_transaction = before[item_id]
+                new_transaction = after[item_id]
+                if old_transaction["type"] != new_transaction["type"]:
+                    _fail(item_path + ".type", "transaction stable type is immutable")
+                if old_transaction["current_version_id"] == new_transaction["current_version_id"]:
+                    if not _contract_equivalent(old_transaction, new_transaction):
+                        _fail(item_path, "transaction stable identity is immutable")
+                    continue
+                old_versions = {
+                    item["id"]: item
+                    for item in baseline["transaction_versions"]
+                    if item["transaction_id"] == item_id
+                }
+                new_versions = {
+                    item["id"]: item
+                    for item in result["transaction_versions"]
+                    if item["transaction_id"] == item_id
+                }
+                next_version_id = new_transaction["current_version_id"]
+                if next_version_id in old_versions or next_version_id not in new_versions:
+                    _fail(
+                        item_path + ".current_version_id",
+                        "must advance to a newly appended version owned by the transaction",
+                    )
+                old_max = max(item["version_number"] for item in old_versions.values())
+                if new_versions[next_version_id]["version_number"] != old_max + 1:
+                    _fail(
+                        item_path + ".current_version_id",
+                        "must advance to the next version number",
+                    )
+
+
+def _validate_no_change_retry(
+    operation: dict[str, Any],
+    operation_path: str,
+    earlier_operations: list[dict[str, Any]],
+) -> None:
+    if operation["outcome"]["status"] != "no_change":
+        return
+    request_id = operation["input"]["request_id"]
+    prior = [
+        item
+        for item in earlier_operations
+        if item["outcome"]["status"] == "accepted"
+        and item["action_type"] == operation["action_type"]
+        and item["input"]["request_id"] == request_id
+    ]
+    if not prior:
+        _fail(operation_path + ".input.request_id", "no prior accepted operation matches this action and request_id")
+    accepted = prior[-1]
+    if not _contract_equivalent(operation["input"], accepted["input"]):
+        _fail(
+            operation_path + ".input",
+            "must be contract-equivalent input to the prior accepted request after declared set-like normalization",
+        )
+    if not operation["returned_ids"]:
+        _fail(operation_path + ".returned_ids", "no_change returned_ids must be non-empty")
+    if not _contract_equivalent(
+        {"returned_ids": operation["returned_ids"]},
+        {"returned_ids": accepted["returned_ids"]},
+    ):
+        _fail(operation_path + ".returned_ids", "must exactly return the prior accepted result IDs")
+
+
+def _validate_registered_action_effects(
+    operation: dict[str, Any],
+    operation_path: str,
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    action = operation["action_type"]
+    accepted = operation["outcome"]["status"] == "accepted"
+    registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
+    if registered_counts is None:
+        _fail(operation_path + ".action_type", "unregistered action type")
+
+    for collection_name, changes in expected_entities.items():
+        required = registered_counts.get(collection_name, (0, 0, 0)) if accepted else (0, 0, 0)
+        actual = tuple(len(changes[field]) for field in _ENTITY_CHANGE_FIELDS)
+        if actual != required:
+            _fail(
+                operation_path + f".deltas.entity_changes.{collection_name}",
+                f"{operation['outcome']['status']} {action} requires exact "
+                f"(added, changed, removed) counts {required}, got {actual}",
+            )
+
+    if not accepted:
+        return
+
+    result_transactions = {item["id"]: item for item in result["transactions"]}
+    result_versions = {item["id"]: item for item in result["transaction_versions"]}
+    result_sets = {item["id"]: item for item in result["posting_sets"]}
+    result_postings = {item["id"]: item for item in result["postings"]}
+    result_candidates = {item["id"]: item for item in result["candidates"]}
+    result_confirmations = {item["id"]: item for item in result["confirmations"]}
+    result_domain_entities = {item["id"]: item for item in result["domain_entities"]}
+    result_audit_links = {item["id"]: item for item in result["audit_links"]}
+    result_reconciliations = {
+        item["id"]: item for item in result["posting_reconciliations"]
+    }
+
+    def effect_path(collection_name: str) -> str:
+        return operation_path + f".deltas.entity_changes.{collection_name}"
+
+    def added_item(collection_name: str, items: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        item_id = expected_entities[collection_name]["added_ids"][0]
+        return items[item_id]
+
+    def validate_confirmation(
+        expected_type: str,
+        subject_kind: str,
+        subject_id: str,
+        confirmed_at: str | None = None,
+    ) -> dict[str, Any]:
+        confirmation = added_item("confirmations", result_confirmations)
+        if (
+            confirmation["type"] != expected_type
+            or confirmation["operation_id"] != operation["id"]
+            or confirmation["subject"] != {"kind": subject_kind, "id": subject_id}
+        ):
+            _fail(
+                effect_path("confirmations"),
+                "added confirmation must have the registered type and belong to this action subject",
+            )
+        if confirmed_at is not None and confirmation.get("confirmed_at") != confirmed_at:
+            _fail(
+                effect_path("confirmations"),
+                "added confirmation timestamp must match the action input",
+            )
+        return confirmation
+
+    if action == "preview_target_balance":
+        source = added_item(
+            "sources", {item["id"]: item for item in result["sources"]}
+        )
+        candidate = added_item("candidates", result_candidates)
+        evidence = added_item(
+            "evidence", {item["id"]: item for item in result["evidence"]}
+        )
+        evidence_link = added_item(
+            "evidence_links", {item["id"]: item for item in result["evidence_links"]}
+        )
+        observation = added_item("domain_entities", result_domain_entities)
+        input_value = operation["input"]
+        expected_source_payload = {
+            "account_id": input_value["account_id"],
+            "target_amount": input_value["target_amount"],
+            "currency": input_value["currency"],
+            "target_observed_at": input_value["target_observed_at"],
+        }
+        if source["type"] != "explicit_balance_observation" or source["payload"] != expected_source_payload:
+            _fail(effect_path("sources"), "preview source must exactly represent the action input")
+        if candidate["type"] != "balance_adjustment" or candidate["source_ids"] != [source["id"]]:
+            _fail(effect_path("candidates"), "preview candidate must belong to the added source")
+        if (
+            evidence["type"] != "user_balance_observation"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"].get("observed_at") != input_value["target_observed_at"]
+        ):
+            _fail(effect_path("evidence"), "preview evidence must belong to the added source and observation time")
+        expected_observation_payload = {
+            "account_id": input_value["account_id"],
+            "target_amount": input_value["target_amount"],
+            "currency": input_value["currency"],
+            "observed_at": input_value["target_observed_at"],
+            "source_id": source["id"],
+        }
+        if (
+            observation["type"] != "target_balance_observation"
+            or observation["payload"] != expected_observation_payload
+        ):
+            _fail(
+                effect_path("domain_entities"),
+                "preview observation must exactly represent the added source and action input",
+            )
+        if evidence_link != {
+            "id": evidence_link["id"],
+            "evidence_id": evidence["id"],
+            "target_kind": "observation",
+            "target_id": observation["id"],
+            "role": "target_balance_observation",
+        }:
+            _fail(
+                effect_path("evidence_links"),
+                "preview evidence link must join the added evidence to the added observation",
+            )
+        return
+
+    added_versions = expected_entities["transaction_versions"]["added_ids"]
+    if action == "transaction_note_update":
+        transaction_id = operation["input"]["transaction_id"]
+        if expected_entities["transactions"]["changed_ids"] != [transaction_id]:
+            _fail(
+                effect_path("transactions"),
+                "transaction_note_update may only advance its target transaction",
+            )
+        version = result_versions[added_versions[0]]
+        confirmation = validate_confirmation(
+            "explicit_manual_save", "operation", operation["id"]
+        )
+        if (
+            version["transaction_id"] != transaction_id
+            or version.get("confirmation_id") != confirmation["id"]
+        ):
+            _fail(
+                effect_path("confirmations"),
+                "transaction_note_update confirmation must own the appended target version",
+            )
+        return
+
+    created_type_by_action = {
+        "manual_expense": "expense",
+        "confirm_balance_adjustment": "balance_adjustment",
+        "confirm_real_transfer": "account_transfer",
+        "confirm_explanation_allocation": "balance_adjustment_reversal",
+    }
+    expected_type = created_type_by_action[action]
+    added_transactions = expected_entities["transactions"]["added_ids"]
+    transaction = result_transactions[added_transactions[0]]
+    version = result_versions[added_versions[0]]
+    posting_set = added_item("posting_sets", result_sets)
+    added_posting_ids = expected_entities["postings"]["added_ids"]
+    added_postings = [result_postings[item_id] for item_id in added_posting_ids]
+    if transaction["type"] != expected_type:
+        _fail(
+            effect_path("transactions"),
+            f"{action} must create transaction type {expected_type}",
+        )
+    if (
+        version["transaction_id"] != transaction["id"]
+        or version["version_number"] != 1
+        or transaction["current_version_id"] != version["id"]
+    ):
+        _fail(
+            effect_path("transaction_versions"),
+            f"{action} must add the created transaction's current v1 and no unrelated version",
+        )
+    if (
+        version["posting_set_id"] != posting_set["id"]
+        or set(posting_set["posting_ids"]) != set(added_posting_ids)
+        or any(item["posting_set_id"] != posting_set["id"] for item in added_postings)
+    ):
+        _fail(
+            effect_path("posting_sets"),
+            f"{action} posting set must contain exactly the postings added by the action",
+        )
+
+    if action == "manual_expense":
+        confirmation = validate_confirmation(
+            "explicit_manual_save", "operation", operation["id"]
+        )
+    elif action == "confirm_balance_adjustment":
+        candidate_id = operation["input"]["candidate_id"]
+        if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
+            _fail(
+                effect_path("candidates"),
+                "confirm_balance_adjustment may only append status to its input candidate",
+            )
+        candidate = result_candidates[candidate_id]
+        if candidate["status_history"][-1]["status"] != "confirmed":
+            _fail(effect_path("candidates"), "confirmed candidate history must end in confirmed")
+        confirmation = validate_confirmation(
+            "candidate_confirmation",
+            "candidate",
+            candidate_id,
+            operation["input"]["confirmed_at"],
+        )
+        adjustment = added_item("domain_entities", result_domain_entities)
+        if (
+            adjustment["type"] != "balance_adjustment"
+            or adjustment["payload"].get("transaction_id") != transaction["id"]
+        ):
+            _fail(
+                effect_path("domain_entities"),
+                "confirm_balance_adjustment must add its transaction-owned adjustment entity",
+            )
+        audit_link = added_item("audit_links", result_audit_links)
+        if (
+            audit_link["type"] != "adjustment_transaction"
+            or audit_link["from"] != {"kind": "domain_entity", "id": adjustment["id"]}
+            or audit_link["to"] != {"kind": "transaction", "id": transaction["id"]}
+        ):
+            _fail(
+                effect_path("audit_links"),
+                "adjustment audit link must join the entities created by this action",
+            )
+    elif action == "confirm_real_transfer":
+        confirmation = validate_confirmation(
+            "explicit_operation_confirmation",
+            "operation",
+            operation["id"],
+            operation["input"]["confirmed_at"],
+        )
+    else:
+        confirmation = validate_confirmation(
+            "explicit_operation_confirmation",
+            "operation",
+            operation["id"],
+            operation["input"]["confirmed_at"],
+        )
+        allocation = added_item("domain_entities", result_domain_entities)
+        if (
+            allocation["type"] != "explanation_allocation"
+            or allocation["payload"].get("reversal_transaction_id") != transaction["id"]
+            or allocation["payload"].get("adjustment_id") != operation["input"]["adjustment_id"]
+            or allocation["payload"].get("explanation_transaction_id")
+            != operation["input"]["transaction_id"]
+        ):
+            _fail(
+                effect_path("domain_entities"),
+                "confirm_explanation_allocation must add its action-owned allocation entity",
+            )
+        audit_links = [
+            result_audit_links[item_id]
+            for item_id in expected_entities["audit_links"]["added_ids"]
+        ]
+        audit_targets = {item["type"]: item for item in audit_links}
+        if set(audit_targets) != {"allocation_reversal", "explanation_transaction"} or any(
+            item["from"] != {"kind": "domain_entity", "id": allocation["id"]}
+            for item in audit_links
+        ):
+            _fail(
+                effect_path("audit_links"),
+                "allocation audit links must originate from the allocation created by this action",
+            )
+        if (
+            audit_targets["allocation_reversal"]["to"]
+            != {"kind": "transaction", "id": transaction["id"]}
+            or audit_targets["explanation_transaction"]["to"]
+            != {"kind": "transaction", "id": operation["input"]["transaction_id"]}
+        ):
+            _fail(
+                effect_path("audit_links"),
+                "allocation audit links must target this action's reversal and explanation transactions",
+            )
+
+    if version.get("confirmation_id") != confirmation["id"]:
+        _fail(
+            effect_path("confirmations"),
+            f"{action} confirmation must own the created transaction version",
+        )
+
+    if action in {"manual_expense", "confirm_real_transfer"}:
+        reconciliations = [
+            result_reconciliations[item_id]
+            for item_id in expected_entities["posting_reconciliations"]["added_ids"]
+        ]
+        eligible_posting_ids = {
+            item["id"] for item in added_postings if item["reconciliation_eligible"]
+        }
+        if (
+            {item["posting_id"] for item in reconciliations} != eligible_posting_ids
+            or any(item["status"] != "pending" for item in reconciliations)
+        ):
+            _fail(
+                effect_path("posting_reconciliations"),
+                f"{action} reconciliations must cover exactly its eligible postings as pending",
+            )
+
+
+def _validate_action_semantics(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    if operation["outcome"]["status"] != "accepted":
+        return
+    action = operation["action_type"]
+    input_value = operation["input"]
+    baseline_accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    baseline_categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    baseline_transactions = {item["id"]: item for item in baseline["transactions"]}
+    baseline_candidates = {item["id"]: item for item in baseline["candidates"]}
+    baseline_entities = {item["id"]: item for item in baseline["domain_entities"]}
+    result_transactions = {item["id"]: item for item in result["transactions"]}
+    result_versions = {item["id"]: item for item in result["transaction_versions"]}
+    result_sets = {item["id"]: item for item in result["posting_sets"]}
+    result_postings = {item["id"]: item for item in result["postings"]}
+
+    def transaction_parts(transaction_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        transaction = result_transactions[transaction_id]
+        version = result_versions[transaction["current_version_id"]]
+        postings = [
+            result_postings[posting_id]
+            for posting_id in result_sets[version["posting_set_id"]]["posting_ids"]
+        ]
+        return version, postings
+
+    if action == "manual_expense":
+        category = baseline_categories.get(input_value["category_id"])
+        if category is None:
+            _fail(operation_path + ".input.category_id", "dangling category reference")
+        if not category["active"] or category["posting_account_id"] is None:
+            _fail(operation_path + ".input.category_id", "must reference an active posting category")
+        if input_value["payment_account_id"] not in baseline_accounts:
+            _fail(operation_path + ".input.payment_account_id", "dangling account reference")
+        if Decimal(input_value["amount"]) <= 0:
+            _fail(operation_path + ".input.amount", "must be positive")
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1:
+            _fail(operation_path + ".deltas.entity_changes.transactions", "manual_expense must add one transaction")
+        transaction = result_transactions[added[0]]
+        if transaction["type"] != "expense":
+            _fail(operation_path + ".result_state_id", "manual_expense must create an expense")
+        version, postings = transaction_parts(transaction["id"])
+        if any(version[field] != input_value["occurred_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.occurred_at", "must be preserved in all economic time roles")
+        if version.get("note") != input_value["note"]:
+            _fail(operation_path + ".input.note", "does not match the created version")
+        expected = {
+            ("expense", category["posting_account_id"]),
+            ("payment_asset", input_value["payment_account_id"]),
+        }
+        if {(item.get("role"), item["account_id"]) for item in postings} != expected:
+            _fail(operation_path + ".result_state_id", "manual_expense postings do not match the input")
+        amounts = {item["role"]: Decimal(item["amount"]) for item in postings}
+        if amounts["expense"] != Decimal(input_value["amount"]) or amounts["payment_asset"] != -Decimal(input_value["amount"]):
+            _fail(operation_path + ".input.amount", "does not match the created postings")
+    elif action == "transaction_note_update":
+        transaction_id = input_value["transaction_id"]
+        before = baseline_transactions.get(transaction_id)
+        if before is None:
+            _fail(operation_path + ".input.transaction_id", "dangling transaction reference")
+        after = result_transactions[transaction_id]
+        added_versions = expected_entities["transaction_versions"]["added_ids"]
+        if len(added_versions) != 1:
+            _fail(
+                operation_path + ".deltas.entity_changes.transaction_versions",
+                "transaction_note_update must append exactly one transaction_version",
+            )
+        if after["current_version_id"] != added_versions[0]:
+            _fail(
+                operation_path + ".result_state_id",
+                "transaction current_version_id must point to the appended transaction_version",
+            )
+        old_version = next(item for item in baseline["transaction_versions"] if item["id"] == before["current_version_id"])
+        new_version = result_versions[after["current_version_id"]]
+        if (
+            new_version["transaction_id"] != transaction_id
+            or new_version["version_number"] != old_version["version_number"] + 1
+        ):
+            _fail(
+                operation_path + ".result_state_id",
+                "appended transaction_version must be the next version owned by the transaction",
+            )
+        if new_version["posting_set_id"] != old_version["posting_set_id"]:
+            _fail(operation_path + ".result_state_id", "metadata-only update must reuse the posting set")
+        if new_version.get("note") != input_value["note"]:
+            _fail(operation_path + ".input.note", "does not match the new version")
+    elif action == "preview_target_balance":
+        added_candidates = expected_entities["candidates"]["added_ids"]
+        if len(added_candidates) != 1:
+            _fail(operation_path + ".deltas.entity_changes.candidates", "preview must add one candidate")
+        candidate = next(item for item in result["candidates"] if item["id"] == added_candidates[0])
+        payload = candidate["payload"]
+        for input_key, payload_key in (
+            ("account_id", "account_id"),
+            ("target_amount", "target_amount"),
+            ("currency", "currency"),
+            ("target_observed_at", "effective_at"),
+        ):
+            if input_value[input_key] != payload[payload_key]:
+                _fail(operation_path + f".input.{input_key}", "does not match the preview candidate")
+    elif action == "confirm_balance_adjustment":
+        candidate = baseline_candidates.get(input_value["candidate_id"])
+        if candidate is None:
+            _fail(operation_path + ".input.candidate_id", "dangling candidate reference")
+        candidate_payload = candidate["payload"]
+        for input_key, payload_key in (
+            ("account_id", "account_id"),
+            ("target_amount", "target_amount"),
+            ("replayed_amount", "replayed_amount"),
+            ("delta", "delta"),
+            ("currency", "currency"),
+            ("effective_at", "effective_at"),
+        ):
+            if input_value[input_key] != candidate_payload[payload_key]:
+                _fail(operation_path + f".input.{input_key}", "does not match the confirmed candidate")
+        if Decimal(input_value["target_amount"]) - Decimal(input_value["replayed_amount"]) != Decimal(input_value["delta"]):
+            _fail(operation_path + ".input.delta", "must equal target_amount - replayed_amount")
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1 or result_transactions[added[0]]["type"] != "balance_adjustment":
+            _fail(operation_path + ".result_state_id", "must add one balance_adjustment transaction")
+        version, postings = transaction_parts(added[0])
+        if any(version[field] != input_value["effective_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.effective_at", "must be preserved in all adjustment time roles")
+        if version.get("created_at") != input_value["confirmed_at"]:
+            _fail(operation_path + ".input.confirmed_at", "must be preserved as adjustment creation time")
+        by_role = {posting.get("role"): posting for posting in postings}
+        if set(by_role) != {"balance_adjustment_target", "balance_adjustment_counterpart"}:
+            _fail(operation_path + ".result_state_id", "adjustment must contain target and counterpart roles")
+        target_posting = by_role["balance_adjustment_target"]
+        counterpart = by_role["balance_adjustment_counterpart"]
+        if target_posting["account_id"] != input_value["account_id"] or target_posting["amount"] != input_value["delta"]:
+            _fail(operation_path + ".input.delta", "does not match the adjustment target posting")
+        counterpart_account = next(
+            (item for item in result["catalog"]["accounts"] if item["id"] == counterpart["account_id"]),
+            None,
+        )
+        if counterpart_account is None or counterpart_account.get("system_role") != "balance_adjustments":
+            _fail(operation_path + ".result_state_id", "adjustment counterpart must use the dedicated system account")
+        if Decimal(counterpart["amount"]) != -Decimal(input_value["delta"]):
+            _fail(operation_path + ".input.delta", "does not match the adjustment counterpart posting")
+        added_adjustments = [
+            item
+            for item in result["domain_entities"]
+            if item["id"] in expected_entities["domain_entities"]["added_ids"]
+            and item["type"] == "balance_adjustment"
+        ]
+        if len(added_adjustments) != 1:
+            _fail(operation_path + ".result_state_id", "must add one balance adjustment domain entity")
+        adjustment_payload = added_adjustments[0]["payload"]
+        if adjustment_payload["transaction_id"] != added[0] or adjustment_payload["original_delta"] != input_value["delta"]:
+            _fail(operation_path + ".result_state_id", "adjustment domain entity does not match the formal transaction")
+    elif action == "confirm_real_transfer":
+        for field in ("target_account_id", "counter_account_id"):
+            if input_value[field] not in baseline_accounts:
+                _fail(operation_path + f".input.{field}", "dangling account reference")
+        if input_value["target_account_id"] == input_value["counter_account_id"]:
+            _fail(operation_path + ".input.counter_account_id", "must differ from target_account_id")
+        if Decimal(input_value["amount"]) <= 0:
+            _fail(operation_path + ".input.amount", "must be positive")
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1 or result_transactions[added[0]]["type"] != "account_transfer":
+            _fail(operation_path + ".result_state_id", "must add one account_transfer transaction")
+        transaction = result_transactions[added[0]]
+        version, postings = transaction_parts(transaction["id"])
+        if any(version[field] != input_value["actual_occurred_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.actual_occurred_at", "must be preserved as the transfer time")
+        if version.get("created_at") != input_value["confirmed_at"]:
+            _fail(operation_path + ".input.confirmed_at", "must be preserved as transfer creation time")
+        by_role = {posting.get("role"): posting for posting in postings}
+        if set(by_role) != {"transfer_principal_in", "transfer_principal_out"}:
+            _fail(operation_path + ".result_state_id", "transfer must contain exact principal roles")
+        incoming = by_role["transfer_principal_in"]
+        outgoing = by_role["transfer_principal_out"]
+        if incoming["account_id"] != input_value["target_account_id"] or incoming["amount"] != input_value["amount"]:
+            _fail(operation_path + ".input.amount", "does not match the transfer-in posting")
+        if outgoing["account_id"] != input_value["counter_account_id"] or Decimal(outgoing["amount"]) != -Decimal(input_value["amount"]):
+            _fail(operation_path + ".input.amount", "does not match the transfer-out posting")
+    elif action == "confirm_explanation_allocation":
+        adjustment = baseline_entities.get(input_value["adjustment_id"])
+        if adjustment is None or adjustment["type"] != "balance_adjustment":
+            _fail(operation_path + ".input.adjustment_id", "dangling or mistyped adjustment reference")
+        explanation = baseline_transactions.get(input_value["transaction_id"])
+        if explanation is None or explanation["type"] != "account_transfer":
+            _fail(operation_path + ".input.transaction_id", "dangling or mistyped transfer reference")
+        observation = baseline_entities[adjustment["payload"]["observation_id"]]
+        observation_payload = observation["payload"]
+        for input_key, expected_value in (
+            ("target_account_id", observation_payload["account_id"]),
+            ("currency", observation_payload["currency"]),
+            ("target_observed_at", observation_payload["observed_at"]),
+        ):
+            if input_value[input_key] != expected_value:
+                _fail(operation_path + f".input.{input_key}", "does not match the target observation")
+        baseline_versions = {item["id"]: item for item in baseline["transaction_versions"]}
+        baseline_sets = {item["id"]: item for item in baseline["posting_sets"]}
+        baseline_postings = {item["id"]: item for item in baseline["postings"]}
+        explanation_version = baseline_versions[explanation["current_version_id"]]
+        if explanation_version["occurred_at"] != input_value["actual_occurred_at"]:
+            _fail(operation_path + ".input.actual_occurred_at", "does not match the explanation transaction")
+        explanation_postings = [
+            baseline_postings[item]
+            for item in baseline_sets[explanation_version["posting_set_id"]]["posting_ids"]
+        ]
+        target_legs = [
+            item
+            for item in explanation_postings
+            if item["account_id"] == input_value["target_account_id"]
+            and item.get("role") == "transfer_principal_in"
+        ]
+        if len(target_legs) != 1 or target_legs[0]["amount"] != input_value["real_transaction_amount"]:
+            _fail(operation_path + ".input.real_transaction_amount", "does not match the transfer target posting")
+        if Decimal(input_value["explanation_amount"]) <= 0 or Decimal(input_value["explanation_amount"]) > Decimal(input_value["real_transaction_amount"]):
+            _fail(operation_path + ".input.explanation_amount", "must be positive and no greater than the real transaction amount")
+        added_transactions = expected_entities["transactions"]["added_ids"]
+        added_entities = expected_entities["domain_entities"]["added_ids"]
+        if len(added_transactions) != 1 or result_transactions[added_transactions[0]]["type"] != "balance_adjustment_reversal":
+            _fail(operation_path + ".result_state_id", "must add one adjustment reversal")
+        allocations = [
+            item for item in result["domain_entities"] if item["id"] in added_entities and item["type"] == "explanation_allocation"
+        ]
+        if len(allocations) != 1:
+            _fail(operation_path + ".result_state_id", "must add one explanation allocation")
+        allocation = allocations[0]["payload"]
+        if (
+            allocation["adjustment_id"] != input_value["adjustment_id"]
+            or allocation["explanation_transaction_id"] != input_value["transaction_id"]
+            or allocation["amount"] != input_value["explanation_amount"]
+            or allocation["currency"] != input_value["currency"]
+            or allocation["confirmed_at"] != input_value["confirmed_at"]
+        ):
+            _fail(operation_path + ".input.explanation_amount", "does not match the allocation")
+        reversal_version, reversal_postings = transaction_parts(added_transactions[0])
+        if any(reversal_version[field] != input_value["target_observed_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.target_observed_at", "must be preserved in reversal time roles")
+        if reversal_version.get("created_at") != input_value["confirmed_at"]:
+            _fail(operation_path + ".input.confirmed_at", "must be preserved as reversal creation time")
+        by_role = {posting.get("role"): posting for posting in reversal_postings}
+        if set(by_role) != {"balance_adjustment_reversal_target", "balance_adjustment_reversal_counterpart"}:
+            _fail(operation_path + ".result_state_id", "reversal must contain exact target and counterpart roles")
+        reversal_target = by_role["balance_adjustment_reversal_target"]
+        reversal_counterpart = by_role["balance_adjustment_reversal_counterpart"]
+        if reversal_target["account_id"] != input_value["target_account_id"] or Decimal(reversal_target["amount"]) != -Decimal(input_value["explanation_amount"]):
+            _fail(operation_path + ".input.explanation_amount", "does not match the reversal target posting")
+        if Decimal(reversal_counterpart["amount"]) != Decimal(input_value["explanation_amount"]):
+            _fail(operation_path + ".input.explanation_amount", "does not match the reversal counterpart posting")
+
+
+def _validate_operations(
+    case: dict[str, Any],
+    states: dict[str, dict[str, Any]],
+    operations: dict[str, dict[str, Any]],
+    state_indexes: dict[str, dict[str, dict[str, dict[str, Any]]]],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    roots = {root["id"]: root for root in case["roots"]}
+    expected_order = sorted(case["operations"], key=lambda item: (item["root_id"], item["sequence"]))
+    if [item["id"] for item in case["operations"]] != [item["id"] for item in expected_order]:
+        _fail("$.operations", "must be ordered by root_id and sequence")
+
+    for root_index, root in enumerate(case["roots"]):
+        root_path = f"$.roots[{root_index}]"
+        initial = states.get(root["initial_state_id"])
+        if initial is None or initial["root_id"] != root["id"]:
+            _fail(root_path + ".initial_state_id", "must reference a same-root state")
+        if initial["as_of_operation_id"] is not None:
+            _fail(root_path + ".initial_state_id", "initial state must have null as_of_operation_id")
+        root_operations = sorted(
+            [item for item in case["operations"] if item["root_id"] == root["id"]],
+            key=lambda item: item["sequence"],
+        )
+        if [item["sequence"] for item in root_operations] != list(range(1, len(root_operations) + 1)):
+            _fail(root_path + ".operation_ids", "operation sequence must be contiguous from 1")
+        if root["operation_ids"] != [item["id"] for item in root_operations]:
+            _fail(root_path + ".operation_ids", "must match operation sequence exactly")
+        previous_state_id = root["initial_state_id"]
+        for operation in root_operations:
+            operation_index = case["operations"].index(operation)
+            operation_path = f"$.operations[{operation_index}]"
+            if operation["baseline_state_id"] != previous_state_id:
+                _fail(operation_path + ".baseline_state_id", "must follow the root execution path")
+            baseline = states.get(operation["baseline_state_id"])
+            result = states.get(operation["result_state_id"])
+            if baseline is None or baseline["root_id"] != root["id"]:
+                _fail(operation_path + ".baseline_state_id", "must reference a same-root state")
+            if result is None or result["root_id"] != root["id"]:
+                _fail(operation_path + ".result_state_id", "must reference a same-root state")
+            if result["as_of_operation_id"] != operation["id"]:
+                _fail(operation_path + ".result_state_id", "result state as_of_operation_id must match")
+
+            _validate_action_input(
+                operation, operation_path, baseline, precisions, timezone
+            )
+            expected_entities = _expected_entity_changes(baseline, result)
+            _validate_append_only_transition(baseline, result, operation_path)
+            if operation["outcome"]["status"] in {"rejected", "no_change"} and not _contract_equivalent(
+                _state_payload(baseline), _state_payload(result)
+            ):
+                _fail(
+                    operation_path,
+                    "rejected and no_change baseline/result states must be contract-equivalent after set-like normalization",
+                )
+            _validate_registered_action_effects(
+                operation, operation_path, result, expected_entities
+            )
+            earlier_operations = [
+                item for item in root_operations if item["sequence"] < operation["sequence"]
+            ]
+            _validate_no_change_retry(operation, operation_path, earlier_operations)
+
+            declared_entities = operation["deltas"]["entity_changes"]
+            for collection_name, expected_change in expected_entities.items():
+                change_path = operation_path + f".deltas.entity_changes.{collection_name}"
+                declared_change = _declared_id_changes(declared_entities[collection_name], change_path)
+                if declared_change != expected_change:
+                    _fail(change_path, f"must exactly recompute to {expected_change}, got {declared_change}")
+                if expected_change["removed_ids"]:
+                    _fail(change_path + ".removed_ids", "append-only state forbids removals")
+
+            expected_balances = _changes(_balance_map(baseline), _balance_map(result))
+            expected_reports = _changes(_report_map(baseline), _report_map(result))
+            expected_statuses = _changes(_status_map(baseline), _status_map(result))
+            declared_values = operation["deltas"]["value_changes"]
+            declared_balances = _declared_balance_changes(
+                declared_values["balances"], operation_path + ".deltas.value_changes.balances"
+            )
+            declared_reports = _declared_report_changes(
+                declared_values["reports"], operation_path + ".deltas.value_changes.reports"
+            )
+            declared_statuses = _declared_status_changes(
+                declared_values["derived_statuses"],
+                operation_path + ".deltas.value_changes.derived_statuses",
+            )
+            if declared_balances != expected_balances:
+                _fail(operation_path + ".deltas.value_changes.balances", "does not exactly match complete states")
+            if declared_reports != expected_reports:
+                _fail(operation_path + ".deltas.value_changes.reports", "does not exactly match complete states")
+            if declared_statuses != expected_statuses:
+                _fail(operation_path + ".deltas.value_changes.derived_statuses", "does not exactly match complete states")
+
+            status_changes: dict[Any, tuple[Any, Any]] = {}
+            for index, change in enumerate(operation["status_changes"]):
+                key = (change["target_kind"], change["target_id"], change["status_name"])
+                if key in status_changes:
+                    _fail(f"{operation_path}.status_changes[{index}]", "duplicate status change key")
+                status_changes[key] = (change["before"], change["after"])
+            if status_changes != expected_statuses or status_changes != declared_statuses:
+                _fail(operation_path + ".status_changes", "must be isomorphic with derived status value changes")
+
+            if operation["outcome"]["status"] == "accepted" and not any(
+                change[change_type]
+                for change in expected_entities.values()
+                for change_type in ("added_ids", "changed_ids", "removed_ids")
+            ) and not (expected_balances or expected_reports or expected_statuses):
+                _fail(
+                    operation_path + ".outcome",
+                    "accepted operation must declare a state or intake effect; use no_change for a valid replay",
+                )
+
+            result_indexes = state_indexes[result["id"]]
+            _validate_returned_ids(operation, operation_path, result, result_indexes, operations)
+            for confirmation_id in expected_entities["confirmations"]["added_ids"]:
+                confirmation = result_indexes["confirmations"][confirmation_id]
+                if confirmation["operation_id"] != operation["id"]:
+                    result_state_index = case["states"].index(result)
+                    confirmation_index = result["confirmations"].index(confirmation)
+                    _fail(
+                        f"$.states[{result_state_index}].confirmations[{confirmation_index}].operation_id",
+                        "new confirmation must name its creating operation",
+                    )
+            _validate_action_semantics(
+                operation, operation_path, baseline, result, expected_entities
+            )
+            previous_state_id = operation["result_state_id"]
+
+    expected_state_ids = {root["initial_state_id"] for root in case["roots"]} | {
+        operation["result_state_id"] for operation in case["operations"]
+    }
+    if set(states) != expected_state_ids:
+        _fail("$.states", "must contain exactly root initial and operation result states")
+    for operation in case["operations"]:
+        if operation["root_id"] not in roots:
+            _fail("$.operations", "operation references an unknown root")
+
+
+def validate_golden_case_v2(
+    case: dict[str, Any],
+    *,
+    schema_path: str | Path | None = None,
+) -> None:
+    _validate_schema(case, schema_path)
+
+    supported_transaction_types = {
+        "RG-01": {"opening_balance", "expense"},
+        "RG-09": {
+            "opening_balance",
+            "account_transfer",
+            "balance_adjustment",
+            "balance_adjustment_reversal",
+        },
+    }
+    case_id = case["case"]["id"]
+    if case_id not in supported_transaction_types:
+        _fail("$.case.id", "semantic prototype supports only RG-01 and RG-09 representative cases")
+
+    precisions: dict[str, int] = {}
+    for index, declaration in enumerate(case["case"]["currencies"]):
+        code = declaration["code"]
+        if code in precisions:
+            _fail(f"$.case.currencies[{index}].code", f"duplicate currency {code!r}")
+        precisions[code] = declaration["precision"]
+    try:
+        timezone = ZoneInfo(case["case"]["timezone"])
+    except ZoneInfoNotFoundError:
+        _fail("$.case.timezone", "must name an available IANA timezone")
+
+    roots = _unique_index(case["roots"], "$.roots")
+    states = _unique_index(case["states"], "$.states")
+    operations = _unique_index(case["operations"], "$.operations")
+    state_indexes: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
+
+    for state_index, state in enumerate(case["states"]):
+        state_path = f"$.states[{state_index}]"
+        if state["root_id"] not in roots:
+            _fail(state_path + ".root_id", "references an unknown root")
+        if state["as_of_operation_id"] is not None:
+            operation = operations.get(state["as_of_operation_id"])
+            if operation is None or operation["root_id"] != state["root_id"]:
+                _fail(state_path + ".as_of_operation_id", "dangling or cross-root operation reference")
+        indexes = _state_indexes(state, state_path)
+        state_indexes[state["id"]] = indexes
+        for transaction_index, transaction in enumerate(state["transactions"]):
+            if transaction["type"] not in supported_transaction_types[case_id]:
+                _fail(
+                    f"{state_path}.transactions[{transaction_index}].type",
+                    f"is registered structurally but not implemented for the {case_id} semantic prototype",
+                )
+        _validate_catalog(state, state_path, indexes, precisions)
+        replay, current = _validate_formal_ledger(
+            state, state_path, indexes, precisions, timezone
+        )
+        _validate_balances(state, state_path, indexes, replay, precisions)
+        _validate_references(
+            state, state_path, indexes, operations, precisions, timezone
+        )
+        reconciliation_by_posting = _validate_reconciliations(state, state_path, indexes)
+        _validate_reports(
+            case_id, state, state_path, indexes, current, precisions
+        )
+        _validate_derived_statuses(
+            state,
+            state_path,
+            indexes,
+            operations,
+            current,
+            reconciliation_by_posting,
+        )
+
+    _validate_operations(
+        case, states, operations, state_indexes, precisions, timezone
+    )
+
+    # RFC 8785 fingerprints and migration mapping completeness are intentionally
+    # outside this prototype because neither field exists on the approved input surface.
