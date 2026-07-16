@@ -1,0 +1,2674 @@
+{
+  "contract": "unifiedledger.golden-case",
+  "contract_version": "2.0.0",
+  "case": {
+    "id": "RG-09",
+    "level": "core_required",
+    "rule_version": 1,
+    "approval_status": "draft_for_review",
+    "ledger_id": "ledger-a",
+    "timezone": "Asia/Shanghai",
+    "currencies": [
+      {
+        "code": "CNY",
+        "precision": 2
+      }
+    ]
+  },
+  "roots": [
+    {
+      "id": "root-rg09-main",
+      "purpose": "representative_main_path",
+      "initial_state_id": "state-rg09-opening",
+      "operation_ids": [
+        "operation-rg09-preview",
+        "operation-rg09-confirm-adjustment",
+        "operation-rg09-confirm-transfer",
+        "operation-rg09-confirm-explanation"
+      ]
+    }
+  ],
+  "states": [
+    {
+      "id": "state-rg09-opening",
+      "root_id": "root-rg09-main",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-a",
+            "name": "Asset A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "asset-b",
+            "name": "Asset B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-balance-adjustments",
+            "name": "Balance adjustments",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "balance_adjustments",
+            "system_managed": true,
+            "hidden": true
+          },
+          {
+            "id": "equity-opening",
+            "name": "Opening equity",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "opening_balance",
+            "system_managed": true,
+            "hidden": true
+          }
+        ],
+        "categories": []
+      },
+      "transactions": [
+        {
+          "id": "transaction-opening-rg09",
+          "type": "opening_balance",
+          "current_version_id": "version-opening-rg09-v1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "version-opening-rg09-v1",
+          "transaction_id": "transaction-opening-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-opening-rg09",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "posting-set-opening-rg09",
+          "posting_ids": [
+            "posting-opening-a-rg09",
+            "posting-opening-b-rg09",
+            "posting-opening-equity-rg09"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-a-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-b-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-b",
+          "amount": "50.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "equity-opening",
+          "amount": "-150.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-a",
+          "currency": "CNY",
+          "amount": "100.00"
+        },
+        {
+          "account_id": "asset-b",
+          "currency": "CNY",
+          "amount": "50.00"
+        },
+        {
+          "account_id": "equity-balance-adjustments",
+          "currency": "CNY",
+          "amount": "0.00"
+        },
+        {
+          "account_id": "equity-opening",
+          "currency": "CNY",
+          "amount": "-150.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "balance_adjustment_net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "budget",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_inflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "internal_transfer_amount",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_expense",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "state-rg09-previewed",
+      "root_id": "root-rg09-main",
+      "as_of_operation_id": "operation-rg09-preview",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-a",
+            "name": "Asset A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "asset-b",
+            "name": "Asset B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-balance-adjustments",
+            "name": "Balance adjustments",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "balance_adjustments",
+            "system_managed": true,
+            "hidden": true
+          },
+          {
+            "id": "equity-opening",
+            "name": "Opening equity",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "opening_balance",
+            "system_managed": true,
+            "hidden": true
+          }
+        ],
+        "categories": []
+      },
+      "transactions": [
+        {
+          "id": "transaction-opening-rg09",
+          "type": "opening_balance",
+          "current_version_id": "version-opening-rg09-v1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "version-opening-rg09-v1",
+          "transaction_id": "transaction-opening-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-opening-rg09",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "posting-set-opening-rg09",
+          "posting_ids": [
+            "posting-opening-a-rg09",
+            "posting-opening-b-rg09",
+            "posting-opening-equity-rg09"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-a-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-b-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-b",
+          "amount": "50.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "equity-opening",
+          "amount": "-150.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-target-observation-rg09",
+          "type": "explicit_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "target_observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "candidates": [
+        {
+          "id": "candidate-adjustment-rg09",
+          "type": "balance_adjustment",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "confidence": "1.00",
+          "payload": {
+            "account_id": "asset-a",
+            "replayed_amount": "100.00",
+            "target_amount": "130.00",
+            "delta": "30.00",
+            "currency": "CNY",
+            "effective_at": "2026-01-31T23:59:59+08:00"
+          },
+          "status_history": [
+            {
+              "id": "candidate-status-rg09-1",
+              "sequence": 1,
+              "status": "pending_confirmation"
+            }
+          ]
+        }
+      ],
+      "confirmations": [],
+      "evidence": [
+        {
+          "id": "evidence-target-observation-rg09",
+          "type": "user_balance_observation",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "payload": {
+            "observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-target-observation-rg09",
+          "evidence_id": "evidence-target-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "role": "target_balance_observation"
+        }
+      ],
+      "relations": [],
+      "domain_entities": [
+        {
+          "id": "observation-target-rg09",
+          "type": "target_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "observed_at": "2026-01-31T23:59:59+08:00",
+            "source_id": "source-target-observation-rg09"
+          }
+        }
+      ],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-a",
+          "currency": "CNY",
+          "amount": "100.00"
+        },
+        {
+          "account_id": "asset-b",
+          "currency": "CNY",
+          "amount": "50.00"
+        },
+        {
+          "account_id": "equity-balance-adjustments",
+          "currency": "CNY",
+          "amount": "0.00"
+        },
+        {
+          "account_id": "equity-opening",
+          "currency": "CNY",
+          "amount": "-150.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "balance_adjustment_net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "budget",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_inflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "internal_transfer_amount",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_expense",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "derived-candidate-rg09",
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "value": "pending_confirmation"
+        }
+      ]
+    },
+    {
+      "id": "state-rg09-adjusted",
+      "root_id": "root-rg09-main",
+      "as_of_operation_id": "operation-rg09-confirm-adjustment",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-a",
+            "name": "Asset A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "asset-b",
+            "name": "Asset B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-balance-adjustments",
+            "name": "Balance adjustments",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "balance_adjustments",
+            "system_managed": true,
+            "hidden": true
+          },
+          {
+            "id": "equity-opening",
+            "name": "Opening equity",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "opening_balance",
+            "system_managed": true,
+            "hidden": true
+          }
+        ],
+        "categories": []
+      },
+      "transactions": [
+        {
+          "id": "transaction-opening-rg09",
+          "type": "opening_balance",
+          "current_version_id": "version-opening-rg09-v1"
+        },
+        {
+          "id": "transaction-adjustment-rg09",
+          "type": "balance_adjustment",
+          "current_version_id": "version-adjustment-rg09-v1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "version-opening-rg09-v1",
+          "transaction_id": "transaction-opening-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-opening-rg09",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-adjustment-rg09-v1",
+          "transaction_id": "transaction-adjustment-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "occurred_at": "2026-01-31T23:59:59+08:00",
+          "statistics_at": "2026-01-31T23:59:59+08:00",
+          "effective_at": "2026-01-31T23:59:59+08:00",
+          "created_at": "2026-02-01T09:05:00+08:00",
+          "confirmation_id": "confirmation-adjustment-rg09"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "posting-set-opening-rg09",
+          "posting_ids": [
+            "posting-opening-a-rg09",
+            "posting-opening-b-rg09",
+            "posting-opening-equity-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-adjustment-rg09",
+          "posting_ids": [
+            "posting-adjustment-a-rg09",
+            "posting-adjustment-equity-rg09"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-a-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-b-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-b",
+          "amount": "50.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "equity-opening",
+          "amount": "-150.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-a-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "asset-a",
+          "amount": "30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_target",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-equity-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "equity-balance-adjustments",
+          "amount": "-30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_counterpart",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-target-observation-rg09",
+          "type": "explicit_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "target_observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "candidates": [
+        {
+          "id": "candidate-adjustment-rg09",
+          "type": "balance_adjustment",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "confidence": "1.00",
+          "payload": {
+            "account_id": "asset-a",
+            "replayed_amount": "100.00",
+            "target_amount": "130.00",
+            "delta": "30.00",
+            "currency": "CNY",
+            "effective_at": "2026-01-31T23:59:59+08:00"
+          },
+          "status_history": [
+            {
+              "id": "candidate-status-rg09-1",
+              "sequence": 1,
+              "status": "pending_confirmation"
+            },
+            {
+              "id": "candidate-status-rg09-2",
+              "sequence": 2,
+              "status": "confirmed"
+            }
+          ]
+        }
+      ],
+      "confirmations": [
+        {
+          "id": "confirmation-adjustment-rg09",
+          "type": "candidate_confirmation",
+          "operation_id": "operation-rg09-confirm-adjustment",
+          "subject": {
+            "kind": "candidate",
+            "id": "candidate-adjustment-rg09"
+          },
+          "confirmed_at": "2026-02-01T09:05:00+08:00",
+          "payload": {}
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-target-observation-rg09",
+          "type": "user_balance_observation",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "payload": {
+            "observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-target-observation-rg09",
+          "evidence_id": "evidence-target-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "role": "target_balance_observation"
+        }
+      ],
+      "relations": [],
+      "domain_entities": [
+        {
+          "id": "observation-target-rg09",
+          "type": "target_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "observed_at": "2026-01-31T23:59:59+08:00",
+            "source_id": "source-target-observation-rg09"
+          }
+        },
+        {
+          "id": "adjustment-rg09",
+          "type": "balance_adjustment",
+          "payload": {
+            "observation_id": "observation-target-rg09",
+            "original_delta": "30.00",
+            "currency": "CNY",
+            "transaction_id": "transaction-adjustment-rg09"
+          }
+        }
+      ],
+      "audit_links": [
+        {
+          "id": "audit-adjustment-transaction-rg09",
+          "type": "adjustment_transaction",
+          "from": {
+            "kind": "domain_entity",
+            "id": "adjustment-rg09"
+          },
+          "to": {
+            "kind": "transaction",
+            "id": "transaction-adjustment-rg09"
+          },
+          "payload": {}
+        }
+      ],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-a",
+          "currency": "CNY",
+          "amount": "130.00"
+        },
+        {
+          "account_id": "asset-b",
+          "currency": "CNY",
+          "amount": "50.00"
+        },
+        {
+          "account_id": "equity-balance-adjustments",
+          "currency": "CNY",
+          "amount": "-30.00"
+        },
+        {
+          "account_id": "equity-opening",
+          "currency": "CNY",
+          "amount": "-150.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "balance_adjustment_net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "30.00"
+            },
+            {
+              "metric": "budget",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_inflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "internal_transfer_amount",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "30.00"
+            },
+            {
+              "metric": "ordinary_expense",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "derived-adjustment-rg09",
+          "target_kind": "domain_entity",
+          "target_id": "adjustment-rg09",
+          "status_name": "explanation_status",
+          "value": "open"
+        },
+        {
+          "id": "derived-candidate-rg09",
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "value": "confirmed"
+        },
+        {
+          "id": "derived-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "value": "balanced_with_unexplained_adjustment"
+        }
+      ]
+    },
+    {
+      "id": "state-rg09-transfer-confirmed",
+      "root_id": "root-rg09-main",
+      "as_of_operation_id": "operation-rg09-confirm-transfer",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-a",
+            "name": "Asset A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "asset-b",
+            "name": "Asset B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-balance-adjustments",
+            "name": "Balance adjustments",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "balance_adjustments",
+            "system_managed": true,
+            "hidden": true
+          },
+          {
+            "id": "equity-opening",
+            "name": "Opening equity",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "opening_balance",
+            "system_managed": true,
+            "hidden": true
+          }
+        ],
+        "categories": []
+      },
+      "transactions": [
+        {
+          "id": "transaction-opening-rg09",
+          "type": "opening_balance",
+          "current_version_id": "version-opening-rg09-v1"
+        },
+        {
+          "id": "transaction-adjustment-rg09",
+          "type": "balance_adjustment",
+          "current_version_id": "version-adjustment-rg09-v1"
+        },
+        {
+          "id": "transaction-transfer-rg09",
+          "type": "account_transfer",
+          "current_version_id": "version-transfer-rg09-v1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "version-opening-rg09-v1",
+          "transaction_id": "transaction-opening-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-opening-rg09",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-adjustment-rg09-v1",
+          "transaction_id": "transaction-adjustment-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "occurred_at": "2026-01-31T23:59:59+08:00",
+          "statistics_at": "2026-01-31T23:59:59+08:00",
+          "effective_at": "2026-01-31T23:59:59+08:00",
+          "created_at": "2026-02-01T09:05:00+08:00",
+          "confirmation_id": "confirmation-adjustment-rg09"
+        },
+        {
+          "id": "version-transfer-rg09-v1",
+          "transaction_id": "transaction-transfer-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-transfer-rg09",
+          "occurred_at": "2026-01-20T12:00:00+08:00",
+          "statistics_at": "2026-01-20T12:00:00+08:00",
+          "effective_at": "2026-01-20T12:00:00+08:00",
+          "created_at": "2026-02-10T18:00:00+08:00",
+          "confirmation_id": "confirmation-transfer-rg09"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "posting-set-opening-rg09",
+          "posting_ids": [
+            "posting-opening-a-rg09",
+            "posting-opening-b-rg09",
+            "posting-opening-equity-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-adjustment-rg09",
+          "posting_ids": [
+            "posting-adjustment-a-rg09",
+            "posting-adjustment-equity-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-transfer-rg09",
+          "posting_ids": [
+            "posting-transfer-a-rg09",
+            "posting-transfer-b-rg09"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-a-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-b-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-b",
+          "amount": "50.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "equity-opening",
+          "amount": "-150.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-a-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "asset-a",
+          "amount": "30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_target",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-equity-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "equity-balance-adjustments",
+          "amount": "-30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_counterpart",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-transfer-a-rg09",
+          "posting_set_id": "posting-set-transfer-rg09",
+          "account_id": "asset-a",
+          "amount": "20.00",
+          "currency": "CNY",
+          "role": "transfer_principal_in",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-transfer-b-rg09",
+          "posting_set_id": "posting-set-transfer-rg09",
+          "account_id": "asset-b",
+          "amount": "-20.00",
+          "currency": "CNY",
+          "role": "transfer_principal_out",
+          "reconciliation_eligible": true
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-target-observation-rg09",
+          "type": "explicit_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "target_observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "candidates": [
+        {
+          "id": "candidate-adjustment-rg09",
+          "type": "balance_adjustment",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "confidence": "1.00",
+          "payload": {
+            "account_id": "asset-a",
+            "replayed_amount": "100.00",
+            "target_amount": "130.00",
+            "delta": "30.00",
+            "currency": "CNY",
+            "effective_at": "2026-01-31T23:59:59+08:00"
+          },
+          "status_history": [
+            {
+              "id": "candidate-status-rg09-1",
+              "sequence": 1,
+              "status": "pending_confirmation"
+            },
+            {
+              "id": "candidate-status-rg09-2",
+              "sequence": 2,
+              "status": "confirmed"
+            }
+          ]
+        }
+      ],
+      "confirmations": [
+        {
+          "id": "confirmation-adjustment-rg09",
+          "type": "candidate_confirmation",
+          "operation_id": "operation-rg09-confirm-adjustment",
+          "subject": {
+            "kind": "candidate",
+            "id": "candidate-adjustment-rg09"
+          },
+          "confirmed_at": "2026-02-01T09:05:00+08:00",
+          "payload": {}
+        },
+        {
+          "id": "confirmation-transfer-rg09",
+          "type": "explicit_operation_confirmation",
+          "operation_id": "operation-rg09-confirm-transfer",
+          "subject": {
+            "kind": "operation",
+            "id": "operation-rg09-confirm-transfer"
+          },
+          "confirmed_at": "2026-02-10T18:00:00+08:00",
+          "payload": {}
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-target-observation-rg09",
+          "type": "user_balance_observation",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "payload": {
+            "observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-target-observation-rg09",
+          "evidence_id": "evidence-target-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "role": "target_balance_observation"
+        }
+      ],
+      "relations": [],
+      "domain_entities": [
+        {
+          "id": "observation-target-rg09",
+          "type": "target_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "observed_at": "2026-01-31T23:59:59+08:00",
+            "source_id": "source-target-observation-rg09"
+          }
+        },
+        {
+          "id": "adjustment-rg09",
+          "type": "balance_adjustment",
+          "payload": {
+            "observation_id": "observation-target-rg09",
+            "original_delta": "30.00",
+            "currency": "CNY",
+            "transaction_id": "transaction-adjustment-rg09"
+          }
+        }
+      ],
+      "audit_links": [
+        {
+          "id": "audit-adjustment-transaction-rg09",
+          "type": "adjustment_transaction",
+          "from": {
+            "kind": "domain_entity",
+            "id": "adjustment-rg09"
+          },
+          "to": {
+            "kind": "transaction",
+            "id": "transaction-adjustment-rg09"
+          },
+          "payload": {}
+        }
+      ],
+      "posting_reconciliations": [
+        {
+          "id": "reconciliation-transfer-a-rg09",
+          "posting_id": "posting-transfer-a-rg09",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09",
+          "posting_id": "posting-transfer-b-rg09",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-a",
+          "currency": "CNY",
+          "amount": "150.00"
+        },
+        {
+          "account_id": "asset-b",
+          "currency": "CNY",
+          "amount": "30.00"
+        },
+        {
+          "account_id": "equity-balance-adjustments",
+          "currency": "CNY",
+          "amount": "-30.00"
+        },
+        {
+          "account_id": "equity-opening",
+          "currency": "CNY",
+          "amount": "-150.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "balance_adjustment_net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "30.00"
+            },
+            {
+              "metric": "budget",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_inflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "internal_transfer_amount",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "20.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "30.00"
+            },
+            {
+              "metric": "ordinary_expense",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "derived-adjustment-rg09",
+          "target_kind": "domain_entity",
+          "target_id": "adjustment-rg09",
+          "status_name": "explanation_status",
+          "value": "open"
+        },
+        {
+          "id": "derived-candidate-rg09",
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "value": "confirmed"
+        },
+        {
+          "id": "derived-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "value": "difference_pending_explanation_confirmation"
+        },
+        {
+          "id": "derived-transfer-rg09",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    },
+    {
+      "id": "state-rg09-partially-explained",
+      "root_id": "root-rg09-main",
+      "as_of_operation_id": "operation-rg09-confirm-explanation",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-a",
+            "name": "Asset A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "asset-b",
+            "name": "Asset B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-balance-adjustments",
+            "name": "Balance adjustments",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "balance_adjustments",
+            "system_managed": true,
+            "hidden": true
+          },
+          {
+            "id": "equity-opening",
+            "name": "Opening equity",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false,
+            "system_role": "opening_balance",
+            "system_managed": true,
+            "hidden": true
+          }
+        ],
+        "categories": []
+      },
+      "transactions": [
+        {
+          "id": "transaction-opening-rg09",
+          "type": "opening_balance",
+          "current_version_id": "version-opening-rg09-v1"
+        },
+        {
+          "id": "transaction-adjustment-rg09",
+          "type": "balance_adjustment",
+          "current_version_id": "version-adjustment-rg09-v1"
+        },
+        {
+          "id": "transaction-transfer-rg09",
+          "type": "account_transfer",
+          "current_version_id": "version-transfer-rg09-v1"
+        },
+        {
+          "id": "transaction-reversal-rg09",
+          "type": "balance_adjustment_reversal",
+          "current_version_id": "version-reversal-rg09-v1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "version-opening-rg09-v1",
+          "transaction_id": "transaction-opening-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-opening-rg09",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-adjustment-rg09-v1",
+          "transaction_id": "transaction-adjustment-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "occurred_at": "2026-01-31T23:59:59+08:00",
+          "statistics_at": "2026-01-31T23:59:59+08:00",
+          "effective_at": "2026-01-31T23:59:59+08:00",
+          "created_at": "2026-02-01T09:05:00+08:00",
+          "confirmation_id": "confirmation-adjustment-rg09"
+        },
+        {
+          "id": "version-transfer-rg09-v1",
+          "transaction_id": "transaction-transfer-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-transfer-rg09",
+          "occurred_at": "2026-01-20T12:00:00+08:00",
+          "statistics_at": "2026-01-20T12:00:00+08:00",
+          "effective_at": "2026-01-20T12:00:00+08:00",
+          "created_at": "2026-02-10T18:00:00+08:00",
+          "confirmation_id": "confirmation-transfer-rg09"
+        },
+        {
+          "id": "version-reversal-rg09-v1",
+          "transaction_id": "transaction-reversal-rg09",
+          "version_number": 1,
+          "posting_set_id": "posting-set-reversal-rg09",
+          "occurred_at": "2026-01-31T23:59:59+08:00",
+          "statistics_at": "2026-01-31T23:59:59+08:00",
+          "effective_at": "2026-01-31T23:59:59+08:00",
+          "created_at": "2026-02-10T18:05:00+08:00",
+          "confirmation_id": "confirmation-explanation-rg09"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "posting-set-opening-rg09",
+          "posting_ids": [
+            "posting-opening-a-rg09",
+            "posting-opening-b-rg09",
+            "posting-opening-equity-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-adjustment-rg09",
+          "posting_ids": [
+            "posting-adjustment-a-rg09",
+            "posting-adjustment-equity-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-transfer-rg09",
+          "posting_ids": [
+            "posting-transfer-a-rg09",
+            "posting-transfer-b-rg09"
+          ]
+        },
+        {
+          "id": "posting-set-reversal-rg09",
+          "posting_ids": [
+            "posting-reversal-a-rg09",
+            "posting-reversal-equity-rg09"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-a-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-a",
+          "amount": "100.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-b-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "asset-b",
+          "amount": "50.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-rg09",
+          "posting_set_id": "posting-set-opening-rg09",
+          "account_id": "equity-opening",
+          "amount": "-150.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-a-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "asset-a",
+          "amount": "30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_target",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-adjustment-equity-rg09",
+          "posting_set_id": "posting-set-adjustment-rg09",
+          "account_id": "equity-balance-adjustments",
+          "amount": "-30.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_counterpart",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-transfer-a-rg09",
+          "posting_set_id": "posting-set-transfer-rg09",
+          "account_id": "asset-a",
+          "amount": "20.00",
+          "currency": "CNY",
+          "role": "transfer_principal_in",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-transfer-b-rg09",
+          "posting_set_id": "posting-set-transfer-rg09",
+          "account_id": "asset-b",
+          "amount": "-20.00",
+          "currency": "CNY",
+          "role": "transfer_principal_out",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-reversal-a-rg09",
+          "posting_set_id": "posting-set-reversal-rg09",
+          "account_id": "asset-a",
+          "amount": "-20.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_reversal_target",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-reversal-equity-rg09",
+          "posting_set_id": "posting-set-reversal-rg09",
+          "account_id": "equity-balance-adjustments",
+          "amount": "20.00",
+          "currency": "CNY",
+          "role": "balance_adjustment_reversal_counterpart",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-target-observation-rg09",
+          "type": "explicit_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "target_observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "candidates": [
+        {
+          "id": "candidate-adjustment-rg09",
+          "type": "balance_adjustment",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "confidence": "1.00",
+          "payload": {
+            "account_id": "asset-a",
+            "replayed_amount": "100.00",
+            "target_amount": "130.00",
+            "delta": "30.00",
+            "currency": "CNY",
+            "effective_at": "2026-01-31T23:59:59+08:00"
+          },
+          "status_history": [
+            {
+              "id": "candidate-status-rg09-1",
+              "sequence": 1,
+              "status": "pending_confirmation"
+            },
+            {
+              "id": "candidate-status-rg09-2",
+              "sequence": 2,
+              "status": "confirmed"
+            }
+          ]
+        }
+      ],
+      "confirmations": [
+        {
+          "id": "confirmation-adjustment-rg09",
+          "type": "candidate_confirmation",
+          "operation_id": "operation-rg09-confirm-adjustment",
+          "subject": {
+            "kind": "candidate",
+            "id": "candidate-adjustment-rg09"
+          },
+          "confirmed_at": "2026-02-01T09:05:00+08:00",
+          "payload": {}
+        },
+        {
+          "id": "confirmation-transfer-rg09",
+          "type": "explicit_operation_confirmation",
+          "operation_id": "operation-rg09-confirm-transfer",
+          "subject": {
+            "kind": "operation",
+            "id": "operation-rg09-confirm-transfer"
+          },
+          "confirmed_at": "2026-02-10T18:00:00+08:00",
+          "payload": {}
+        },
+        {
+          "id": "confirmation-explanation-rg09",
+          "type": "explicit_operation_confirmation",
+          "operation_id": "operation-rg09-confirm-explanation",
+          "subject": {
+            "kind": "operation",
+            "id": "operation-rg09-confirm-explanation"
+          },
+          "confirmed_at": "2026-02-10T18:05:00+08:00",
+          "payload": {}
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-target-observation-rg09",
+          "type": "user_balance_observation",
+          "source_ids": [
+            "source-target-observation-rg09"
+          ],
+          "payload": {
+            "observed_at": "2026-01-31T23:59:59+08:00"
+          }
+        }
+      ],
+      "evidence_links": [
+        {
+          "id": "evidence-link-target-observation-rg09",
+          "evidence_id": "evidence-target-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "role": "target_balance_observation"
+        }
+      ],
+      "relations": [],
+      "domain_entities": [
+        {
+          "id": "observation-target-rg09",
+          "type": "target_balance_observation",
+          "payload": {
+            "account_id": "asset-a",
+            "target_amount": "130.00",
+            "currency": "CNY",
+            "observed_at": "2026-01-31T23:59:59+08:00",
+            "source_id": "source-target-observation-rg09"
+          }
+        },
+        {
+          "id": "adjustment-rg09",
+          "type": "balance_adjustment",
+          "payload": {
+            "observation_id": "observation-target-rg09",
+            "original_delta": "30.00",
+            "currency": "CNY",
+            "transaction_id": "transaction-adjustment-rg09"
+          }
+        },
+        {
+          "id": "allocation-rg09",
+          "type": "explanation_allocation",
+          "payload": {
+            "adjustment_id": "adjustment-rg09",
+            "explanation_transaction_id": "transaction-transfer-rg09",
+            "reversal_transaction_id": "transaction-reversal-rg09",
+            "amount": "20.00",
+            "currency": "CNY",
+            "confirmed_at": "2026-02-10T18:05:00+08:00"
+          }
+        }
+      ],
+      "audit_links": [
+        {
+          "id": "audit-adjustment-transaction-rg09",
+          "type": "adjustment_transaction",
+          "from": {
+            "kind": "domain_entity",
+            "id": "adjustment-rg09"
+          },
+          "to": {
+            "kind": "transaction",
+            "id": "transaction-adjustment-rg09"
+          },
+          "payload": {}
+        },
+        {
+          "id": "audit-explanation-transaction-rg09",
+          "type": "explanation_transaction",
+          "from": {
+            "kind": "domain_entity",
+            "id": "allocation-rg09"
+          },
+          "to": {
+            "kind": "transaction",
+            "id": "transaction-transfer-rg09"
+          },
+          "payload": {}
+        },
+        {
+          "id": "audit-allocation-reversal-rg09",
+          "type": "allocation_reversal",
+          "from": {
+            "kind": "domain_entity",
+            "id": "allocation-rg09"
+          },
+          "to": {
+            "kind": "transaction",
+            "id": "transaction-reversal-rg09"
+          },
+          "payload": {}
+        }
+      ],
+      "posting_reconciliations": [
+        {
+          "id": "reconciliation-transfer-a-rg09",
+          "posting_id": "posting-transfer-a-rg09",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09",
+          "posting_id": "posting-transfer-b-rg09",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-a",
+          "currency": "CNY",
+          "amount": "130.00"
+        },
+        {
+          "account_id": "asset-b",
+          "currency": "CNY",
+          "amount": "30.00"
+        },
+        {
+          "account_id": "equity-balance-adjustments",
+          "currency": "CNY",
+          "amount": "-10.00"
+        },
+        {
+          "account_id": "equity-opening",
+          "currency": "CNY",
+          "amount": "-150.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "balance_adjustment_net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "10.00"
+            },
+            {
+              "metric": "budget",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_inflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "internal_transfer_amount",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "20.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "10.00"
+            },
+            {
+              "metric": "ordinary_expense",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "ordinary_income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "derived-adjustment-rg09",
+          "target_kind": "domain_entity",
+          "target_id": "adjustment-rg09",
+          "status_name": "explanation_status",
+          "value": "partially_explained"
+        },
+        {
+          "id": "derived-candidate-rg09",
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "value": "confirmed"
+        },
+        {
+          "id": "derived-observation-rg09",
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "value": "balanced_with_unexplained_adjustment"
+        },
+        {
+          "id": "derived-transfer-rg09",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "operation-rg09-preview",
+      "root_id": "root-rg09-main",
+      "sequence": 1,
+      "operation_class": "read",
+      "action_type": "preview_target_balance",
+      "baseline_state_id": "state-rg09-opening",
+      "result_state_id": "state-rg09-previewed",
+      "input": {
+        "request_id": "request-preview-rg09",
+        "account_id": "asset-a",
+        "target_amount": "130.00",
+        "currency": "CNY",
+        "target_observed_at": "2026-01-31T23:59:59+08:00",
+        "explicit_confirmation": false
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "before": null,
+          "after": "pending_confirmation"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [
+              "source-target-observation-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [
+              "candidate-adjustment-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [
+              "evidence-target-observation-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [
+              "evidence-link-target-observation-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [
+              "observation-target-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "candidate",
+                "target_id": "candidate-adjustment-rg09",
+                "status_name": "confirmation_status"
+              },
+              "before": null,
+              "after": "pending_confirmation"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "candidate",
+          "id": "candidate-adjustment-rg09"
+        },
+        {
+          "kind": "observation",
+          "id": "observation-target-rg09"
+        }
+      ]
+    },
+    {
+      "id": "operation-rg09-confirm-adjustment",
+      "root_id": "root-rg09-main",
+      "sequence": 2,
+      "operation_class": "adjustment",
+      "action_type": "confirm_balance_adjustment",
+      "baseline_state_id": "state-rg09-previewed",
+      "result_state_id": "state-rg09-adjusted",
+      "input": {
+        "request_id": "request-confirm-adjustment-rg09",
+        "candidate_id": "candidate-adjustment-rg09",
+        "account_id": "asset-a",
+        "target_amount": "130.00",
+        "replayed_amount": "100.00",
+        "delta": "30.00",
+        "currency": "CNY",
+        "effective_at": "2026-01-31T23:59:59+08:00",
+        "explicit_confirmation": true,
+        "confirmed_at": "2026-02-01T09:05:00+08:00"
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "domain_entity",
+          "target_id": "adjustment-rg09",
+          "status_name": "explanation_status",
+          "before": null,
+          "after": "open"
+        },
+        {
+          "target_kind": "candidate",
+          "target_id": "candidate-adjustment-rg09",
+          "status_name": "confirmation_status",
+          "before": "pending_confirmation",
+          "after": "confirmed"
+        },
+        {
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "before": null,
+          "after": "balanced_with_unexplained_adjustment"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [
+              "transaction-adjustment-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-adjustment-rg09-v1"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [
+              "posting-set-adjustment-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [
+              "posting-adjustment-a-rg09",
+              "posting-adjustment-equity-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [
+              "candidate-adjustment-rg09"
+            ],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "confirmation-adjustment-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [
+              "adjustment-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [
+              "audit-adjustment-transaction-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [
+            {
+              "key": {
+                "account_id": "asset-a",
+                "currency": "CNY"
+              },
+              "before": "100.00",
+              "after": "130.00"
+            },
+            {
+              "key": {
+                "account_id": "equity-balance-adjustments",
+                "currency": "CNY"
+              },
+              "before": "0.00",
+              "after": "-30.00"
+            }
+          ],
+          "reports": [
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "balance_adjustment_net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "30.00"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "30.00"
+              }
+            }
+          ],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "domain_entity",
+                "target_id": "adjustment-rg09",
+                "status_name": "explanation_status"
+              },
+              "before": null,
+              "after": "open"
+            },
+            {
+              "key": {
+                "kind": "candidate",
+                "target_id": "candidate-adjustment-rg09",
+                "status_name": "confirmation_status"
+              },
+              "before": "pending_confirmation",
+              "after": "confirmed"
+            },
+            {
+              "key": {
+                "kind": "observation",
+                "target_id": "observation-target-rg09",
+                "status_name": "verification_status"
+              },
+              "before": null,
+              "after": "balanced_with_unexplained_adjustment"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "confirmation-adjustment-rg09"
+        },
+        {
+          "kind": "domain_entity",
+          "id": "adjustment-rg09"
+        },
+        {
+          "kind": "transaction",
+          "id": "transaction-adjustment-rg09"
+        }
+      ]
+    },
+    {
+      "id": "operation-rg09-confirm-transfer",
+      "root_id": "root-rg09-main",
+      "sequence": 3,
+      "operation_class": "creation",
+      "action_type": "confirm_real_transfer",
+      "baseline_state_id": "state-rg09-adjusted",
+      "result_state_id": "state-rg09-transfer-confirmed",
+      "input": {
+        "request_id": "request-transfer-rg09",
+        "target_account_id": "asset-a",
+        "counter_account_id": "asset-b",
+        "amount": "20.00",
+        "currency": "CNY",
+        "actual_occurred_at": "2026-01-20T12:00:00+08:00",
+        "discovered_at": "2026-02-10T17:30:00+08:00",
+        "explicit_confirmation": true,
+        "confirmed_at": "2026-02-10T18:00:00+08:00"
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "before": "balanced_with_unexplained_adjustment",
+          "after": "difference_pending_explanation_confirmation"
+        },
+        {
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "before": null,
+          "after": "pending"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [
+              "transaction-transfer-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-transfer-rg09-v1"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [
+              "posting-set-transfer-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [
+              "posting-transfer-a-rg09",
+              "posting-transfer-b-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "confirmation-transfer-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [
+              "reconciliation-transfer-a-rg09",
+              "reconciliation-transfer-b-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [
+            {
+              "key": {
+                "account_id": "asset-a",
+                "currency": "CNY"
+              },
+              "before": "130.00",
+              "after": "150.00"
+            },
+            {
+              "key": {
+                "account_id": "asset-b",
+                "currency": "CNY"
+              },
+              "before": "50.00",
+              "after": "30.00"
+            }
+          ],
+          "reports": [
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "internal_transfer_amount",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "20.00"
+              }
+            }
+          ],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "observation",
+                "target_id": "observation-target-rg09",
+                "status_name": "verification_status"
+              },
+              "before": "balanced_with_unexplained_adjustment",
+              "after": "difference_pending_explanation_confirmation"
+            },
+            {
+              "key": {
+                "kind": "transaction",
+                "target_id": "transaction-transfer-rg09",
+                "status_name": "reconciliation_summary"
+              },
+              "before": null,
+              "after": "pending"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "confirmation-transfer-rg09"
+        },
+        {
+          "kind": "transaction",
+          "id": "transaction-transfer-rg09"
+        }
+      ]
+    },
+    {
+      "id": "operation-rg09-confirm-explanation",
+      "root_id": "root-rg09-main",
+      "sequence": 4,
+      "operation_class": "reversal",
+      "action_type": "confirm_explanation_allocation",
+      "baseline_state_id": "state-rg09-transfer-confirmed",
+      "result_state_id": "state-rg09-partially-explained",
+      "input": {
+        "request_id": "request-confirm-allocation-rg09",
+        "adjustment_id": "adjustment-rg09",
+        "transaction_id": "transaction-transfer-rg09",
+        "target_account_id": "asset-a",
+        "actual_occurred_at": "2026-01-20T12:00:00+08:00",
+        "real_transaction_amount": "20.00",
+        "currency": "CNY",
+        "target_observed_at": "2026-01-31T23:59:59+08:00",
+        "allocation_direction": "same_as_original_adjustment",
+        "explanation_amount": "20.00",
+        "confirms_target_account": true,
+        "confirms_actual_occurred_at": true,
+        "confirms_real_transaction_amount": true,
+        "confirms_currency": true,
+        "confirms_target_observed_at": true,
+        "confirms_allocation_direction": true,
+        "confirms_explanation_amount": true,
+        "explicit_confirmation": true,
+        "confirmed_at": "2026-02-10T18:05:00+08:00"
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "domain_entity",
+          "target_id": "adjustment-rg09",
+          "status_name": "explanation_status",
+          "before": "open",
+          "after": "partially_explained"
+        },
+        {
+          "target_kind": "observation",
+          "target_id": "observation-target-rg09",
+          "status_name": "verification_status",
+          "before": "difference_pending_explanation_confirmation",
+          "after": "balanced_with_unexplained_adjustment"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [
+              "transaction-reversal-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-reversal-rg09-v1"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [
+              "posting-set-reversal-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [
+              "posting-reversal-a-rg09",
+              "posting-reversal-equity-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "confirmation-explanation-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [
+              "allocation-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [
+              "audit-allocation-reversal-rg09",
+              "audit-explanation-transaction-rg09"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [
+            {
+              "key": {
+                "account_id": "asset-a",
+                "currency": "CNY"
+              },
+              "before": "150.00",
+              "after": "130.00"
+            },
+            {
+              "key": {
+                "account_id": "equity-balance-adjustments",
+                "currency": "CNY"
+              },
+              "before": "-30.00",
+              "after": "-10.00"
+            }
+          ],
+          "reports": [
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "balance_adjustment_net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "30.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "10.00"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "30.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "10.00"
+              }
+            }
+          ],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "domain_entity",
+                "target_id": "adjustment-rg09",
+                "status_name": "explanation_status"
+              },
+              "before": "open",
+              "after": "partially_explained"
+            },
+            {
+              "key": {
+                "kind": "observation",
+                "target_id": "observation-target-rg09",
+                "status_name": "verification_status"
+              },
+              "before": "difference_pending_explanation_confirmation",
+              "after": "balanced_with_unexplained_adjustment"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "confirmation-explanation-rg09"
+        },
+        {
+          "kind": "domain_entity",
+          "id": "allocation-rg09"
+        },
+        {
+          "kind": "transaction",
+          "id": "transaction-reversal-rg09"
+        }
+      ]
+    }
+  ]
+}
