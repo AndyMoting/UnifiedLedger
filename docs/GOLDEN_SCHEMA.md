@@ -120,20 +120,25 @@ Representative subtype payloads are fully frozen:
 | source `explicit_balance_observation` | `account_id`, `target_amount`, `currency`, `target_observed_at` |
 | candidate `balance_adjustment` | `account_id`, `replayed_amount`, `target_amount`, `delta`, `currency`, `effective_at` |
 | confirmation `explicit_manual_save` | empty payload; subject kind `operation` |
-| confirmation `candidate_confirmation` | empty payload; subject kind `candidate`; `confirmed_at` required |
-| confirmation `explicit_operation_confirmation` | empty payload; subject kind `operation`; `confirmed_at` required |
+| confirmation `candidate_confirmation` | empty payload; subject kind `candidate`; optional `confirmed_at` only when the legacy or native fact records the actual time |
+| confirmation `explicit_operation_confirmation` | empty payload; subject kind `operation`; optional `confirmed_at` only when the legacy or native fact records the actual time |
 | evidence `user_balance_observation` | `observed_at` |
+| evidence `item_receipt` | `observed_at` |
+| evidence `merchant_stored_value_credit` | `observed_at` |
 | domain entity `target_balance_observation` | `account_id`, `target_amount`, `currency`, `observed_at`, `source_id` |
 | domain entity `balance_adjustment` | `observation_id`, `original_delta`, `currency`, `transaction_id` |
 | domain entity `explanation_allocation` | `adjustment_id`, `explanation_transaction_id`, `reversal_transaction_id`, `amount`, `currency`, `confirmed_at` |
+| domain entity `consumption_record` | `expense_posting_id`, `category_id`, `amount`, `currency`, `statistics_at` |
+| domain entity `item_allocation` | `consumption_record_id`, `expense_posting_id`, `category_id`, `amount`, `currency` |
+| domain entity `stored_value_lot` | `recharge_transaction_id`, `loaded_at`, `face_value`, `currency` |
 | audit link `adjustment_transaction`, `explanation_transaction`, `allocation_reversal` | empty payload; endpoint kinds must match the role semantics |
 
 The remaining approved type registry reserves these semantics without claiming their full RG payloads are frozen:
 
 - Relation types: `mixed_payment`, `merged_payment`, `staged_payment`. Each relates the exact business entity or allocation identities to its single formal payment identity; payload registration requires a later contract amendment.
-- Domain entity types: `funding_component`, `consumption_record`, `item_allocation`, `installment_payment`, `refund_relationship`, `counterparty`, `lending_position`, `lending_settlement`, `settlement_component`, `stored_value_lot`, `lot_consumption`, `stored_value_consumption`, `activation_adjustment`, and `merchant_allocation`. Each owns the named business identity and lifecycle rather than formal postings. It is reserved but unusable until an amendment freezes its closed payload.
-- Evidence-link roles: `target_balance_observation`, `real_account_posting`, `payment_asset_posting`, `destination_asset_posting`, `funding_asset_posting`, `bank_payment_posting`, `refund_relationship`, `counterparty_lending_relationship`, and `stored_value_activation_balance_fact`. Each may target only the fact named by the role.
-- Confirmation types reserved for later payload registration: `refund_relationship_confirmation`, `lending_event_confirmation`, `lending_settlement_confirmation`, `stored_value_activation_balance_confirmation`, `stored_value_expiry_confirmation`, `stored_value_recharge_confirmation`, and `stored_value_spend_confirmation`. Every confirmation still requires `operation_id`, an exact subject, and an actual `confirmed_at` when confirmation occurred.
+- Domain entity types still reserved without a closed payload are `funding_component`, `installment_payment`, `refund_relationship`, `counterparty`, `lending_position`, `lending_settlement`, `settlement_component`, `lot_consumption`, `stored_value_consumption`, `activation_adjustment`, and `merchant_allocation`. The registered `consumption_record`, `item_allocation`, and `stored_value_lot` payloads above are intentionally minimal migration contracts, not complete business lifecycles.
+- Evidence-link roles: `target_balance_observation`, `real_account_posting`, `payment_asset_posting`, `destination_asset_posting`, `funding_asset_posting`, `bank_payment_posting`, `refund_relationship`, `counterparty_lending_relationship`, `stored_value_activation_balance_fact`, `item_allocation_fact`, `stored_value_asset_posting`, and `stored_value_lot_fact`. Each may target only the exact fact named by the role.
+- Confirmation types reserved for later payload registration: `refund_relationship_confirmation`, `lending_event_confirmation`, `lending_settlement_confirmation`, `stored_value_activation_balance_confirmation`, `stored_value_expiry_confirmation`, `stored_value_recharge_confirmation`, and `stored_value_spend_confirmation`. Every confirmation requires `operation_id` and an exact subject. Across every confirmation subtype, `confirmed_at` is present only when an actual time was recorded; omission preserves an unknown time, while any present value remains strictly validated.
 - Audit link types currently registered are only `adjustment_transaction`, `explanation_transaction`, and `allocation_reversal`.
 
 Reserved-but-unregistered payloads cannot appear in a v2 document. A later independent contract amendment may register them without changing the representative examples or treating those examples as migration output.
@@ -213,7 +218,7 @@ The single formal chain is:
 
 `occurred_at` is the economic occurrence time, `statistics_at` controls report period attribution, and `effective_at` controls balance replay. `created_at` is an optional actual creation or confirmation time. These fields are not generally interchangeable.
 
-A legacy source timestamp may expand into more than one economic-time role only when an approved per-RG mapping identifies that exact source field as a collapsed fact carrying those roles. The exact source timestamp text is preserved in each approved target role. This is not a general default, does not permit copying an arbitrary available time, and never permits generation of `created_at` or `confirmed_at`. RG-01 v1 is explicitly approved to expand its collapsed `occurred_at` into transaction-version `occurred_at`, `statistics_at`, and `effective_at`; its note-only replacement reuses the prior version's three economic times.
+A legacy `occurred_at` may expand into `occurred_at`, `statistics_at`, and `effective_at` only when a frozen fixture plus an approved per-RG mapping proves that exact legacy field simultaneously carried all three economic meanings. The exact source timestamp text is copied byte-for-byte into those approved roles. This is not a general default, does not permit copying an arbitrary available time, and never permits generation of `created_at` or `confirmed_at`. RG-01 v1 is explicitly approved for this three-role expansion; its note-only replacement reuses the prior version's three economic times.
 
 Canonical transaction types include `opening_balance`, `expense`, `income`, `account_transfer`, `credit_repayment`, `refund_receipt`, `lending_disbursement`, `lending_collection`, `balance_adjustment`, `balance_adjustment_reversal`, `stored_value_recharge`, `stored_value_spend`, `stored_value_expiry_loss`, and `stored_value_pre_activation_balance_adjustment`. The last token is preserved as a canonical type; migration must not alias or replace it silently.
 
@@ -237,6 +242,10 @@ The following collections have distinct identities and cannot be collapsed into 
 - `audit_links` are non-evidentiary links among formal and domain identities. Examples are `adjustment_transaction`, `explanation_transaction`, and `allocation_reversal`.
 
 All targets must exist in the same root state and have the declared target kind. An evidence role cannot be used as a relation role, confirmation provenance, or audit role. Later evidence can change reconciliation facts but cannot change balances or reports.
+
+RG-05 item-receipt evidence uses `item_allocation_fact` and targets exactly one `domain_entity` of subtype `item_allocation`. It does not also target the related `consumption_record`; that reference remains inside the closed allocation payload.
+
+RG-10 merchant credit evidence is one evidence object with two independent evidence-link identities and targets: `stored_value_asset_posting` targets the eligible owned real posting whose posting role is `stored_value_asset`, while `stored_value_lot_fact` targets exactly one `stored_value_lot` domain entity. Both links must describe the same recharge: the lot references a `stored_value_recharge` transaction, the posting belongs to that transaction's current version and posting set, lot currency equals posting currency, lot `face_value` equals the positive asset-posting amount, and lot `loaded_at` equals the current recharge version's `occurred_at`. The posting link participates in posting reconciliation; the lot link proves only the lot and business fact. A combined `stored_value_credit_lot` role is not canonical.
 
 No state may contain a redundant entity registry or nested projection that duplicates one of these canonical collections.
 
@@ -280,6 +289,8 @@ There is no implicit map projection and no JSON Pointer interpretation. Arrays a
 
 Financial reconciliation belongs only to an eligible posting on an owned real asset or liability account. `posting_reconciliations` references one exact `posting_id` and has canonical status `pending`, `matched`, or `has_difference`. A posting that is not eligible has no reconciliation record; `not_applicable` is a derived display value, not a stored reconciliation fact.
 
+Legacy RG-10 `not_present` maps at migration time to absence of a `posting_reconciliations` record, not to a new stored status. This mapping rule does not globally relax the current RG-01/RG-09 representative validator, which still requires reconciliation records to cover every eligible posting. Once RG-10 is added to the semantic validator, its supported state rules must explicitly define when record absence is permitted. When RG-10 reconciliation records are present for a transaction, the summary is derived only from eligible postings: one `matched` plus one `pending` is `partial`, and all `matched` is `matched`. The legacy word `complete` is not a canonical summary token and must not enter v2.
+
 Transaction, relation, group, target-observation, payment-progress, fulfillment, refund, lending, and adjustment summaries belong in `derived_statuses`. They are recomputed from canonical postings, evidence links, and domain entities. They cannot be an independent balance-changing fact. Reconciliation changes never alter posting amounts, balances, transaction effectiveness, or reports.
 
 ## Reports
@@ -316,7 +327,7 @@ Timestamps use RFC 3339 date-time strings with seconds and an explicit `Z` or nu
 
 An absent time property means the source did not provide that time. Timestamp properties may not be `null`, copied from another semantic time, derived from file order, or filled with migration/runtime current time. Required economic times must instead cause preserve/map/derive/reject classification to reject an unresolvable record. Representative sample times are included only where the governing fixture or sample input explicitly defines their semantics.
 
-The sole migration exception is an explicit per-RG collapsed-time approval as defined under Formal ledger ownership. Such an approval names the source field and every target role; it is evidence that the one legacy fact already carried those meanings, not permission to invent missing times. RG-01 has this approval for `occurred_at`, `statistics_at`, and `effective_at` only.
+The sole migration exception is an explicit per-RG collapsed-time approval as defined under Formal ledger ownership. Such an approval names the exact legacy `occurred_at` field and all three target economic roles; the frozen fixture and mapping are evidence that the one legacy fact already carried those meanings, not permission to invent missing times. RG-01 has this approval for `occurred_at`, `statistics_at`, and `effective_at` only.
 
 ### IDs and canonicalization
 

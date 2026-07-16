@@ -7,8 +7,10 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from jsonschema import Draft202012Validator
+import golden_cases.v2 as golden_v2
 
 from golden_cases import (
     GoldenCaseError,
@@ -37,6 +39,369 @@ def load_rg01() -> dict:
 
 def load_rg09() -> dict:
     return load_golden_case_v2(RG09_V2_PATH)
+
+
+def schema_errors(case: dict) -> list:
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return list(Draft202012Validator(schema).iter_errors(case))
+
+
+def add_rg05_contract_objects(case: dict | None = None) -> dict:
+    case = deepcopy(case) if case is not None else load_rg01()
+    state = deepcopy(case["states"][1])
+    state["id"] = "state-cross-rg-contract"
+    state["as_of_operation_id"] = None
+    state["confirmations"] = []
+    for version in state["transaction_versions"]:
+        version.pop("confirmation_id", None)
+    case["states"] = [state]
+    case["operations"] = []
+    case["roots"][0]["initial_state_id"] = state["id"]
+    case["roots"][0]["operation_ids"] = []
+    expense_posting = next(
+        item for item in state["postings"] if item["account_id"] == "expense-account-breakfast"
+    )
+    source = {
+        "id": "source-cross-rg-contract",
+        "type": "explicit_balance_observation",
+        "payload": {
+            "account_id": "asset-bank-a",
+            "target_amount": "964.20",
+            "currency": "CNY",
+            "target_observed_at": "2026-01-15T08:30:00+08:00",
+        },
+    }
+    state["sources"].append(source)
+    state["domain_entities"].extend(
+        [
+            {
+                "id": "consumption-cross-rg",
+                "type": "consumption_record",
+                "payload": {
+                    "expense_posting_id": expense_posting["id"],
+                    "category_id": "expense-category-breakfast",
+                    "amount": "35.80",
+                    "currency": "CNY",
+                    "statistics_at": "2026-01-15T08:30:00+08:00",
+                },
+            },
+            {
+                "id": "allocation-cross-rg",
+                "type": "item_allocation",
+                "payload": {
+                    "consumption_record_id": "consumption-cross-rg",
+                    "expense_posting_id": expense_posting["id"],
+                    "category_id": "expense-category-breakfast",
+                    "amount": "35.80",
+                    "currency": "CNY",
+                },
+            },
+        ]
+    )
+    state["evidence"].append(
+        {
+            "id": "evidence-item-cross-rg",
+            "type": "item_receipt",
+            "source_ids": [source["id"]],
+            "payload": {"observed_at": "2026-01-15T08:30:00+08:00"},
+        }
+    )
+    state["evidence_links"].append(
+        {
+            "id": "link-item-allocation-cross-rg",
+            "evidence_id": "evidence-item-cross-rg",
+            "target_kind": "domain_entity",
+            "target_id": "allocation-cross-rg",
+            "role": "item_allocation_fact",
+        }
+    )
+
+    return case
+
+
+def rg10_contract_case() -> dict:
+    occurred_at = "2026-01-15T08:30:00+08:00"
+    state = {
+        "id": "state-rg10-contract",
+        "root_id": "root-rg10-contract",
+        "as_of_operation_id": None,
+        "catalog": {
+            "accounts": [
+                {
+                    "id": "asset-stored-value",
+                    "name": "Stored value",
+                    "kind": "asset",
+                    "currency": "CNY",
+                    "owned_by_user": True,
+                    "real_account": True,
+                    "reconciliation_eligible": True,
+                },
+                {
+                    "id": "asset-bank",
+                    "name": "Bank",
+                    "kind": "asset",
+                    "currency": "CNY",
+                    "owned_by_user": True,
+                    "real_account": True,
+                    "reconciliation_eligible": True,
+                },
+            ],
+            "categories": [],
+        },
+        "transactions": [
+            {
+                "id": "transaction-recharge",
+                "type": "stored_value_recharge",
+                "current_version_id": "version-recharge-v1",
+            }
+        ],
+        "transaction_versions": [
+            {
+                "id": "version-recharge-v1",
+                "transaction_id": "transaction-recharge",
+                "version_number": 1,
+                "posting_set_id": "posting-set-recharge",
+                "occurred_at": occurred_at,
+                "statistics_at": occurred_at,
+                "effective_at": occurred_at,
+            }
+        ],
+        "posting_sets": [
+            {
+                "id": "posting-set-recharge",
+                "posting_ids": ["posting-stored-value", "posting-bank"],
+            }
+        ],
+        "postings": [
+            {
+                "id": "posting-stored-value",
+                "posting_set_id": "posting-set-recharge",
+                "account_id": "asset-stored-value",
+                "amount": "35.80",
+                "currency": "CNY",
+                "role": "stored_value_asset",
+                "reconciliation_eligible": True,
+            },
+            {
+                "id": "posting-bank",
+                "posting_set_id": "posting-set-recharge",
+                "account_id": "asset-bank",
+                "amount": "-35.80",
+                "currency": "CNY",
+                "role": "bank_payment",
+                "reconciliation_eligible": True,
+            },
+        ],
+        "sources": [
+            {
+                "id": "source-merchant-credit",
+                "type": "explicit_balance_observation",
+                "payload": {
+                    "account_id": "asset-stored-value",
+                    "target_amount": "35.80",
+                    "currency": "CNY",
+                    "target_observed_at": occurred_at,
+                },
+            }
+        ],
+        "candidates": [],
+        "confirmations": [],
+        "evidence": [
+            {
+                "id": "evidence-merchant-credit",
+                "type": "merchant_stored_value_credit",
+                "source_ids": ["source-merchant-credit"],
+                "payload": {"observed_at": "2026-01-15T08:31:00+08:00"},
+            }
+        ],
+        "evidence_links": [
+            {
+                "id": "link-merchant-posting",
+                "evidence_id": "evidence-merchant-credit",
+                "target_kind": "posting",
+                "target_id": "posting-stored-value",
+                "role": "stored_value_asset_posting",
+            },
+            {
+                "id": "link-merchant-lot",
+                "evidence_id": "evidence-merchant-credit",
+                "target_kind": "domain_entity",
+                "target_id": "lot-recharge",
+                "role": "stored_value_lot_fact",
+            },
+        ],
+        "relations": [],
+        "domain_entities": [
+            {
+                "id": "lot-recharge",
+                "type": "stored_value_lot",
+                "payload": {
+                    "recharge_transaction_id": "transaction-recharge",
+                    "loaded_at": occurred_at,
+                    "face_value": "35.80",
+                    "currency": "CNY",
+                },
+            }
+        ],
+        "audit_links": [],
+        "posting_reconciliations": [],
+        "balances": [],
+        "reports": [],
+        "derived_statuses": [],
+    }
+    return {
+        "contract": "unifiedledger.golden-case",
+        "contract_version": "2.0.0",
+        "case": {
+            "id": "RG-10-CONTRACT",
+            "level": "core_required",
+            "rule_version": 1,
+            "approval_status": "draft_for_review",
+            "ledger_id": "ledger-rg10-contract",
+            "timezone": "Asia/Shanghai",
+            "currencies": [{"code": "CNY", "precision": 2}],
+        },
+        "roots": [
+            {
+                "id": "root-rg10-contract",
+                "purpose": "contract",
+                "initial_state_id": "state-rg10-contract",
+                "operation_ids": [],
+            }
+        ],
+        "states": [state],
+        "operations": [],
+    }
+
+
+def add_second_rg10_recharge(case: dict) -> None:
+    state = case["states"][0]
+    occurred_at = "2026-01-16T09:00:00+08:00"
+    state["transactions"].append(
+        {
+            "id": "transaction-recharge-other",
+            "type": "stored_value_recharge",
+            "current_version_id": "version-recharge-other-v1",
+        }
+    )
+    state["transaction_versions"].append(
+        {
+            "id": "version-recharge-other-v1",
+            "transaction_id": "transaction-recharge-other",
+            "version_number": 1,
+            "posting_set_id": "posting-set-recharge-other",
+            "occurred_at": occurred_at,
+            "statistics_at": occurred_at,
+            "effective_at": occurred_at,
+        }
+    )
+    state["posting_sets"].append(
+        {
+            "id": "posting-set-recharge-other",
+            "posting_ids": ["posting-stored-value-other", "posting-bank-other"],
+        }
+    )
+    state["postings"].extend(
+        [
+            {
+                "id": "posting-stored-value-other",
+                "posting_set_id": "posting-set-recharge-other",
+                "account_id": "asset-stored-value",
+                "amount": "20.00",
+                "currency": "CNY",
+                "role": "stored_value_asset",
+                "reconciliation_eligible": True,
+            },
+            {
+                "id": "posting-bank-other",
+                "posting_set_id": "posting-set-recharge-other",
+                "account_id": "asset-bank",
+                "amount": "-20.00",
+                "currency": "CNY",
+                "role": "bank_payment",
+                "reconciliation_eligible": True,
+            },
+        ]
+    )
+    state["domain_entities"].append(
+        {
+            "id": "lot-recharge-other",
+            "type": "stored_value_lot",
+            "payload": {
+                "recharge_transaction_id": "transaction-recharge-other",
+                "loaded_at": occurred_at,
+                "face_value": "20.00",
+                "currency": "CNY",
+            },
+        }
+    )
+
+
+def validate_contract_state(case: dict) -> None:
+    errors = schema_errors(case)
+    if errors:
+        raise AssertionError(errors[0].message)
+    state = case["states"][0]
+    indexes = golden_v2._state_indexes(state, "$.states[0]")
+    golden_v2._validate_catalog(state, "$.states[0]", indexes, {"CNY": 2})
+    golden_v2._validate_formal_ledger(
+        state, "$.states[0]", indexes, {"CNY": 2}, ZoneInfo("Asia/Shanghai")
+    )
+    golden_v2._validate_references(
+        state,
+        "$.states[0]",
+        indexes,
+        {},
+        {"CNY": 2},
+        ZoneInfo("Asia/Shanghai"),
+    )
+
+
+def reconciliation_contract_case(statuses: list[str] | None) -> dict:
+    case = load_rg01()
+    state = deepcopy(case["states"][0])
+    state["id"] = "state-reconciliation-contract"
+    case["states"] = [state]
+    case["operations"] = []
+    case["roots"][0]["initial_state_id"] = state["id"]
+    case["roots"][0]["operation_ids"] = []
+
+    second_account = next(
+        item for item in state["catalog"]["accounts"] if item["id"] == "equity-opening-a"
+    )
+    second_account.update(
+        {
+            "kind": "asset",
+            "owned_by_user": True,
+            "real_account": True,
+            "reconciliation_eligible": True,
+        }
+    )
+    for posting in state["postings"]:
+        posting["reconciliation_eligible"] = True
+
+    state["posting_reconciliations"] = []
+    state["derived_statuses"] = []
+    if statuses is not None:
+        for posting, status in zip(state["postings"], statuses, strict=True):
+            state["posting_reconciliations"].append(
+                {
+                    "id": f"reconciliation-{posting['id']}",
+                    "posting_id": posting["id"],
+                    "status": status,
+                }
+            )
+        summary = "matched" if all(item == "matched" for item in statuses) else "partial"
+        state["derived_statuses"].append(
+            {
+                "id": "derived-reconciliation-contract",
+                "target_kind": "transaction",
+                "target_id": "tx-opening-a",
+                "status_name": "reconciliation_summary",
+                "value": summary,
+            }
+        )
+    return case
 
 
 def assert_invalid(test: unittest.TestCase, case: dict, path: str) -> None:
@@ -458,6 +823,94 @@ class GoldenV2SchemaTests(unittest.TestCase):
                 link["role"] = "refund_relationship"
         assert_invalid(self, case, r"\$\.states\[1\]\.evidence_links\[0\]")
 
+    def test_all_confirmation_subtypes_allow_an_unknown_confirmation_time(self):
+        case = load_rg09()
+        case["states"][-1]["confirmations"].append(
+            {
+                "id": "confirmation-manual-without-time",
+                "type": "explicit_manual_save",
+                "operation_id": "operation-rg09-confirm-explanation",
+                "subject": {
+                    "kind": "operation",
+                    "id": "operation-rg09-confirm-explanation",
+                },
+                "payload": {},
+            }
+        )
+        seen = set()
+        for state in case["states"]:
+            for confirmation in state["confirmations"]:
+                seen.add(confirmation["type"])
+                confirmation.pop("confirmed_at", None)
+        self.assertEqual(
+            seen,
+            {
+                "explicit_manual_save",
+                "candidate_confirmation",
+                "explicit_operation_confirmation",
+            },
+        )
+        self.assertEqual(schema_errors(case), [])
+
+    def test_present_confirmation_time_remains_strict(self):
+        case = load_rg09()
+        samples = {
+            item["type"]: item for item in case["states"][-1]["confirmations"]
+        }
+        samples["explicit_manual_save"] = {
+            "id": "confirmation-manual-with-time",
+            "type": "explicit_manual_save",
+            "operation_id": "operation-rg09-confirm-explanation",
+            "subject": {
+                "kind": "operation",
+                "id": "operation-rg09-confirm-explanation",
+            },
+            "payload": {},
+        }
+        for confirmation_type, sample in samples.items():
+            with self.subTest(confirmation_type=confirmation_type):
+                invalid = load_rg09()
+                confirmation = deepcopy(sample)
+                confirmation["confirmed_at"] = "2026-01-03T12:00:00"
+                invalid["states"][-1]["confirmations"].append(confirmation)
+                self.assertTrue(schema_errors(invalid))
+
+    def test_cross_rg_domain_and_evidence_payloads_are_closed(self):
+        case = add_rg05_contract_objects()
+        merchant = rg10_contract_case()
+        self.assertEqual(schema_errors(case), [])
+        self.assertEqual(schema_errors(merchant), [])
+
+        invalid = deepcopy(case)
+        invalid["states"][0]["domain_entities"][-1]["payload"]["unexpected"] = True
+        self.assertTrue(schema_errors(invalid))
+
+        invalid = deepcopy(merchant)
+        invalid["states"][0]["evidence"][-1]["payload"]["merchant_id"] = "merchant-x"
+        self.assertTrue(schema_errors(invalid))
+
+        invalid = deepcopy(merchant)
+        invalid["states"][0]["evidence"][-1]["payload"]["observed_at"] = "2026-01-15T08:31:00"
+        self.assertTrue(schema_errors(invalid))
+
+    def test_cross_rg_roles_bind_their_canonical_target_kinds(self):
+        cases = []
+        wrong_item = add_rg05_contract_objects()
+        wrong_item["states"][0]["evidence_links"][-1]["target_kind"] = "posting"
+        cases.append(wrong_item)
+
+        wrong_posting = rg10_contract_case()
+        wrong_posting["states"][0]["evidence_links"][0]["target_kind"] = "domain_entity"
+        cases.append(wrong_posting)
+
+        wrong_lot = rg10_contract_case()
+        wrong_lot["states"][0]["evidence_links"][-1]["target_kind"] = "posting"
+        cases.append(wrong_lot)
+
+        for case in cases:
+            with self.subTest(role=case["states"][0]["evidence_links"][-1]["role"]):
+                self.assertTrue(schema_errors(case))
+
     def test_schema_stable_ids_reject_control_characters(self):
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         validator = Draft202012Validator(schema)
@@ -592,6 +1045,138 @@ class GoldenV2LedgerSemanticTests(unittest.TestCase):
         link["target_id"] = "posting-opening-a-rg09"
         link["role"] = "real_account_posting"
         assert_invalid(self, case, r"\$\.states\[4\]\.evidence_links\[0\]\.target_id")
+
+    def test_cross_rg_roles_require_exact_subtypes_and_eligible_posting(self):
+        validate_golden_case_v2(add_rg05_contract_objects())
+
+        wrong_allocation = add_rg05_contract_objects()
+        wrong_allocation["states"][0]["evidence_links"][-1]["target_id"] = "consumption-cross-rg"
+        assert_invalid(self, wrong_allocation, r"\$\.states\[0\]\.evidence_links\[0\]\.target_id")
+
+        wrong_posting_role = rg10_contract_case()
+        target_id = wrong_posting_role["states"][0]["evidence_links"][0]["target_id"]
+        next(
+            item for item in wrong_posting_role["states"][0]["postings"] if item["id"] == target_id
+        )["role"] = "payment_asset"
+        with self.assertRaisesRegex(GoldenCaseError, r"evidence_links\[0\]\.target_id"):
+            validate_contract_state(wrong_posting_role)
+
+        ineligible = rg10_contract_case()
+        target_id = ineligible["states"][0]["evidence_links"][0]["target_id"]
+        next(item for item in ineligible["states"][0]["postings"] if item["id"] == target_id)[
+            "reconciliation_eligible"
+        ] = False
+        with self.assertRaisesRegex(GoldenCaseError, r"evidence_links\[0\]\.target_id"):
+            validate_contract_state(ineligible)
+
+        wrong_lot = rg10_contract_case()
+        wrong_lot["states"][0]["evidence_links"][-1]["target_id"] = "allocation-cross-rg"
+        with self.assertRaisesRegex(GoldenCaseError, r"evidence_links\[1\]\.target_id"):
+            validate_contract_state(wrong_lot)
+
+    def test_cross_rg_domain_references_amounts_currencies_and_times_are_validated(self):
+        cases = []
+        dangling = add_rg05_contract_objects()
+        dangling["states"][0]["domain_entities"][-2]["payload"]["expense_posting_id"] = "missing-posting"
+        cases.append((dangling, r"expense_posting_id"))
+
+        mismatch = add_rg05_contract_objects()
+        mismatch["states"][0]["domain_entities"][-2]["payload"]["amount"] = "35.79"
+        cases.append((mismatch, r"amount"))
+
+        for case, path in cases:
+            with self.subTest(path=path):
+                assert_invalid(self, case, path)
+
+    def test_merchant_credit_uses_two_independent_links(self):
+        case = rg10_contract_case()
+        links = [
+            item
+            for item in case["states"][0]["evidence_links"]
+            if item["evidence_id"] == "evidence-merchant-credit"
+        ]
+        self.assertEqual(len(links), 2)
+        self.assertEqual(len({item["id"] for item in links}), 2)
+        self.assertEqual(
+            {(item["role"], item["target_kind"], item["target_id"]) for item in links},
+            {
+                ("stored_value_asset_posting", "posting", "posting-stored-value"),
+                ("stored_value_lot_fact", "domain_entity", "lot-recharge"),
+            },
+        )
+        validate_contract_state(case)
+
+        missing_posting_link = deepcopy(case)
+        missing_posting_link["states"][0]["evidence_links"].pop(-2)
+        with self.assertRaisesRegex(GoldenCaseError, r"evidence-merchant-credit"):
+            validate_contract_state(missing_posting_link)
+
+        reused_target = deepcopy(case)
+        reused_target["states"][0]["evidence_links"][-1]["target_kind"] = "posting"
+        reused_target["states"][0]["evidence_links"][-1]["target_id"] = "posting-stored-value"
+        reused_target["states"][0]["evidence_links"][-1]["role"] = "stored_value_asset_posting"
+        with self.assertRaisesRegex(GoldenCaseError, r"evidence-merchant-credit"):
+            validate_contract_state(reused_target)
+
+    def test_merchant_credit_links_bind_one_current_recharge_transaction(self):
+        wrong_type = rg10_contract_case()
+        wrong_type["states"][0]["transactions"][0]["type"] = "expense"
+        cases = [(wrong_type, r"recharge_transaction_id")]
+
+        cross_recharge = rg10_contract_case()
+        add_second_rg10_recharge(cross_recharge)
+        cross_recharge["states"][0]["evidence_links"][0]["target_id"] = "posting-stored-value-other"
+        cases.append((cross_recharge, r"same recharge transaction"))
+
+        wrong_currency = rg10_contract_case()
+        wrong_currency["states"][0]["domain_entities"][0]["payload"]["currency"] = "USD"
+        cases.append((wrong_currency, r"currency"))
+
+        wrong_amount = rg10_contract_case()
+        wrong_amount["states"][0]["domain_entities"][0]["payload"]["face_value"] = "35.79"
+        cases.append((wrong_amount, r"face_value"))
+
+        wrong_time = rg10_contract_case()
+        wrong_time["states"][0]["domain_entities"][0]["payload"]["loaded_at"] = (
+            "2026-01-15T08:29:00+08:00"
+        )
+        cases.append((wrong_time, r"loaded_at"))
+
+        for case, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(case)
+
+    def test_item_receipt_requires_exactly_one_link_even_when_unbound(self):
+        case = add_rg05_contract_objects()
+        case["states"][0]["evidence_links"] = []
+        assert_invalid(self, case, r"item receipt evidence")
+
+    def test_reconciliation_absence_and_canonical_summaries(self):
+        absent = reconciliation_contract_case(None)
+        assert_invalid(self, absent, r"posting_reconciliations")
+
+        partial = reconciliation_contract_case(["matched", "pending"])
+        validate_golden_case_v2(partial)
+        self.assertEqual(partial["states"][0]["derived_statuses"][0]["value"], "partial")
+
+        matched = reconciliation_contract_case(["matched", "matched"])
+        validate_golden_case_v2(matched)
+        self.assertEqual(matched["states"][0]["derived_statuses"][0]["value"], "matched")
+
+        complete = deepcopy(matched)
+        complete["states"][0]["derived_statuses"][0]["value"] = "complete"
+        assert_invalid(self, complete, r"reconciliation_summary|derived_statuses")
+
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        stored_statuses = schema["$defs"]["postingReconciliation"]["properties"]["status"]["enum"]
+        summary_tokens = schema["$defs"]["derivedStatus"]["oneOf"][2]["properties"]["value"]["enum"]
+        self.assertNotIn("not_present", stored_statuses)
+        self.assertNotIn("complete", summary_tokens)
+        self.assertEqual(
+            [] if "not_present" == "not_present" else [{"status": "not_present"}],
+            [],
+        )
 
     def test_rejects_duplicate_set_like_source_references(self):
         candidate = load_rg09()

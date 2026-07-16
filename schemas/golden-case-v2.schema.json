@@ -282,7 +282,7 @@
     "candidateConfirmation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "operation_id", "subject", "confirmed_at", "payload"],
+      "required": ["id", "type", "operation_id", "subject", "payload"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
         "type": {"const": "candidate_confirmation"},
@@ -295,7 +295,7 @@
     "explicitOperationConfirmation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "operation_id", "subject", "confirmed_at", "payload"],
+      "required": ["id", "type", "operation_id", "subject", "payload"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
         "type": {"const": "explicit_operation_confirmation"},
@@ -319,12 +319,34 @@
     },
     "emptyPayload": {"type": "object", "additionalProperties": false, "maxProperties": 0},
     "evidence": {
+      "oneOf": [
+        {"$ref": "#/$defs/userBalanceObservationEvidence"},
+        {"$ref": "#/$defs/itemReceiptEvidence"},
+        {"$ref": "#/$defs/merchantStoredValueCreditEvidence"}
+      ]
+    },
+    "userBalanceObservationEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "user_balance_observation"}}
+    },
+    "itemReceiptEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "item_receipt"}}
+    },
+    "merchantStoredValueCreditEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "merchant_stored_value_credit"}}
+    },
+    "observedAtEvidence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "source_ids", "payload"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "type": {"const": "user_balance_observation"},
+        "type": {"type": "string"},
         "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
         "payload": {
           "type": "object",
@@ -348,7 +370,8 @@
             "target_balance_observation", "real_account_posting", "payment_asset_posting",
             "destination_asset_posting", "funding_asset_posting", "bank_payment_posting",
             "refund_relationship", "counterparty_lending_relationship",
-            "stored_value_activation_balance_fact"
+            "stored_value_activation_balance_fact", "item_allocation_fact",
+            "stored_value_asset_posting", "stored_value_lot_fact"
           ]
         }
       },
@@ -363,7 +386,7 @@
               "role": {
                 "enum": [
                   "real_account_posting", "payment_asset_posting", "destination_asset_posting",
-                  "funding_asset_posting", "bank_payment_posting"
+                  "funding_asset_posting", "bank_payment_posting", "stored_value_asset_posting"
                 ]
               }
             },
@@ -382,7 +405,14 @@
         },
         {
           "if": {
-            "properties": {"role": {"const": "stored_value_activation_balance_fact"}},
+            "properties": {
+              "role": {
+                "enum": [
+                  "stored_value_activation_balance_fact", "item_allocation_fact",
+                  "stored_value_lot_fact"
+                ]
+              }
+            },
             "required": ["role"]
           },
           "then": {"properties": {"target_kind": {"const": "domain_entity"}}}
@@ -394,7 +424,10 @@
       "oneOf": [
         {"$ref": "#/$defs/targetBalanceObservation"},
         {"$ref": "#/$defs/balanceAdjustmentEntity"},
-        {"$ref": "#/$defs/explanationAllocation"}
+        {"$ref": "#/$defs/explanationAllocation"},
+        {"$ref": "#/$defs/consumptionRecord"},
+        {"$ref": "#/$defs/itemAllocation"},
+        {"$ref": "#/$defs/storedValueLot"}
       ]
     },
     "targetBalanceObservation": {
@@ -459,6 +492,68 @@
             "amount": {"$ref": "#/$defs/decimal"},
             "currency": {"type": "string", "minLength": 1},
             "confirmed_at": {"$ref": "#/$defs/timestamp"}
+          }
+        }
+      }
+    },
+    "consumptionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "consumption_record"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expense_posting_id", "category_id", "amount", "currency", "statistics_at"],
+          "properties": {
+            "expense_posting_id": {"$ref": "#/$defs/id"},
+            "category_id": {"$ref": "#/$defs/id"},
+            "amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "statistics_at": {"$ref": "#/$defs/timestamp"}
+          }
+        }
+      }
+    },
+    "itemAllocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "item_allocation"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["consumption_record_id", "expense_posting_id", "category_id", "amount", "currency"],
+          "properties": {
+            "consumption_record_id": {"$ref": "#/$defs/id"},
+            "expense_posting_id": {"$ref": "#/$defs/id"},
+            "category_id": {"$ref": "#/$defs/id"},
+            "amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "storedValueLot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "stored_value_lot"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recharge_transaction_id", "loaded_at", "face_value", "currency"],
+          "properties": {
+            "recharge_transaction_id": {"$ref": "#/$defs/id"},
+            "loaded_at": {"$ref": "#/$defs/timestamp"},
+            "face_value": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1}
           }
         }
       }

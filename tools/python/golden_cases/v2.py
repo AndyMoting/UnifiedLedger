@@ -787,6 +787,9 @@ def _validate_references(
             "refund_relationship": "relation",
             "counterparty_lending_relationship": "relation",
             "stored_value_activation_balance_fact": "domain_entity",
+            "item_allocation_fact": "domain_entity",
+            "stored_value_asset_posting": "posting",
+            "stored_value_lot_fact": "domain_entity",
         }
         expected_kind = role_target_kinds[link["role"]]
         if link["target_kind"] != expected_kind:
@@ -807,6 +810,7 @@ def _validate_references(
             "destination_asset_posting": "destination_asset",
             "funding_asset_posting": "funding_asset",
             "bank_payment_posting": "bank_payment",
+            "stored_value_asset_posting": "stored_value_asset",
         }
         posting_roles = {"real_account_posting", *posting_role_targets}
         if link["role"] in posting_roles:
@@ -835,6 +839,87 @@ def _validate_references(
                 _fail(
                     link_path + ".target_id",
                     "requires the reserved activation_adjustment domain subtype, which is not implemented by this prototype",
+                )
+        domain_role_targets = {
+            "item_allocation_fact": "item_allocation",
+            "stored_value_lot_fact": "stored_value_lot",
+        }
+        if link["role"] in domain_role_targets:
+            expected_type = domain_role_targets[link["role"]]
+            if target.get("type") != expected_type:
+                _fail(link_path + ".target_id", f"must target domain subtype {expected_type}")
+        evidence = indexes["evidence"][link["evidence_id"]]
+        evidence_role_types = {
+            "item_allocation_fact": "item_receipt",
+            "stored_value_asset_posting": "merchant_stored_value_credit",
+            "stored_value_lot_fact": "merchant_stored_value_credit",
+        }
+        if (
+            link["role"] in evidence_role_types
+            and evidence["type"] != evidence_role_types[link["role"]]
+        ):
+            _fail(
+                link_path + ".evidence_id",
+                f"role {link['role']} requires evidence type {evidence_role_types[link['role']]}",
+            )
+
+    links_by_evidence: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for link in state["evidence_links"]:
+        links_by_evidence[link["evidence_id"]].append(link)
+    for evidence in state["evidence"]:
+        links = links_by_evidence[evidence["id"]]
+        if evidence["type"] == "item_receipt":
+            if len(links) != 1 or links[0]["role"] != "item_allocation_fact":
+                _fail(
+                    path + ".evidence_links",
+                    f"item receipt evidence {evidence['id']!r} must link exactly one item_allocation fact",
+                )
+        if evidence["type"] == "merchant_stored_value_credit":
+            roles = [link["role"] for link in links]
+            if sorted(roles) != ["stored_value_asset_posting", "stored_value_lot_fact"]:
+                _fail(
+                    path + ".evidence_links",
+                    f"merchant credit evidence {evidence['id']!r} must have one asset-posting link and one lot-fact link",
+                )
+            posting_link = next(
+                link for link in links if link["role"] == "stored_value_asset_posting"
+            )
+            lot_link = next(link for link in links if link["role"] == "stored_value_lot_fact")
+            posting = indexes["postings"][posting_link["target_id"]]
+            lot = domain_entities[lot_link["target_id"]]
+            lot_payload = lot["payload"]
+            recharge = transactions.get(lot_payload["recharge_transaction_id"])
+            if recharge is None or recharge["type"] != "stored_value_recharge":
+                lot_index = state["domain_entities"].index(lot)
+                _fail(
+                    f"{path}.domain_entities[{lot_index}].payload.recharge_transaction_id",
+                    "must reference a stored_value_recharge transaction",
+                )
+            version = indexes["transaction_versions"][recharge["current_version_id"]]
+            posting_set = indexes["posting_sets"][version["posting_set_id"]]
+            if posting["id"] not in posting_set["posting_ids"]:
+                _fail(
+                    path + ".evidence_links",
+                    f"merchant credit evidence {evidence['id']!r} links must target the same recharge transaction",
+                )
+            if lot_payload["currency"] != posting["currency"]:
+                _fail(
+                    path + ".evidence_links",
+                    f"merchant credit evidence {evidence['id']!r} lot currency must match its asset posting",
+                )
+            face_value = _amount(
+                lot_payload["face_value"],
+                lot_payload["currency"],
+                path + ".domain_entities.payload.face_value",
+                precisions,
+            )
+            posting_amount = _amount(
+                posting["amount"], posting["currency"], path + ".postings.amount", precisions
+            )
+            if posting_amount <= 0 or face_value != posting_amount:
+                _fail(
+                    path + ".evidence_links",
+                    f"merchant credit evidence {evidence['id']!r} lot face_value must match its positive asset posting",
                 )
 
     for index, entity in enumerate(state["domain_entities"]):
@@ -869,6 +954,64 @@ def _validate_references(
             if amount <= 0:
                 _fail(entity_path + ".amount", "must be positive")
             _timestamp(payload["confirmed_at"], entity_path + ".confirmed_at", timezone)
+        elif entity["type"] == "consumption_record":
+            posting = indexes["postings"].get(payload["expense_posting_id"])
+            if posting is None or posting.get("role") != "expense":
+                _fail(entity_path + ".expense_posting_id", "must reference an expense posting")
+            category = indexes["catalog_categories"].get(payload["category_id"])
+            if category is None or category["posting_account_id"] != posting["account_id"]:
+                _fail(entity_path + ".category_id", "must reference the posting's category")
+            if not category["active"]:
+                _fail(entity_path + ".category_id", "category must be active")
+            amount = _amount(payload["amount"], payload["currency"], entity_path + ".amount", precisions)
+            if amount <= 0:
+                _fail(entity_path + ".amount", "must be positive")
+            if payload["currency"] != posting["currency"]:
+                _fail(entity_path + ".currency", "must match the expense posting currency")
+            if amount != _decimal(posting["amount"], entity_path + ".expense_posting_id"):
+                _fail(entity_path + ".amount", "must match the expense posting amount")
+            _timestamp(payload["statistics_at"], entity_path + ".statistics_at", timezone)
+        elif entity["type"] == "item_allocation":
+            consumption = domain_entities.get(payload["consumption_record_id"])
+            if consumption is None or consumption["type"] != "consumption_record":
+                _fail(
+                    entity_path + ".consumption_record_id",
+                    "must reference a consumption_record",
+                )
+            posting = indexes["postings"].get(payload["expense_posting_id"])
+            if posting is None or posting.get("role") != "expense":
+                _fail(entity_path + ".expense_posting_id", "must reference an expense posting")
+            category = indexes["catalog_categories"].get(payload["category_id"])
+            if category is None or category["posting_account_id"] != posting["account_id"]:
+                _fail(entity_path + ".category_id", "must reference the posting's category")
+            if not category["active"]:
+                _fail(entity_path + ".category_id", "category must be active")
+            amount = _amount(payload["amount"], payload["currency"], entity_path + ".amount", precisions)
+            if amount <= 0:
+                _fail(entity_path + ".amount", "must be positive")
+            expected = consumption["payload"]
+            for field in ("expense_posting_id", "category_id", "amount", "currency"):
+                if payload[field] != expected[field]:
+                    _fail(entity_path + f".{field}", "must match the consumption_record")
+        elif entity["type"] == "stored_value_lot":
+            recharge = transactions.get(payload["recharge_transaction_id"])
+            if recharge is None or recharge["type"] != "stored_value_recharge":
+                _fail(
+                    entity_path + ".recharge_transaction_id",
+                    "must reference a stored_value_recharge transaction",
+                )
+            version = indexes["transaction_versions"][recharge["current_version_id"]]
+            face_value = _amount(
+                payload["face_value"], payload["currency"], entity_path + ".face_value", precisions
+            )
+            if face_value <= 0:
+                _fail(entity_path + ".face_value", "must be positive")
+            _timestamp(payload["loaded_at"], entity_path + ".loaded_at", timezone)
+            if payload["loaded_at"] != version["occurred_at"]:
+                _fail(
+                    entity_path + ".loaded_at",
+                    "must match the recharge current version occurred_at",
+                )
 
     audit_rules = {
         "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),
