@@ -2589,17 +2589,23 @@ def _validate_rejected_manual_income_attempt(
 
 
 def _transfer_account_failure(
-    input_value: dict[str, Any], accounts: dict[str, dict[str, Any]], *, attempted: bool
+    input_value: dict[str, Any],
+    accounts: dict[str, dict[str, Any]],
+    *,
+    attempted: bool,
+    require_destination: bool = True,
 ) -> tuple[str, str] | None:
     source_id = input_value.get("source_account_id")
     destination_id = input_value.get("destination_account_id")
     if source_id is None:
         return "source_account_id", "required"
-    if destination_id is None:
+    if destination_id is None and require_destination:
         return "destination_account_id", "required"
-    if source_id == destination_id:
+    if destination_id is not None and source_id == destination_id:
         return "destination_account_id", "distinct_own_real_financial_accounts_required"
     for field, account_id in (("source_account_id", source_id), ("destination_account_id", destination_id)):
+        if account_id is None:
+            continue
         account = accounts.get(account_id)
         if account is None:
             return field, "known_account_required"
@@ -2628,9 +2634,8 @@ def _validate_rejected_manual_account_transfer_attempt(
     attempted = operation["attempted_input"]
     attempted_path = operation_path + ".attempted_input"
     accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
-    for field in ("currency", "source_currency", "destination_currency"):
-        if field in attempted and attempted[field] not in precisions:
-            _fail(attempted_path + f".{field}", "undeclared currency")
+    if "currency" in attempted and attempted["currency"] not in precisions:
+        _fail(attempted_path + ".currency", "undeclared currency")
     currency = attempted.get("currency")
     if currency is not None:
         for field in ("source_debit_amount", "destination_credit_amount", "fee_amount"):
@@ -3008,7 +3013,12 @@ def _validate_action_input(
         for field in account_fields:
             if input_value[field] not in accounts:
                 _fail(input_path + f".{field}", "dangling account reference")
-        failure = _transfer_account_failure(input_value, accounts, attempted=False)
+        failure = _transfer_account_failure(
+            input_value,
+            accounts,
+            attempted=False,
+            require_destination=action != "import_incomplete_source",
+        )
         if failure is not None:
             _fail(input_path + f".{failure[0]}", failure[1])
         if action == "import_incomplete_source":

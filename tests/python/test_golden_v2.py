@@ -2731,6 +2731,82 @@ class GoldenV2SchemaTests(unittest.TestCase):
                     operation, "$.operations[0]", baseline, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai")
                 )
 
+    def test_rg03_incomplete_source_skips_destination_requirement_but_validates_source(self):
+        baseline = rg03_transfer_provenance_case()["states"][1]
+        operation = {
+            "action_type": "import_incomplete_source",
+            "input": {
+                "request_id": "request-rg03-incomplete",
+                "source_id": "source-rg03-incomplete",
+                "source_account_id": "asset-bank-a",
+                "debit_amount": "40.00",
+                "currency": "CNY",
+                "observed_at": "2026-01-21T11:00:00+08:00",
+            },
+            "outcome": {"status": "accepted"},
+        }
+        golden_v2._validate_action_input(
+            operation,
+            "$.operations[0]",
+            baseline,
+            {"CNY": 2},
+            ZoneInfo("Asia/Shanghai"),
+        )
+
+        invalid = deepcopy(operation)
+        invalid["input"]["source_account_id"] = "expense-account-breakfast"
+        with self.assertRaisesRegex(GoldenCaseError, r"source_account_id"):
+            golden_v2._validate_action_input(
+                invalid,
+                "$.operations[0]",
+                baseline,
+                {"CNY": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+    def test_rg03_rejected_transfer_prechecks_only_declared_currency(self):
+        baseline = rg03_transfer_provenance_case()["states"][1]
+        operation = {
+            "action_type": "manual_account_transfer",
+            "attempted_input": {
+                "request_id": "request-rg03-cross-currency",
+                "source_account_id": "asset-bank-a",
+                "destination_account_id": "asset-wallet-b",
+                "source_debit_amount": "60.00",
+                "destination_credit_amount": "59.00",
+                "fee_amount": "1.00",
+                "currency": "CNY",
+                "source_currency": "CNY",
+                "destination_currency": "USD",
+            },
+            "outcome": {
+                "status": "rejected",
+                "reason_code": "same_currency_required",
+                "field_path": "$.attempted_input.destination_currency",
+            },
+        }
+        golden_v2._validate_rejected_manual_account_transfer_attempt(
+            operation,
+            "$.operations[0]",
+            baseline,
+            {"CNY": 2},
+            ZoneInfo("Asia/Shanghai"),
+        )
+
+        undeclared_primary = deepcopy(operation)
+        undeclared_primary["attempted_input"]["currency"] = "USD"
+        with self.assertRaisesRegex(
+            GoldenCaseError,
+            r"\$\.operations\[0\]\.attempted_input\.currency.*undeclared currency",
+        ):
+            golden_v2._validate_rejected_manual_account_transfer_attempt(
+                undeclared_primary,
+                "$.operations[0]",
+                baseline,
+                {"CNY": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
     def test_rg03_positive_case_uses_complete_validator_and_returned_ids_are_closed(self):
         case = rg03_full_manual_case()
         validate_golden_case_v2(case)
