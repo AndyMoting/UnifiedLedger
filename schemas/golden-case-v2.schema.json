@@ -47,6 +47,10 @@
       "type": "string",
       "pattern": "^(?:0|-?[1-9][0-9]*)(?:\\.[0-9]+)?$"
     },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^(?:0\\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\\.[0-9]+)?)$"
+    },
     "attemptedDecimal": {
       "type": "string",
       "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
@@ -308,7 +312,9 @@
             "lending_interest", "lending_fee", "balance_adjustment_target",
             "balance_adjustment_counterpart", "balance_adjustment_reversal_target",
             "balance_adjustment_reversal_counterpart", "stored_value_asset",
-            "stored_value_bonus_income", "stored_value_expiry_loss"
+            "stored_value_bonus_income", "stored_value_expiry_loss",
+            "mixed_expense_asset_funding", "mixed_expense_credit_funding",
+            "credit_repayment_asset_outflow", "credit_repayment_liability_principal"
           ]
         },
         "reconciliation_eligible": {"type": "boolean"}
@@ -593,7 +599,9 @@
         {"$ref": "#/$defs/itemReceiptEvidence"},
         {"$ref": "#/$defs/merchantStoredValueCreditEvidence"},
         {"$ref": "#/$defs/confirmedActualExpiryEvidence"},
-        {"$ref": "#/$defs/transferRecordEvidence"}
+        {"$ref": "#/$defs/transferRecordEvidence"},
+        {"$ref": "#/$defs/assetFundingDebitEvidence"},
+        {"$ref": "#/$defs/creditLiabilityMirrorEvidence"}
       ]
     },
     "userBalanceObservationEvidence": {
@@ -621,13 +629,55 @@
       "type": "object",
       "properties": {"type": {"const": "transfer_record"}}
     },
+    "assetFundingDebitEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "asset_funding_debit"},
+        "source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at"],
+          "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      }
+    },
+    "creditLiabilityMirrorEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "credit_liability_mirror"},
+        "source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at"],
+          "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      }
+    },
     "observedAtEvidence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "source_ids", "payload"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "type": {"type": "string"},
+        "type": {"enum": ["user_balance_observation", "item_receipt", "merchant_stored_value_credit", "confirmed_actual_expiry", "transfer_record"]},
         "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
         "payload": {
           "type": "object",
@@ -702,7 +752,76 @@
         }
       ]
     },
-    "relation": false,
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "member_refs", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "mixed_payment"},
+        "member_refs": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": {"enum": ["transaction", "posting"]},
+              "id": {"$ref": "#/$defs/id"}
+            }
+          },
+          "contains": {
+            "type": "object",
+            "properties": {"kind": {"const": "transaction"}}
+          },
+          "minContains": 1,
+          "maxContains": 1,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {"kind": {"const": "posting"}}
+              },
+              "minContains": 2,
+              "maxContains": 2
+            }
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "system_managed", "display_name", "generic_order_lifecycle",
+            "payment_composition_total", "funding_components"
+          ],
+          "properties": {
+            "system_managed": {"const": true},
+            "display_name": {"type": "string", "minLength": 1},
+            "generic_order_lifecycle": {"const": false},
+            "payment_composition_total": {"$ref": "#/$defs/positiveDecimal"},
+            "funding_components": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["account_id", "funding_amount", "currency", "posting_id"],
+                "properties": {
+                  "account_id": {"$ref": "#/$defs/id"},
+                  "funding_amount": {"$ref": "#/$defs/positiveDecimal"},
+                  "currency": {"type": "string", "minLength": 1},
+                  "posting_id": {"$ref": "#/$defs/id"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "domainEntity": {
       "oneOf": [
         {"$ref": "#/$defs/targetBalanceObservation"},

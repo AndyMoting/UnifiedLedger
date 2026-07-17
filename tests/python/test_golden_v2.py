@@ -2433,6 +2433,126 @@ class GoldenV2SchemaTests(unittest.TestCase):
                 link["role"] = "refund_relationship"
         assert_invalid(self, case, r"\$\.states\[1\]\.evidence_links\[0\]")
 
+    def test_rg04_posting_roles_are_closed_and_registered(self):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(
+            {"$defs": schema["$defs"], "$ref": "#/$defs/posting"}
+        )
+        roles = (
+            "mixed_expense_asset_funding",
+            "mixed_expense_credit_funding",
+            "credit_repayment_asset_outflow",
+            "credit_repayment_liability_principal",
+        )
+        posting = {
+            "id": "posting-rg04",
+            "posting_set_id": "posting-set-rg04",
+            "account_id": "account-rg04",
+            "amount": "1.00",
+            "currency": "CNY",
+            "reconciliation_eligible": True,
+        }
+        for role in roles:
+            with self.subTest(role=role):
+                accepted = deepcopy(posting)
+                accepted["role"] = role
+                self.assertTrue(validator.is_valid(accepted))
+                rejected = deepcopy(accepted)
+                rejected["role"] = role[:-1]
+                self.assertFalse(validator.is_valid(rejected))
+
+    def test_rg04_financial_evidence_variants_are_closed(self):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(
+            {"$defs": schema["$defs"], "$ref": "#/$defs/evidence"}
+        )
+        for evidence_type in ("asset_funding_debit", "credit_liability_mirror"):
+            evidence = {
+                "id": f"evidence-{evidence_type}",
+                "type": evidence_type,
+                "source_ids": ["source-rg04"],
+                "payload": {"observed_at": "2026-01-20T10:00:00+08:00"},
+            }
+            with self.subTest(evidence_type=evidence_type):
+                self.assertTrue(validator.is_valid(evidence))
+                for source_ids in ([], ["source-rg04", "source-rg04"]):
+                    invalid = deepcopy(evidence)
+                    invalid["source_ids"] = source_ids
+                    self.assertFalse(validator.is_valid(invalid))
+                missing = deepcopy(evidence)
+                del missing["payload"]["observed_at"]
+                self.assertFalse(validator.is_valid(missing))
+                extra = deepcopy(evidence)
+                extra["payload"]["unexpected"] = True
+                self.assertFalse(validator.is_valid(extra))
+
+    def test_rg04_mixed_payment_relation_is_closed(self):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(
+            {"$defs": schema["$defs"], "$ref": "#/$defs/relation"}
+        )
+        relation = {
+            "id": "relation-rg04",
+            "type": "mixed_payment",
+            "member_refs": [
+                {"kind": "transaction", "id": "transaction-rg04"},
+                {"kind": "posting", "id": "posting-asset-rg04"},
+                {"kind": "posting", "id": "posting-credit-rg04"},
+            ],
+            "payload": {
+                "system_managed": True,
+                "display_name": "Mixed payment",
+                "generic_order_lifecycle": False,
+                "payment_composition_total": "120.00",
+                "funding_components": [
+                    {"account_id": "asset-rg04", "funding_amount": "70.00", "currency": "CNY", "posting_id": "posting-asset-rg04"},
+                    {"account_id": "credit-rg04", "funding_amount": "50.00", "currency": "CNY", "posting_id": "posting-credit-rg04"},
+                ],
+            },
+        }
+        self.assertTrue(validator.is_valid(relation))
+        invalid = deepcopy(relation)
+        invalid["extra"] = True
+        self.assertFalse(validator.is_valid(invalid))
+        invalid = deepcopy(relation)
+        invalid["payload"]["funding_components"][0]["id"] = "component-rg04"
+        self.assertFalse(validator.is_valid(invalid))
+        for field, value in (("type", "mixed-payment"), ("system_managed", False), ("generic_order_lifecycle", True)):
+            invalid = deepcopy(relation)
+            target = invalid if field == "type" else invalid["payload"]
+            target[field] = value
+            self.assertFalse(validator.is_valid(invalid), field)
+        duplicate_member_refs = deepcopy(relation["member_refs"])
+        duplicate_member_refs[2] = deepcopy(duplicate_member_refs[1])
+        three_postings = [
+            {"kind": "posting", "id": "posting-asset-rg04"},
+            {"kind": "posting", "id": "posting-credit-rg04"},
+            {"kind": "posting", "id": "posting-extra-rg04"},
+        ]
+        two_transactions = [
+            {"kind": "transaction", "id": "transaction-rg04"},
+            {"kind": "transaction", "id": "transaction-extra-rg04"},
+            {"kind": "posting", "id": "posting-asset-rg04"},
+        ]
+        for members in (
+            relation["member_refs"][:2],
+            duplicate_member_refs,
+            relation["member_refs"] + [deepcopy(relation["member_refs"][0])],
+            three_postings,
+            two_transactions,
+        ):
+            invalid = deepcopy(relation)
+            invalid["member_refs"] = members
+            self.assertFalse(validator.is_valid(invalid))
+        for components in (relation["payload"]["funding_components"][:1], relation["payload"]["funding_components"] * 2):
+            invalid = deepcopy(relation)
+            invalid["payload"]["funding_components"] = components
+            self.assertFalse(validator.is_valid(invalid))
+        for amount in ("0.00", "-1.00"):
+            invalid = deepcopy(relation)
+            invalid["payload"]["funding_components"][0]["funding_amount"] = amount
+            self.assertFalse(validator.is_valid(invalid))
+
     def test_all_confirmation_subtypes_allow_an_unknown_confirmation_time(self):
         case = load_rg09()
         case["states"][-1]["confirmations"].append(
