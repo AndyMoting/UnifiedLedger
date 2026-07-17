@@ -1206,6 +1206,59 @@ class GoldenV2MappingTests(unittest.TestCase):
                     )
                 )
 
+    def test_rg10_reconstruction_identity_owners_are_current_but_replay_stays_gated(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-10-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        gaps = {gap["id"]: gap for gap in path_map["unresolved_contract_gaps"]}
+        prefix = "$.secondary_cases.activation_boundary.expected.replacement_semantics"
+
+        expected_ready = {
+            f"{prefix}.adjustment_id": {
+                "$.states[*].domain_entities[*].payload.adjustment_id"
+            },
+            f"{prefix}.replacement_group_id": {
+                "$.states[*].domain_entities[*].id"
+            },
+        }
+        for source_path, targets in expected_ready.items():
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(set(entry["target_paths"]), targets)
+                self.assertEqual(entry["contract_gap_ids"], [])
+                self.assertIn("stored_value_reconstruction", entry["transform"])
+
+        replay_gated = {
+            f"{prefix}.active_effect_rule",
+            f"{prefix}.full_reconstruction_algorithm",
+            f"{prefix}.mode",
+            f"{prefix}.preserve_adjustment_transaction_and_version",
+        }
+        gap_paths = set(gaps["RG10-GAP-04"]["affected_source_paths"])
+        self.assertTrue(replay_gated.issubset(gap_paths))
+        self.assertEqual(len(gap_paths), 140)
+        for source_path in replay_gated:
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path, boundary="operation gap"):
+                self.assertEqual(
+                    entry["disposition"], "requires_contract_amendment"
+                )
+                self.assertEqual(entry["contract_gap_ids"], ["RG10-GAP-04"])
+                self.assertTrue(
+                    all(
+                        target.startswith(PLANNED_CONTRACT_PREFIX)
+                        for target in entry["target_paths"]
+                    )
+                )
+
     def test_rg09_fingerprint_paths_remain_gated_until_mandatory_generation(self):
         path_map = json.loads(
             (

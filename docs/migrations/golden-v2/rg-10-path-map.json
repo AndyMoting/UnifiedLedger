@@ -19,14 +19,14 @@
   "classified_path_count": 1161,
   "unclassified_path_count": 0,
   "classification_counts": {
-    "map": 660,
-    "derive": 491,
+    "map": 662,
+    "derive": 489,
     "preserve": 9,
     "reject": 1
   },
   "disposition_counts": {
-    "requires_contract_amendment": 863,
-    "ready": 297,
+    "requires_contract_amendment": 861,
+    "ready": 299,
     "test_only_exclusion": 1
   },
   "contract_gap_count": 6,
@@ -493,12 +493,6 @@
         "$.secondary_cases.activation_boundary.expected.is_recharge",
         "$.secondary_cases.activation_boundary.expected.pre_activation_events_unchanged",
         "$.secondary_cases.activation_boundary.expected.reconstructed_history_replaces_adjustment",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.active_effect_rule",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.adjustment_id",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.full_reconstruction_algorithm",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.mode",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.preserve_adjustment_transaction_and_version",
-        "$.secondary_cases.activation_boundary.expected.replacement_semantics.replacement_group_id",
         "$.secondary_cases.activation_boundary.expected.resulting_state_id",
         "$.secondary_cases.activation_boundary.expected.status",
         "$.secondary_cases.activation_boundary.expected.stored_value_posting",
@@ -776,8 +770,8 @@
       "id": "RG10-GAP-04",
       "title": "Activation boundary and replace-not-append reconstruction semantics",
       "status": "unresolved",
-      "capability_boundary": "Current v2 preserves the activation adjustment type but lacks its closed semantic state, replacement group, audit, and exclusive-effective-history contract.",
-      "required_change": "Register the pre-activation boundary, append-only audit, replacement group, and rule that adjustment or reconstructed history alone is effective.",
+      "capability_boundary": "Current v2 owns the closed reconstruction identity, endpoint topology, typed audit links, active-mode history, and append-only invariants, but no operation or replay path applies the selected economic owner.",
+      "required_change": "Register activation and reconstruction operations, enforce selected-owner exclusivity in formal replay, and migrate the frozen fixture and expected outputs.",
       "risk": "A plain adjustment cannot prevent duplicate effects when real history replaces it.",
       "affected_source_paths": [
         "$.canonical_states.activation_boundary.adjustments[*].activation_at",
@@ -911,6 +905,10 @@
         "$.reconciliation_states.state-rg10-recharge-merchant-reconciled.lots_ref[*]",
         "$.reconciliation_states.state-rg10-recharge-merchant-reconciled.reports_unchanged",
         "$.reconciliation_states.state-rg10-recharge-merchant-reconciled.transactions_ref[*]",
+        "$.secondary_cases.activation_boundary.expected.replacement_semantics.active_effect_rule",
+        "$.secondary_cases.activation_boundary.expected.replacement_semantics.full_reconstruction_algorithm",
+        "$.secondary_cases.activation_boundary.expected.replacement_semantics.mode",
+        "$.secondary_cases.activation_boundary.expected.replacement_semantics.preserve_adjustment_transaction_and_version",
         "$.secondary_cases.activation_boundary.pre_operation_baseline_id",
         "$.secondary_cases.merchant_evidenced_allocation.states.baseline.allocations",
         "$.secondary_cases.merchant_evidenced_allocation.states.baseline.consumptions",
@@ -20415,16 +20413,14 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.active_effect_rule",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.planned_contract.operations[*].input.active_effect_rule"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Keep the exactly-one effective-owner rule in the planned reconstruction operation and formal replay contract.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-037, D-047, D-050, D-063, D-064, D-067.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
+      "rationale": "The domain entity records one active mode, but current formal replay does not yet select postings by reconstruction ownership.",
       "contract_gap_ids": [
-        "RG10-GAP-01"
+        "RG10-GAP-04"
       ]
     },
     {
@@ -20433,19 +20429,15 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "derive",
+      "classification": "map",
       "target_paths": [
-        "$.planned_contract.operations[*].input.adjustment_id",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.states[*].domain_entities[*].payload.adjustment_id"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
-      "contract_gap_ids": [
-        "RG10-GAP-01"
-      ]
+      "transform": "Map the original adjustment identity to the closed stored_value_reconstruction domain payload; semantic validation requires an activation_adjustment endpoint.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-037, D-047, D-050, D-063, D-064, D-067.",
+      "disposition": "ready",
+      "rationale": "The current domain owner preserves and validates the original adjustment identity without opening an operation surface.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.secondary_cases.activation_boundary.expected.replacement_semantics.full_reconstruction_algorithm",
@@ -20455,16 +20447,14 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.full_reconstruction_algorithm",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.planned_contract.operations[*].input.full_reconstruction_algorithm"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Keep reconstruction creation and replay switching in the planned operation contract.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-037, D-047, D-050, D-063, D-064, D-067.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
+      "rationale": "This batch validates stored topology and history only; it does not implement a reconstruction algorithm.",
       "contract_gap_ids": [
-        "RG10-GAP-01"
+        "RG10-GAP-04"
       ]
     },
     {
@@ -20475,16 +20465,14 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.mode",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.planned_contract.operations[*].input.mode"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Keep replace_not_append as planned operation and replay policy; do not alias it to the stored active_mode token.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-037, D-047, D-050, D-063, D-064, D-067.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
+      "rationale": "replace_not_append describes transition and replay policy, while active_mode stores only the selected owner.",
       "contract_gap_ids": [
-        "RG10-GAP-01"
+        "RG10-GAP-04"
       ]
     },
     {
@@ -20495,16 +20483,14 @@
       "occurrence_count": 1,
       "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.preserve_adjustment_transaction_and_version",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.planned_contract.operations[*].input.preserve_adjustment_transaction_and_version"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Keep operation-level preservation of adjustment transactions and versions in the planned reconstruction contract.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-037, D-047, D-050, D-063, D-064, D-067.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
+      "rationale": "Stored endpoint immutability is executable, but no registered reconstruction operation or fixture transition proves complete transaction-version preservation.",
       "contract_gap_ids": [
-        "RG10-GAP-01"
+        "RG10-GAP-04"
       ]
     },
     {
@@ -20513,19 +20499,15 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "derive",
+      "classification": "map",
       "target_paths": [
-        "$.planned_contract.operations[*].input.replacement_group_id",
-        "$.planned_contract.operations[*].action_type",
-        "$.operations[*].operation_class"
+        "$.states[*].domain_entities[*].id"
       ],
-      "transform": "Freeze action_type=confirm_stored_value_activation_balance, operation_class=adjustment; use closed input and exhaustive outcome/deltas; retries retain the originating registered action_type and are no generic retry action.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current operation registry has no closed RG-10 action family or outcome-specific inputs.",
-      "contract_gap_ids": [
-        "RG10-GAP-01"
-      ]
+      "transform": "Map replacement_group_id to the stable identity of the closed stored_value_reconstruction domain entity.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-037, D-047, D-050, D-063, D-064, D-067.",
+      "disposition": "ready",
+      "rationale": "Replacement-group identity belongs to the domain owner rather than a stateful relation or operation input.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.secondary_cases.activation_boundary.expected.resulting_state_id",

@@ -972,7 +972,7 @@ def _validate_references(
             if target.get("type") != "activation_adjustment":
                 _fail(
                     link_path + ".target_id",
-                    "requires the reserved activation_adjustment domain subtype, which is not implemented by this prototype",
+                    "must target domain subtype activation_adjustment",
                 )
         domain_role_targets = {
             "item_allocation_fact": "item_allocation",
@@ -1056,6 +1056,49 @@ def _validate_references(
                     f"merchant credit evidence {evidence['id']!r} lot face_value must match its positive asset posting",
                 )
 
+    activation_transactions: dict[str, str] = {}
+    reconstruction_transactions: dict[str, tuple[str, str]] = {}
+    for entity_index, entity in enumerate(state["domain_entities"]):
+        payload = entity["payload"]
+        if entity["type"] == "activation_adjustment":
+            transaction_id = payload["transaction_id"]
+            prior_owner = activation_transactions.get(transaction_id)
+            if prior_owner is not None:
+                _fail(
+                    f"{path}.domain_entities[{entity_index}].payload.transaction_id",
+                    f"activation adjustment transaction is already owned by {prior_owner!r}",
+                )
+            activation_transactions[transaction_id] = entity["id"]
+        elif entity["type"] == "stored_value_reconstruction":
+            for transaction_index, transaction_id in enumerate(
+                payload["reconstructed_transaction_ids"]
+            ):
+                transaction_path = (
+                    f"{path}.domain_entities[{entity_index}].payload"
+                    f".reconstructed_transaction_ids[{transaction_index}]"
+                )
+                prior_owner = reconstruction_transactions.get(transaction_id)
+                if prior_owner is not None:
+                    _fail(
+                        transaction_path,
+                        f"transaction endpoint already belongs to reconstruction group {prior_owner[0]!r}",
+                    )
+                reconstruction_transactions[transaction_id] = (
+                    entity["id"],
+                    transaction_path,
+                )
+
+    for transaction_id, (_, transaction_path) in reconstruction_transactions.items():
+        adjustment_id = activation_transactions.get(transaction_id)
+        if adjustment_id is None:
+            continue
+        _fail(
+            transaction_path,
+            f"activation adjustment transaction owned by {adjustment_id!r} cannot be a reconstructed endpoint",
+        )
+
+    reconstruction_adjustments: dict[str, str] = {}
+    reconstructions: list[tuple[int, dict[str, Any]]] = []
     for index, entity in enumerate(state["domain_entities"]):
         entity_path = f"{path}.domain_entities[{index}].payload"
         payload = entity["payload"]
@@ -1146,6 +1189,95 @@ def _validate_references(
                     entity_path + ".loaded_at",
                     "must match the recharge current version occurred_at",
                 )
+        elif entity["type"] == "activation_adjustment":
+            transaction = transactions.get(payload["transaction_id"])
+            if (
+                transaction is None
+                or transaction["type"]
+                != "stored_value_pre_activation_balance_adjustment"
+            ):
+                _fail(
+                    entity_path + ".transaction_id",
+                    "must reference a stored_value_pre_activation_balance_adjustment transaction",
+                )
+        elif entity["type"] == "stored_value_reconstruction":
+            reconstructions.append((index, entity))
+            adjustment = domain_entities.get(payload["adjustment_id"])
+            if adjustment is None or adjustment["type"] != "activation_adjustment":
+                _fail(
+                    entity_path + ".adjustment_id",
+                    "must reference an activation_adjustment domain entity",
+                )
+            prior_group = reconstruction_adjustments.get(payload["adjustment_id"])
+            if prior_group is not None:
+                _fail(
+                    entity_path + ".adjustment_id",
+                    f"adjustment endpoint already belongs to reconstruction group {prior_group!r}",
+                )
+            reconstruction_adjustments[payload["adjustment_id"]] = entity["id"]
+
+            transaction_ids = payload["reconstructed_transaction_ids"]
+            if len(transaction_ids) != len(set(transaction_ids)):
+                _fail(
+                    entity_path + ".reconstructed_transaction_ids",
+                    "contains duplicate transaction endpoints",
+                )
+            if payload["active_mode"] == "reconstructed" and not transaction_ids:
+                _fail(
+                    entity_path + ".reconstructed_transaction_ids",
+                    "reconstructed mode requires at least one transaction endpoint",
+                )
+            for transaction_index, transaction_id in enumerate(transaction_ids):
+                transaction_path = (
+                    entity_path
+                    + f".reconstructed_transaction_ids[{transaction_index}]"
+                )
+                if transaction_id not in transactions:
+                    _fail(transaction_path, "dangling transaction endpoint")
+            history = payload["history"]
+            _unique_index(history, entity_path + ".history")
+            if [event["sequence"] for event in history] != list(
+                range(1, len(history) + 1)
+            ):
+                _fail(
+                    entity_path + ".history",
+                    "sequence must be contiguous and ordered from 1",
+                )
+            if history[0]["active_mode"] != "adjustment":
+                _fail(
+                    entity_path + ".history[0].active_mode",
+                    "reconstruction history must begin with adjustment ownership",
+                )
+            previous_confirmed_at: datetime | None = None
+            for history_index, event in enumerate(history):
+                confirmed_at = _timestamp(
+                    event["confirmed_at"],
+                    entity_path + f".history[{history_index}].confirmed_at",
+                    timezone,
+                )
+                if (
+                    previous_confirmed_at is not None
+                    and confirmed_at <= previous_confirmed_at
+                ):
+                    _fail(
+                        entity_path + f".history[{history_index}].confirmed_at",
+                        "must be strictly later than the previous history event",
+                    )
+                previous_confirmed_at = confirmed_at
+                if (
+                    history_index > 0
+                    and event["active_mode"]
+                    == history[history_index - 1]["active_mode"]
+                ):
+                    _fail(
+                        entity_path + f".history[{history_index}].active_mode",
+                        "history events must record an ownership mode change",
+                    )
+            if history[-1]["active_mode"] != payload["active_mode"]:
+                _fail(
+                    entity_path + ".active_mode",
+                    "must match the latest reconstruction history event",
+                )
 
     audit_rules = {
         "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),
@@ -1154,6 +1286,60 @@ def _validate_references(
     }
     for index, link in enumerate(state["audit_links"]):
         link_path = f"{path}.audit_links[{index}]"
+        if link["type"] in {
+            "reconstruction_adjustment",
+            "reconstruction_transaction",
+        }:
+            if link["from"]["kind"] != "domain_entity":
+                _fail(
+                    link_path + ".from.kind",
+                    "reconstruction audit source must be a domain_entity",
+                )
+            source = domain_entities.get(link["from"]["id"])
+            if source is None or source["type"] != "stored_value_reconstruction":
+                _fail(
+                    link_path + ".from.id",
+                    "reconstruction audit source must identify its reconstruction group",
+                )
+            if link["type"] == "reconstruction_adjustment":
+                if link["to"]["kind"] != "domain_entity":
+                    _fail(
+                        link_path + ".to.kind",
+                        "reconstruction adjustment endpoint must be a domain_entity",
+                    )
+                target = domain_entities.get(link["to"]["id"])
+                if target is None or target["type"] != "activation_adjustment":
+                    _fail(
+                        link_path + ".to.id",
+                        "dangling or mistyped reconstruction adjustment endpoint",
+                    )
+                expected_target_id = source["payload"]["adjustment_id"]
+            else:
+                if link["to"]["kind"] != "transaction":
+                    _fail(
+                        link_path + ".to.kind",
+                        "reconstruction transaction endpoint must be a transaction",
+                    )
+                if link["to"]["id"] not in transactions:
+                    _fail(
+                        link_path + ".to.id",
+                        "dangling reconstruction transaction endpoint",
+                    )
+                expected_transaction_ids = source["payload"][
+                    "reconstructed_transaction_ids"
+                ]
+                if link["to"]["id"] not in expected_transaction_ids:
+                    _fail(
+                        link_path + ".to.id",
+                        "audit target does not belong to the reconstruction group",
+                    )
+                continue
+            if link["to"]["id"] != expected_target_id:
+                _fail(
+                    link_path + ".to.id",
+                    "audit target does not match the reconstruction group payload",
+                )
+            continue
         from_type, to_type = audit_rules[link["type"]]
         if link["from"]["kind"] != "domain_entity":
             _fail(link_path + ".from.kind", "audit source must be a domain_entity")
@@ -1173,6 +1359,29 @@ def _validate_references(
             expected_target_id = source["payload"]["reversal_transaction_id"]
         if link["to"]["id"] != expected_target_id:
             _fail(link_path + ".to.id", "audit target does not match the domain entity payload")
+
+    reconstruction_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for link in state["audit_links"]:
+        if link["type"].startswith("reconstruction_"):
+            reconstruction_links[link["from"]["id"]].append(link)
+    for entity_index, reconstruction in reconstructions:
+        entity_path = f"{path}.domain_entities[{entity_index}].payload"
+        payload = reconstruction["payload"]
+        expected_endpoints = {
+            ("reconstruction_adjustment", payload["adjustment_id"]): 1,
+            **{
+                ("reconstruction_transaction", transaction_id): 1
+                for transaction_id in payload["reconstructed_transaction_ids"]
+            },
+        }
+        actual_endpoints: dict[tuple[str, str], int] = defaultdict(int)
+        for link in reconstruction_links[reconstruction["id"]]:
+            actual_endpoints[(link["type"], link["to"]["id"])] += 1
+        if dict(actual_endpoints) != expected_endpoints:
+            _fail(
+                path + ".audit_links",
+                f"reconstruction group {reconstruction['id']!r} must have exactly one typed audit link per endpoint",
+            )
 
 
 def _validate_reconciliations(
@@ -1865,6 +2074,43 @@ def _validate_history_prefix(
         _fail(path + f".{history_field}", "existing history must remain an exact prefix and only append")
 
 
+def _validate_reconstruction_history_prefix(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    path: str,
+) -> None:
+    immutable_fields = {
+        key: value
+        for key, value in before.items()
+        if key not in {"active_mode", "history"}
+    }
+    after_immutable_fields = {
+        key: value
+        for key, value in after.items()
+        if key not in {"active_mode", "history"}
+    }
+    if not _contract_equivalent(immutable_fields, after_immutable_fields):
+        _fail(path, "reconstruction endpoints are immutable")
+    before_history = before["history"]
+    after_history = after["history"]
+    if after_history[: len(before_history)] != before_history:
+        _fail(
+            path + ".history",
+            "existing history must remain an exact prefix and only append",
+        )
+    if len(after_history) == len(before_history):
+        if after["active_mode"] != before["active_mode"]:
+            _fail(path + ".active_mode", "mode changes require an appended history event")
+        return
+    if len(after_history) < len(before_history):
+        _fail(
+            path + ".history",
+            "existing history must remain an exact prefix and only append",
+        )
+    if after["active_mode"] != after_history[-1]["active_mode"]:
+        _fail(path + ".active_mode", "must match the appended history event")
+
+
 def _validate_append_only_transition(
     baseline: dict[str, Any],
     result: dict[str, Any],
@@ -1903,7 +2149,26 @@ def _validate_append_only_transition(
             elif collection_name == "domain_entities":
                 old_payload = before[item_id].get("payload", {})
                 new_payload = after[item_id].get("payload", {})
-                if "status_history" in old_payload and "status_history" in new_payload:
+                if (
+                    before[item_id].get("type") == "stored_value_reconstruction"
+                    and new_payload is not None
+                ):
+                    old_outer = {
+                        key: value
+                        for key, value in before[item_id].items()
+                        if key != "payload"
+                    }
+                    new_outer = {
+                        key: value
+                        for key, value in after[item_id].items()
+                        if key != "payload"
+                    }
+                    if not _contract_equivalent(old_outer, new_outer):
+                        _fail(item_path, "domain entity stable identity is immutable")
+                    _validate_reconstruction_history_prefix(
+                        old_payload, new_payload, item_path + ".payload"
+                    )
+                elif "status_history" in old_payload and "status_history" in new_payload:
                     old_outer = {key: value for key, value in before[item_id].items() if key != "payload"}
                     new_outer = {key: value for key, value in after[item_id].items() if key != "payload"}
                     if not _contract_equivalent(old_outer, new_outer):

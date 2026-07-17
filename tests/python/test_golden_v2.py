@@ -342,15 +342,209 @@ def add_second_rg10_recharge(case: dict) -> None:
     )
 
 
+def reconstruction_contract_case() -> dict:
+    case = rg10_contract_case()
+    state = case["states"][0]
+    occurred_at = "2026-01-14T08:30:00+08:00"
+    state["catalog"]["accounts"].append(
+        {
+            "id": "equity-pre-activation-adjustment",
+            "name": "Pre-activation adjustment",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": False,
+            "real_account": False,
+            "reconciliation_eligible": False,
+            "system_role": "balance_adjustments",
+        }
+    )
+    state["transactions"].append(
+        {
+            "id": "transaction-activation-adjustment",
+            "type": "stored_value_pre_activation_balance_adjustment",
+            "current_version_id": "version-activation-adjustment-v1",
+        }
+    )
+    state["transaction_versions"].append(
+        {
+            "id": "version-activation-adjustment-v1",
+            "transaction_id": "transaction-activation-adjustment",
+            "version_number": 1,
+            "posting_set_id": "posting-set-activation-adjustment",
+            "occurred_at": occurred_at,
+            "statistics_at": occurred_at,
+            "effective_at": occurred_at,
+        }
+    )
+    state["posting_sets"].append(
+        {
+            "id": "posting-set-activation-adjustment",
+            "posting_ids": [
+                "posting-activation-stored-value",
+                "posting-activation-counterpart",
+            ],
+        }
+    )
+    state["postings"].extend(
+        [
+            {
+                "id": "posting-activation-stored-value",
+                "posting_set_id": "posting-set-activation-adjustment",
+                "account_id": "asset-stored-value",
+                "amount": "35.80",
+                "currency": "CNY",
+                "role": "stored_value_asset",
+                "reconciliation_eligible": False,
+            },
+            {
+                "id": "posting-activation-counterpart",
+                "posting_set_id": "posting-set-activation-adjustment",
+                "account_id": "equity-pre-activation-adjustment",
+                "amount": "-35.80",
+                "currency": "CNY",
+                "role": "balance_adjustment_counterpart",
+                "reconciliation_eligible": False,
+            },
+        ]
+    )
+    state["domain_entities"].extend(
+        [
+            {
+                "id": "activation-adjustment-contract",
+                "type": "activation_adjustment",
+                "payload": {
+                    "transaction_id": "transaction-activation-adjustment",
+                },
+            },
+            {
+                "id": "reconstruction-group-contract",
+                "type": "stored_value_reconstruction",
+                "payload": {
+                    "adjustment_id": "activation-adjustment-contract",
+                    "reconstructed_transaction_ids": ["transaction-recharge"],
+                    "active_mode": "adjustment",
+                    "history": [
+                        {
+                            "id": "reconstruction-history-1",
+                            "sequence": 1,
+                            "active_mode": "adjustment",
+                            "confirmed_at": occurred_at,
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    state["audit_links"].extend(
+        [
+            {
+                "id": "audit-reconstruction-adjustment",
+                "type": "reconstruction_adjustment",
+                "from": {
+                    "kind": "domain_entity",
+                    "id": "reconstruction-group-contract",
+                },
+                "to": {
+                    "kind": "domain_entity",
+                    "id": "activation-adjustment-contract",
+                },
+                "payload": {},
+            },
+            {
+                "id": "audit-reconstruction-transaction",
+                "type": "reconstruction_transaction",
+                "from": {
+                    "kind": "domain_entity",
+                    "id": "reconstruction-group-contract",
+                },
+                "to": {"kind": "transaction", "id": "transaction-recharge"},
+                "payload": {},
+            },
+        ]
+    )
+    return case
+
+
+def cross_group_adjustment_endpoint_case(activation_before_reconstruction: bool) -> dict:
+    case = reconstruction_contract_case()
+    add_second_rg10_recharge(case)
+    state = case["states"][0]
+    transaction = next(
+        item
+        for item in state["transactions"]
+        if item["id"] == "transaction-recharge-other"
+    )
+    transaction["type"] = "stored_value_pre_activation_balance_adjustment"
+    state["domain_entities"] = [
+        item for item in state["domain_entities"] if item["id"] != "lot-recharge-other"
+    ]
+
+    reconstruction = next(
+        item
+        for item in state["domain_entities"]
+        if item["id"] == "reconstruction-group-contract"
+    )
+    reconstruction["payload"]["reconstructed_transaction_ids"] = [
+        "transaction-recharge-other"
+    ]
+    next(
+        item
+        for item in state["audit_links"]
+        if item["type"] == "reconstruction_transaction"
+    )["to"]["id"] = "transaction-recharge-other"
+
+    other_adjustment = {
+        "id": "activation-adjustment-other",
+        "type": "activation_adjustment",
+        "payload": {"transaction_id": "transaction-recharge-other"},
+    }
+    other_reconstruction = {
+        "id": "reconstruction-group-other",
+        "type": "stored_value_reconstruction",
+        "payload": {
+            "adjustment_id": "activation-adjustment-other",
+            "reconstructed_transaction_ids": [],
+            "active_mode": "adjustment",
+            "history": [
+                {
+                    "id": "reconstruction-other-history-1",
+                    "sequence": 1,
+                    "active_mode": "adjustment",
+                    "confirmed_at": "2026-01-16T09:00:00+08:00",
+                }
+            ],
+        },
+    }
+    reconstruction_index = state["domain_entities"].index(reconstruction)
+    insert_at = reconstruction_index if activation_before_reconstruction else len(
+        state["domain_entities"]
+    )
+    state["domain_entities"][insert_at:insert_at] = [
+        other_adjustment,
+        other_reconstruction,
+    ]
+    state["audit_links"].append(
+        {
+            "id": "audit-reconstruction-other-adjustment",
+            "type": "reconstruction_adjustment",
+            "from": {"kind": "domain_entity", "id": "reconstruction-group-other"},
+            "to": {"kind": "domain_entity", "id": "activation-adjustment-other"},
+            "payload": {},
+        }
+    )
+    return case
+
+
 def validate_contract_state(case: dict) -> None:
     errors = schema_errors(case)
     if errors:
         raise AssertionError(errors[0].message)
     state = case["states"][0]
+    timezone = ZoneInfo(case["case"]["timezone"])
     indexes = golden_v2._state_indexes(state, "$.states[0]")
     golden_v2._validate_catalog(state, "$.states[0]", indexes, {"CNY": 2})
     golden_v2._validate_formal_ledger(
-        state, "$.states[0]", indexes, {"CNY": 2}, ZoneInfo("Asia/Shanghai")
+        state, "$.states[0]", indexes, {"CNY": 2}, timezone
     )
     golden_v2._validate_references(
         state,
@@ -358,7 +552,7 @@ def validate_contract_state(case: dict) -> None:
         indexes,
         {},
         {"CNY": 2},
-        ZoneInfo("Asia/Shanghai"),
+        timezone,
     )
 
 
@@ -1333,6 +1527,203 @@ class GoldenV2LedgerSemanticTests(unittest.TestCase):
         for case, path in cases:
             with self.subTest(path=path):
                 assert_invalid(self, case, path)
+
+    def test_reconstruction_domain_and_typed_audit_topology_are_closed(self):
+        case = reconstruction_contract_case()
+        self.assertEqual(schema_errors(case), [])
+        validate_contract_state(case)
+
+        relation = deepcopy(case)
+        relation["states"][0]["relations"] = [
+            {
+                "id": "relation-reconstruction",
+                "type": "stored_value_reconstruction",
+                "payload": {"active_mode": "adjustment"},
+            }
+        ]
+        assert_invalid(self, relation, r"relations")
+
+        stateful_link = deepcopy(case)
+        stateful_link["states"][0]["audit_links"][-1]["payload"] = {
+            "active_mode": "adjustment"
+        }
+        assert_invalid(self, stateful_link, r"audit_links")
+
+    def test_reconstruction_active_mode_and_history_are_consistent(self):
+        reconstructed = reconstruction_contract_case()
+        payload = reconstructed["states"][0]["domain_entities"][-1]["payload"]
+        payload["active_mode"] = "reconstructed"
+        payload["history"].append(
+            {
+                "id": "reconstruction-history-2",
+                "sequence": 2,
+                "active_mode": "reconstructed",
+                "confirmed_at": "2026-01-15T09:00:00+08:00",
+            }
+        )
+        validate_contract_state(reconstructed)
+
+        cases = []
+        empty = reconstruction_contract_case()
+        empty_payload = empty["states"][0]["domain_entities"][-1]["payload"]
+        empty_payload["active_mode"] = "reconstructed"
+        empty_payload["reconstructed_transaction_ids"] = []
+        empty_payload["history"][0]["active_mode"] = "reconstructed"
+        cases.append((empty, r"reconstructed_transaction_ids"))
+
+        wrong_tail = reconstruction_contract_case()
+        wrong_tail["states"][0]["domain_entities"][-1]["payload"]["active_mode"] = (
+            "reconstructed"
+        )
+        cases.append((wrong_tail, r"active_mode"))
+
+        bad_sequence = reconstruction_contract_case()
+        bad_sequence["states"][0]["domain_entities"][-1]["payload"]["history"][0][
+            "sequence"
+        ] = 2
+        cases.append((bad_sequence, r"history"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+    def test_reconstruction_rejects_dangling_duplicate_and_cross_group_endpoints(self):
+        duplicate = reconstruction_contract_case()
+        duplicate["states"][0]["domain_entities"][-1]["payload"][
+            "reconstructed_transaction_ids"
+        ].append("transaction-recharge")
+        self.assertTrue(schema_errors(duplicate))
+
+        cases = []
+        dangling = reconstruction_contract_case()
+        dangling["states"][0]["domain_entities"][-1]["payload"][
+            "reconstructed_transaction_ids"
+        ][0] = "missing-transaction"
+        dangling["states"][0]["audit_links"][-1]["to"]["id"] = "missing-transaction"
+        cases.append((dangling, r"reconstructed_transaction_ids"))
+
+        cross_group = reconstruction_contract_case()
+        state = cross_group["states"][0]
+        other = deepcopy(state["domain_entities"][-1])
+        other["id"] = "reconstruction-group-other"
+        other["payload"]["history"][0]["id"] = "reconstruction-other-history-1"
+        state["domain_entities"].append(other)
+        cases.append((cross_group, r"reconstruction group|reconstructed_transaction_ids"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+        for activation_before_reconstruction in (True, False):
+            invalid = cross_group_adjustment_endpoint_case(
+                activation_before_reconstruction
+            )
+            with self.subTest(
+                activation_before_reconstruction=activation_before_reconstruction
+            ):
+                with self.assertRaisesRegex(
+                    GoldenCaseError,
+                    r"activation adjustment transaction|reconstructed_transaction_ids",
+                ):
+                    validate_contract_state(invalid)
+
+    def test_reconstruction_history_instants_are_strictly_increasing(self):
+        cases = []
+        same_instant = replace_timestamp_offset(
+            reconstruction_contract_case(), "+08:00", "+00:00"
+        )
+        same_instant["case"]["timezone"] = "UTC"
+        payload = same_instant["states"][0]["domain_entities"][-1]["payload"]
+        payload["active_mode"] = "reconstructed"
+        payload["history"].append(
+            {
+                "id": "reconstruction-history-2",
+                "sequence": 2,
+                "active_mode": "reconstructed",
+                "confirmed_at": "2026-01-14T00:30:00Z",
+            }
+        )
+        cases.append(same_instant)
+
+        reversed_instant = deepcopy(same_instant)
+        reversed_instant["states"][0]["domain_entities"][-1]["payload"][
+            "history"
+        ][-1]["confirmed_at"] = "2026-01-14T00:29:59Z"
+        cases.append(reversed_instant)
+
+        for invalid in cases:
+            with self.subTest(
+                confirmed_at=invalid["states"][0]["domain_entities"][-1][
+                    "payload"
+                ]["history"][-1]["confirmed_at"]
+            ):
+                with self.assertRaisesRegex(
+                    GoldenCaseError,
+                    r"confirmed_at.*strictly later",
+                ):
+                    validate_contract_state(invalid)
+
+    def test_reconstruction_audit_links_exactly_cover_typed_endpoints(self):
+        cases = []
+        missing = reconstruction_contract_case()
+        missing["states"][0]["audit_links"].pop()
+        cases.append((missing, r"audit_links"))
+
+        wrong_adjustment_kind = reconstruction_contract_case()
+        wrong_adjustment_kind["states"][0]["audit_links"][0]["to"]["kind"] = (
+            "transaction"
+        )
+        wrong_adjustment_kind["states"][0]["audit_links"][0]["to"]["id"] = (
+            "transaction-activation-adjustment"
+        )
+        cases.append((wrong_adjustment_kind, r"audit_links\[0\]\.to"))
+
+        cross_endpoint = reconstruction_contract_case()
+        add_second_rg10_recharge(cross_endpoint)
+        cross_endpoint["states"][0]["audit_links"][-1]["to"]["id"] = (
+            "transaction-recharge-other"
+        )
+        cases.append((cross_endpoint, r"audit target|audit_links"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+    def test_reconstruction_history_is_append_only_and_drives_mode_changes(self):
+        baseline = reconstruction_contract_case()["states"][0]
+        result = deepcopy(baseline)
+        payload = result["domain_entities"][-1]["payload"]
+        payload["active_mode"] = "reconstructed"
+        payload["history"].append(
+            {
+                "id": "reconstruction-history-2",
+                "sequence": 2,
+                "active_mode": "reconstructed",
+                "confirmed_at": "2026-01-15T09:00:00+08:00",
+            }
+        )
+        golden_v2._validate_append_only_transition(baseline, result, "$.operation")
+
+        rewritten = deepcopy(result)
+        rewritten["domain_entities"][-1]["payload"]["history"][0][
+            "confirmed_at"
+        ] = "2026-01-14T09:00:00+08:00"
+        with self.assertRaisesRegex(GoldenCaseError, r"history.*prefix"):
+            golden_v2._validate_append_only_transition(
+                baseline, rewritten, "$.operation"
+            )
+
+        mode_without_history = deepcopy(baseline)
+        mode_without_history["domain_entities"][-1]["payload"]["active_mode"] = (
+            "reconstructed"
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"history|active_mode"):
+            golden_v2._validate_append_only_transition(
+                baseline, mode_without_history, "$.operation"
+            )
 
     def test_merchant_credit_uses_two_independent_links(self):
         case = rg10_contract_case()

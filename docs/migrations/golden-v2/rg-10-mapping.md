@@ -2,15 +2,15 @@
 
 ## Authority
 
-This path map is governed by the frozen RG-10 fixture, stored-value design, Golden Schema v2, accounting rules, golden tests, and D-034, D-035, D-036, D-037, D-043, D-044, D-050, and D-066. It records the approved catalog foundation amendment but authorizes no adapter, expected output, or fixture rewrite.
+This path map is governed by the frozen RG-10 fixture, stored-value design, Golden Schema v2, accounting rules, golden tests, and D-034, D-035, D-036, D-037, D-043, D-044, D-047, D-050, D-063, D-064, D-066, and D-067. It records the approved catalog and reconstruction domain foundation amendments but authorizes no adapter, expected output, fixture rewrite, reconstruction operation, or replay switch.
 
 ## Inventory
 
 - normalized paths: 1161
 - leaf occurrences: 2022
 - classified/unclassified: 1161/0
-- classifications: map 660, derive 491, preserve 9, reject 1
-- dispositions: requires_contract_amendment 863, ready 297, test_only_exclusion 1
+- classifications: map 662, derive 489, preserve 9, reject 1
+- dispositions: requires_contract_amendment 861, ready 299, test_only_exclusion 1
 
 ## Frozen Semantics
 
@@ -18,7 +18,9 @@ Recharge is stored_value_recharge: stored-value asset +1200.00, payment bank ass
 
 Lots retain stable IDs, face value, explicit paid/bonus facts, and loaded/expiry ordering. Merchant allocation overrides expiry, loaded_at, stable-ID ordering only with evidence. Consumption records lot amount and evidence; missing composition remains unknown and never becomes paid-first or bonus-first. Expiry needs explicit confirmation and only affects confirmed remaining value. Dates, reminders, and status labels have zero formal effect.
 
-The activation boundary is stored_value_pre_activation_balance_adjustment, not recharge or ordinary income. Reconstruction is replace_not_append: adjustment or reconstructed history is effective, never both; adjustments, versions, and provenance remain append-only. Renaming an account or lot retains stable IDs and has zero economic and reconciliation effect.
+The activation boundary is stored_value_pre_activation_balance_adjustment, not recharge or ordinary income. The closed activation_adjustment domain entity binds that transaction identity. The closed stored_value_reconstruction domain entity owns the original adjustment endpoint, a unique reconstructed transaction ID set, active_mode, and append-only mode history; its stable entity ID owns replacement_group_id. Typed empty-payload audit links exactly cover the adjustment and reconstructed transaction endpoints. Relations remain closed and own no lifecycle or business state.
+
+The frozen reconstruction policy is replace_not_append: adjustment or reconstructed history is effective, never both, and both endpoint histories remain preserved. This batch validates domain identity, endpoint uniqueness and typing, active-mode history, and append-only state transitions only. Current formal replay does not select postings by active_mode, and no reconstruction operation or fixture transition is registered, so economic exclusivity and operation-level preservation remain RG10-GAP-04.
 
 Merchant credit uses two independent typed links: target_kind=posting, target_id=stored-value asset posting, role=stored_value_asset_posting; and target_kind=domain_entity, target_id=stored_value_lot, role=stored_value_lot_fact. The posting link can reconcile; the lot link proves only the lot fact. Bank evidence remains target_kind=posting with role=bank_payment_posting. The old mixed stored_value_credit_lot link is never emitted. Legacy not_present/not_applicable reconciliation maps to no posting_reconciliations record. Activation evidence targets the activation_adjustment domain entity with role=stored_value_activation_balance_fact; it never targets the adjustment transaction or a posting. Bonus-component and expiry-confirmation evidence remain in their dedicated contract gap until exact domain roles and targets are registered; neither is aliased to stored_value_lot_fact.
 
@@ -50,10 +52,10 @@ Every retry retains its originating action_type and operation_class, returns the
 
 ## Unresolved Gaps
 
-1. RG10-GAP-01: Closed RG-10 stored-value action family and atomic operation outcomes (527 affected paths)
+1. RG10-GAP-01: Closed RG-10 stored-value action family and atomic operation outcomes (521 affected paths)
 2. RG10-GAP-02: Stored-value lot, consumption, allocation, and expiry lifecycle payloads (75 affected paths)
 3. RG10-GAP-03: Stored-value import source, candidate, confirmation, and provenance payloads (109 affected paths)
-4. RG10-GAP-04: Activation boundary and replace-not-append reconstruction semantics (136 affected paths)
+4. RG10-GAP-04: Activation boundary operations, replay exclusivity, and replace-not-append transitions (140 affected paths). Domain identity and audit topology are executable; fixture migration, reconstructed transaction creation, replay owner selection, atomic rejection, and complete operation transitions remain gated.
 5. RG10-GAP-05: Category parent identity migration (1 affected path). Stored-value configuration and system roles are now ready. The remaining numeric level path cannot map until an explicit sanitized parent identity is supplied; it must not be inferred.
 6. RG10-GAP-06: Bonus-component and expiry-confirmation evidence roles and domain targets (15 affected paths)
 
