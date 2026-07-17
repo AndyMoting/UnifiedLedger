@@ -5,8 +5,8 @@
   "source": "golden/rules/rg-02.json",
   "source_schema_version": 1,
   "target_contract_version": "2.0.0",
-  "status": "needs_contract_amendment",
-  "expected_output_gate": "closed",
+  "status": "approved",
+  "expected_output_gate": "completed",
   "normalization": {
     "root": "$",
     "object_member": ".key",
@@ -25,89 +25,11 @@
     "reject": 1
   },
   "disposition_counts": {
-    "ready": 111,
-    "requires_contract_amendment": 42,
+    "ready": 153,
     "test_only_exclusion": 1
   },
-  "contract_gap_count": 3,
-  "unresolved_contract_gaps": [
-    {
-      "id": "RG02-GAP-01",
-      "title": "Registered manual-income operation and outcome-specific inputs",
-      "status": "unresolved",
-      "capability_boundary": "The v2 operation registry has no manual_income action, strict accepted/no_change input, or closed sparse rejected input using receiving_account_id.",
-      "required_change": "Register creation and rejection forms of manual_income, define strict accepted/no_change and sparse attempted inputs, preserve optional note absence for variants, and validate income-specific category and receiving-account rules.",
-      "risk": "Reusing manual_expense would invert account semantics and field names; open input objects would weaken the closed contract.",
-      "affected_source_paths": [
-        "$.create.expected.accepted",
-        "$.create.request.amount",
-        "$.create.request.category_id",
-        "$.create.request.currency",
-        "$.create.request.kind",
-        "$.create.request.note",
-        "$.create.request.occurred_at",
-        "$.create.request.receiving_account_id",
-        "$.create.request.request_id",
-        "$.idempotency.repeated_request_id",
-        "$.invalid_inputs[*].expected.accepted",
-        "$.invalid_inputs[*].expected.field",
-        "$.invalid_inputs[*].expected.new_posting_count",
-        "$.invalid_inputs[*].expected.new_transaction_count",
-        "$.invalid_inputs[*].expected.new_version_count",
-        "$.invalid_inputs[*].expected.reason",
-        "$.invalid_inputs[*].expected.reconciliation_change_count",
-        "$.invalid_inputs[*].expected.state_unchanged",
-        "$.invalid_inputs[*].id",
-        "$.invalid_inputs[*].input.amount",
-        "$.invalid_inputs[*].input.category_id",
-        "$.invalid_inputs[*].input.receiving_account_id",
-        "$.variants[*].expected.accepted",
-        "$.variants[*].request.amount",
-        "$.variants[*].request.category_id",
-        "$.variants[*].request.currency",
-        "$.variants[*].request.kind",
-        "$.variants[*].request.occurred_at",
-        "$.variants[*].request.receiving_account_id",
-        "$.variants[*].request.request_id"
-      ]
-    },
-    {
-      "id": "RG02-GAP-02",
-      "title": "Canonical ordinary-income posting roles",
-      "status": "unresolved",
-      "capability_boundary": "The transaction registry includes income, but the posting-role registry lacks its income-classification and receiving-real-account legs.",
-      "required_change": "Register a closed ordinary-income posting-role pair: a negative income-category leg and a positive receiving owned-real-account leg.",
-      "risk": "Absent roles violate the non-opening role requirement; transfer or lending roles would misclassify reports and reconciliation.",
-      "affected_source_paths": [
-        "$.create.expected.transaction.postings[*].account_id",
-        "$.create.request.category_id",
-        "$.create.request.receiving_account_id",
-        "$.variants[*].expected.transaction.postings[*].account_id",
-        "$.variants[*].request.category_id",
-        "$.variants[*].request.receiving_account_id"
-      ]
-    },
-    {
-      "id": "RG02-GAP-03",
-      "title": "Category rename operation with preserved catalog history",
-      "status": "unresolved",
-      "capability_boundary": "Complete states can carry old and new names, but the operation registry has no category-rename action or closed input explaining the transition, and the catalog has no closed category-name history records for the frozen version/status facts.",
-      "required_change": "Register category_rename with category_id, new_name, and explicit confirmation; add closed category_name_history records with category_id, name, version, and status; validate that only catalog naming/history changes and financial state remains unchanged.",
-      "risk": "A transaction update would create false ledger history; silent replacement would lose the frozen old-to-new audit evidence.",
-      "affected_source_paths": [
-        "$.category_rename.expected.category_id",
-        "$.category_rename.expected.current_name",
-        "$.category_rename.expected.display_path",
-        "$.category_rename.expected.name_versions[*].name",
-        "$.category_rename.expected.name_versions[*].status",
-        "$.category_rename.expected.name_versions[*].version",
-        "$.category_rename.expected.posting_account_id",
-        "$.category_rename.expected.transaction_category_id",
-        "$.category_rename.request.category_id",
-        "$.category_rename.request.new_name"
-      ]
-    }
-  ],
+  "contract_gap_count": 0,
+  "unresolved_contract_gaps": [],
   "entries": [
     {
       "source_path": "$.case.currency",
@@ -416,15 +338,13 @@
       "classification": "map",
       "target_paths": [
         "$.states[*].catalog.categories[*].id",
-        "$.planned_contract.states[*].catalog.category_name_history[*].category_id"
+        "$.states[*].catalog.category_name_history[*].category_id"
       ],
       "transform": "Preserve the stable category ID in the pre-rename and post-rename catalog snapshots owned by complete states.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The rename changes category naming only; the category's v2 identity field is id, not category_id.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.current_name",
@@ -438,11 +358,9 @@
       ],
       "transform": "Map the final name to the renamed category's name in the post-operation complete-state catalog.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current display name is a catalog fact; GAP-03 must register the operation that produced it.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "disposition": "ready",
+      "rationale": "The current display name is a catalog fact; The implemented category_rename contract registers the operation that produced it.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.display_path",
@@ -457,11 +375,9 @@
       ],
       "transform": "Derive the display path from the renamed category name and its parent_id-linked parent name; do not serialize it as a closed derived status.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "Display paths are catalog projections, while the current derived-status registry is limited to registered business statuses.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.evidence_refs",
@@ -505,15 +421,13 @@
       "classification": "map",
       "target_paths": [
         "$.states[*].catalog.categories[*].name",
-        "$.planned_contract.states[*].catalog.category_name_history[*].name"
+        "$.states[*].catalog.category_name_history[*].name"
       ],
-      "transform": "Preserve old and new names in the corresponding complete-state catalogs and in GAP-03's planned closed category_name_history records.",
+      "transform": "Preserve old and new names in the corresponding complete-state catalogs and in closed category_name_history records.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "State snapshots show the transition, but explicit ordered name history requires the GAP-03 catalog-history amendment.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "disposition": "ready",
+      "rationale": "State snapshots show the transition, but explicit ordered name history requires the implemented category-name-history owner.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.name_versions[*].status",
@@ -523,15 +437,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.category_name_history[*].status"
+        "$.states[*].catalog.category_name_history[*].status"
       ],
-      "transform": "Map superseded/current only to GAP-03's planned category-name-history status field; never map it to operation outcome status.",
+      "transform": "Map superseded/current only to category-name-history status field; never map it to operation outcome status.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "Category-name lifecycle status is distinct from an operation's accepted/no_change/rejected outcome.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.name_versions[*].version",
@@ -541,15 +453,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.category_name_history[*].version"
+        "$.states[*].catalog.category_name_history[*].version"
       ],
-      "transform": "Map each category-name version only to GAP-03's planned category_name_history version field; never reuse operation sequence.",
+      "transform": "Map each category-name version only to category_name_history version field; never reuse operation sequence.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "Category-name version order is an independent catalog-history sequence, not operation ordering.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.posting_account_id",
@@ -563,11 +473,9 @@
       ],
       "transform": "Preserve the category-to-posting-account binding across pre-rename and post-rename complete-state catalogs.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "A category rename must not alter the hidden income account that owns its formal postings.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.reconciliation.posting-bank-rg02",
@@ -786,11 +694,9 @@
       ],
       "transform": "Verify the transaction's stable category association by joining the income posting account_id to the category's unchanged posting_account_id and stable id; do not serialize a derived status.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The closed ledger stores the posting account and catalog binding; category identity follows that legal relationship, not the derived-status registry.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.expected.transaction_version_count",
@@ -818,13 +724,11 @@
       "target_paths": [
         "$.operations[*].input.category_id"
       ],
-      "transform": "Map the stable target category ID to the planned category_rename operation's closed category_id input.",
+      "transform": "Map the stable target category ID to the category_rename operation's closed category_id input.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "GAP-03 must register the exact category identity being renamed without changing financial ownership.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "disposition": "ready",
+      "rationale": "The implemented category_rename contract registers the exact category identity being renamed without changing financial ownership.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.category_rename.request.new_name",
@@ -836,13 +740,11 @@
       "target_paths": [
         "$.operations[*].input.new_name"
       ],
-      "transform": "Map the submitted replacement name to the planned category_rename operation's closed new_name input.",
+      "transform": "Map the submitted replacement name to the category_rename operation's closed new_name input.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "GAP-03 must preserve the authored rename input that explains the catalog transition.",
-      "contract_gap_ids": [
-        "RG02-GAP-03"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.candidate",
@@ -908,11 +810,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.expected.balances.asset-bank-a",
@@ -1250,11 +1150,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.expected.transaction.postings[*].amount",
@@ -1319,11 +1217,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.category_id",
@@ -1337,12 +1233,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01",
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.currency",
@@ -1356,11 +1249,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.kind",
@@ -1374,11 +1265,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.note",
@@ -1392,11 +1281,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.occurred_at",
@@ -1411,13 +1298,11 @@
         "$.states[*].transaction_versions[*].statistics_at",
         "$.states[*].transaction_versions[*].effective_at"
       ],
-      "transform": "Preserve the exact text in the pending manual-income input and apply the approved RG-02 path-specific expansion to occurred_at, statistics_at, and effective_at; never derive created_at or confirmed_at.",
+      "transform": "Preserve the exact text in the manual-income input and apply the approved RG-02 path-specific expansion to occurred_at, statistics_at, and effective_at; never derive created_at or confirmed_at.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The time expansion is approved, but serializing this accepted request still depends on the unresolved manual-income operation contract.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "disposition": "ready",
+      "rationale": "The approved time expansion is owned by the implemented closed manual-income operation contract.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.receiving_account_id",
@@ -1431,12 +1316,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01",
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.create.request.request_id",
@@ -1453,11 +1335,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.forbidden_side_effects[*]",
@@ -1803,11 +1683,9 @@
       ],
       "transform": "Represent retry as a no_change manual-income operation and recompute the unchanged complete state and exhaustive zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The same request returns the existing transaction and cannot duplicate financial effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.accepted",
@@ -1821,11 +1699,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.field",
@@ -1839,11 +1715,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.new_posting_count",
@@ -1859,11 +1733,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.new_transaction_count",
@@ -1879,11 +1751,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.new_version_count",
@@ -1899,11 +1769,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.reason",
@@ -1917,11 +1785,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.reconciliation_change_count",
@@ -1937,11 +1803,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].expected.state_unchanged",
@@ -1957,11 +1821,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].id",
@@ -1978,11 +1840,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].input.amount",
@@ -1997,11 +1857,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].input.category_id",
@@ -2016,11 +1874,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.invalid_inputs[*].input.receiving_account_id",
@@ -2035,11 +1891,9 @@
       ],
       "transform": "Map each invalid-case occurrence to an independent rejected operation with its closed sparse attempted input, unchanged complete state, and zero deltas.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The attempted facts and atomic rejection must remain testable without creating formal ledger effects.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.opening.expected_balances.asset-bank-a",
@@ -2260,11 +2114,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].expected.balances.asset-bank-a",
@@ -2584,11 +2436,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].expected.transaction.postings[*].amount",
@@ -2671,11 +2521,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.category_id",
@@ -2689,12 +2537,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01",
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.currency",
@@ -2708,11 +2553,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.kind",
@@ -2726,11 +2569,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.occurred_at",
@@ -2745,13 +2586,11 @@
         "$.states[*].transaction_versions[*].statistics_at",
         "$.states[*].transaction_versions[*].effective_at"
       ],
-      "transform": "Preserve each exact text in the pending manual-income input and apply the approved RG-02 path-specific expansion to occurred_at, statistics_at, and effective_at; never derive created_at or confirmed_at.",
+      "transform": "Preserve each exact text in the manual-income input and apply the approved RG-02 path-specific expansion to occurred_at, statistics_at, and effective_at; never derive created_at or confirmed_at.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The time expansion is approved, but serializing these accepted requests still depends on the unresolved manual-income operation contract.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "disposition": "ready",
+      "rationale": "The approved time expansion is owned by the implemented closed manual-income operation contract.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.receiving_account_id",
@@ -2765,12 +2604,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01",
-        "RG02-GAP-02"
-      ]
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.variants[*].request.request_id",
@@ -2787,11 +2623,9 @@
       ],
       "transform": "Map submitted facts into an independent accepted manual-income operation; preserve authored formal identities and postings and recompute canonical state projections.",
       "authority": "RG-02 frozen design and fixture; RG-02 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "disposition": "requires_contract_amendment",
+      "disposition": "ready",
       "rationale": "The main case and two variants are explicitly confirmed income operations in independent roots.",
-      "contract_gap_ids": [
-        "RG02-GAP-01"
-      ]
+      "contract_gap_ids": []
     }
   ]
 }

@@ -13,6 +13,30 @@
     "states": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/state"}},
     "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "case": {
+            "properties": {"id": {"const": "RG-02"}},
+            "required": ["id"]
+          }
+        },
+        "required": ["case"]
+      },
+      "then": {
+        "properties": {
+          "states": {
+            "items": {
+              "properties": {
+                "catalog": {"required": ["category_name_history"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": {
       "type": "string",
@@ -149,7 +173,11 @@
       "required": ["accounts", "categories"],
       "properties": {
         "accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
-        "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}}
+        "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}},
+        "category_name_history": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/categoryNameHistory"}
+        }
       }
     },
     "account": {
@@ -197,6 +225,17 @@
         "parent_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
         "posting_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
         "active": {"type": "boolean"}
+      }
+    },
+    "categoryNameHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category_id", "name", "version", "status"],
+      "properties": {
+        "category_id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string"},
+        "version": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["superseded", "current"]}
       }
     },
     "transaction": {
@@ -262,7 +301,8 @@
         "currency": {"type": "string", "minLength": 1},
         "role": {
           "enum": [
-            "expense", "payment_asset", "transfer_principal_in", "transfer_principal_out",
+            "expense", "payment_asset", "income_classification", "receiving_asset",
+            "transfer_principal_in", "transfer_principal_out",
             "transfer_fee", "destination_asset", "funding_asset", "bank_payment",
             "lending_receivable", "lending_principal_in", "lending_principal_out",
             "lending_interest", "lending_fee", "balance_adjustment_target",
@@ -1147,6 +1187,49 @@
         "explicit_confirmation": {"type": "boolean"}
       }
     },
+    "manualIncomeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "amount", "currency", "category_id", "receiving_account_id",
+        "occurred_at", "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "category_id": {"$ref": "#/$defs/id"},
+        "receiving_account_id": {"$ref": "#/$defs/id"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "note": {"type": "string"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "manualIncomeAttemptedInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "currency": {"type": "string", "minLength": 1},
+        "category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "receiving_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "note": {"type": "string"},
+        "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "categoryRenameInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category_id", "new_name", "explicit_confirmation"],
+      "properties": {
+        "category_id": {"$ref": "#/$defs/id"},
+        "new_name": {"type": "string", "minLength": 1},
+        "explicit_confirmation": {"const": true}
+      }
+    },
     "transactionNoteUpdateInput": {
       "type": "object",
       "additionalProperties": false,
@@ -1618,7 +1701,8 @@
         },
         "action_type": {
           "enum": [
-            "manual_expense", "transaction_note_update", "preview_target_balance",
+            "manual_expense", "manual_income", "category_rename",
+            "transaction_note_update", "preview_target_balance",
             "confirm_balance_adjustment", "confirm_real_transfer", "confirm_explanation_allocation",
             "confirm_stored_value_recharge", "confirm_stored_value_spend",
             "ingest_stored_value_recharge_candidate", "ingest_stored_value_spend_candidate",
@@ -1648,6 +1732,36 @@
               "properties": {
                 "action_type": {"const": "manual_expense"},
                 "operation_class": {"const": "creation"},
+                "outcome": {
+                  "properties": {"status": {"enum": ["accepted", "no_change"]}},
+                  "required": ["status"]
+                }
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "manual_income"},
+                "operation_class": {"const": "creation"},
+                "outcome": {
+                  "properties": {"status": {"enum": ["accepted", "no_change"]}},
+                  "required": ["status"]
+                }
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "manual_income"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {
+                  "properties": {"status": {"const": "rejected"}},
+                  "required": ["status"]
+                }
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "category_rename"},
+                "operation_class": {"const": "update"},
                 "outcome": {
                   "properties": {"status": {"enum": ["accepted", "no_change"]}},
                   "required": ["status"]
@@ -1884,6 +1998,33 @@
             "required": ["action_type", "outcome"]
           },
           "then": {"properties": {"input": {"$ref": "#/$defs/manualExpenseInput"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {"const": "manual_income"},
+              "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]}
+            },
+            "required": ["action_type", "outcome"]
+          },
+          "then": {"properties": {"attempted_input": {"$ref": "#/$defs/manualIncomeAttemptedInput"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {"const": "manual_income"},
+              "outcome": {
+                "properties": {"status": {"enum": ["accepted", "no_change"]}},
+                "required": ["status"]
+              }
+            },
+            "required": ["action_type", "outcome"]
+          },
+          "then": {"properties": {"input": {"$ref": "#/$defs/manualIncomeInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "category_rename"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/categoryRenameInput"}}}
         },
         {
           "if": {"properties": {"action_type": {"const": "transaction_note_update"}}, "required": ["action_type"]},

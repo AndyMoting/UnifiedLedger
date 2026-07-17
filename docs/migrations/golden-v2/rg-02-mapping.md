@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-02.json`、`docs/specs/2026-07-14-rg-02-normal-income-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md` 与 `docs/GOLDEN_SCHEMA.md` 约束。它只定义 RG-02 v1 到 v2 的逐路径迁移，不授权 adapter、fixture rewrite 或 expected output 生成。
+本映射受 `golden/rules/rg-02.json`、`docs/specs/2026-07-14-rg-02-normal-income-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md` 与 `docs/GOLDEN_SCHEMA.md` 约束。它定义 RG-02 v1 到 v2 的逐路径迁移，并生成静态完整产物 `docs/migrations/golden-v2/rg-02-expected.json` 供独立复审；不授权 adapter 或 v1 fixture rewrite。
 
 ## Inventory
 
@@ -12,7 +12,7 @@
 - leaf occurrences: `368`
 - classified/unclassified: `154/0`
 - classifications: `map 56`, `preserve 22`, `derive 75`, `reject 1`
-- dispositions: `ready 111`, `requires_contract_amendment 42`, `test_only_exclusion 1`
+- dispositions: `ready 153`, `requires_contract_amendment 0`, `test_only_exclusion 1`
 
 ## Section Mapping
 
@@ -22,7 +22,7 @@
 | `catalog` | every complete state's account/category catalog |
 | `opening` | opening transaction, version, posting set, postings, and replayed balances |
 | `create` | accepted manual-income operation, confirmation, formal income chain, projections, and reconciliation |
-| `category_rename` | catalog transition between complete states; display path and transaction category association derive from legal catalog/posting facts; explicit name history remains a GAP-03 planned contract |
+| `category_rename` | closed update operation plus catalog transition between complete states; display path and transaction category association derive from legal catalog/posting facts; closed `category_name_history` records preserve every name version |
 | `idempotency` | no-change retry over the original request and unchanged complete state |
 | `invalid_inputs` | independent rejected operations with sparse attempted input and zero deltas |
 | `variants` | independent accepted manual-income roots using the same formal and projection rules |
@@ -38,16 +38,18 @@ The v1 `schema_version` is a source-dialect discriminator. It maps to the requir
 
 For every income classification posting, v1 `reconciliation_status="not_applicable"` maps to `postings[*].reconciliation_eligible=false` and canonical absence from `posting_reconciliations`. Only receiving owned-real-account postings receive a posting-reconciliation record. No `not_applicable` status token is serialized.
 
-## Unresolved Gaps
+## Closed Contract Owners
 
-1. `RG02-GAP-01` (`manual_income`): register strict accepted/no-change input and closed sparse rejected attempted input using `receiving_account_id`, including income-category validation.
-2. `RG02-GAP-02` (income posting roles): register the negative income-classification leg and positive receiving owned-real-account leg.
-3. `RG02-GAP-03` (`category_rename`): register a closed rename operation and closed `category_name_history` records containing `category_id`, `name`, `version`, and `status`, without creating financial changes. Name-history status/version are not operation outcome/sequence fields; the map names their future owner under `$.planned_contract.states[*].catalog.category_name_history[*]`.
+1. `RG02-GAP-01` is closed by strict accepted/no-change `manual_income` input, closed sparse rejected attempted input using `receiving_account_id`, and income-specific category/account validation.
+2. `RG02-GAP-02` is closed by the exact `income_classification` negative leg and `receiving_asset` positive owned-real-account leg, including receiving-posting-only reconciliation.
+3. `RG02-GAP-03` is closed by the `category_rename` operation and `states[*].catalog.category_name_history[*]` records containing `category_id`, `name`, `version`, and `status`. Rename changes only the category name/history and produces zero financial, report, or reconciliation effects.
+
+The static expected output contains the opening/main chain, category rename, idempotent retry, eight independent invalid-input roots, and both independent accepted variants. Every complete state is schema-valid and passes the complete semantic validator; all generated migration IDs are reproducible from normalized source locators and stable occurrence discriminators.
 
 ## Gate
 
-- status: `needs_contract_amendment`
-- expected output gate: `closed`
-- unresolved gap count: `3`
+- status: `approved`
+- expected output gate: `completed`
+- unresolved gap count: `0`
 
-Expected v2 output remains closed until all three gaps are approved and implemented. The RG-02 collapsed-time decision is already closed and is not an unresolved gap.
+All three approved amendments are implemented and the contract gap count is zero. The expected output passed independent review and received explicit user approval, so its approval status is `approved` and the expected-output gate is `completed`. The RG-02 collapsed-time decision remains path-specific: each frozen economic timestamp expands only to `occurred_at`, `statistics_at`, and `effective_at`.

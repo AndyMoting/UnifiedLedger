@@ -121,6 +121,17 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "confirmations": (1, 0, 0),
         "posting_reconciliations": (1, 0, 0),
     },
+    "manual_income": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "category_rename": {
+        "catalog_categories": (0, 1, 0),
+    },
     "transaction_note_update": {
         "transactions": (0, 1, 0),
         "transaction_versions": (1, 0, 0),
@@ -707,6 +718,46 @@ def _validate_catalog(
                 category_path + ".posting_account_id",
                 "category posting accounts must be expense or income accounts",
             )
+
+    if "category_name_history" in state["catalog"]:
+        histories = state["catalog"]["category_name_history"]
+        _unique_compound(
+            histories,
+            path + ".catalog.category_name_history",
+            ("category_id", "version"),
+        )
+        by_category: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for index, history in enumerate(histories):
+            history_path = f"{path}.catalog.category_name_history[{index}]"
+            if history["category_id"] not in categories:
+                _fail(history_path + ".category_id", "dangling category reference")
+            by_category[history["category_id"]].append(history)
+        if set(by_category) != set(categories):
+            _fail(
+                path + ".catalog.category_name_history",
+                "must exactly cover every catalog category",
+            )
+        for category_id, records in by_category.items():
+            ordered = sorted(records, key=lambda item: item["version"])
+            versions = [item["version"] for item in ordered]
+            if versions != list(range(1, len(ordered) + 1)):
+                _fail(
+                    path + ".catalog.category_name_history",
+                    f"category {category_id!r} name versions must be consecutive from 1",
+                )
+            if [item["status"] for item in ordered] != [
+                *(["superseded"] * (len(ordered) - 1)),
+                "current",
+            ]:
+                _fail(
+                    path + ".catalog.category_name_history",
+                    f"category {category_id!r} must have exactly one final current name",
+                )
+            if categories[category_id]["name"] != ordered[-1]["name"]:
+                _fail(
+                    path + ".catalog.category_name_history",
+                    f"category {category_id!r} name must match its current history record",
+                )
 
 
 def _validate_formal_ledger(
@@ -1837,8 +1888,30 @@ def _validate_reports(
     precisions: dict[str, int],
 ) -> None:
     _unique_compound(state["reports"], path + ".reports", ("period_type", "period"))
+    if case_id == "RG-02":
+        report_keys = {(item["period_type"], item["period"]) for item in state["reports"]}
+        day_periods = [period for period_type, period in report_keys if period_type == "day"]
+        month_periods = [period for period_type, period in report_keys if period_type == "month"]
+        if (
+            len(report_keys) != 2
+            or len(day_periods) != 1
+            or len(month_periods) != 1
+            or month_periods[0] != day_periods[0][:7]
+        ):
+            _fail(
+                path + ".reports",
+                "RG-02 requires exactly one matching day and month report",
+            )
     expected_metric_sets = {
         "RG-01": {"cash_outflow", "consumption", "income", "net_worth_change", "budget"},
+        "RG-02": {
+            "budget",
+            "cash_inflow",
+            "cash_outflow",
+            "consumption",
+            "income",
+            "net_worth_change",
+        },
         "RG-09": {
             "balance_adjustment_net_worth_change",
             "budget",
@@ -1861,7 +1934,9 @@ def _validate_reports(
         for metric_index, metric in enumerate(report["metrics"]):
             metric_path = f"{report_path}.metrics[{metric_index}]"
             expected_applicability = (
-                "not_applicable" if case_id == "RG-01" and metric["metric"] == "budget" else "applicable"
+                "not_applicable"
+                if case_id in {"RG-01", "RG-02"} and metric["metric"] == "budget"
+                else "applicable"
             )
             if metric["applicability"] != expected_applicability:
                 _fail(metric_path + ".applicability", f"must be {expected_applicability}")
@@ -2264,6 +2339,74 @@ def _validate_rejected_manual_expense_attempt(
         )
 
 
+def _validate_rejected_manual_income_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+
+    account_id = attempted.get("receiving_account_id")
+    account = accounts.get(account_id) if account_id is not None else None
+    if account_id is not None and account is None:
+        _fail(attempted_path + ".receiving_account_id", "dangling account reference")
+    category_id = attempted.get("category_id")
+    category = categories.get(category_id) if category_id is not None else None
+    if category_id is not None and category is None:
+        _fail(attempted_path + ".category_id", "dangling category reference")
+
+    currency = attempted.get("currency")
+    amount = attempted.get("amount")
+    if currency is not None:
+        if currency not in precisions:
+            _fail(attempted_path + ".currency", "undeclared currency")
+        if amount is not None:
+            _attempted_amount(amount, currency, attempted_path + ".amount", precisions)
+    if "occurred_at" in attempted:
+        _timestamp(attempted["occurred_at"], attempted_path + ".occurred_at", timezone)
+
+    if amount is None:
+        failure = ("amount", "required")
+    elif Decimal(amount) <= 0:
+        failure = ("amount", "must_be_positive")
+    elif account_id is None:
+        failure = ("receiving_account_id", "required")
+    elif category_id is None:
+        failure = ("category_id", "required")
+    elif category is not None and category["parent_id"] is None:
+        failure = ("category_id", "secondary_category_required")
+    elif category is not None and not category["active"]:
+        failure = ("category_id", "category_inactive")
+    elif category is not None and (
+        category["posting_account_id"] is None
+        or accounts[category["posting_account_id"]]["kind"] != "income"
+    ):
+        failure = ("category_id", "income_category_required")
+    else:
+        _fail(
+            attempted_path,
+            "does not match a registered rejected manual_income failure",
+        )
+
+    field, reason = failure
+    outcome = operation["outcome"]
+    if outcome["field_path"] != f"$.attempted_input.{field}":
+        _fail(
+            operation_path + ".outcome.field_path",
+            f"must identify {field!r} as the first failing attempted field",
+        )
+    if outcome["reason_code"] != reason:
+        _fail(
+            operation_path + ".outcome.reason_code",
+            f"must be {reason!r} for the first failing attempted field",
+        )
+
+
 def _validate_rg10_structural_input(
     input_value: dict[str, Any],
     input_path: str,
@@ -2499,6 +2642,10 @@ def _validate_action_input(
             _validate_rejected_manual_expense_attempt(
                 operation, operation_path, baseline, precisions, timezone
             )
+        elif action == "manual_income":
+            _validate_rejected_manual_income_attempt(
+                operation, operation_path, baseline, precisions, timezone
+            )
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
                 operation,
@@ -2518,13 +2665,16 @@ def _validate_action_input(
     candidates = {item["id"]: item for item in baseline["candidates"]}
     entities = {item["id"]: item for item in baseline["domain_entities"]}
 
-    if action == "manual_expense":
+    if action in {"manual_expense", "manual_income"}:
         category = categories.get(input_value["category_id"])
         if category is None:
             _fail(input_path + ".category_id", "dangling category reference")
-        payment_account = accounts.get(input_value["payment_account_id"])
+        account_field = (
+            "payment_account_id" if action == "manual_expense" else "receiving_account_id"
+        )
+        payment_account = accounts.get(input_value[account_field])
         if payment_account is None:
-            _fail(input_path + ".payment_account_id", "dangling account reference")
+            _fail(input_path + f".{account_field}", "dangling account reference")
         posting_account = accounts.get(category["posting_account_id"])
         if payment_account["currency"] != input_value["currency"] or (
             posting_account is not None
@@ -2532,7 +2682,32 @@ def _validate_action_input(
         ):
             _fail(input_path + ".currency", "must match payment and category posting accounts")
         _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        if Decimal(input_value["amount"]) <= 0:
+            _fail(input_path + ".amount", "must be positive")
         _timestamp(input_value["occurred_at"], input_path + ".occurred_at", timezone)
+        if action == "manual_income":
+            if not (
+                payment_account["kind"] == "asset"
+                and payment_account["owned_by_user"]
+                and payment_account["real_account"]
+            ):
+                _fail(
+                    input_path + ".receiving_account_id",
+                    "must reference an owned real receiving asset",
+                )
+            if (
+                category["parent_id"] is None
+                or not category["active"]
+                or posting_account is None
+                or posting_account["kind"] != "income"
+            ):
+                _fail(
+                    input_path + ".category_id",
+                    "must reference an active second-level income category",
+                )
+    elif action == "category_rename":
+        if input_value["category_id"] not in categories:
+            _fail(input_path + ".category_id", "dangling category reference")
     elif action == "transaction_note_update":
         if input_value["transaction_id"] not in transactions:
             _fail(input_path + ".transaction_id", "dangling transaction reference")
@@ -2767,6 +2942,47 @@ def _validate_append_only_transition(
                         item_path + ".current_version_id",
                         "must advance to the next version number",
                     )
+            elif collection_name == "catalog_accounts":
+                if not _contract_equivalent(before[item_id], after[item_id]):
+                    _fail(item_path, "existing catalog accounts are immutable")
+            elif collection_name == "catalog_categories":
+                old_category = before[item_id]
+                new_category = after[item_id]
+                if not _contract_equivalent(
+                    {key: value for key, value in old_category.items() if key != "name"},
+                    {key: value for key, value in new_category.items() if key != "name"},
+                ):
+                    _fail(item_path, "category rename may only change the name")
+
+    before_history = baseline["catalog"].get("category_name_history", [])
+    after_history = result["catalog"].get("category_name_history", [])
+    before_by_key = {
+        (item["category_id"], item["version"]): item for item in before_history
+    }
+    after_by_key = {
+        (item["category_id"], item["version"]): item for item in after_history
+    }
+    if not set(before_by_key).issubset(after_by_key):
+        _fail(
+            operation_path + ".append_only.category_name_history",
+            "category name history records cannot be removed",
+        )
+    for key, old_record in before_by_key.items():
+        new_record = after_by_key[key]
+        if old_record["category_id"] != new_record["category_id"] or old_record[
+            "name"
+        ] != new_record["name"]:
+            _fail(
+                operation_path + ".append_only.category_name_history",
+                "existing category name and version records are immutable",
+            )
+        if old_record["status"] != new_record["status"] and not (
+            old_record["status"] == "current" and new_record["status"] == "superseded"
+        ):
+            _fail(
+                operation_path + ".append_only.category_name_history",
+                "history status may only transition from current to superseded",
+            )
 
 
 def _validate_no_change_retry(
@@ -2883,6 +3099,15 @@ def _validate_registered_action_effects(
             )
         return confirmation
 
+    if action == "category_rename":
+        category_id = operation["input"]["category_id"]
+        if expected_entities["catalog_categories"]["changed_ids"] != [category_id]:
+            _fail(
+                effect_path("catalog_categories"),
+                "category_rename may only change its target category",
+            )
+        return
+
     if action == "preview_target_balance":
         source = added_item(
             "sources", {item["id"]: item for item in result["sources"]}
@@ -2964,6 +3189,7 @@ def _validate_registered_action_effects(
 
     created_type_by_action = {
         "manual_expense": "expense",
+        "manual_income": "income",
         "confirm_balance_adjustment": "balance_adjustment",
         "confirm_real_transfer": "account_transfer",
         "confirm_explanation_allocation": "balance_adjustment_reversal",
@@ -2999,7 +3225,7 @@ def _validate_registered_action_effects(
             f"{action} posting set must contain exactly the postings added by the action",
         )
 
-    if action == "manual_expense":
+    if action in {"manual_expense", "manual_income"}:
         confirmation = validate_confirmation(
             "explicit_manual_save", "operation", operation["id"]
         )
@@ -3094,7 +3320,16 @@ def _validate_registered_action_effects(
             f"{action} confirmation must own the created transaction version",
         )
 
-    if action in {"manual_expense", "confirm_real_transfer"}:
+    if action == "manual_income" and not _contract_equivalent(
+        {"returned_ids": operation["returned_ids"]},
+        {"returned_ids": [{"kind": "transaction", "id": transaction["id"]}]},
+    ):
+        _fail(
+            operation_path + ".returned_ids",
+            "manual_income must return exactly its created transaction",
+        )
+
+    if action in {"manual_expense", "manual_income", "confirm_real_transfer"}:
         reconciliations = [
             result_reconciliations[item_id]
             for item_id in expected_entities["posting_reconciliations"]["added_ids"]
@@ -3172,6 +3407,130 @@ def _validate_action_semantics(
         amounts = {item["role"]: Decimal(item["amount"]) for item in postings}
         if amounts["expense"] != Decimal(input_value["amount"]) or amounts["payment_asset"] != -Decimal(input_value["amount"]):
             _fail(operation_path + ".input.amount", "does not match the created postings")
+    elif action == "manual_income":
+        category = baseline_categories.get(input_value["category_id"])
+        if category is None:
+            _fail(operation_path + ".input.category_id", "dangling category reference")
+        receiving_account = baseline_accounts.get(input_value["receiving_account_id"])
+        if receiving_account is None:
+            _fail(operation_path + ".input.receiving_account_id", "dangling account reference")
+        posting_account = baseline_accounts.get(category["posting_account_id"])
+        if not (
+            category["active"]
+            and category["parent_id"] is not None
+            and posting_account is not None
+            and posting_account["kind"] == "income"
+        ):
+            _fail(
+                operation_path + ".input.category_id",
+                "must reference an active second-level income category",
+            )
+        if not (
+            receiving_account["kind"] == "asset"
+            and receiving_account["owned_by_user"]
+            and receiving_account["real_account"]
+            and receiving_account["reconciliation_eligible"]
+        ):
+            _fail(
+                operation_path + ".input.receiving_account_id",
+                "must reference an eligible owned real receiving asset",
+            )
+        added = expected_entities["transactions"]["added_ids"]
+        transaction = result_transactions[added[0]]
+        if transaction["type"] != "income":
+            _fail(operation_path + ".result_state_id", "manual_income must create income")
+        version, postings = transaction_parts(transaction["id"])
+        if any(
+            version[field] != input_value["occurred_at"]
+            for field in ("occurred_at", "statistics_at", "effective_at")
+        ):
+            _fail(
+                operation_path + ".input.occurred_at",
+                "must be preserved in all economic time roles",
+            )
+        if version.get("note", "") != input_value.get("note", ""):
+            _fail(operation_path + ".input.note", "does not match the created version")
+        expected = {
+            ("income_classification", category["posting_account_id"]),
+            ("receiving_asset", input_value["receiving_account_id"]),
+        }
+        if {(item.get("role"), item["account_id"]) for item in postings} != expected:
+            _fail(
+                operation_path + ".result_state_id",
+                "manual_income postings do not match exact category and receiving roles",
+            )
+        amounts = {item["role"]: Decimal(item["amount"]) for item in postings}
+        amount = Decimal(input_value["amount"])
+        if amounts["income_classification"] != -amount or amounts[
+            "receiving_asset"
+        ] != amount:
+            _fail(
+                operation_path + ".input.amount",
+                "does not match the exact income posting signs",
+            )
+    elif action == "category_rename":
+        category_id = input_value["category_id"]
+        before = baseline_categories.get(category_id)
+        after_categories = {
+            item["id"]: item for item in result["catalog"]["categories"]
+        }
+        if before is None:
+            _fail(operation_path + ".input.category_id", "dangling category reference")
+        after = after_categories[category_id]
+        if after["name"] != input_value["new_name"]:
+            _fail(
+                operation_path + ".input.new_name",
+                "must match the renamed category current name",
+            )
+        if not _contract_equivalent(
+            {key: value for key, value in before.items() if key != "name"},
+            {key: value for key, value in after.items() if key != "name"},
+        ):
+            _fail(
+                operation_path + ".result_state_id",
+                "category rename must preserve every non-name association",
+            )
+        before_history = [
+            item
+            for item in baseline["catalog"].get("category_name_history", [])
+            if item["category_id"] == category_id
+        ]
+        after_history = [
+            item
+            for item in result["catalog"].get("category_name_history", [])
+            if item["category_id"] == category_id
+        ]
+        before_other_history = [
+            item
+            for item in baseline["catalog"].get("category_name_history", [])
+            if item["category_id"] != category_id
+        ]
+        after_other_history = [
+            item
+            for item in result["catalog"].get("category_name_history", [])
+            if item["category_id"] != category_id
+        ]
+        if not _contract_equivalent(before_other_history, after_other_history):
+            _fail(
+                operation_path + ".append_only.category_name_history",
+                "category_rename may only change history for its target category",
+            )
+        if len(after_history) != len(before_history) + 1:
+            _fail(
+                operation_path + ".result_state_id",
+                "category rename must append exactly one name-history version",
+            )
+        newest = max(after_history, key=lambda item: item["version"])
+        if newest != {
+            "category_id": category_id,
+            "name": input_value["new_name"],
+            "version": len(after_history),
+            "status": "current",
+        }:
+            _fail(
+                operation_path + ".result_state_id",
+                "category rename must append the exact consecutive current name record",
+            )
     elif action == "transaction_note_update":
         transaction_id = input_value["transaction_id"]
         before = baseline_transactions.get(transaction_id)
@@ -3529,6 +3888,7 @@ def validate_golden_case_v2(
 
     supported_transaction_types = {
         "RG-01": {"opening_balance", "expense"},
+        "RG-02": {"opening_balance", "income"},
         "RG-09": {
             "opening_balance",
             "account_transfer",
@@ -3538,7 +3898,10 @@ def validate_golden_case_v2(
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
-        _fail("$.case.id", "semantic prototype supports only RG-01 and RG-09 representative cases")
+        _fail(
+            "$.case.id",
+            "semantic prototype supports only RG-01, RG-02, and RG-09 representative cases",
+        )
 
     precisions: dict[str, int] = {}
     for index, declaration in enumerate(case["case"]["currencies"]):
@@ -3566,6 +3929,11 @@ def validate_golden_case_v2(
                 _fail(state_path + ".as_of_operation_id", "dangling or cross-root operation reference")
         indexes = _state_indexes(state, state_path)
         state_indexes[state["id"]] = indexes
+        if case_id == "RG-02" and "category_name_history" not in state["catalog"]:
+            _fail(
+                state_path + ".catalog.category_name_history",
+                "RG-02 complete states require category name history",
+            )
         for transaction_index, transaction in enumerate(state["transactions"]):
             if transaction["type"] not in supported_transaction_types[case_id]:
                 _fail(

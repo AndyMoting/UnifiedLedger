@@ -1687,8 +1687,15 @@ class GoldenV2MappingTests(unittest.TestCase):
                 entries = path_map["entries"]
                 gaps = path_map["unresolved_contract_gaps"]
                 gaps_by_id = {gap["id"]: gap for gap in gaps}
-                self.assertEqual(path_map["status"], "needs_contract_amendment")
-                self.assertEqual(path_map["expected_output_gate"], "closed")
+                if gaps:
+                    self.assertEqual(path_map["status"], "needs_contract_amendment")
+                    self.assertEqual(path_map["expected_output_gate"], "closed")
+                elif case_id == "RG-02":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(path_map["expected_output_gate"], "completed")
+                else:
+                    self.assertEqual(path_map["status"], "completed")
+                    self.assertEqual(path_map["expected_output_gate"], "completed")
                 self.assertEqual(path_map["contract_gap_count"], len(gaps))
                 self.assertEqual(len(gaps_by_id), len(gaps))
 
