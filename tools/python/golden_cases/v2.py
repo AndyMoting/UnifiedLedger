@@ -1229,11 +1229,14 @@ def _validate_references(
             link_path + ".target_id",
         )
         posting_role_targets = {
-            "payment_asset_posting": "payment_asset",
-            "destination_asset_posting": "destination_asset",
-            "funding_asset_posting": "funding_asset",
-            "bank_payment_posting": "bank_payment",
-            "stored_value_asset_posting": "stored_value_asset",
+            "payment_asset_posting": {"payment_asset"},
+            "destination_asset_posting": {
+                "destination_asset",
+                "transfer_principal_in",
+            },
+            "funding_asset_posting": {"funding_asset"},
+            "bank_payment_posting": {"bank_payment"},
+            "stored_value_asset_posting": {"stored_value_asset"},
         }
         posting_roles = {"real_account_posting", *posting_role_targets}
         if link["role"] in posting_roles:
@@ -1249,8 +1252,14 @@ def _validate_references(
                     link_path + ".target_id",
                     f"{link['role']} must target an eligible owned real posting",
                 )
-        if link["role"] in posting_role_targets and target.get("role") != posting_role_targets[link["role"]]:
-            _fail(link_path + ".target_id", f"must target posting role {posting_role_targets[link['role']]}")
+        if (
+            link["role"] in posting_role_targets
+            and target.get("role") not in posting_role_targets[link["role"]]
+        ):
+            _fail(
+                link_path + ".target_id",
+                f"must target posting role in {sorted(posting_role_targets[link['role']])}",
+            )
         if link["role"] in {"refund_relationship", "counterparty_lending_relationship"}:
             if target.get("type") != link["role"]:
                 _fail(
@@ -3390,6 +3399,9 @@ def _validate_registered_action_effects(
             )
 
     if not accepted:
+        return
+
+    if action == "import_mirror_record":
         return
 
     result_transactions = {item["id"]: item for item in result["transactions"]}

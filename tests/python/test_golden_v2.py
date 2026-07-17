@@ -2762,6 +2762,7 @@ class GoldenV2SchemaTests(unittest.TestCase):
         mirror_operation = {"id": "operation-rg03-mirror", "action_type": "import_mirror_record", "operation_class": "reconciliation", "input": {"request_id": "request-rg03-mirror", "source_id": "source-rg03-mirror", "evidence_id": "evidence-rg03-mirror", "transaction_id": "transaction-rg03-manual", "candidate_id": "candidate-rg03-confirmed", "account_id": "asset-b", "credit_amount": "59.00", "currency": "CNY", "observed_at": "2026-01-21T11:01:00+08:00"}, "outcome": {"status": "accepted"}, "returned_ids": [{"kind": "source", "id": "source-rg03-mirror"}, {"kind": "evidence", "id": "evidence-rg03-mirror"}, {"kind": "evidence_link", "id": "link-rg03-mirror"}]}
         expected_entities = golden_v2._expected_entity_changes(baseline, result)
         golden_v2._validate_action_semantics(mirror_operation, "$.operations[1]", baseline, result, expected_entities)
+
         invalid_mirror = deepcopy(result)
         invalid_mirror["evidence_links"][-1]["target_id"] = "posting-opening-b-rg09"
         with self.assertRaisesRegex(GoldenCaseError, r"unique destination posting|destination posting"):
@@ -2776,6 +2777,54 @@ class GoldenV2SchemaTests(unittest.TestCase):
         invalid["operations"][0]["root_id"] = "root-other"
         with self.assertRaisesRegex(GoldenCaseError, r"root_id|root"):
             validate_golden_case_v2(invalid)
+
+    def test_rg03_mirror_evidence_role_allows_only_destination_posting_roles(self):
+        case = rg03_confirm_account_transfer_candidate_case()
+        baseline = deepcopy(case["states"][-1])
+        result = deepcopy(baseline)
+        result["id"] = "state-rg03-mirror"
+        result["as_of_operation_id"] = "operation-rg03-mirror"
+        result["sources"].append({"id": "source-rg03-mirror", "type": "account_credit_observation", "payload": {"account_id": "asset-b", "credit_amount": "59.00", "currency": "CNY", "observed_at": "2026-01-21T11:01:00+08:00", "evidence_id": "evidence-rg03-mirror"}})
+        result["evidence"].append({"id": "evidence-rg03-mirror", "type": "transfer_record", "source_ids": ["source-rg03-mirror"], "payload": {"observed_at": "2026-01-21T11:01:00+08:00"}})
+        result["evidence_links"].append({"id": "link-rg03-mirror", "evidence_id": "evidence-rg03-mirror", "target_kind": "posting", "target_id": "posting-destination-rg03-confirmed-transfer", "role": "destination_asset_posting"})
+        next(item for item in result["posting_reconciliations"] if item["posting_id"] == "posting-destination-rg03-confirmed-transfer")["status"] = "matched"
+        next(item for item in result["derived_statuses"] if item["target_id"] == "transaction-rg03-confirmed-transfer")["value"] = "matched"
+        deltas, status_changes = _operation_deltas(baseline, result)
+        operation = {
+            "id": "operation-rg03-mirror", "root_id": case["roots"][0]["id"], "sequence": 5,
+            "operation_class": "reconciliation", "action_type": "import_mirror_record",
+            "baseline_state_id": baseline["id"], "result_state_id": result["id"],
+            "input": {"request_id": "request-rg03-mirror", "source_id": "source-rg03-mirror", "evidence_id": "evidence-rg03-mirror", "transaction_id": "transaction-rg03-confirmed-transfer", "candidate_id": "candidate-rg03-imported-transfer", "account_id": "asset-b", "credit_amount": "59.00", "currency": "CNY", "observed_at": "2026-01-21T11:01:00+08:00"},
+            "outcome": {"status": "accepted"}, "status_changes": status_changes, "deltas": deltas,
+            "returned_ids": [{"kind": "source", "id": "source-rg03-mirror"}, {"kind": "evidence", "id": "evidence-rg03-mirror"}, {"kind": "evidence_link", "id": "link-rg03-mirror"}],
+        }
+        case["roots"][0]["operation_ids"].append(operation["id"])
+        case["states"].append(result)
+        case["operations"].append(operation)
+        validate_golden_case_v2(case)
+
+        contract_case = rg03_full_manual_case()
+        contract_state = contract_case["states"][-1]
+        contract_state["sources"].append({"id": "source-destination-role", "type": "account_credit_observation", "payload": {"account_id": "asset-b", "credit_amount": "59.00", "currency": "CNY", "observed_at": "2026-01-21T11:01:00+08:00", "evidence_id": "evidence-destination-role"}})
+        contract_state["evidence"].append({"id": "evidence-destination-role", "type": "transfer_record", "source_ids": ["source-destination-role"], "payload": {"observed_at": "2026-01-21T11:01:00+08:00"}})
+        link = {"id": "link-destination-role", "evidence_id": "evidence-destination-role", "target_kind": "posting", "target_id": "posting-destination-rg03-manual", "role": "destination_asset_posting"}
+        contract_state["evidence_links"].append(link)
+        target = next(item for item in contract_state["postings"] if item["id"] == link["target_id"])
+        target["role"] = "destination_asset"
+        validate_contract_state(contract_case, 1)
+
+        for role in ("transfer_principal_out", "transfer_fee", "payment_asset"):
+            with self.subTest(role=role):
+                invalid = deepcopy(contract_case)
+                target = next(item for item in invalid["states"][-1]["postings"] if item["id"] == "posting-destination-rg03-manual")
+                target["role"] = role
+                with self.assertRaisesRegex(GoldenCaseError, r"target_id"):
+                    validate_contract_state(invalid, 1)
+
+        unrelated = deepcopy(contract_case)
+        unrelated["states"][-1]["evidence_links"][-1]["target_id"] = "posting-opening-b-rg09"
+        with self.assertRaisesRegex(GoldenCaseError, r"target_id"):
+            validate_contract_state(unrelated, 1)
 
     def test_rg03_import_source_record_is_source_only_and_exact(self):
         case = rg03_import_source_record_case()
