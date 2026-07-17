@@ -47,6 +47,106 @@ def schema_errors(case: dict) -> list:
     return list(Draft202012Validator(schema).iter_errors(case))
 
 
+def rg03_transfer_provenance_case(complete: bool = True, confirmed: bool = False) -> dict:
+    case = deepcopy(load_rg01())
+    state = case["states"][1]
+    observed_at = "2026-01-21T11:00:00+08:00"
+    state["catalog"]["accounts"].append(
+        {
+            "id": "asset-wallet-b",
+            "name": "Wallet B",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": True,
+            "real_account": True,
+            "reconciliation_eligible": True,
+        }
+    )
+    state["balances"].append(
+        {"account_id": "asset-wallet-b", "currency": "CNY", "amount": "0.00"}
+    )
+    source = {
+        "id": "source-transfer-rg03",
+        "type": "account_transfer",
+        "payload": {
+            "source_account_id": "asset-bank-a",
+            "currency": "CNY",
+            "completeness": "complete" if complete else "missing_destination",
+            "observed_at": observed_at,
+            "evidence_id": "evidence-transfer-rg03",
+        },
+    }
+    candidate_payload = {
+        "currency": "CNY",
+        "evidence_refs": ["evidence-transfer-rg03"],
+        "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+        "requires_confirmation": ["formal_transaction_creation"],
+    }
+    if complete:
+        source["payload"].update(
+            {
+                "destination_account_id": "asset-wallet-b",
+                "source_debit_amount": "60.00",
+                "destination_credit_amount": "59.00",
+                "fee_amount": "1.00",
+            }
+        )
+        candidate_payload.update(
+            {
+                "source_account_id": "asset-bank-a",
+                "destination_account_id": "asset-wallet-b",
+                "source_debit_amount": "60.00",
+                "destination_credit_amount": "59.00",
+                "fee_amount": "1.00",
+            }
+        )
+    else:
+        source["payload"]["debit_amount"] = "40.00"
+        candidate_payload.update(
+            {
+                "source_account_id": "asset-bank-a",
+                "debit_amount": "40.00",
+                "requires_confirmation": [
+                    "destination_account_id",
+                    "formal_transaction_creation",
+                ],
+            }
+        )
+    state["sources"].append(source)
+    state["evidence"].append(
+        {
+            "id": "evidence-transfer-rg03",
+            "type": "transfer_record",
+            "source_ids": [source["id"]],
+            "payload": {"observed_at": observed_at},
+        }
+    )
+    history = [{"id": "candidate-transfer-pending", "sequence": 1, "status": "pending_confirmation"}]
+    if confirmed:
+        history.append({"id": "candidate-transfer-confirmed", "sequence": 2, "status": "confirmed"})
+    state["candidates"].append(
+        {
+            "id": "candidate-transfer-rg03",
+            "type": "account_transfer",
+            "source_ids": [source["id"]],
+            "confidence": "1.00",
+            "payload": candidate_payload,
+            "status_history": history,
+        }
+    )
+    if confirmed:
+        state["confirmations"].append(
+            {
+                "id": "confirmation-transfer-rg03",
+                "type": "candidate_confirmation",
+                "operation_id": "operation-rg01-create",
+                "subject": {"kind": "candidate", "id": "candidate-transfer-rg03"},
+                "payload": {},
+            }
+        )
+    return case
+
+
 def add_rg05_contract_objects(case: dict | None = None) -> dict:
     case = deepcopy(case) if case is not None else load_rg01()
     state = deepcopy(case["states"][1])
@@ -712,22 +812,23 @@ def cross_group_adjustment_endpoint_case(activation_before_reconstruction: bool)
     return case
 
 
-def validate_contract_state(case: dict) -> None:
+def validate_contract_state(case: dict, state_index: int = 0) -> None:
     errors = schema_errors(case)
     if errors:
         raise AssertionError(errors[0].message)
-    state = case["states"][0]
+    state = case["states"][state_index]
+    state_path = f"$.states[{state_index}]"
     timezone = ZoneInfo(case["case"]["timezone"])
-    indexes = golden_v2._state_indexes(state, "$.states[0]")
-    golden_v2._validate_catalog(state, "$.states[0]", indexes, {"CNY": 2})
+    indexes = golden_v2._state_indexes(state, state_path)
+    golden_v2._validate_catalog(state, state_path, indexes, {"CNY": 2})
     golden_v2._validate_formal_ledger(
-        state, "$.states[0]", indexes, {"CNY": 2}, timezone
+        state, state_path, indexes, {"CNY": 2}, timezone
     )
     golden_v2._validate_references(
         state,
-        "$.states[0]",
+        state_path,
         indexes,
-        {},
+        {operation["id"]: operation for operation in case["operations"]},
         {"CNY": 2},
         timezone,
     )
@@ -1832,6 +1933,141 @@ class GoldenV2SchemaTests(unittest.TestCase):
         invalid = deepcopy(merchant)
         invalid["states"][0]["evidence"][-1]["payload"]["observed_at"] = "2026-01-15T08:31:00"
         self.assertTrue(schema_errors(invalid))
+
+    def test_rg03_transfer_provenance_payloads_are_closed(self):
+        for complete, confirmed in ((True, False), (True, True), (False, False)):
+            with self.subTest(complete=complete, confirmed=confirmed):
+                case = rg03_transfer_provenance_case(complete, confirmed)
+                self.assertEqual(schema_errors(case), [])
+                validate_contract_state(case, state_index=1)
+
+        unknown_destination = rg03_transfer_provenance_case(False)
+        self.assertNotIn(
+            "destination_account_id",
+            unknown_destination["states"][1]["sources"][-1]["payload"],
+        )
+        self.assertNotIn(
+            "destination_account_id",
+            unknown_destination["states"][1]["candidates"][-1]["payload"],
+        )
+
+        cases = []
+        source_extra = rg03_transfer_provenance_case()
+        source_extra["states"][1]["sources"][-1]["payload"]["target_id"] = "posting-x"
+        cases.append(source_extra)
+
+        candidate_extra = rg03_transfer_provenance_case()
+        candidate_extra["states"][1]["candidates"][-1]["payload"]["reconciliation_status"] = "matched"
+        cases.append(candidate_extra)
+
+        evidence_extra = rg03_transfer_provenance_case()
+        evidence_extra["states"][1]["evidence"][-1]["payload"]["target_id"] = "posting-x"
+        cases.append(evidence_extra)
+
+        guessed_destination = rg03_transfer_provenance_case(False)
+        guessed_destination["states"][1]["sources"][-1]["payload"]["destination_account_id"] = (
+            "asset-wallet-b"
+        )
+        cases.append(guessed_destination)
+
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertTrue(schema_errors(case))
+
+    def test_rg03_transfer_provenance_references_and_status_history_are_semantic(self):
+        valid = rg03_transfer_provenance_case(True, True)
+        validate_contract_state(valid, state_index=1)
+
+        cases = []
+        wrong_evidence_ref = rg03_transfer_provenance_case()
+        wrong_evidence_ref["states"][1]["candidates"][-1]["payload"]["evidence_refs"] = ["missing-evidence"]
+        cases.append((wrong_evidence_ref, r"evidence_refs"))
+
+        mismatched_source_evidence = rg03_transfer_provenance_case()
+        mismatched_source_evidence["states"][1]["evidence"][-1]["source_ids"] = []
+        cases.append((mismatched_source_evidence, r"sources\[0\].payload.evidence_id"))
+
+        dangling_source_evidence = rg03_transfer_provenance_case()
+        dangling_source_evidence["states"][1]["sources"][-1]["payload"]["evidence_id"] = (
+            "missing-evidence"
+        )
+        cases.append((dangling_source_evidence, r"sources\[0\].payload.evidence_id"))
+
+        mismatched_evidence_time = rg03_transfer_provenance_case()
+        mismatched_evidence_time["states"][1]["evidence"][-1]["payload"]["observed_at"] = (
+            "2026-01-21T11:01:00+08:00"
+        )
+        cases.append((mismatched_evidence_time, r"observed_at"))
+
+        candidate_source_completeness_mismatch = rg03_transfer_provenance_case()
+        candidate_source_completeness_mismatch["states"][1]["candidates"][-1]["payload"] = (
+            rg03_transfer_provenance_case(False)["states"][1]["candidates"][-1]["payload"]
+        )
+        cases.append((candidate_source_completeness_mismatch, r"candidates\[0\].payload"))
+
+        invalid_history = rg03_transfer_provenance_case(True, True)
+        invalid_history["states"][1]["candidates"][-1]["status_history"][0]["status"] = "confirmed"
+        cases.append((invalid_history, r"status_history"))
+
+        repeated_pending = rg03_transfer_provenance_case()
+        repeated_pending["states"][1]["candidates"][-1]["status_history"].append(
+            {"id": "candidate-transfer-pending-again", "sequence": 2, "status": "pending_confirmation"}
+        )
+        cases.append((repeated_pending, r"status_history"))
+
+        repeated_pending_then_confirmed = rg03_transfer_provenance_case(True, True)
+        repeated_pending_then_confirmed["states"][1]["candidates"][-1]["status_history"].insert(
+            1,
+            {"id": "candidate-transfer-pending-again", "sequence": 2, "status": "pending_confirmation"},
+        )
+        repeated_pending_then_confirmed["states"][1]["candidates"][-1]["status_history"][2][
+            "sequence"
+        ] = 3
+        cases.append((repeated_pending_then_confirmed, r"status_history"))
+
+        repeated_confirmation = rg03_transfer_provenance_case(True, True)
+        repeated_confirmation["states"][1]["candidates"][-1]["status_history"].append(
+            {"id": "candidate-transfer-confirmed-again", "sequence": 3, "status": "confirmed"}
+        )
+        cases.append((repeated_confirmation, r"status_history"))
+
+        pending_with_confirmation = rg03_transfer_provenance_case()
+        pending_with_confirmation["states"][1]["confirmations"].append(
+            deepcopy(
+                rg03_transfer_provenance_case(True, True)["states"][1]["confirmations"][-1]
+            )
+        )
+        cases.append((pending_with_confirmation, r"candidate_confirmation"))
+
+        confirmed_without_confirmation = rg03_transfer_provenance_case(True, True)
+        confirmed_without_confirmation["states"][1]["confirmations"] = [
+            confirmation
+            for confirmation in confirmed_without_confirmation["states"][1]["confirmations"]
+            if confirmation["id"] != "confirmation-transfer-rg03"
+        ]
+        cases.append((confirmed_without_confirmation, r"candidate_confirmation"))
+
+        confirmed_with_two_confirmations = rg03_transfer_provenance_case(True, True)
+        duplicate_confirmation = deepcopy(
+            confirmed_with_two_confirmations["states"][1]["confirmations"][-1]
+        )
+        duplicate_confirmation["id"] = "confirmation-transfer-rg03-duplicate"
+        confirmed_with_two_confirmations["states"][1]["confirmations"].append(
+            duplicate_confirmation
+        )
+        cases.append((confirmed_with_two_confirmations, r"candidate_confirmation"))
+
+        for case, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(case, state_index=1)
+
+    def test_rg03_helper_executes_transfer_semantics_in_second_state(self):
+        case = rg03_transfer_provenance_case()
+        case["states"][1]["sources"][-1]["payload"]["source_debit_amount"] = "61.00"
+        self.assertEqual(schema_errors(case), [])
+        with self.assertRaisesRegex(GoldenCaseError, r"source_debit_amount"):
+            validate_contract_state(case, state_index=1)
 
     def test_cross_rg_roles_bind_their_canonical_target_kinds(self):
         cases = []

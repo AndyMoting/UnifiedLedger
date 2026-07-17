@@ -315,6 +315,13 @@
       }
     },
     "source": {
+      "oneOf": [
+        {"$ref": "#/$defs/explicitBalanceObservationSource"},
+        {"$ref": "#/$defs/completeAccountTransferSource"},
+        {"$ref": "#/$defs/incompleteAccountTransferSource"}
+      ]
+    },
+    "explicitBalanceObservationSource": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "payload"],
@@ -335,7 +342,70 @@
         "target_observed_at": {"$ref": "#/$defs/timestamp"}
       }
     },
+    "completeAccountTransferSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_transfer"},
+        "payload": {"$ref": "#/$defs/completeAccountTransferSourcePayload"}
+      }
+    },
+    "completeAccountTransferSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_account_id", "destination_account_id", "source_debit_amount",
+        "destination_credit_amount", "fee_amount", "currency", "completeness",
+        "observed_at", "evidence_id"
+      ],
+      "properties": {
+        "source_account_id": {"$ref": "#/$defs/id"},
+        "destination_account_id": {"$ref": "#/$defs/id"},
+        "source_debit_amount": {"$ref": "#/$defs/decimal"},
+        "destination_credit_amount": {"$ref": "#/$defs/decimal"},
+        "fee_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "completeness": {"const": "complete"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "evidence_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "incompleteAccountTransferSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_transfer"},
+        "payload": {"$ref": "#/$defs/incompleteAccountTransferSourcePayload"}
+      }
+    },
+    "incompleteAccountTransferSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_account_id", "debit_amount", "currency", "completeness", "observed_at",
+        "evidence_id"
+      ],
+      "properties": {
+        "source_account_id": {"$ref": "#/$defs/id"},
+        "debit_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "completeness": {"const": "missing_destination"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "evidence_id": {"$ref": "#/$defs/id"}
+      }
+    },
     "candidate": {
+      "oneOf": [
+        {"$ref": "#/$defs/balanceAdjustmentCandidate"},
+        {"$ref": "#/$defs/completeAccountTransferCandidate"},
+        {"$ref": "#/$defs/incompleteAccountTransferCandidate"}
+      ]
+    },
+    "balanceAdjustmentCandidate": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
@@ -370,6 +440,91 @@
         "currency": {"type": "string", "minLength": 1},
         "effective_at": {"$ref": "#/$defs/timestamp"}
       }
+    },
+    "completeAccountTransferCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_transfer"},
+        "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/completeAccountTransferCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "completeAccountTransferCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_account_id", "destination_account_id", "source_debit_amount",
+        "destination_credit_amount", "fee_amount", "currency", "evidence_refs", "provenance",
+        "requires_confirmation"
+      ],
+      "properties": {
+        "source_account_id": {"$ref": "#/$defs/id"},
+        "destination_account_id": {"$ref": "#/$defs/id"},
+        "source_debit_amount": {"$ref": "#/$defs/decimal"},
+        "destination_credit_amount": {"$ref": "#/$defs/decimal"},
+        "fee_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "provenance": {"$ref": "#/$defs/accountTransferCandidateProvenance"},
+        "requires_confirmation": {"$ref": "#/$defs/completeAccountTransferConfirmationRequirements"}
+      }
+    },
+    "incompleteAccountTransferCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_transfer"},
+        "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/incompleteAccountTransferCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "incompleteAccountTransferCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_account_id", "debit_amount", "currency", "evidence_refs", "provenance",
+        "requires_confirmation"
+      ],
+      "properties": {
+        "source_account_id": {"$ref": "#/$defs/id"},
+        "debit_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "provenance": {"$ref": "#/$defs/accountTransferCandidateProvenance"},
+        "requires_confirmation": {"$ref": "#/$defs/incompleteAccountTransferConfirmationRequirements"}
+      }
+    },
+    "accountTransferCandidateProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "rule_version"],
+      "properties": {
+        "rule": {"const": "complete_transfer_source"},
+        "rule_version": {"const": 1}
+      }
+    },
+    "completeAccountTransferConfirmationRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {"const": "formal_transaction_creation"}
+    },
+    "incompleteAccountTransferConfirmationRequirements": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"enum": ["destination_account_id", "formal_transaction_creation"]}
     },
     "confirmation": {
       "oneOf": [
@@ -435,7 +590,8 @@
         {"$ref": "#/$defs/userBalanceObservationEvidence"},
         {"$ref": "#/$defs/itemReceiptEvidence"},
         {"$ref": "#/$defs/merchantStoredValueCreditEvidence"},
-        {"$ref": "#/$defs/confirmedActualExpiryEvidence"}
+        {"$ref": "#/$defs/confirmedActualExpiryEvidence"},
+        {"$ref": "#/$defs/transferRecordEvidence"}
       ]
     },
     "userBalanceObservationEvidence": {
@@ -457,6 +613,11 @@
       "$ref": "#/$defs/observedAtEvidence",
       "type": "object",
       "properties": {"type": {"const": "confirmed_actual_expiry"}}
+    },
+    "transferRecordEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "transfer_record"}}
     },
     "observedAtEvidence": {
       "type": "object",

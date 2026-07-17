@@ -961,6 +961,54 @@ def _validate_references(
     for index, source in enumerate(state["sources"]):
         payload = source["payload"]
         source_path = f"{path}.sources[{index}].payload"
+        if source["type"] == "account_transfer":
+            source_account = accounts.get(payload["source_account_id"])
+            if source_account is None:
+                _fail(source_path + ".source_account_id", "dangling account reference")
+            if not (
+                source_account["owned_by_user"]
+                and source_account["real_account"]
+                and source_account["kind"] in {"asset", "liability"}
+            ):
+                _fail(source_path + ".source_account_id", "must be an owned real financial account")
+            if payload["currency"] != source_account["currency"]:
+                _fail(source_path + ".currency", "must match the source account currency")
+            _timestamp(payload["observed_at"], source_path + ".observed_at", timezone)
+            evidence = indexes["evidence"].get(payload["evidence_id"])
+            if evidence is None:
+                _fail(source_path + ".evidence_id", "dangling evidence reference")
+            if evidence["type"] != "transfer_record":
+                _fail(source_path + ".evidence_id", "must reference transfer_record evidence")
+            if evidence["source_ids"] != [source["id"]]:
+                _fail(source_path + ".evidence_id", "transfer_record evidence must reference this exact source")
+            if evidence["payload"]["observed_at"] != payload["observed_at"]:
+                _fail(source_path + ".evidence_id", "transfer_record evidence must have the same observed_at")
+            if payload["completeness"] == "complete":
+                destination_account = accounts.get(payload["destination_account_id"])
+                if destination_account is None:
+                    _fail(source_path + ".destination_account_id", "dangling account reference")
+                if payload["destination_account_id"] == payload["source_account_id"]:
+                    _fail(source_path + ".destination_account_id", "must differ from source_account_id")
+                if not (
+                    destination_account["owned_by_user"]
+                    and destination_account["real_account"]
+                    and destination_account["kind"] in {"asset", "liability"}
+                ):
+                    _fail(source_path + ".destination_account_id", "must be an owned real financial account")
+                if payload["currency"] != destination_account["currency"]:
+                    _fail(source_path + ".currency", "must match the destination account currency")
+                debit = _amount(payload["source_debit_amount"], payload["currency"], source_path + ".source_debit_amount", precisions)
+                credit = _amount(payload["destination_credit_amount"], payload["currency"], source_path + ".destination_credit_amount", precisions)
+                fee = _amount(payload["fee_amount"], payload["currency"], source_path + ".fee_amount", precisions)
+                if debit <= 0 or credit <= 0 or fee < 0:
+                    _fail(source_path, "transfer amounts must have positive principal and non-negative fee")
+                if debit != credit + fee:
+                    _fail(source_path + ".source_debit_amount", "must equal destination_credit_amount + fee_amount")
+            else:
+                debit = _amount(payload["debit_amount"], payload["currency"], source_path + ".debit_amount", precisions)
+                if debit <= 0:
+                    _fail(source_path + ".debit_amount", "must be positive")
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(source_path + ".account_id", "dangling account reference")
@@ -983,6 +1031,68 @@ def _validate_references(
             _fail(candidate_path + ".status_history", "sequence must be contiguous and ordered from 1")
         _decimal(candidate["confidence"], candidate_path + ".confidence")
         payload = candidate["payload"]
+        if candidate["type"] == "account_transfer":
+            if len(candidate["source_ids"]) != 1:
+                _fail(candidate_path + ".source_ids", "must contain exactly one transfer source reference")
+            source = sources[candidate["source_ids"][0]]
+            if source["type"] != "account_transfer":
+                _fail(candidate_path + ".source_ids[0]", "must reference an account_transfer source")
+            source_payload = source["payload"]
+            if len(payload["evidence_refs"]) != 1 or len(payload["evidence_refs"]) != len(set(payload["evidence_refs"])):
+                _fail(candidate_path + ".payload.evidence_refs", "must contain exactly one transfer evidence reference")
+            evidence = indexes["evidence"].get(payload["evidence_refs"][0])
+            if evidence is None:
+                _fail(candidate_path + ".payload.evidence_refs[0]", "dangling evidence reference")
+            if evidence["type"] != "transfer_record":
+                _fail(candidate_path + ".payload.evidence_refs[0]", "must reference transfer_record evidence")
+            if evidence["source_ids"] != candidate["source_ids"]:
+                _fail(candidate_path + ".payload.evidence_refs[0]", "must have the candidate's exact source reference")
+            if source_payload["evidence_id"] != evidence["id"]:
+                _fail(candidate_path + ".payload.evidence_refs[0]", "must match the transfer source evidence identity")
+            if payload["currency"] != source_payload["currency"]:
+                _fail(candidate_path + ".payload.currency", "must match the transfer source currency")
+            history_statuses = [item["status"] for item in history]
+            if history_statuses not in (
+                ["pending_confirmation"],
+                ["pending_confirmation", "confirmed"],
+            ):
+                _fail(
+                    candidate_path + ".status_history",
+                    "must be exactly pending_confirmation or pending_confirmation followed by confirmed",
+                )
+            confirmation_owners = [
+                confirmation
+                for confirmation in state["confirmations"]
+                if confirmation["type"] == "candidate_confirmation"
+                and confirmation["subject"]["id"] == candidate["id"]
+            ]
+            expected_confirmation_count = 1 if history_statuses[-1] == "confirmed" else 0
+            if len(confirmation_owners) != expected_confirmation_count:
+                _fail(
+                    candidate_path + ".status_history",
+                    "candidate_confirmation ownership must be absent while pending and exact once confirmed",
+                )
+            if source_payload["completeness"] == "complete":
+                if "source_debit_amount" not in payload:
+                    _fail(candidate_path + ".payload", "must use the complete transfer candidate payload")
+                fields = (
+                    "source_account_id", "destination_account_id", "source_debit_amount",
+                    "destination_credit_amount", "fee_amount", "currency",
+                )
+                for field in fields:
+                    if payload[field] != source_payload[field]:
+                        _fail(candidate_path + ".payload." + field, "must match the complete transfer source")
+            else:
+                if "debit_amount" not in payload:
+                    _fail(candidate_path + ".payload", "must use the incomplete transfer candidate payload")
+                for field in ("source_account_id", "debit_amount", "currency"):
+                    if payload[field] != source_payload[field]:
+                        _fail(candidate_path + ".payload." + field, "must match the incomplete transfer source")
+                if set(payload["requires_confirmation"]) != {
+                    "destination_account_id", "formal_transaction_creation",
+                }:
+                    _fail(candidate_path + ".payload.requires_confirmation", "must require destination_account_id and formal_transaction_creation")
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(candidate_path + ".payload.account_id", "dangling account reference")
@@ -1024,6 +1134,16 @@ def _validate_references(
             if source_id not in sources:
                 _fail(f"{evidence_path}.source_ids[{source_index}]", "dangling source reference")
         _timestamp(evidence["payload"]["observed_at"], evidence_path + ".payload.observed_at", timezone)
+        if evidence["type"] == "transfer_record":
+            if len(evidence["source_ids"]) != 1:
+                _fail(evidence_path + ".source_ids", "must contain exactly one transfer source reference")
+            source = sources[evidence["source_ids"][0]]
+            if source["type"] != "account_transfer":
+                _fail(evidence_path + ".source_ids[0]", "must reference an account_transfer source")
+            if source["payload"]["evidence_id"] != evidence["id"]:
+                _fail(evidence_path + ".source_ids[0]", "must match the transfer source evidence identity")
+            if source["payload"]["observed_at"] != evidence["payload"]["observed_at"]:
+                _fail(evidence_path + ".payload.observed_at", "must match the transfer source observed_at")
 
     evidence_link_keys: set[tuple[str, str, str]] = set()
     for index, link in enumerate(state["evidence_links"]):

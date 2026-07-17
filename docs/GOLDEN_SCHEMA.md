@@ -119,12 +119,17 @@ Representative subtype payloads are fully frozen:
 | --- | --- |
 | source `explicit_balance_observation` | `account_id`, `target_amount`, `currency`, `target_observed_at` |
 | candidate `balance_adjustment` | `account_id`, `replayed_amount`, `target_amount`, `delta`, `currency`, `effective_at` |
+| source `account_transfer`, complete | `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `completeness:"complete"`, `observed_at`, `evidence_id` |
+| source `account_transfer`, missing destination | `source_account_id`, `debit_amount`, `currency`, `completeness:"missing_destination"`, `observed_at`, `evidence_id`; destination fields are absent |
+| candidate `account_transfer`, complete | `source_ids` contains exactly one complete transfer source; payload contains the exact source and destination accounts, debit, credit, fee, currency, one `evidence_refs` transfer-record identity, `provenance:{rule:"complete_transfer_source",rule_version:1}`, and `requires_confirmation:["formal_transaction_creation"]` |
+| candidate `account_transfer`, missing destination | `source_ids` contains exactly one incomplete transfer source; payload contains only the exact source account, debit, currency, one `evidence_refs` transfer-record identity, the same deterministic provenance, and exactly `destination_account_id` plus `formal_transaction_creation` in `requires_confirmation`; destination account and split amounts are absent |
 | confirmation `explicit_manual_save` | empty payload; subject kind `operation` |
 | confirmation `candidate_confirmation` | empty payload; subject kind `candidate`; optional `confirmed_at` only when the legacy or native fact records the actual time |
 | confirmation `explicit_operation_confirmation` | empty payload; subject kind `operation`; optional `confirmed_at` only when the legacy or native fact records the actual time |
 | evidence `user_balance_observation` | `observed_at` |
 | evidence `item_receipt` | `observed_at` |
 | evidence `merchant_stored_value_credit` | `observed_at` |
+| evidence `transfer_record` | `observed_at`; `source_ids` contains exactly one `account_transfer` source whose `evidence_id` and `observed_at` are identical |
 | domain entity `target_balance_observation` | `account_id`, `target_amount`, `currency`, `observed_at`, `source_id` |
 | domain entity `balance_adjustment` | `observation_id`, `original_delta`, `currency`, `transaction_id` |
 | domain entity `explanation_allocation` | `adjustment_id`, `explanation_transaction_id`, `reversal_transaction_id`, `amount`, `currency`, `confirmed_at` |
@@ -142,6 +147,8 @@ The remaining approved type registry reserves these semantics without claiming t
 - Audit link types currently registered are only `adjustment_transaction`, `explanation_transaction`, and `allocation_reversal`.
 
 Reserved-but-unregistered payloads cannot appear in a v2 document. A later independent contract amendment may register them without changing the representative examples or treating those examples as migration output.
+
+Transfer-source and account-transfer-candidate records are provenance only. They cannot contain formal transaction, posting, balance, report, reconciliation, target, match-status, or evidence-link fields. Every transfer source `evidence_id` resolves to exactly one same-state `transfer_record` evidence object; that evidence must reference exactly that source and carry the identical `observed_at`. A transfer-record evidence object owns only its source identity and observation time; typed targets and matching status remain owned by `evidence_links` and `posting_reconciliations`. An account-transfer candidate status history is exactly `[pending_confirmation]` or `[pending_confirmation, confirmed]`. The confirmed form requires exactly one existing `candidate_confirmation` whose subject is that candidate; it does not create a second confirmation owner. No other status, repetition, or later append is valid. Formal posting creation still requires the separately registered confirmation operation. This contract retains one source, one evidence identity, two distinct owned real financial accounts, and one currency; combination transfers and multi-currency payloads remain `future_draft`.
 
 ### Projection shapes
 
