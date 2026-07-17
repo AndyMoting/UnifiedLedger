@@ -1068,6 +1068,130 @@ class GoldenV2MappingTests(unittest.TestCase):
                     )
                 )
 
+    def test_rg10_gap05_uses_current_catalog_owners_and_exact_gap_boundary(self):
+        source = json.loads(
+            (ROOT / "golden" / "rules" / "rg-10.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-10-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        gaps = {gap["id"]: gap for gap in path_map["unresolved_contract_gaps"]}
+        accounts = source["catalog"]["accounts"]
+        categories = source["catalog"]["categories"]
+
+        case_ledger_id = source["case"]["ledger_id"]
+        self.assertTrue(accounts)
+        self.assertEqual(
+            {account["ledger_id"] for account in accounts},
+            {case_ledger_id},
+        )
+        for account in accounts:
+            with self.subTest(account_id=account["id"], fact="financial"):
+                self.assertEqual(
+                    account["financial"],
+                    account["type"] in {"asset", "liability"},
+                )
+
+        accounts_by_id = {account["id"]: account for account in accounts}
+        self.assertTrue(categories)
+        for category in categories:
+            posting_account = accounts_by_id[category["account_id"]]
+            with self.subTest(category_id=category["id"], fact="kind"):
+                self.assertEqual(category["kind"], posting_account["type"])
+            with self.subTest(category_id=category["id"], fact="parent_identity"):
+                self.assertIn("level", category)
+                self.assertNotIn("parent_id", category)
+
+        fixture_roles = {
+            account["system_role"]
+            for account in accounts
+            if "system_role" in account
+        }
+        current_role_enum = set(
+            schema["$defs"]["account"]["properties"]["system_role"]["enum"]
+        )
+        self.assertEqual(len(fixture_roles), 3)
+        self.assertTrue(all(role.startswith("stored_value_") for role in fixture_roles))
+        self.assertEqual(fixture_roles - current_role_enum, fixture_roles)
+
+        ready_targets = {
+            "$.case.precision": {"$.case.currencies[*].precision"},
+            "$.catalog.accounts[*].ledger_id": {"$.case.ledger_id"},
+            "$.catalog.accounts[*].type": {
+                "$.states[*].catalog.accounts[*].kind"
+            },
+            "$.catalog.accounts[*].financial": {
+                "$.states[*].catalog.accounts[*].real_account"
+            },
+            "$.catalog.categories[*].account_id": {
+                "$.states[*].catalog.categories[*].posting_account_id"
+            },
+            "$.catalog.categories[*].kind": {
+                "$.states[*].catalog.accounts[*].kind",
+                "$.states[*].catalog.categories[*].posting_account_id",
+            },
+        }
+        expected_ready_entries = {
+            source_path: {
+                "disposition": "ready",
+                "target_paths": sorted(targets),
+                "contract_gap_ids": [],
+            }
+            for source_path, targets in ready_targets.items()
+        }
+        actual_ready_entries = {
+            source_path: {
+                "disposition": entries[source_path]["disposition"],
+                "target_paths": sorted(entries[source_path]["target_paths"]),
+                "contract_gap_ids": entries[source_path]["contract_gap_ids"],
+            }
+            for source_path in ready_targets
+        }
+
+        planned_account_fields = {
+            "enabled",
+            "merchant_id",
+            "restricted",
+            "stored_value",
+            "system_role",
+        }
+        expected_gap_paths = {
+            "$.catalog.categories[*].level",
+            *(f"$.catalog.accounts[*].{field}" for field in planned_account_fields),
+        }
+        self.maxDiff = None
+        with self.subTest(boundary="current owners are ready"):
+            self.assertEqual(actual_ready_entries, expected_ready_entries)
+        with self.subTest(boundary="exact affected paths"):
+            self.assertEqual(
+                gaps["RG10-GAP-05"]["affected_source_paths"],
+                sorted(expected_gap_paths),
+            )
+
+        for source_path in expected_gap_paths:
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path, boundary="gap membership"):
+                self.assertEqual(
+                    entry["disposition"], "requires_contract_amendment"
+                )
+                self.assertEqual(entry["contract_gap_ids"], ["RG10-GAP-05"])
+                self.assertTrue(
+                    all(
+                        target.startswith(PLANNED_CONTRACT_PREFIX)
+                        for target in entry["target_paths"]
+                    )
+                )
+
     def test_rg10_absence_dispatch_and_evidence_role_boundaries(self):
         source = json.loads(
             (ROOT / "golden" / "rules" / "rg-10.json").read_text(

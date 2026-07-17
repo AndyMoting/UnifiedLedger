@@ -20,13 +20,13 @@
   "unclassified_path_count": 0,
   "classification_counts": {
     "map": 660,
-    "derive": 490,
-    "preserve": 10,
+    "derive": 491,
+    "preserve": 9,
     "reject": 1
   },
   "disposition_counts": {
-    "requires_contract_amendment": 873,
-    "ready": 287,
+    "requires_contract_amendment": 868,
+    "ready": 292,
     "test_only_exclusion": 1
   },
   "contract_gap_count": 6,
@@ -921,21 +921,16 @@
     {
       "id": "RG10-GAP-05",
       "status": "unresolved",
-      "title": "Stored-value account activation, merchant restriction, category metadata, and precision contract",
-      "capability_boundary": "Current v2 account/category catalogs do not own RG-10 enabled, financial, ledger, merchant, restricted, stored_value, legacy type, category account/kind/level, or case precision facts.",
-      "required_change": "Register the minimum closed catalog and currency-precision fields required to identify an enabled, merchant-restricted stored-value asset and its eligible consumption category.",
-      "risk": "Dropping these facts would permit an unowned, disabled, unrestricted, or incorrectly categorized account to enter stored-value operations.",
+      "title": "Stored-value configuration, category hierarchy, and system-role contract",
+      "capability_boundary": "Current v2 catalogs lack only the closed stored-value configuration fields (enabled, merchant identity, merchant restriction, and stored-value presence/capability), the RG-10 category hierarchy owner, and the three RG-10 stored-value system_role enum values. This gap does not duplicate precision, ledger identity, account kind/real-account ownership, or category posting ownership.",
+      "required_change": "Register closed stored-value configuration for enabled, merchant_id, restricted, and stored_value; resolve category level through a planned hierarchy owner once the pending parent-identity design gate is approved; and extend the current account system_role enum with stored_value_bonus_right_income, stored_value_expiry_loss, and stored_value_pre_activation_adjustment.",
+      "risk": "Without these six contract additions, stored-value capability and merchant restrictions cannot be validated, the level-2 category has no approved parent identity, and all three frozen stored-value system roles remain outside the closed enum.",
       "affected_source_paths": [
-        "$.case.precision",
         "$.catalog.accounts[*].enabled",
-        "$.catalog.accounts[*].financial",
-        "$.catalog.accounts[*].ledger_id",
         "$.catalog.accounts[*].merchant_id",
         "$.catalog.accounts[*].restricted",
         "$.catalog.accounts[*].stored_value",
-        "$.catalog.accounts[*].type",
-        "$.catalog.categories[*].account_id",
-        "$.catalog.categories[*].kind",
+        "$.catalog.accounts[*].system_role",
         "$.catalog.categories[*].level"
       ]
     },
@@ -8721,17 +8716,15 @@
         "number"
       ],
       "occurrence_count": 1,
-      "classification": "preserve",
+      "classification": "map",
       "target_paths": [
-        "$.planned_contract.case.precision"
+        "$.case.currencies[*].precision"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map the source precision exactly to the CNY declaration at $.case.currencies[*].precision.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "The current v2 currency declaration owns precision; RG-10 declares only CNY, so the frozen value 2 maps without loss or a duplicate case-level field.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.case.rule_version",
@@ -8789,12 +8782,12 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.enabled"
+        "$.planned_contract.states[*].catalog.stored_value_config.enabled"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map enabled to the planned closed stored_value configuration for each referenced account.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
+      "rationale": "Stored-value operations must distinguish the enabled account from the frozen disabled counterexample, but the current account catalog has no activation field.",
       "contract_gap_ids": [
         "RG10-GAP-05"
       ]
@@ -8807,15 +8800,13 @@
       "occurrence_count": 9,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.financial"
+        "$.states[*].catalog.accounts[*].real_account"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map financial exactly to real_account for every catalog account and validate account-by-account that asset and liability are true while equity, income, and expense are false.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "The current v2 account catalog owns real-account status, and the frozen fixture proves financial equals whether kind is asset or liability for all nine accounts.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].hidden",
@@ -8857,15 +8848,13 @@
       "occurrence_count": 9,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.ledger_id"
+        "$.case.ledger_id"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Validate every source account ledger_id equals $.case.ledger_id and serialize only the case-level ledger identity, never a per-account ledger_id.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "All nine frozen accounts equal the case ledger_id, and the current v2 case ledger boundary makes duplicate account-level serialization unnecessary.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].merchant_id",
@@ -8875,12 +8864,12 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.merchant_id"
+        "$.planned_contract.states[*].catalog.stored_value_config.merchant_id"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map merchant_id to the merchant identity in the planned closed stored_value configuration for each referenced account.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
+      "rationale": "Merchant identity scopes the restricted balance and allocation facts, but the current account catalog has no merchant owner.",
       "contract_gap_ids": [
         "RG10-GAP-05"
       ]
@@ -8941,12 +8930,12 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.restricted"
+        "$.planned_contract.states[*].catalog.stored_value_config.restricted"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map restricted to the merchant-restriction flag in the planned closed stored_value configuration for each referenced account.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
+      "rationale": "D-050 requires the stored balance to remain merchant-restricted, but the current account catalog cannot express that restriction.",
       "contract_gap_ids": [
         "RG10-GAP-05"
       ]
@@ -8959,12 +8948,12 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.stored_value"
+        "$.planned_contract.states[*].catalog.stored_value_config.stored_value"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map stored_value to the presence/capability flag in the planned closed stored_value configuration for each referenced account.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
+      "rationale": "The current account catalog cannot distinguish a stored-value capability from an ordinary asset using a closed field.",
       "contract_gap_ids": [
         "RG10-GAP-05"
       ]
@@ -8993,13 +8982,15 @@
       "occurrence_count": 3,
       "classification": "map",
       "target_paths": [
-        "$.states[*].catalog.accounts[*].system_role"
+        "$.planned_contract.states[*].catalog.accounts[*].system_role"
       ],
-      "transform": "Map the catalog account fact to the current closed account catalog.",
+      "transform": "Extend the current system_role enum and map stored_value_bonus_right_income, stored_value_expiry_loss, and stored_value_pre_activation_adjustment exactly.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "ready",
-      "rationale": "Stable account identity, kind, currency, ownership, real-account, and reconciliation eligibility remain catalog facts.",
-      "contract_gap_ids": []
+      "disposition": "requires_contract_amendment",
+      "rationale": "All three frozen stored-value roles are absent from the current closed system_role enum, so the existing field owner needs an enum extension rather than a new role field.",
+      "contract_gap_ids": [
+        "RG10-GAP-05"
+      ]
     },
     {
       "source_path": "$.catalog.accounts[*].type",
@@ -9009,15 +9000,13 @@
       "occurrence_count": 9,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.type"
+        "$.states[*].catalog.accounts[*].kind"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map each source account type exactly to the current account kind field.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "The source and current v2 account-kind enums use the same asset, liability, equity, income, and expense meanings.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.categories[*].account_id",
@@ -9027,15 +9016,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.account_id"
+        "$.states[*].catalog.categories[*].posting_account_id"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map the source category account_id exactly to the current category posting_account_id.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "The current v2 category catalog already owns the posting-account relationship used by stored-value consumption.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.categories[*].active",
@@ -9075,17 +9062,16 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.kind"
+        "$.states[*].catalog.accounts[*].kind",
+        "$.states[*].catalog.categories[*].posting_account_id"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Resolve the category posting_account_id, read the referenced current account kind, and validate that it equals the source category kind; do not serialize a category kind field.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "disposition": "ready",
+      "rationale": "Current v2 owns category posting through posting_account_id and classification through the referenced account kind; the frozen category kind equals that account kind.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.categories[*].level",
@@ -9095,12 +9081,12 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.rg10.level"
+        "$.planned_contract.states[*].catalog.category_hierarchy[*].level"
       ],
-      "transform": "Map the RG-10 precision or stored-value catalog capability through a closed contract amendment.",
+      "transform": "Map level to the planned category hierarchy owner only after the pending design gate supplies the required parent identity; do not infer a parent from level alone.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "The current catalog lacks this exact precision, activation, restriction, merchant, or category metadata owner.",
+      "rationale": "The frozen fixture proves level 2 but provides no parent identity, so an exact current-contract hierarchy cannot be constructed until the category-hierarchy design gate is resolved.",
       "contract_gap_ids": [
         "RG10-GAP-05"
       ]
