@@ -250,6 +250,324 @@ def rg03_import_source_record_case() -> dict:
     return case
 
 
+def _operation_deltas(baseline: dict, result: dict) -> tuple[dict, list[dict]]:
+    balance_changes = [
+        {
+            "key": {"account_id": key[0], "currency": key[1]},
+            "before": old,
+            "after": new,
+        }
+        for key, (old, new) in sorted(
+            golden_v2._changes(
+                golden_v2._balance_map(baseline), golden_v2._balance_map(result)
+            ).items()
+        )
+    ]
+    report_changes = []
+    for key, (old, new) in sorted(
+        golden_v2._changes(
+            golden_v2._report_map(baseline), golden_v2._report_map(result)
+        ).items()
+    ):
+        report_key = {"period_type": key[0], "period": key[1], "metric": key[2]}
+        if key[3] is not None:
+            report_key["currency"] = key[3]
+        report_changes.append({"key": report_key, "before": old, "after": new})
+    status_changes = [
+        {
+            "key": {
+                "kind": key[0],
+                "target_id": key[1],
+                "status_name": key[2],
+            },
+            "before": old,
+            "after": new,
+        }
+        for key, (old, new) in sorted(
+            golden_v2._changes(
+                golden_v2._status_map(baseline), golden_v2._status_map(result)
+            ).items()
+        )
+    ]
+    return {
+        "entity_changes": golden_v2._expected_entity_changes(baseline, result),
+        "value_changes": {
+            "balances": balance_changes,
+            "reports": report_changes,
+            "derived_statuses": status_changes,
+        },
+    }, [
+        {
+            "target_kind": item["key"]["kind"],
+            "target_id": item["key"]["target_id"],
+            "status_name": item["key"]["status_name"],
+            "before": item["before"],
+            "after": item["after"],
+        }
+        for item in status_changes
+    ]
+
+
+def rg03_confirm_account_transfer_candidate_case() -> dict:
+    case = rg03_import_source_record_case()
+    baseline = deepcopy(case["states"][-1])
+    result = deepcopy(baseline)
+    result["id"] = "state-rg03-imported-transfer-confirmed"
+    result["as_of_operation_id"] = "operation-rg03-confirm-imported-transfer"
+    candidate = result["candidates"][-1]
+    candidate["payload"]["transaction_id"] = "transaction-rg03-confirmed-transfer"
+    candidate["status_history"].append(
+        {
+            "id": "candidate-rg03-imported-transfer-confirmed",
+            "sequence": 2,
+            "status": "confirmed",
+        }
+    )
+    result["transactions"].append(
+        {
+            "id": "transaction-rg03-confirmed-transfer",
+            "type": "account_transfer",
+            "current_version_id": "version-rg03-confirmed-transfer-v1",
+        }
+    )
+    result["transaction_versions"].append(
+        {
+            "id": "version-rg03-confirmed-transfer-v1",
+            "transaction_id": "transaction-rg03-confirmed-transfer",
+            "version_number": 1,
+            "posting_set_id": "posting-set-rg03-confirmed-transfer",
+            "occurred_at": "2026-01-21T10:00:00+08:00",
+            "statistics_at": "2026-01-21T10:00:00+08:00",
+            "effective_at": "2026-01-21T10:00:00+08:00",
+            "confirmation_id": "confirmation-rg03-imported-transfer",
+        }
+    )
+    result["posting_sets"].append(
+        {
+            "id": "posting-set-rg03-confirmed-transfer",
+            "posting_ids": [
+                "posting-source-rg03-confirmed-transfer",
+                "posting-destination-rg03-confirmed-transfer",
+                "posting-fee-rg03-confirmed-transfer",
+            ],
+        }
+    )
+    result["postings"].extend(
+        [
+            {
+                "id": "posting-source-rg03-confirmed-transfer",
+                "posting_set_id": "posting-set-rg03-confirmed-transfer",
+                "account_id": "asset-a",
+                "amount": "-60.00",
+                "currency": "CNY",
+                "role": "transfer_principal_out",
+                "reconciliation_eligible": True,
+            },
+            {
+                "id": "posting-destination-rg03-confirmed-transfer",
+                "posting_set_id": "posting-set-rg03-confirmed-transfer",
+                "account_id": "asset-b",
+                "amount": "59.00",
+                "currency": "CNY",
+                "role": "transfer_principal_in",
+                "reconciliation_eligible": True,
+            },
+            {
+                "id": "posting-fee-rg03-confirmed-transfer",
+                "posting_set_id": "posting-set-rg03-confirmed-transfer",
+                "account_id": "expense-account-transfer-fee-rg03",
+                "amount": "1.00",
+                "currency": "CNY",
+                "role": "transfer_fee",
+                "reconciliation_eligible": False,
+            },
+        ]
+    )
+    result["confirmations"].append(
+        {
+            "id": "confirmation-rg03-imported-transfer",
+            "type": "candidate_confirmation",
+            "operation_id": "operation-rg03-confirm-imported-transfer",
+            "subject": {
+                "kind": "candidate",
+                "id": "candidate-rg03-imported-transfer",
+            },
+            "payload": {},
+        }
+    )
+    result["evidence_links"].append(
+        {
+            "id": "evidence-link-rg03-confirmed-transfer",
+            "evidence_id": "evidence-rg03-imported-transfer",
+            "target_kind": "posting",
+            "target_id": "posting-source-rg03-confirmed-transfer",
+            "role": "real_account_posting",
+        }
+    )
+    result["posting_reconciliations"].extend(
+        [
+            {
+                "id": "reconciliation-source-rg03-confirmed-transfer",
+                "posting_id": "posting-source-rg03-confirmed-transfer",
+                "status": "matched",
+            },
+            {
+                "id": "reconciliation-destination-rg03-confirmed-transfer",
+                "posting_id": "posting-destination-rg03-confirmed-transfer",
+                "status": "pending",
+            },
+        ]
+    )
+    for balance in result["balances"]:
+        if balance["account_id"] == "asset-a":
+            balance["amount"] = "-20.00"
+        elif balance["account_id"] == "asset-b":
+            balance["amount"] = "168.00"
+        elif balance["account_id"] == "expense-account-transfer-fee-rg03":
+            balance["amount"] = "2.00"
+    for metric in result["reports"][0]["metrics"]:
+        if metric["metric"] in {"cash_outflow", "consumption", "ordinary_expense"}:
+            metric["amount"] = "2.00"
+        elif metric["metric"] == "internal_transfer_amount":
+            metric["amount"] = "118.00"
+        elif metric["metric"] == "net_worth_change":
+            metric["amount"] = "-2.00"
+    result["derived_statuses"] = [
+        {
+            **item,
+            "value": "confirmed",
+        }
+        if item["target_id"] == candidate["id"]
+        else item
+        for item in result["derived_statuses"]
+    ]
+    result["derived_statuses"].append(
+        {
+            "id": "derived-rg03-confirmed-transfer",
+            "target_kind": "transaction",
+            "target_id": "transaction-rg03-confirmed-transfer",
+            "status_name": "reconciliation_summary",
+            "value": "partial",
+        }
+    )
+    deltas, status_changes = _operation_deltas(baseline, result)
+    operation = {
+        "id": "operation-rg03-confirm-imported-transfer",
+        "root_id": "root-rg09-main",
+        "sequence": 3,
+        "operation_class": "creation",
+        "action_type": "confirm_account_transfer_candidate",
+        "baseline_state_id": baseline["id"],
+        "result_state_id": result["id"],
+        "input": {
+            "request_id": "request-rg03-confirm-imported-transfer",
+            "candidate_id": candidate["id"],
+            "source_account_id": "asset-a",
+            "destination_account_id": "asset-b",
+            "source_debit_amount": "60.00",
+            "destination_credit_amount": "59.00",
+            "fee_amount": "1.00",
+            "currency": "CNY",
+            "fee_category_id": "expense-category-transfer-fee-rg03",
+            "occurred_at": "2026-01-21T10:00:00+08:00",
+            "explicit_confirmation": True,
+        },
+        "outcome": {"status": "accepted"},
+        "status_changes": status_changes,
+        "deltas": deltas,
+        "returned_ids": [
+            {"kind": "confirmation", "id": "confirmation-rg03-imported-transfer"},
+            {"kind": "transaction", "id": "transaction-rg03-confirmed-transfer"},
+        ],
+    }
+    case["states"].append(result)
+    case["operations"].append(operation)
+    case["roots"][0]["operation_ids"].append(operation["id"])
+    retry = deepcopy(result)
+    retry["id"] = "state-rg03-confirmed-transfer-retry"
+    retry["as_of_operation_id"] = "operation-rg03-confirm-imported-transfer-retry"
+    retry_deltas, retry_status_changes = _operation_deltas(result, retry)
+    retry_operation = {
+        **operation,
+        "id": "operation-rg03-confirm-imported-transfer-retry",
+        "sequence": 4,
+        "baseline_state_id": result["id"],
+        "result_state_id": retry["id"],
+        "outcome": {"status": "no_change", "reason_code": "idempotent_replay"},
+        "status_changes": retry_status_changes,
+        "deltas": retry_deltas,
+    }
+    case["states"].append(retry)
+    case["operations"].append(retry_operation)
+    case["roots"][0]["operation_ids"].append(retry_operation["id"])
+    return case
+
+
+def add_second_rg03_pending_candidate(case: dict) -> dict:
+    case = deepcopy(case)
+    source = {
+        "id": "source-rg03-secondary-transfer",
+        "type": "account_transfer",
+        "payload": {
+            "source_account_id": "asset-b",
+            "destination_account_id": "asset-a",
+            "source_debit_amount": "20.00",
+            "destination_credit_amount": "20.00",
+            "fee_amount": "0.00",
+            "currency": "CNY",
+            "completeness": "complete",
+            "observed_at": "2026-01-21T11:00:00+08:00",
+            "evidence_id": "evidence-rg03-secondary-transfer",
+        },
+    }
+    evidence = {
+        "id": "evidence-rg03-secondary-transfer",
+        "type": "transfer_record",
+        "source_ids": [source["id"]],
+        "payload": {"observed_at": source["payload"]["observed_at"]},
+    }
+    candidate = {
+        "id": "candidate-rg03-secondary-transfer",
+        "type": "account_transfer",
+        "source_ids": [source["id"]],
+        "confidence": "1.00",
+        "payload": {
+            "source_account_id": "asset-b",
+            "destination_account_id": "asset-a",
+            "source_debit_amount": "20.00",
+            "destination_credit_amount": "20.00",
+            "fee_amount": "0.00",
+            "currency": "CNY",
+            "evidence_refs": [evidence["id"]],
+            "provenance": {
+                "rule": "complete_transfer_source",
+                "rule_version": 1,
+            },
+            "requires_confirmation": ["formal_transaction_creation"],
+        },
+        "status_history": [
+            {
+                "id": "candidate-rg03-secondary-transfer-pending",
+                "sequence": 1,
+                "status": "pending_confirmation",
+            }
+        ],
+    }
+    derived_status = {
+        "id": "derived-candidate-rg03-secondary-transfer",
+        "target_kind": "candidate",
+        "target_id": candidate["id"],
+        "status_name": "confirmation_status",
+        "value": "pending_confirmation",
+    }
+    for state in case["states"]:
+        state["sources"].append(deepcopy(source))
+        state["evidence"].append(deepcopy(evidence))
+        state["candidates"].append(deepcopy(candidate))
+        state["derived_statuses"].append(deepcopy(derived_status))
+    return case
+
+
 def schema_errors(case: dict) -> list:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     return list(Draft202012Validator(schema).iter_errors(case))
@@ -2496,6 +2814,72 @@ class GoldenV2SchemaTests(unittest.TestCase):
         invalid = deepcopy(case)
         invalid["states"][-1]["candidates"][-1]["payload"]["fee_amount"] = "2.00"
         with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(invalid)
+
+    def test_rg03_candidate_confirmation_allows_only_its_transaction_binding_transition(self):
+        case = rg03_confirm_account_transfer_candidate_case()
+        validate_golden_case_v2(case)
+
+        pending_prebound = deepcopy(case)
+        for state in pending_prebound["states"][:-1]:
+            candidates = [
+                item
+                for item in state["candidates"]
+                if item["id"] == "candidate-rg03-imported-transfer"
+            ]
+            if candidates:
+                candidates[0]["payload"]["transaction_id"] = "transaction-rg03-manual"
+        with self.subTest("pending candidate cannot prebind a transaction"):
+            with self.assertRaisesRegex(GoldenCaseError, r"pending transfer candidate"):
+                validate_golden_case_v2(pending_prebound)
+
+        changed_payload = deepcopy(case)
+        changed_payload["states"][-1]["candidates"][-1]["payload"]["fee_amount"] = "2.00"
+        with self.subTest("confirmation cannot rewrite original candidate payload"):
+            with self.assertRaisesRegex(GoldenCaseError, r"candidates.*immutable|candidates.*payload"):
+                validate_golden_case_v2(changed_payload)
+
+        changed_transaction = deepcopy(case)
+        for state in changed_transaction["states"][-2:]:
+            state["candidates"][-1]["payload"]["transaction_id"] = (
+                "transaction-rg03-manual"
+            )
+        with self.subTest("confirmation must bind its unique newly created transfer"):
+            with self.assertRaisesRegex(GoldenCaseError, r"confirmed candidate must bind"):
+                validate_golden_case_v2(changed_transaction)
+
+        nonconfirmation_binding = rg03_import_source_record_case()
+        nonconfirmation_binding["states"][-1]["candidates"][-1]["payload"]["transaction_id"] = (
+            "transaction-rg03-manual"
+        )
+        with self.subTest("nonconfirmation action cannot bind a pending candidate"):
+            with self.assertRaisesRegex(GoldenCaseError, r"pending transfer candidate"):
+                validate_golden_case_v2(nonconfirmation_binding)
+
+        confirmed_rewrite = deepcopy(case)
+        confirmed_rewrite["states"][-1]["candidates"][-1]["confidence"] = "0.90"
+        with self.subTest("confirmed candidates remain append-only after confirmation"):
+            with self.assertRaisesRegex(GoldenCaseError, r"candidates.*(?:immutable|non-history)"):
+                validate_golden_case_v2(confirmed_rewrite)
+
+    def test_rg03_candidate_confirmation_special_transition_is_scoped_to_input_candidate(self):
+        case = add_second_rg03_pending_candidate(
+            rg03_confirm_account_transfer_candidate_case()
+        )
+        validate_golden_case_v2(case)
+
+        invalid = deepcopy(case)
+        for state in invalid["states"][-2:]:
+            secondary = next(
+                item
+                for item in state["candidates"]
+                if item["id"] == "candidate-rg03-secondary-transfer"
+            )
+            secondary["confidence"] = "0.90"
+        with self.assertRaisesRegex(
+            GoldenCaseError,
+            r"candidates\[candidate-rg03-secondary-transfer\].*(?:immutable|non-history)",
+        ):
             validate_golden_case_v2(invalid)
 
     def test_cross_rg_roles_bind_their_canonical_target_kinds(self):

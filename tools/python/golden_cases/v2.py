@@ -3080,6 +3080,37 @@ def _validate_history_prefix(
         _fail(path + f".{history_field}", "existing history must remain an exact prefix and only append")
 
 
+def _validate_rg03_candidate_confirmation_transition(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    path: str,
+) -> None:
+    before_outer = {
+        key: value
+        for key, value in before.items()
+        if key not in {"payload", "status_history"}
+    }
+    after_outer = {
+        key: value
+        for key, value in after.items()
+        if key not in {"payload", "status_history"}
+    }
+    if not _contract_equivalent(before_outer, after_outer):
+        _fail(path, "candidate stable identity is immutable")
+    if "transaction_id" in before["payload"]:
+        _fail(path + ".payload.transaction_id", "pending candidate cannot replace a transaction binding")
+    transaction_id = after["payload"].get("transaction_id")
+    if transaction_id is None:
+        _fail(path + ".payload.transaction_id", "candidate confirmation must add a transaction binding")
+    expected_payload = {**before["payload"], "transaction_id": transaction_id}
+    if not _contract_equivalent(expected_payload, after["payload"]):
+        _fail(path + ".payload", "candidate confirmation may only add transaction_id")
+    before_history = before["status_history"]
+    after_history = after["status_history"]
+    if len(after_history) <= len(before_history) or after_history[: len(before_history)] != before_history:
+        _fail(path + ".status_history", "existing history must remain an exact prefix and only append")
+
+
 def _validate_reconstruction_history_prefix(
     before: dict[str, Any],
     after: dict[str, Any],
@@ -3124,6 +3155,7 @@ def _validate_append_only_transition(
     *,
     case_id: str | None = None,
     action_type: str | None = None,
+    target_candidate_id: str | None = None,
 ) -> None:
     immutable_collections = {
         "transaction_versions",
@@ -3156,6 +3188,8 @@ def _validate_append_only_transition(
                 ):
                     old = before[item_id]
                     new = after[item_id]
+                    if _contract_equivalent(old, new):
+                        continue
                     old_identity = {key: value for key, value in old.items() if key != "status"}
                     new_identity = {key: value for key, value in new.items() if key != "status"}
                     if not _contract_equivalent(old_identity, new_identity):
@@ -3166,9 +3200,20 @@ def _validate_append_only_transition(
                 if not _contract_equivalent(before[item_id], after[item_id]):
                     _fail(item_path, f"existing {collection_name} entities are immutable")
             elif collection_name == "candidates":
-                _validate_history_prefix(
-                    before[item_id], after[item_id], item_path, "status_history"
-                )
+                if (
+                    case_id == "RG-03"
+                    and action_type == "confirm_account_transfer_candidate"
+                    and item_id == target_candidate_id
+                    and before[item_id].get("type") == "account_transfer"
+                    and "transaction_id" not in before[item_id].get("payload", {})
+                ):
+                    _validate_rg03_candidate_confirmation_transition(
+                        before[item_id], after[item_id], item_path
+                    )
+                else:
+                    _validate_history_prefix(
+                        before[item_id], after[item_id], item_path, "status_history"
+                    )
             elif collection_name == "domain_entities":
                 old_payload = before[item_id].get("payload", {})
                 new_payload = after[item_id].get("payload", {})
@@ -4340,6 +4385,7 @@ def _validate_operations(
                 operation_path,
                 case_id=case["case"]["id"],
                 action_type=operation["action_type"],
+                target_candidate_id=(operation.get("input") or {}).get("candidate_id"),
             )
             if operation["outcome"]["status"] in {"rejected", "no_change"} and not _contract_equivalent(
                 _state_payload(baseline), _state_payload(result)
