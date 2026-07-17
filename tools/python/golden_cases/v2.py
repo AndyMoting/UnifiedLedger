@@ -3477,6 +3477,76 @@ def _validate_registered_action_effects(
             )
         return
 
+    if action == "import_source_record":
+        input_value = operation["input"]
+        source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
+        candidate = next(item for item in result["candidates"] if item["id"] in expected_entities["candidates"]["added_ids"])
+        evidence = next(item for item in result["evidence"] if item["id"] in expected_entities["evidence"]["added_ids"])
+        if source["id"] != input_value["source_id"] or evidence["id"] != input_value["evidence_id"] or candidate["source_ids"] != [source["id"]]:
+            _fail(operation_path + ".result_state_id", "intake identities must be owned by the action input")
+        expected_source_payload = {
+            "source_account_id": input_value["source_account_id"], "destination_account_id": input_value["destination_account_id"],
+            "source_debit_amount": input_value["source_debit_amount"], "destination_credit_amount": input_value["destination_credit_amount"],
+            "fee_amount": input_value["fee_amount"], "currency": input_value["currency"], "completeness": "complete",
+            "observed_at": input_value["observed_at"], "evidence_id": input_value["evidence_id"],
+        }
+        if source["type"] != "account_transfer" or source["payload"] != expected_source_payload:
+            _fail(operation_path + ".result_state_id", "complete intake source must exactly equal the action input")
+        if evidence["type"] != "transfer_record" or evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_value["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "complete intake evidence must exactly equal the source identity and observed_at")
+        expected_candidate_payload = {
+            "source_account_id": input_value["source_account_id"], "destination_account_id": input_value["destination_account_id"],
+            "source_debit_amount": input_value["source_debit_amount"], "destination_credit_amount": input_value["destination_credit_amount"],
+            "fee_amount": input_value["fee_amount"], "currency": input_value["currency"], "evidence_refs": [input_value["evidence_id"]],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["formal_transaction_creation"],
+        }
+        if candidate["type"] != "account_transfer" or candidate["confidence"] != "1.00" or candidate["payload"] != expected_candidate_payload:
+            _fail(operation_path + ".result_state_id", "complete intake candidate must exactly equal the source-derived candidate contract")
+        if [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]:
+            _fail(operation_path + ".result_state_id", "complete intake must remain pending")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "candidate", "id": candidate["id"]},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", "complete intake must return exactly its source, evidence, and candidate")
+        return
+
+    if action == "import_incomplete_source":
+        input_value = operation["input"]
+        source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
+        candidate = next(item for item in result["candidates"] if item["id"] in expected_entities["candidates"]["added_ids"])
+        if source["id"] != input_value["source_id"] or candidate["source_ids"] != [source["id"]] or "destination_account_id" in candidate["payload"]:
+            _fail(operation_path + ".result_state_id", "incomplete intake must not guess a destination")
+        expected_source_payload = {
+            "source_account_id": input_value["source_account_id"], "debit_amount": input_value["debit_amount"],
+            "currency": input_value["currency"], "completeness": "missing_destination",
+            "observed_at": input_value["observed_at"], "evidence_id": input_value["evidence_id"],
+        }
+        if source["type"] != "account_transfer" or source["payload"] != expected_source_payload:
+            _fail(operation_path + ".result_state_id", "incomplete intake source must exactly equal the action input and omit destination")
+        evidence = next(item for item in result["evidence"] if item["id"] in expected_entities["evidence"]["added_ids"])
+        if evidence["type"] != "transfer_record" or evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_value["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "incomplete intake evidence must exactly equal the source identity and observed_at")
+        expected_candidate_payload = {
+            "source_account_id": input_value["source_account_id"], "debit_amount": input_value["debit_amount"],
+            "currency": input_value["currency"], "evidence_refs": [input_value["evidence_id"]],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["destination_account_id", "formal_transaction_creation"],
+        }
+        if candidate["type"] != "account_transfer" or candidate["confidence"] != "1.00" or candidate["payload"] != expected_candidate_payload:
+            _fail(operation_path + ".result_state_id", "incomplete intake candidate must exactly equal the source-derived incomplete contract")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "candidate", "id": candidate["id"]},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", "incomplete intake must return exactly its source, evidence, and candidate")
+        return
+
     created_type_by_action = {
         "manual_expense": "expense",
         "manual_income": "income",
@@ -3779,6 +3849,7 @@ def _validate_action_semantics(
             _fail(operation_path + ".result_state_id", "complete intake candidate must exactly equal the source-derived candidate contract")
         if [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]:
             _fail(operation_path + ".result_state_id", "complete intake must remain pending")
+        return
     elif action == "import_incomplete_source":
         source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
         candidate = next(item for item in result["candidates"] if item["id"] in expected_entities["candidates"]["added_ids"])

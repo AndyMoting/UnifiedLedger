@@ -137,6 +137,119 @@ def rg03_full_manual_case() -> dict:
     return case
 
 
+def rg03_import_source_record_case() -> dict:
+    case = rg03_full_manual_case()
+    baseline = deepcopy(case["states"][-1])
+    result = deepcopy(baseline)
+    result["id"] = "state-rg03-imported-source"
+    result["as_of_operation_id"] = "operation-rg03-import-source"
+    source = {
+        "id": "source-rg03-imported-transfer",
+        "type": "account_transfer",
+        "payload": {
+            "source_account_id": "asset-a",
+            "destination_account_id": "asset-b",
+            "source_debit_amount": "60.00",
+            "destination_credit_amount": "59.00",
+            "fee_amount": "1.00",
+            "currency": "CNY",
+            "completeness": "complete",
+            "observed_at": "2026-01-21T10:00:00+08:00",
+            "evidence_id": "evidence-rg03-imported-transfer",
+        },
+    }
+    evidence = {
+        "id": "evidence-rg03-imported-transfer",
+        "type": "transfer_record",
+        "source_ids": [source["id"]],
+        "payload": {"observed_at": source["payload"]["observed_at"]},
+    }
+    candidate = {
+        "id": "candidate-rg03-imported-transfer",
+        "type": "account_transfer",
+        "source_ids": [source["id"]],
+        "confidence": "1.00",
+        "payload": {
+            "source_account_id": "asset-a",
+            "destination_account_id": "asset-b",
+            "source_debit_amount": "60.00",
+            "destination_credit_amount": "59.00",
+            "fee_amount": "1.00",
+            "currency": "CNY",
+            "evidence_refs": [evidence["id"]],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["formal_transaction_creation"],
+        },
+        "status_history": [
+            {"id": "candidate-rg03-imported-transfer-pending", "sequence": 1, "status": "pending_confirmation"}
+        ],
+    }
+    result["sources"].append(source)
+    result["evidence"].append(evidence)
+    result["candidates"].append(candidate)
+    result["derived_statuses"].append({
+        "id": "derived-candidate-rg03-imported-transfer",
+        "target_kind": "candidate",
+        "target_id": candidate["id"],
+        "status_name": "confirmation_status",
+        "value": "pending_confirmation",
+    })
+    operation = {
+        "id": "operation-rg03-import-source",
+        "root_id": "root-rg09-main",
+        "sequence": 2,
+        "operation_class": "creation",
+        "action_type": "import_source_record",
+        "baseline_state_id": baseline["id"],
+        "result_state_id": result["id"],
+        "input": {
+            "request_id": "request-rg03-import-source",
+            "source_id": source["id"],
+            "evidence_id": evidence["id"],
+            "source_account_id": "asset-a",
+            "destination_account_id": "asset-b",
+            "source_debit_amount": "60.00",
+            "destination_credit_amount": "59.00",
+            "fee_amount": "1.00",
+            "currency": "CNY",
+            "observed_at": source["payload"]["observed_at"],
+        },
+        "outcome": {"status": "accepted"},
+        "status_changes": [{
+            "target_kind": "candidate",
+            "target_id": candidate["id"],
+            "status_name": "confirmation_status",
+            "before": None,
+            "after": "pending_confirmation",
+        }],
+        "deltas": {
+            "entity_changes": golden_v2._expected_entity_changes(baseline, result),
+            "value_changes": {
+                "balances": [],
+                "reports": [],
+                "derived_statuses": [{
+                    "key": {
+                        "kind": "candidate",
+                        "target_id": candidate["id"],
+                        "status_name": "confirmation_status",
+                    },
+                    "before": None,
+                    "after": "pending_confirmation",
+                }],
+            },
+        },
+        "returned_ids": [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "candidate", "id": candidate["id"]},
+        ],
+    }
+    case["states"].append(result)
+    case["operations"].append(operation)
+    case["roots"][0]["operation_ids"].append(operation["id"])
+    return case
+
+
 def schema_errors(case: dict) -> list:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     return list(Draft202012Validator(schema).iter_errors(case))
@@ -2344,6 +2457,45 @@ class GoldenV2SchemaTests(unittest.TestCase):
         invalid = deepcopy(case)
         invalid["operations"][0]["root_id"] = "root-other"
         with self.assertRaisesRegex(GoldenCaseError, r"root_id|root"):
+            validate_golden_case_v2(invalid)
+
+    def test_rg03_import_source_record_is_source_only_and_exact(self):
+        case = rg03_import_source_record_case()
+        validate_golden_case_v2(case)
+
+        invalid = deepcopy(case)
+        result = invalid["states"][-1]
+        result["transactions"].append({
+            "id": "transaction-rg03-illicit-import",
+            "type": "account_transfer",
+            "current_version_id": "version-rg03-illicit-import-v1",
+        })
+        invalid["operations"][-1]["deltas"]["entity_changes"] = golden_v2._expected_entity_changes(
+            invalid["states"][-2], result
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"transactions"):
+            validate_golden_case_v2(invalid)
+
+        invalid = deepcopy(case)
+        invalid["operations"][-1]["returned_ids"][-1] = {
+            "kind": "transaction", "id": "transaction-rg03-manual"
+        }
+        with self.assertRaisesRegex(GoldenCaseError, r"returned_ids"):
+            validate_golden_case_v2(invalid)
+
+        invalid = deepcopy(case)
+        invalid["states"][-1]["sources"][-1]["payload"]["fee_amount"] = "2.00"
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(invalid)
+
+        invalid = deepcopy(case)
+        invalid["states"][-1]["evidence"][-1]["payload"]["observed_at"] = "2026-01-21T10:01:00+08:00"
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(invalid)
+
+        invalid = deepcopy(case)
+        invalid["states"][-1]["candidates"][-1]["payload"]["fee_amount"] = "2.00"
+        with self.assertRaises(GoldenCaseError):
             validate_golden_case_v2(invalid)
 
     def test_cross_rg_roles_bind_their_canonical_target_kinds(self):
