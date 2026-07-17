@@ -27,6 +27,16 @@
       "type": "string",
       "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
     },
+    "rg10AttemptedAmount": {
+      "type": "string",
+      "pattern": "^-?(?:0|[1-9][0-9]*)\\.[0-9]{2}$"
+    },
+    "rg10RechargeAttemptedAmount": {
+      "anyOf": [
+        {"$ref": "#/$defs/rg10AttemptedAmount"},
+        {"type": "number"}
+      ]
+    },
     "sha256Fingerprint": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -1444,8 +1454,8 @@
       "properties": {
         "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"},
         "payment_account_id": {"$ref": "#/$defs/id"}, "stored_value_account_id": {"$ref": "#/$defs/id"},
-        "paid_amount": {"$ref": "#/$defs/attemptedDecimal"}, "credited_amount": {"$ref": "#/$defs/attemptedDecimal"},
-        "bonus_amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "paid_amount": {"$ref": "#/$defs/rg10RechargeAttemptedAmount"}, "credited_amount": {"$ref": "#/$defs/rg10RechargeAttemptedAmount"},
+        "bonus_amount": {"$ref": "#/$defs/rg10RechargeAttemptedAmount"}, "currency": {"type": "string", "minLength": 1},
         "occurred_at": {"$ref": "#/$defs/timestamp"}, "created_at": {"$ref": "#/$defs/timestamp"},
         "explicit_confirmation": {"type": "boolean"}, "confirms_model": {"type": "boolean"},
         "confirms_payment_account": {"type": "boolean"}, "confirms_stored_value_account": {"type": "boolean"},
@@ -1459,13 +1469,15 @@
       "properties": {
         "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"}, "behavior": {"type": "string"},
         "stored_value_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
-        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "amount": {"$ref": "#/$defs/rg10AttemptedAmount"}, "currency": {"type": "string", "minLength": 1},
         "occurred_at": {"$ref": "#/$defs/timestamp"}, "created_at": {"$ref": "#/$defs/timestamp"},
         "explicit_confirmation": {"type": "boolean"}, "confirms_model": {"type": "boolean"},
         "confirms_behavior": {"type": "boolean"}, "confirms_stored_value_account": {"type": "boolean"},
         "confirms_amount": {"type": "boolean"}, "confirms_actual_time": {"type": "boolean"},
         "confirms_category": {"type": "boolean"}, "merchant_allocation_provided": {"type": "boolean"},
         "confirms_lot_allocation": {"type": "boolean"},
+        "paid_bonus_composition": {"type": "string"},
+        "lot_id": {"$ref": "#/$defs/id"},
         "lot_allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
         "all_facts_complete": {"type": "boolean"}
       }
@@ -1475,10 +1487,13 @@
       "properties": {
         "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"},
         "payment_account_id": {"$ref": "#/$defs/id"}, "stored_value_account_id": {"$ref": "#/$defs/id"},
-        "paid_amount": {"$ref": "#/$defs/attemptedDecimal"}, "credited_amount": {"$ref": "#/$defs/attemptedDecimal"},
-        "bonus_amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "paid_amount": {"$ref": "#/$defs/rg10AttemptedAmount"}, "credited_amount": {"$ref": "#/$defs/rg10AttemptedAmount"},
+        "bonus_amount": {"$ref": "#/$defs/rg10AttemptedAmount"}, "currency": {"type": "string", "minLength": 1},
         "occurred_at": {"$ref": "#/$defs/timestamp"}, "lot_id": {"$ref": "#/$defs/id"},
-        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"}
+        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"},
+        "bank_payment_confirmed": {"type": "boolean"}, "model_confirmed": {"type": "boolean"},
+        "merchant_credit_amount": {"$ref": "#/$defs/rg10AttemptedAmount"},
+        "merchant_source_id": {"$ref": "#/$defs/id"}
       }
     },
     "rg10IngestSpendAttemptedInput": {
@@ -1486,17 +1501,18 @@
       "properties": {
         "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"}, "behavior": {"type": "string"},
         "stored_value_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
-        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
-        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "amount": {"$ref": "#/$defs/rg10AttemptedAmount"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}, "actual_time": {"$ref": "#/$defs/timestamp"},
         "lot_allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
-        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"}
+        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"},
+        "category_confirmed": {"type": "boolean"}, "lot_allocation_confirmed": {"type": "boolean"}
       }
     },
     "rg10ExpiryAttemptedInput": {
       "type": "object", "additionalProperties": false, "minProperties": 1,
       "properties": {
         "request_id": {"$ref": "#/$defs/id"}, "lot_id": {"$ref": "#/$defs/id"},
-        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "amount": {"$ref": "#/$defs/rg10AttemptedAmount"}, "currency": {"type": "string", "minLength": 1},
         "occurred_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"},
         "confirms_actual_expiry": {"type": "boolean"}, "confirms_lot": {"type": "boolean"},
         "confirms_amount": {"type": "boolean"}
@@ -1505,10 +1521,82 @@
     "rg10AllocationAttemptedInput": {
       "type": "object", "additionalProperties": false, "minProperties": 1,
       "properties": {
-        "request_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "request_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/rg10AttemptedAmount"},
+        "lot_id": {"$ref": "#/$defs/id"},
         "merchant_allocation_provided": {"type": "boolean"}, "merchant_evidence_id": {"$ref": "#/$defs/id"},
         "allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
         "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "rg10RechargeRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"}, "reason_code": {"type": "string"}, "field_path": {"type": "string"}
+      },
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "exact_decimal_string_required"}, "field_path": {"const": "$.attempted_input.paid_amount"}}},
+        {"properties": {"reason_code": {"const": "exact_decimal_string_required"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
+        {"properties": {"reason_code": {"const": "exact_decimal_string_required"}, "field_path": {"const": "$.attempted_input.bonus_amount"}}},
+        {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"const": "$.attempted_input.paid_amount"}}},
+        {"properties": {"reason_code": {"const": "credited_amount_must_be_positive"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
+        {"properties": {"reason_code": {"const": "bonus_amount_must_be_zero_or_positive"}, "field_path": {"const": "$.attempted_input.bonus_amount"}}},
+        {"properties": {"reason_code": {"const": "credited_must_equal_paid_plus_bonus"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
+        {"properties": {"reason_code": {"const": "component_sum_mismatch"}, "field_path": {"const": "$.attempted_input.bonus_amount"}}},
+        {"properties": {"reason_code": {"const": "stored_value_account_not_enabled"}, "field_path": {"const": "$.attempted_input.stored_value_account_id"}}},
+        {"properties": {"reason_code": {"const": "stored_value_models_must_not_overlap"}, "field_path": {"const": "$.attempted_input.model"}}},
+        {"properties": {"reason_code": {"const": "unknown_payment_account"}, "field_path": {"const": "$.attempted_input.payment_account_id"}}},
+        {"properties": {"reason_code": {"const": "owned_payment_asset_required"}, "field_path": {"const": "$.attempted_input.payment_account_id"}}},
+        {"properties": {"reason_code": {"const": "same_cny_currency_required"}, "field_path": {"const": "$.attempted_input.currency"}}}
+      ]
+    },
+    "rg10SpendRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"}, "reason_code": {"type": "string"}, "field_path": {"type": "string"}
+      },
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "insufficient_effective_stored_balance"}, "field_path": {"const": "$.attempted_input.amount"}}},
+        {"properties": {"reason_code": {"const": "paid_bonus_composition_must_be_evidenced"}, "field_path": {"const": "$.attempted_input.paid_bonus_composition"}}},
+        {"properties": {"reason_code": {"const": "active_secondary_category_required"}, "field_path": {"const": "$.attempted_input.category_id"}}},
+        {"properties": {"reason_code": {"const": "enabled_restricted_stored_value_asset_required"}, "field_path": {"const": "$.attempted_input.stored_value_account_id"}}}
+      ]
+    },
+    "rg10ImportedRechargeRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "bank_payment_model_and_all_recharge_facts_required"},
+        "field_path": {"const": "$.attempted_input.bank_payment_confirmed"}
+      }
+    },
+    "rg10ImportedSpendRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "spend_category_and_behavior_confirmation_required"},
+        "field_path": {"const": "$.attempted_input.category_confirmed"}
+      }
+    },
+    "rg10ExpiryRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "actual_expiry_requires_explicit_confirmation"},
+        "field_path": {"const": "$.attempted_input.explicit_confirmation"}
+      }
+    },
+    "rg10AllocationRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "lot_allocation_exceeds_remaining_face_value"},
+        "field_path": {"const": "$.attempted_input.amount"}
       }
     },
     "operationBase": {
@@ -1618,7 +1706,7 @@
               "properties": {
                 "action_type": {"const": "confirm_stored_value_recharge"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10RechargeRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10RechargeAttemptedInput"}
               }
             },
@@ -1634,7 +1722,7 @@
               "properties": {
                 "action_type": {"const": "confirm_stored_value_spend"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10SpendRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10SpendAttemptedInput"}
               }
             },
@@ -1658,7 +1746,7 @@
               "properties": {
                 "action_type": {"const": "confirm_imported_stored_value_recharge"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10ImportedRechargeRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10IngestRechargeAttemptedInput"}
               }
             },
@@ -1666,7 +1754,7 @@
               "properties": {
                 "action_type": {"const": "confirm_imported_stored_value_spend"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10ImportedSpendRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10IngestSpendAttemptedInput"}
               }
             },
@@ -1690,7 +1778,7 @@
               "properties": {
                 "action_type": {"const": "confirm_stored_value_expiry_loss"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10ExpiryRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10ExpiryAttemptedInput"}
               }
             },
@@ -1722,7 +1810,7 @@
               "properties": {
                 "action_type": {"const": "apply_merchant_lot_allocation"},
                 "operation_class": {"const": "rejection"},
-                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "outcome": {"$ref": "#/$defs/rg10AllocationRejectedOutcome"},
                 "attempted_input": {"$ref": "#/$defs/rg10AllocationAttemptedInput"}
               }
             },

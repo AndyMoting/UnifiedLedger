@@ -1382,6 +1382,30 @@ class GoldenV2MappingTests(unittest.TestCase):
                     "requires_contract_amendment",
                 )
                 self.assertIn("RG10-GAP-01", entries[source_path]["contract_gap_ids"])
+                self.assertIn(
+                    "$.operations[*].outcome.reason_code",
+                    entries[source_path]["target_paths"],
+                )
+        self.assertIn("14 unique", gap["capability_boundary"])
+        self.assertIn("17 frozen cases", gap["capability_boundary"])
+        self.assertIn("5 frozen cases", gap["required_change"])
+
+        lossless_gated_inputs = {
+            "$.import_path.incomplete_confirmations[*].input.actual_time": "$.operations[*].attempted_input.actual_time",
+            "$.import_path.incomplete_confirmations[*].input.bank_payment_confirmed": "$.operations[*].attempted_input.bank_payment_confirmed",
+            "$.import_path.incomplete_confirmations[*].input.category_confirmed": "$.operations[*].attempted_input.category_confirmed",
+            "$.import_path.incomplete_confirmations[*].input.lot_allocation_confirmed": "$.operations[*].attempted_input.lot_allocation_confirmed",
+            "$.import_path.incomplete_confirmations[*].input.merchant_credit_amount": "$.operations[*].attempted_input.merchant_credit_amount",
+            "$.import_path.incomplete_confirmations[*].input.merchant_source_id": "$.operations[*].attempted_input.merchant_source_id",
+            "$.import_path.incomplete_confirmations[*].input.model_confirmed": "$.operations[*].attempted_input.model_confirmed",
+            "$.invalid_inputs[*].input.paid_bonus_composition": "$.operations[*].attempted_input.paid_bonus_composition",
+        }
+        for source_path, target_path in lossless_gated_inputs.items():
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path, boundary="lossless gated input"):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertIn("RG10-GAP-01", entry["contract_gap_ids"])
+                self.assertIn(target_path, entry["target_paths"])
         self.assertEqual(len(gap["affected_source_paths"]), 387)
         self.assertEqual(path_map["disposition_counts"]["ready"], 452)
         self.assertEqual(path_map["disposition_counts"]["requires_contract_amendment"], 708)

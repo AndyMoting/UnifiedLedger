@@ -72,6 +72,46 @@ _RG10_REJECTED_ACTIONS = {
     "confirm_stored_value_expiry_loss",
     "apply_merchant_lot_allocation",
 }
+_RG10_REJECTION_REASON_FIELDS = {
+    "confirm_stored_value_recharge": {
+        "exact_decimal_string_required": {"paid_amount", "credited_amount", "bonus_amount"},
+        "must_be_positive": {"paid_amount"},
+        "credited_amount_must_be_positive": {"credited_amount"},
+        "bonus_amount_must_be_zero_or_positive": {"bonus_amount"},
+        "credited_must_equal_paid_plus_bonus": {"credited_amount"},
+        "component_sum_mismatch": {"bonus_amount"},
+        "stored_value_account_not_enabled": {"stored_value_account_id"},
+        "stored_value_models_must_not_overlap": {"model"},
+        "unknown_payment_account": {"payment_account_id"},
+        "owned_payment_asset_required": {"payment_account_id"},
+        "same_cny_currency_required": {"currency"},
+    },
+    "confirm_stored_value_spend": {
+        "insufficient_effective_stored_balance": {"amount"},
+        "paid_bonus_composition_must_be_evidenced": {"paid_bonus_composition"},
+        "active_secondary_category_required": {"category_id"},
+        "enabled_restricted_stored_value_asset_required": {"stored_value_account_id"},
+    },
+    "confirm_imported_stored_value_recharge": {
+        "bank_payment_model_and_all_recharge_facts_required": {"bank_payment_confirmed"},
+    },
+    "confirm_imported_stored_value_spend": {
+        "spend_category_and_behavior_confirmation_required": {"category_confirmed"},
+    },
+    "confirm_stored_value_expiry_loss": {
+        "actual_expiry_requires_explicit_confirmation": {"explicit_confirmation"},
+    },
+    "apply_merchant_lot_allocation": {
+        "lot_allocation_exceeds_remaining_face_value": {"amount"},
+    },
+}
+_RG10_UNOWNED_REJECTION_REASONS = {
+    "insufficient_effective_stored_balance": "effective stored-value replay owner",
+    "lot_allocation_exceeds_remaining_face_value": "lot remaining-face-value effect owner",
+    "paid_bonus_composition_must_be_evidenced": "paid/bonus composition provenance owner",
+    "bank_payment_model_and_all_recharge_facts_required": "stored-value import candidate/fact owner",
+    "spend_category_and_behavior_confirmation_required": "stored-value import candidate/fact owner",
+}
 _ACCEPTED_ACTION_ENTITY_COUNTS = {
     "manual_expense": {
         "transactions": (1, 0, 0),
@@ -2306,6 +2346,146 @@ def _validate_rg10_structural_input(
             _decimal(allocation["amount"], allocation_path + ".amount")
 
 
+def _validate_rejected_rg10_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    action = operation["action_type"]
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    outcome = operation["outcome"]
+    reason = outcome["reason_code"]
+    field_path = outcome["field_path"]
+    registered = _RG10_REJECTION_REASON_FIELDS[action]
+    if reason not in registered:
+        _fail(operation_path + ".outcome.reason_code", "is not registered for this RG-10 action")
+    expected_field = field_path.removeprefix("$.attempted_input.")
+    if field_path != f"$.attempted_input.{expected_field}" or expected_field not in registered[reason]:
+        _fail(
+            operation_path + ".outcome.field_path",
+            "does not match the registered field for this RG-10 rejection reason",
+        )
+
+    for field in ("occurred_at", "created_at", "activation_at", "actual_time"):
+        if field in attempted:
+            _timestamp(attempted[field], attempted_path + f".{field}", timezone)
+
+    if reason in _RG10_UNOWNED_REJECTION_REASONS:
+        if expected_field not in attempted:
+            _fail(
+                operation_path + ".outcome.field_path",
+                "must locate the present attempted field for this gated RG-10 rejection",
+            )
+        _fail(
+            attempted_path,
+            f"cannot execute this rejection without a {_RG10_UNOWNED_REJECTION_REASONS[reason]}",
+        )
+
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    lots = {
+        item["id"]: item
+        for item in baseline["domain_entities"]
+        if item["type"] == "stored_value_lot"
+    }
+
+    failure: tuple[str, str] | None = None
+    if action == "confirm_stored_value_recharge":
+        amounts: dict[str, Decimal] = {}
+        for field in ("paid_amount", "credited_amount", "bonus_amount"):
+            if field not in attempted:
+                continue
+            value = attempted[field]
+            if not isinstance(value, str) or not _DECIMAL_PATTERN.fullmatch(value):
+                failure = (field, "exact_decimal_string_required")
+                break
+            amounts[field] = Decimal(value)
+        if failure is None and "paid_amount" in amounts and amounts["paid_amount"] <= 0:
+            failure = ("paid_amount", "must_be_positive")
+        elif failure is None and "credited_amount" in amounts and amounts["credited_amount"] <= 0:
+            failure = ("credited_amount", "credited_amount_must_be_positive")
+        elif failure is None and "bonus_amount" in amounts and amounts["bonus_amount"] < 0:
+            failure = ("bonus_amount", "bonus_amount_must_be_zero_or_positive")
+        elif failure is None and all(
+            field in amounts for field in ("paid_amount", "credited_amount", "bonus_amount")
+        ):
+            if amounts["credited_amount"] < amounts["paid_amount"]:
+                failure = ("credited_amount", "credited_must_equal_paid_plus_bonus")
+            elif amounts["credited_amount"] != amounts["paid_amount"] + amounts["bonus_amount"]:
+                failure = ("bonus_amount", "component_sum_mismatch")
+
+        payment_id = attempted.get("payment_account_id")
+        payment = accounts.get(payment_id) if payment_id is not None else None
+        if failure is None and payment_id is not None and payment is None:
+            failure = ("payment_account_id", "unknown_payment_account")
+        elif failure is None and payment is not None and (
+            payment["kind"] != "asset" or not payment["owned_by_user"]
+        ):
+            failure = ("payment_account_id", "owned_payment_asset_required")
+
+        stored_id = attempted.get("stored_value_account_id")
+        stored = accounts.get(stored_id) if stored_id is not None else None
+        if failure is None and stored is not None and "stored_value" in stored:
+            if not stored["stored_value"]["enabled"]:
+                failure = ("stored_value_account_id", "stored_value_account_not_enabled")
+        if failure is None and attempted.get("model") == "immediate_expense" and stored_id is not None:
+            failure = ("model", "stored_value_models_must_not_overlap")
+        if failure is None and "currency" in attempted and attempted["currency"] != "CNY":
+            failure = ("currency", "same_cny_currency_required")
+
+    elif action == "confirm_stored_value_spend":
+        stored_id = attempted.get("stored_value_account_id")
+        stored = accounts.get(stored_id) if stored_id is not None else None
+        if stored_id is not None and (
+            stored is None
+            or stored["kind"] != "asset"
+            or not stored["owned_by_user"]
+            or not stored.get("stored_value", {}).get("enabled", False)
+            or not stored["stored_value"].get("merchant_restricted", False)
+        ):
+            failure = (
+                "stored_value_account_id",
+                "enabled_restricted_stored_value_asset_required",
+            )
+        category_id = attempted.get("category_id")
+        category = categories.get(category_id) if category_id is not None else None
+        if failure is None and category_id is not None and (
+            category is None
+            or category["parent_id"] is None
+            or category["posting_account_id"] is None
+            or not category["active"]
+        ):
+            failure = ("category_id", "active_secondary_category_required")
+
+    elif action == "confirm_stored_value_expiry_loss":
+        if attempted.get("explicit_confirmation") is False:
+            failure = (
+                "explicit_confirmation",
+                "actual_expiry_requires_explicit_confirmation",
+            )
+        lot_id = attempted.get("lot_id")
+        if failure is None and lot_id is not None and lot_id not in lots:
+            _fail(attempted_path + ".lot_id", "dangling or mistyped lot reference")
+
+    if failure is None:
+        _fail(attempted_path, "does not match an executable registered RG-10 rejection failure")
+    expected_field, expected_reason = failure
+    expected_path = f"$.attempted_input.{expected_field}"
+    if field_path != expected_path:
+        _fail(
+            operation_path + ".outcome.field_path",
+            f"must be {expected_path!r} for the first failing attempted field",
+        )
+    if reason != expected_reason:
+        _fail(
+            operation_path + ".outcome.reason_code",
+            f"must be {expected_reason!r} for the first failing attempted field",
+        )
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -2320,13 +2500,12 @@ def _validate_action_input(
                 operation, operation_path, baseline, precisions, timezone
             )
         elif action in _RG10_REJECTED_ACTIONS:
-            _validate_rg10_structural_input(
-                operation["attempted_input"],
-                operation_path + ".attempted_input",
+            _validate_rejected_rg10_attempt(
+                operation,
+                operation_path,
                 baseline,
                 precisions,
                 timezone,
-                attempted=True,
             )
         else:
             _fail(operation_path + ".action_type", "unregistered rejected action")
@@ -2636,13 +2815,16 @@ def _validate_registered_action_effects(
     expected_entities: dict[str, dict[str, list[str]]],
 ) -> None:
     action = operation["action_type"]
-    if action in _RG10_STRUCTURAL_ACTIONS:
-        _fail(
-            operation_path + ".action_type",
-            "is structurally registered but economic effects are not implemented",
-        )
     accepted = operation["outcome"]["status"] == "accepted"
-    registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
+    if action in _RG10_STRUCTURAL_ACTIONS:
+        if operation["outcome"]["status"] != "rejected":
+            _fail(
+                operation_path + ".action_type",
+                "is structurally registered but economic effects are not implemented",
+            )
+        registered_counts: dict[str, tuple[int, int, int]] | None = {}
+    else:
+        registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
     if registered_counts is None:
         _fail(operation_path + ".action_type", "unregistered action type")
 
@@ -3225,7 +3407,10 @@ def _validate_operations(
             if result["as_of_operation_id"] != operation["id"]:
                 _fail(operation_path + ".result_state_id", "result state as_of_operation_id must match")
 
-            if operation["action_type"] in _RG10_STRUCTURAL_ACTIONS:
+            if (
+                operation["action_type"] in _RG10_STRUCTURAL_ACTIONS
+                and operation["outcome"]["status"] != "rejected"
+            ):
                 _fail(
                     operation_path + ".action_type",
                     "is structurally registered but economic effects are not implemented",

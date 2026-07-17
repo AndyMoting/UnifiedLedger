@@ -35,8 +35,8 @@
       "id": "RG10-GAP-01",
       "title": "RG-10 operation effects, fixture transitions, and complete retries",
       "status": "unresolved",
-      "capability_boundary": "The closed registry owns the 13 RG-10 action tokens, exact class/outcome dispatch, closed inputs, sparse attempted_input, and generic rejected/no-change atomicity. It does not execute RG-10 domain failure predicates, reason_code/field_path selection, fixture transitions, economic effects, lifecycle changes, returned IDs, or complete idempotent retries.",
-      "required_change": "Add fixture-backed operation prototypes with domain failure predicates, exact reason_code/field_path selection, exhaustive effect signatures, economic and lifecycle invariants, returned IDs, and same-action retry verification before opening adapter or expected-output gates.",
+      "capability_boundary": "The closed registry owns the 13 RG-10 action tokens, exact class/outcome dispatch, closed inputs, sparse attempted_input, and generic rejected/no-change atomicity. Six rejection branches register exact reason/field pairs, and current catalog, amount, currency, category, lot identity, timestamp, and explicit-confirmation owners execute 14 unique reasons across 17 frozen cases end to end through action-specific predicates and generic rejected atomicity. Accepted/no-change effects, fixture transitions, lifecycle changes, returned IDs, and complete idempotent retries remain unimplemented.",
+      "required_change": "Add the missing import candidate/fact, paid/bonus composition provenance, effective stored-balance replay, and lot remaining-face-value effect owners for the 5 frozen cases that remain gated, then add exhaustive effect signatures, economic and lifecycle invariants, returned IDs, and same-action retry verification before opening adapter or expected-output gates.",
       "risk": "Open inputs or generic retries would weaken atomic rejection, pending-confirmation, and idempotency guarantees.",
       "affected_source_paths": [
         "$.idempotency.activation_retry.expected.accepted",
@@ -13858,12 +13858,12 @@
       "target_paths": [
         "$.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].outcome.reason_code"
+        "$.operations[*].outcome.reason_code"
       ],
-      "transform": "Retain the registered action_type and operation_class, but keep reason_code and field_path planned until the corresponding domain failure predicate is executable.",
+      "transform": "Map to the exact current branch registry, but keep this normalized source path gated because both imported-confirmation reasons still require a stored-value import candidate/fact owner.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "A closed sparse attempted_input shape does not prove which domain predicate failed or which reason and field path must be emitted.",
+      "rationale": "The reason/field pair is structurally closed, but current v2 cannot independently prove the imported candidate and fact completeness predicate.",
       "contract_gap_ids": [
         "RG10-GAP-01"
       ]
@@ -13981,7 +13981,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.actual_time"
+        "$.operations[*].attempted_input.actual_time"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14019,7 +14019,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.bank_payment_confirmed"
+        "$.operations[*].attempted_input.bank_payment_confirmed"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14039,7 +14039,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.category_confirmed"
+        "$.operations[*].attempted_input.category_confirmed"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14077,7 +14077,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.lot_allocation_confirmed"
+        "$.operations[*].attempted_input.lot_allocation_confirmed"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14097,7 +14097,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.merchant_credit_amount"
+        "$.operations[*].attempted_input.merchant_credit_amount"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14117,7 +14117,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.merchant_source_id"
+        "$.operations[*].attempted_input.merchant_source_id"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -14137,7 +14137,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.model_confirmed"
+        "$.operations[*].attempted_input.model_confirmed"
       ],
       "transform": "Dispatch by source item identity: import-recharge-only-merchant-rg10 -> action_type=confirm_imported_stored_value_recharge, operation_class=rejection; import-spend-without-category-rg10 -> action_type=confirm_imported_stored_value_spend, operation_class=rejection. Use the matching closed sparse attempted_input, preserve pending_confirmation as the intake boundary, keep result_state_id equal to baseline_state_id, and emit exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
@@ -15292,12 +15292,12 @@
       "target_paths": [
         "$.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].outcome.reason_code"
+        "$.operations[*].outcome.reason_code"
       ],
-      "transform": "Retain the registered action_type and operation_class, but keep reason_code and field_path planned until the corresponding domain failure predicate is executable.",
+      "transform": "Map to the exact current branch registry. Fourteen unique reasons covering 17 of 20 invalid-input occurrences are executable; keep this normalized source path gated because effective stored balance, lot remaining face value, and paid/bonus composition provenance have no current owner.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
       "disposition": "requires_contract_amendment",
-      "rationale": "A closed sparse attempted_input shape does not prove which domain predicate failed or which reason and field path must be emitted.",
+      "rationale": "The normalized path mixes executable predicates with three owner-dependent predicates, so the path cannot be marked ready as a whole.",
       "contract_gap_ids": [
         "RG10-GAP-01"
       ]
@@ -15578,7 +15578,7 @@
       "target_paths": [
         "$.planned_contract.operations[*].action_type",
         "$.operations[*].operation_class",
-        "$.planned_contract.operations[*].attempted_input.paid_bonus_composition"
+        "$.operations[*].attempted_input.paid_bonus_composition"
       ],
       "transform": "Dispatch rejected source IDs exactly: amount/composition/account/model/currency recharge cases -> action_type=confirm_stored_value_recharge; spend-over-balance, guessed-composition, unknown-category, and wrong stored spend account cases -> action_type=confirm_stored_value_spend; invalid-lot-allocation -> action_type=apply_merchant_lot_allocation; unconfirmed-expiry -> action_type=confirm_stored_value_expiry_loss. Every case uses operation_class=rejection, its closed sparse attempted_input, unchanged named state, and exhaustive zero deltas.",
       "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
