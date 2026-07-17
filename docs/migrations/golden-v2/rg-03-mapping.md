@@ -50,7 +50,7 @@ The existing `account_transfer` transaction type, three transfer posting roles, 
 ## Gate
 
 - status: `approved`
-- expected output gate: `closed`
+- expected output gate: `completed`
 - unresolved gap count: `0`
 
-Expected v2 output remains closed for the next approved generation stage; expected has not yet been generated. This closed mapping authorizes neither an adapter nor a v1 fixture rewrite.
+The expected v2 output has passed independent review and received explicit user approval, with `approval_status=approved`. Adapter implementation, v1 fixture rewrite, and publication remain closed.

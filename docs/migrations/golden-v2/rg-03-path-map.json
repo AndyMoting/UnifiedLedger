@@ -6,7 +6,7 @@
   "source_schema_version": 1,
   "target_contract_version": "2.0.0",
   "status": "approved",
-  "expected_output_gate": "closed",
+  "expected_output_gate": "completed",
   "normalization": {
     "root": "$",
     "object_member": ".key",
@@ -538,9 +538,9 @@
         "$.states[*].evidence_links[*].target_id",
         "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map the legacy posting reference to an evidence link with target_kind=posting, target_id equal to the exact eligible real-account posting ID, and role fixed to real_account_posting.",
+      "transform": "Map each legacy posting reference by evidence responsibility to target_kind=posting and the exact eligible posting ID: the debit-source evidence link uses role=real_account_posting, while the credit-mirror evidence link uses role=destination_asset_posting.",
       "authority": "RG-03 frozen design and fixture; RG-03 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "rationale": "The current evidence-link contract requires the typed posting target and the constant real_account_posting role; no posting_id alias or new role is needed.",
+      "rationale": "The debit source proves the source real-account posting, while the later credit mirror specifically proves the destination asset posting; both roles are already registered and must retain their distinct responsibilities.",
       "disposition": "ready",
       "contract_gap_ids": []
     },
@@ -1893,9 +1893,9 @@
         "$.states[*].evidence_links[*].target_id",
         "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map the legacy posting reference to an evidence link with target_kind=posting, target_id equal to the exact eligible real-account posting ID, and role fixed to real_account_posting.",
+      "transform": "Map each legacy posting reference by evidence responsibility to target_kind=posting and the exact eligible posting ID: the debit-source evidence link uses role=real_account_posting, while the credit-mirror evidence link uses role=destination_asset_posting.",
       "authority": "RG-03 frozen design and fixture; RG-03 golden test; GOLDEN_SCHEMA 2.0.0; ACCOUNTING_RULES and GOLDEN_TESTS.",
-      "rationale": "The current evidence-link contract requires the typed posting target and the constant real_account_posting role; no posting_id alias or new role is needed.",
+      "rationale": "The debit source proves the source real-account posting, while the later credit mirror specifically proves the destination asset posting; both roles are already registered and must retain their distinct responsibilities.",
       "disposition": "ready",
       "contract_gap_ids": []
     },
