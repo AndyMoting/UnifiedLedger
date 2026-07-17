@@ -14,6 +14,9 @@ EXPECTED_INVENTORIES = {
     "RG-05": (549, 1407),
     "RG-06": (1188, 3610),
     "RG-07": (2523, 6084),
+    "RG-08": (4969, 16797),
+    "RG-09": (7445, 23869),
+    "RG-10": (1161, 2022),
 }
 CLASSIFICATIONS = {"preserve", "map", "derive", "reject"}
 DISPOSITIONS = {
@@ -154,7 +157,7 @@ class GoldenV2MappingTests(unittest.TestCase):
                 self.assertEqual(path_map["target_contract_version"], "2.0.0")
                 self.assertEqual(path_map["normalization"], expected_normalization)
 
-    def test_rg02_through_rg07_path_maps_close_over_source_inventories(self):
+    def test_rg02_through_rg10_path_maps_close_over_source_inventories(self):
         for case_id, (expected_paths, expected_occurrences) in EXPECTED_INVENTORIES.items():
             suffix = case_id[-2:]
             with self.subTest(case_id=case_id):
@@ -769,6 +772,498 @@ class GoldenV2MappingTests(unittest.TestCase):
         )
         self.assertIn("originating registered action_type", retry_text)
         self.assertIn("no generic retry action", retry_text)
+
+    def test_rg08_collection_identity_audit_time_and_effective_gap(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-08-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+
+        complete_snapshot_patterns = {
+            "planned": re.compile(
+                r"(?:^|\.)canonical_state\.id$|^\$\.canonical_states\.[^.]+\.id$"
+            ),
+            "current": re.compile(
+                r"(?:^|\.)resulting_state\.id$|"
+                r"(?:^|\.)pre_operation_baseline\.id$|"
+                r"(?:^|\.)baseline_state\.id$|(?:^|\.)result_state\.id$"
+            ),
+        }
+        complete_snapshot_entries = []
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            snapshot_kind = next(
+                (
+                    kind
+                    for kind, pattern in complete_snapshot_patterns.items()
+                    if pattern.search(source_path)
+                ),
+                None,
+            )
+            if snapshot_kind is None:
+                continue
+            complete_snapshot_entries.append(entry)
+            expected_target = (
+                "$.planned_contract.states[*].id"
+                if snapshot_kind == "planned"
+                else "$.states[*].id"
+            )
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["target_paths"], [expected_target])
+                self.assertNotIn(
+                    "$.planned_contract.operations[*].input.id",
+                    entry["target_paths"],
+                )
+        self.assertTrue(complete_snapshot_entries)
+
+        exact_collection_fields = {
+            "transactions[*].postings[*].": {
+                field: f"$.states[*].postings[*].{field}"
+                for field in (
+                    "id",
+                    "account_id",
+                    "amount",
+                    "currency",
+                    "reconciliation_eligible",
+                )
+            },
+            "transactions[*].": {
+                "id": "$.states[*].transactions[*].id",
+                "current_version_id": "$.states[*].transactions[*].current_version_id",
+                "occurred_at": "$.states[*].transaction_versions[*].occurred_at",
+                "posting_set_id": "$.states[*].posting_sets[*].id",
+                "statistics_at": "$.states[*].transaction_versions[*].statistics_at",
+                "type": "$.states[*].transactions[*].type",
+            },
+            "versions[*].": {
+                "id": "$.states[*].transaction_versions[*].id",
+                "created_at": "$.states[*].transaction_versions[*].created_at",
+                "posting_set_id": "$.states[*].transaction_versions[*].posting_set_id",
+                "transaction_id": "$.states[*].transaction_versions[*].transaction_id",
+            },
+        }
+        matched_collection_fields = 0
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            for marker, field_targets in exact_collection_fields.items():
+                if marker not in source_path:
+                    continue
+                if (
+                    marker == "transactions[*]."
+                    and "transactions[*].postings[*]." in source_path
+                ):
+                    continue
+                tail = source_path.split(marker, 1)[1]
+                if tail not in field_targets:
+                    continue
+                matched_collection_fields += 1
+                with self.subTest(source_path=source_path):
+                    self.assertEqual(
+                        entry["target_paths"], [field_targets[tail]]
+                    )
+        self.assertGreater(matched_collection_fields, 0)
+
+        position_ids = []
+        settlement_ids = []
+        history_ids = []
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            if source_path.endswith(".positions[*].id"):
+                position_ids.append(entry)
+            if source_path.endswith(".settlements[*].id"):
+                settlement_ids.append(entry)
+            if source_path.endswith(
+                (".positions[*].history[*].id", ".settlements[*].history[*].id")
+            ):
+                history_ids.append(entry)
+        self.assertTrue(position_ids)
+        self.assertTrue(settlement_ids)
+        self.assertTrue(history_ids)
+        for entry in position_ids + settlement_ids:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(
+                    entry["target_paths"],
+                    ["$.planned_contract.states[*].domain_entities[*].id"],
+                )
+        for entry in history_ids:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(
+                    entry["target_paths"],
+                    [
+                        "$.planned_contract.states[*].domain_entities[*].payload."
+                        "history[*].id"
+                    ],
+                )
+
+        audit_ref_fields = {
+            "mirror_of_evidence_id": {
+                "$.planned_contract.states[*].audit_links[*].from.kind",
+                "$.planned_contract.states[*].audit_links[*].from.id",
+            },
+            "merged_into_evidence_link_id": {
+                "$.planned_contract.states[*].audit_links[*].to.kind",
+                "$.planned_contract.states[*].audit_links[*].to.id",
+            },
+        }
+        matched_audit_refs = 0
+        for entry in path_map["entries"]:
+            field = entry["source_path"].rsplit(".", 1)[-1]
+            if field not in audit_ref_fields:
+                continue
+            matched_audit_refs += 1
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(set(entry["target_paths"]), audit_ref_fields[field])
+        self.assertGreater(matched_audit_refs, 0)
+
+        economic_time_targets = {
+            "$.states[*].transaction_versions[*].occurred_at",
+            "$.states[*].transaction_versions[*].statistics_at",
+            "$.states[*].transaction_versions[*].effective_at",
+        }
+        for entry in path_map["entries"]:
+            if not entry["source_path"].endswith((".created_at", ".confirmed_at")):
+                continue
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertTrue(
+                    economic_time_targets.isdisjoint(entry["target_paths"])
+                )
+
+        gaps = {gap["id"]: gap for gap in path_map["unresolved_contract_gaps"]}
+        self.assertIn("RG08-GAP-04", gaps)
+        effective_gap = gaps["RG08-GAP-04"]
+        ambiguous_paths = {
+            source_path
+            for source_path in entries
+            if source_path.endswith(
+                (".actual_receipt_at", ".proposed_actual_receipt_at")
+            )
+            or source_path == "$.lend.request.actual_at"
+        }
+        gap_paths = {
+            entry["source_path"]
+            for entry in path_map["entries"]
+            if "RG08-GAP-04" in entry["contract_gap_ids"]
+        }
+        self.assertEqual(gap_paths, ambiguous_paths)
+        self.assertEqual(set(effective_gap["affected_source_paths"]), gap_paths)
+        self.assertEqual(
+            effective_gap["affected_source_path_count"], len(gap_paths)
+        )
+        for source_path in gap_paths:
+            entry = entries[source_path]
+            semantic_text = f"{entry['transform']} {entry['rationale']}".lower()
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertIn("effective_at is not inferred", semantic_text)
+                self.assertFalse(
+                    any(
+                        target.endswith((".created_at", ".confirmed_at"))
+                        for target in entry["target_paths"]
+                    )
+                )
+
+    def test_rg09_snapshot_ids_current_audits_and_gap_scope(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-09-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        gaps = {gap["id"]: gap for gap in path_map["unresolved_contract_gaps"]}
+        self.assertNotIn("RG09-GAP-04", gaps)
+
+        snapshot_pattern = re.compile(
+            r"^(?:\$\.canonical_states\.[^.]+\.id|.*\.(?:resulting_state|pre_operation_baseline)\.id)$"
+        )
+        state_id_entries = []
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            if "$.states[*].id" in entry["target_paths"]:
+                state_id_entries.append(entry)
+                with self.subTest(source_path=source_path):
+                    self.assertIsNotNone(snapshot_pattern.fullmatch(source_path))
+            elif source_path.endswith(".id"):
+                with self.subTest(source_path=source_path):
+                    self.assertNotIn("$.states[*].id", entry["target_paths"])
+        self.assertTrue(state_id_entries)
+
+        audit_field_targets = {
+            "id": {"$.states[*].audit_links[*].id"},
+            "allocation_id": {
+                "$.states[*].audit_links[*].from.kind",
+                "$.states[*].audit_links[*].from.id",
+            },
+            "target_id": {
+                "$.states[*].audit_links[*].to.kind",
+                "$.states[*].audit_links[*].to.id",
+            },
+            "role": {"$.states[*].audit_links[*].type"},
+        }
+        matched_audit_entries = 0
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            if ".audit_links[*]." not in source_path:
+                continue
+            self.assertFalse(
+                any(".audit_links[*].payload" in target for target in entry["target_paths"])
+            )
+            field = source_path.rsplit(".", 1)[-1]
+            if field not in audit_field_targets:
+                continue
+            matched_audit_entries += 1
+            with self.subTest(source_path=source_path):
+                self.assertEqual(
+                    set(entry["target_paths"]), audit_field_targets[field]
+                )
+                self.assertEqual(entry["disposition"], "ready")
+        self.assertGreater(matched_audit_entries, 0)
+
+        current_semantic_entries = []
+        for entry in path_map["entries"]:
+            source_path = entry["source_path"]
+            target_paths = entry["target_paths"]
+            is_current_target = target_paths and not any(
+                target.startswith(PLANNED_CONTRACT_PREFIX)
+                for target in target_paths
+            )
+            is_current_semantic = any(
+                marker in source_path
+                for marker in (
+                    ".adjustments[*].",
+                    ".allocations[*].",
+                    ".audit_links[*].",
+                    ".reconciliation.",
+                )
+            ) or source_path.endswith(".status")
+            if is_current_target and is_current_semantic:
+                current_semantic_entries.append(entry)
+        self.assertTrue(current_semantic_entries)
+        for entry in current_semantic_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertNotIn("RG09-GAP-02", entry["contract_gap_ids"])
+
+        gap02_entries = [
+            entry
+            for entry in path_map["entries"]
+            if "RG09-GAP-02" in entry["contract_gap_ids"]
+        ]
+        self.assertTrue(gap02_entries)
+        for entry in gap02_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertTrue(
+                    all(
+                        target.startswith(PLANNED_CONTRACT_PREFIX)
+                        for target in entry["target_paths"]
+                    )
+                )
+
+    def test_rg10_absence_dispatch_and_evidence_role_boundaries(self):
+        source = json.loads(
+            (ROOT / "golden" / "rules" / "rg-10.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        values = normalized_leaf_values(source)
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-10-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+
+        not_present_entries = [
+            entries[source_path]
+            for source_path, occurrences in values.items()
+            if "not_present" in occurrences
+        ]
+        self.assertTrue(not_present_entries)
+        for entry in not_present_entries:
+            semantic_text = f"{entry['transform']} {entry['rationale']}".lower()
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertIn(
+                    "$.states[*].postings[*].reconciliation_eligible",
+                    entry["target_paths"],
+                )
+                self.assertNotIn(
+                    "$.states[*].posting_reconciliations[*].status",
+                    entry["target_paths"],
+                )
+                self.assertIn("canonical absence", semantic_text)
+                self.assertIn("emit no posting_reconciliations record", semantic_text)
+
+        mapping_markdown = (
+            ROOT / "docs" / "migrations" / "golden-v2" / "rg-10-mapping.md"
+        ).read_text(encoding="utf-8")
+        registry_section = mapping_markdown.split(
+            "## Planned Action Registry", 1
+        )[1].split("## Unresolved Gaps", 1)[0]
+        registry_rows = re.findall(
+            r"^\|\s*([a-z0-9_]+)\s*\|\s*([^|]+?)\s*\|",
+            registry_section,
+            re.MULTILINE,
+        )
+        registry = {
+            action_type: tuple(
+                operation_class.strip().split(" / ")
+            )
+            for action_type, operation_class in registry_rows
+            if action_type != "action_type"
+        }
+        self.assertEqual(len(registry), 13)
+        self.assertTrue(
+            {
+                "confirm_imported_stored_value_spend",
+                "ingest_stored_value_recharge_candidate",
+                "ingest_stored_value_spend_candidate",
+                "record_expiry_reminder",
+                "confirm_stored_value_expiry_loss",
+                "reconcile_merchant_credit",
+                "reconcile_bank_payment",
+                "apply_merchant_lot_allocation",
+                "confirm_stored_value_activation_balance",
+            }.issubset(registry)
+        )
+        expected_dispatch = {
+            (action_type, operation_class)
+            for action_type, operation_classes in registry.items()
+            for operation_class in operation_classes
+        }
+        self.assertEqual(len(expected_dispatch), 17)
+
+        pair_pattern = re.compile(
+            r"action_type=([a-z0-9_]+)(?:,\s*operation_class=([a-z_]+)"
+            r"|(?=[\s\S]*?operation_class=([a-z_]+)))"
+        )
+        entries_by_pair = defaultdict(list)
+        for entry in path_map["entries"]:
+            transform = entry["transform"].lower()
+            for match in pair_pattern.finditer(transform):
+                pair = (match.group(1), match.group(2) or match.group(3))
+                entries_by_pair[pair].append(entry)
+
+        actual_dispatch = set(entries_by_pair)
+        self.assertEqual(actual_dispatch, expected_dispatch)
+        for pair in expected_dispatch:
+            pair_entries = entries_by_pair[pair]
+            aggregate_targets = {
+                target
+                for entry in pair_entries
+                for target in entry["target_paths"]
+            }
+            expected_branch = (
+                "attempted_input" if pair[1] == "rejection" else "input"
+            )
+            unexpected_branch = (
+                "input" if expected_branch == "attempted_input" else "attempted_input"
+            )
+            with self.subTest(action_type=pair[0], operation_class=pair[1]):
+                self.assertIn(
+                    "$.planned_contract.operations[*].action_type",
+                    aggregate_targets,
+                )
+                self.assertIn(
+                    "$.operations[*].operation_class", aggregate_targets
+                )
+                self.assertTrue(
+                    any(
+                        f".operations[*].{expected_branch}." in target
+                        for target in aggregate_targets
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        f".operations[*].{unexpected_branch}." in target
+                        for target in aggregate_targets
+                    )
+                )
+
+        retry_entries = [
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"].startswith("$.idempotency.")
+            and "retain originating action_type=" in entry["transform"].lower()
+        ]
+        self.assertTrue(retry_entries)
+        retry_pairs = set()
+        for entry in retry_entries:
+            retry_text = entry["transform"].lower()
+            retry_matches = list(pair_pattern.finditer(retry_text))
+            self.assertTrue(retry_matches)
+            retry_pairs.update(
+                (match.group(1), match.group(2) or match.group(3))
+                for match in retry_matches
+            )
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertIn(
+                    "$.planned_contract.operations[*].action_type",
+                    entry["target_paths"],
+                )
+                self.assertIn(
+                    "$.operations[*].operation_class", entry["target_paths"]
+                )
+                self.assertIn("retain originating action_type", retry_text)
+                self.assertIn("no generic retry action", retry_text)
+                self.assertNotIn("action_type=retry", retry_text)
+        self.assertTrue(retry_pairs.issubset(expected_dispatch))
+
+        role_entries = []
+        for source_path, occurrences in values.items():
+            if source_path.endswith(".role") and ".evidence_links[*]." in source_path:
+                role_entries.append((entries[source_path], set(occurrences)))
+        self.assertTrue(role_entries)
+        typed_link_targets = {
+            "$.states[*].evidence_links[*].target_kind",
+            "$.states[*].evidence_links[*].target_id",
+            "$.states[*].evidence_links[*].role",
+        }
+        for entry, roles in role_entries:
+            targets = set(entry["target_paths"])
+            semantic_text = f"{entry['transform']} {entry['rationale']}".lower()
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertTrue(typed_link_targets.issubset(targets))
+                if "stored_value_activation_balance_fact" in roles:
+                    self.assertIn("target_kind=domain_entity", semantic_text)
+                    self.assertIn(
+                        "role=stored_value_activation_balance_fact", semantic_text
+                    )
+                    self.assertIn("never target the transaction or a posting", semantic_text)
+                if "stored_value_credit_lot" in roles:
+                    self.assertIn("two independently identified links", semantic_text)
+                    self.assertIn("role=stored_value_asset_posting", semantic_text)
+                    self.assertIn("role=stored_value_lot_fact", semantic_text)
+                if roles.intersection(
+                    {
+                        "stored_value_bonus_component",
+                        "stored_value_expiry_confirmation",
+                    }
+                ):
+                    self.assertIn("RG10-GAP-06", entry["contract_gap_ids"])
+                    self.assertTrue(
+                        any(
+                            target.startswith(PLANNED_CONTRACT_PREFIX)
+                            for target in targets
+                        )
+                    )
+                    self.assertIn(
+                        "never generate another stored_value_lot_fact link",
+                        semantic_text,
+                    )
 
     def test_contract_gap_references_are_bidirectionally_closed(self):
         for case_id in EXPECTED_INVENTORIES:

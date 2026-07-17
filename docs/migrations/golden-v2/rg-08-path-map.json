@@ -49744,11 +49744,11 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.operations[*].input.id"
+        "$.planned_contract.states[*].id"
       ],
-      "transform": "Exact field mapping to $.planned_contract.operations[*].input.id; source context supplies collection identity.",
+      "transform": "Map the complete snapshot identity to $.planned_contract.states[*].id; do not substitute the planned operation input id.",
       "authority": "RG-08 fixture; v2 contract.",
-      "rationale": "Atomic operation contract.",
+      "rationale": "The canonical_state id identifies the complete snapshot, so it belongs to the planned state identity rather than an operation input identity.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG08-GAP-01"
