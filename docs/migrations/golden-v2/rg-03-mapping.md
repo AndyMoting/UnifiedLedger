@@ -12,7 +12,7 @@
 - leaf occurrences: `560`
 - classified/unclassified: `304/0`
 - classifications: `map 143`, `preserve 22`, `derive 135`, `reject 4`
-- dispositions: `ready 210`, `requires_contract_amendment 90`, `test_only_exclusion 4`
+- dispositions: `ready 300`, `test_only_exclusion 4`; all `304` normalized paths are classified, and test-only exclusions are not counted as executable ready paths
 
 ## Section Mapping
 
@@ -31,7 +31,7 @@
 
 ## IDs And Time
 
-Existing stable account, category, transaction, version, posting-set, posting, request, source, evidence, candidate, and evidence-link IDs are preserved where v2 owns the same identity. Missing root, state, operation, opening version/posting-set, confirmation, candidate-status, and reconciliation IDs use the contract's deterministic migration helpers with normalized source locator plus a stable source ID, request ID, operation ID, invalid-case ID, or case ID discriminator. Array index, display name, traversal order, runtime time, and local path are forbidden discriminators.
+Existing stable account, category, transaction, version, posting-set, posting, request, source, evidence, candidate, and evidence-link IDs are preserved where v2 owns the same identity. Returned transaction identities are operation-owned and map to `$.operations[*].returned_ids[*].id`, with no substitute mapping through state transaction collections. Missing root, state, operation, opening version/posting-set, confirmation, candidate-status, and reconciliation IDs use the contract's deterministic migration helpers with normalized source locator plus a stable source ID, request ID, operation ID, invalid-case ID, or case ID discriminator. Array index, display name, traversal order, runtime time, and local path are forbidden discriminators.
 
 The frozen RG-03 fixture and tests prove that the opening, manual-transfer, and confirmed-import `occurred_at` paths simultaneously carry occurrence, statistics attribution, and balance effectiveness. Under the approved RG-03 path-specific mapping, the exact timestamp text may therefore expand to `transaction_versions[*].occurred_at`, `statistics_at`, and `effective_at`. This is not a general migration default and must never generate `created_at` or `confirmed_at`. Source-record `observed_at` remains evidence time and never becomes an economic transaction time.
 
@@ -39,18 +39,18 @@ The frozen RG-03 fixture and tests prove that the opening, manual-transfer, and 
 
 RG-03 v1 serializes only a one-to-one, same-currency transfer between two distinct user-owned real asset or liability accounts. The formal transaction uses the existing canonical `account_transfer` type and `transfer_principal_out`, `transfer_principal_in`, and `transfer_fee` posting roles. Principal remains internal; only the fee contributes to consumption, external cash outflow, and net-worth change. Combination transfer is retained only as the `future_draft` negative scope assertion and does not create v2 entities or operations.
 
-## Unresolved Gaps
+## Closed Gaps
 
-1. `RG03-GAP-01` (account-transfer operations, `65` affected paths): register closed manual creation, transfer-source intake, candidate confirmation, mirror-evidence merge, incomplete intake, rejected attempts, and no-change retry forms without admitting combination transfer into v1.
-2. `RG03-GAP-02` (transfer source and candidate, `46` affected paths): register closed complete/incomplete transfer source payloads and account-transfer candidate payload/status history with exact one-to-one accounts, amounts, completeness, provenance, confidence, and confirmation requirements.
-3. `RG03-GAP-03` (transfer evidence subtype, `4` affected paths): register only a closed transfer-record evidence subtype carrying source identity and `observed_at`. Existing evidence-link `target_kind`/`target_id`/`role` fields and independent posting-reconciliation records remain the canonical owners of target and match status.
+1. `RG03-GAP-01` is closed: registered operation forms cover manual creation, complete and incomplete intake, candidate confirmation, mirror-evidence merge, all ten frozen manual rejections, and originating-action retries.
+2. `RG03-GAP-02` is closed: complete and incomplete transfer source/candidate payloads, provenance, confidence, confirmation requirements, candidate history, and the mirror-only `account_credit_observation` source payload are closed. Incomplete `destination_account_id:null` is mapped to destination-field omission/absence, never to a serialized null destination.
+3. `RG03-GAP-03` is closed: `transfer_record` evidence retains only source identity and observation time; evidence links and posting reconciliation own targets and matching state. Mirror source records never coerce into complete transfer sources.
 
 The existing `account_transfer` transaction type, three transfer posting roles, typed evidence-link targets, and posting-reconciliation records are already sufficient and are not contract gaps. Complete balances, reports, operation deltas, transaction reconciliation summary, candidate status values, candidate confirmation identity, and deterministic migration IDs also use current contracts. Legacy fee-posting `not_applicable` maps to `reconciliation_eligible=false` plus canonical absence of a reconciliation record.
 
 ## Gate
 
-- status: `needs_contract_amendment`
+- status: `approved`
 - expected output gate: `closed`
-- unresolved gap count: `3`
+- unresolved gap count: `0`
 
-Expected v2 output remains closed until all three gaps are approved and implemented. No schema change, adapter, expected output, or fixture rewrite is authorized by this mapping.
+Expected v2 output remains closed for the next approved generation stage; expected has not yet been generated. This closed mapping authorizes neither an adapter nor a v1 fixture rewrite.

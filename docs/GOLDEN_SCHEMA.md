@@ -121,6 +121,7 @@ Representative subtype payloads are fully frozen:
 | candidate `balance_adjustment` | `account_id`, `replayed_amount`, `target_amount`, `delta`, `currency`, `effective_at` |
 | source `account_transfer`, complete | `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `completeness:"complete"`, `observed_at`, `evidence_id` |
 | source `account_transfer`, missing destination | `source_account_id`, `debit_amount`, `currency`, `completeness:"missing_destination"`, `observed_at`, `evidence_id`; destination fields are absent |
+| source `account_credit_observation` | `account_id`, `credit_amount`, `currency`, `observed_at`, `evidence_id`; this subtype is mirror evidence only and cannot contain transfer-source or formal-ledger fields |
 | candidate `account_transfer`, complete | `source_ids` contains exactly one complete transfer source; payload contains the exact source and destination accounts, debit, credit, fee, currency, one `evidence_refs` transfer-record identity, `provenance:{rule:"complete_transfer_source",rule_version:1}`, and `requires_confirmation:["formal_transaction_creation"]` |
 | candidate `account_transfer`, missing destination | `source_ids` contains exactly one incomplete transfer source; payload contains only the exact source account, debit, currency, one `evidence_refs` transfer-record identity, the same deterministic provenance, and exactly `destination_account_id` plus `formal_transaction_creation` in `requires_confirmation`; destination account and split amounts are absent |
 | confirmation `explicit_manual_save` | empty payload; subject kind `operation` |
@@ -175,10 +176,15 @@ For `accepted` and `no_change`, operation `input` is closed per `action_type` an
 | `confirm_balance_adjustment` | `adjustment` | `request_id`, `candidate_id`, `account_id`, `target_amount`, `replayed_amount`, `delta`, `currency`, `effective_at`, `explicit_confirmation:true`, `confirmed_at` |
 | `confirm_real_transfer` | `creation` | `request_id`, `target_account_id`, `counter_account_id`, `amount`, `currency`, `actual_occurred_at`, `discovered_at`, `explicit_confirmation:true`, `confirmed_at` |
 | `confirm_explanation_allocation` | `reversal` | `request_id`, `adjustment_id`, `transaction_id`, `target_account_id`, `actual_occurred_at`, `real_transaction_amount`, `currency`, `target_observed_at`, `allocation_direction`, `explanation_amount`, all seven `confirms_*:true` fields shown in the representative sample, `explicit_confirmation:true`, `confirmed_at` |
+| `manual_account_transfer` | `creation` | `request_id`, `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `fee_category_id`, `occurred_at`, `explicit_confirmation:true` |
+| `import_source_record` | `creation` | `request_id`, `source_id`, `evidence_id`, `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `observed_at` |
+| `confirm_account_transfer_candidate` | `creation` | `request_id`, `candidate_id`, `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `occurred_at`, `explicit_confirmation:true` |
+| `import_mirror_record` | `reconciliation` | `request_id`, `source_id`, `evidence_id`, `transaction_id`, `candidate_id`, `account_id`, `credit_amount`, `currency`, `observed_at` |
+| `import_incomplete_source` | `creation` | `request_id`, `source_id`, `evidence_id`, `source_account_id`, `debit_amount`, `currency`, `observed_at` |
 
 For `confirm_explanation_allocation`, `allocation_direction` is currently `same_as_original_adjustment`; required booleans are `confirms_target_account`, `confirms_actual_occurred_at`, `confirms_real_transaction_amount`, `confirms_currency`, `confirms_target_observed_at`, `confirms_allocation_direction`, and `confirms_explanation_amount`. None of these facts may be inherited from the transaction, candidate, or prior operation.
 
-The only registered rejected action is `manual_expense`. It uses `operation_class=rejection`, forbids strict `input`, and requires a closed sparse `attempted_input`:
+Registered rejected actions are `manual_expense` and `manual_account_transfer`. They use `operation_class=rejection`, forbid strict `input`, and require a closed sparse `attempted_input`.
 
 | Field | Presence and type |
 | --- | --- |
@@ -207,6 +213,12 @@ A rejected outcome requires both `reason_code` and `field_path`. The path is roo
 The validator recomputes the first failure and requires exact agreement with both outcome fields. A sparse payload that does not match one of these registered failures is invalid; sparse accepted/no-change input never becomes valid through this branch.
 
 All other RG actions require an independent contract amendment that freezes their operation class and closed input before Schema, validator, adapter, or migration implementation.
+
+RG-03 `manual_account_transfer` uses the v1 field names. Its sparse attempted input requires `request_id` and may contain only `source_account_id`, `destination_account_id`, `source_debit_amount`, `destination_credit_amount`, `fee_amount`, `currency`, `source_currency`, `destination_currency`, `fee_category_id`, `occurred_at`, and `explicit_confirmation`; every field except `request_id` may be omitted, and account and amount fields may be explicit `null`. Its stable first-failure precedence is: missing source, missing destination, same account, unknown source or destination, non-owned source or destination, non-real-financial source or destination, non-positive destination principal, unbalanced source debit/credit/fee, then different source/destination currencies. Reasons and fields are exactly those frozen by RG-03 v1: `required`, `distinct_own_real_financial_accounts_required`, `known_account_required`, `own_account_required`, `real_financial_account_required`, `must_be_positive`, `amounts_must_balance`, and `same_currency_required`.
+
+RG-03 intake actions create only the named source, transfer-record evidence, and pending candidate until explicit candidate confirmation. Candidate confirmation adds one formal `account_transfer`, its version, three role-bound postings, the candidate confirmation, and source-posting evidence/reconciliation; the candidate history changes from pending to confirmed. Mirror intake maps its v1 `source_record` to the closed `account_credit_observation` source subtype and adds only that source, its `transfer_record` evidence, a `destination_asset_posting` link to the existing destination principal posting, and the corresponding reconciliation transition when one exists. It never adds a second formal transaction, version, posting set, posting, candidate, balance, report, or derived financial effect. Incomplete intake creates its source, evidence, and pending candidate with no formal or projection effects. `no_change` replays use their originating action and strict input, return exactly the original operation's returned IDs, and leave the complete state unchanged.
+
+This amendment closes operation representation only. Expected RG-03 v2 output remains for the next approved generation stage; it does not authorize an adapter or v1 fixture rewrite.
 
 ## Formal ledger ownership
 

@@ -318,7 +318,8 @@
       "oneOf": [
         {"$ref": "#/$defs/explicitBalanceObservationSource"},
         {"$ref": "#/$defs/completeAccountTransferSource"},
-        {"$ref": "#/$defs/incompleteAccountTransferSource"}
+        {"$ref": "#/$defs/incompleteAccountTransferSource"},
+        {"$ref": "#/$defs/accountCreditObservationSource"}
       ]
     },
     "explicitBalanceObservationSource": {
@@ -469,6 +470,7 @@
         "destination_credit_amount": {"$ref": "#/$defs/decimal"},
         "fee_amount": {"$ref": "#/$defs/decimal"},
         "currency": {"type": "string", "minLength": 1},
+        "transaction_id": {"$ref": "#/$defs/id"},
         "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/id"}},
         "provenance": {"$ref": "#/$defs/accountTransferCandidateProvenance"},
         "requires_confirmation": {"$ref": "#/$defs/completeAccountTransferConfirmationRequirements"}
@@ -1456,6 +1458,67 @@
         "confirmed_at": {"$ref": "#/$defs/timestamp"}
       }
     },
+    "accountCreditObservationSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_credit_observation"},
+        "payload": {"$ref": "#/$defs/accountCreditObservationSourcePayload"}
+      }
+    },
+    "accountCreditObservationSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "credit_amount", "currency", "observed_at", "evidence_id"],
+      "properties": {
+        "account_id": {"$ref": "#/$defs/id"},
+        "credit_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "evidence_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "manualAccountTransferInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "source_account_id", "destination_account_id", "source_debit_amount", "destination_credit_amount", "fee_amount", "currency", "fee_category_id", "occurred_at", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "source_account_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"},
+        "source_debit_amount": {"$ref": "#/$defs/decimal"}, "destination_credit_amount": {"$ref": "#/$defs/decimal"}, "fee_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1}, "fee_category_id": {"$ref": "#/$defs/id"}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}
+      }
+    },
+    "manualAccountTransferAttemptedInput": {
+      "type": "object", "additionalProperties": false, "required": ["request_id"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "source_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "destination_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "source_debit_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]}, "destination_credit_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]}, "fee_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "currency": {"type": "string", "minLength": 1}, "source_currency": {"type": "string", "minLength": 1}, "destination_currency": {"type": "string", "minLength": 1}, "fee_category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "importSourceRecordInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "source_id", "evidence_id", "source_account_id", "destination_account_id", "source_debit_amount", "destination_credit_amount", "fee_amount", "currency", "observed_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "source_account_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "source_debit_amount": {"$ref": "#/$defs/decimal"}, "destination_credit_amount": {"$ref": "#/$defs/decimal"}, "fee_amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmAccountTransferCandidateInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "candidate_id", "source_account_id", "destination_account_id", "source_debit_amount", "destination_credit_amount", "fee_amount", "currency", "fee_category_id", "occurred_at", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "source_account_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "source_debit_amount": {"$ref": "#/$defs/decimal"}, "destination_credit_amount": {"$ref": "#/$defs/decimal"}, "fee_amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "fee_category_id": {"$ref": "#/$defs/id"}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}}
+    },
+    "importMirrorRecordInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "source_id", "evidence_id", "transaction_id", "candidate_id", "account_id", "credit_amount", "currency", "observed_at"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "credit_amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "importIncompleteSourceInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "source_id", "evidence_id", "source_account_id", "debit_amount", "currency", "observed_at"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "source_account_id": {"$ref": "#/$defs/id"}, "debit_amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
     "confirmExplanationAllocationInput": {
       "type": "object",
       "additionalProperties": false,
@@ -1871,7 +1934,8 @@
             "record_expiry_reminder", "confirm_stored_value_expiry_loss",
             "reconcile_merchant_credit", "reconcile_bank_payment",
             "apply_merchant_lot_allocation", "confirm_stored_value_activation_balance",
-            "rename_stored_value_labels"
+            "rename_stored_value_labels", "manual_account_transfer", "import_source_record",
+            "confirm_account_transfer_candidate", "import_mirror_record", "import_incomplete_source"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -1909,6 +1973,12 @@
                 }
               }
             },
+            {"properties": {"action_type": {"const": "manual_account_transfer"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "manual_account_transfer"}, "operation_class": {"const": "rejection"}, "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "import_source_record"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "confirm_account_transfer_candidate"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "import_mirror_record"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "import_incomplete_source"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
             {
               "properties": {
                 "action_type": {"const": "manual_income"},
@@ -2160,6 +2230,12 @@
           },
           "then": {"properties": {"input": {"$ref": "#/$defs/manualExpenseInput"}}}
         },
+        {"if": {"properties": {"action_type": {"const": "manual_account_transfer"}, "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]}}, "required": ["action_type", "outcome"]}, "then": {"properties": {"attempted_input": {"$ref": "#/$defs/manualAccountTransferAttemptedInput"}}}},
+        {"if": {"properties": {"action_type": {"const": "manual_account_transfer"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}, "required": ["action_type", "outcome"]}, "then": {"properties": {"input": {"$ref": "#/$defs/manualAccountTransferInput"}}}},
+        {"if": {"properties": {"action_type": {"const": "import_source_record"}}, "required": ["action_type"]}, "then": {"properties": {"input": {"$ref": "#/$defs/importSourceRecordInput"}}}},
+        {"if": {"properties": {"action_type": {"const": "confirm_account_transfer_candidate"}}, "required": ["action_type"]}, "then": {"properties": {"input": {"$ref": "#/$defs/confirmAccountTransferCandidateInput"}}}},
+        {"if": {"properties": {"action_type": {"const": "import_mirror_record"}}, "required": ["action_type"]}, "then": {"properties": {"input": {"$ref": "#/$defs/importMirrorRecordInput"}}}},
+        {"if": {"properties": {"action_type": {"const": "import_incomplete_source"}}, "required": ["action_type"]}, "then": {"properties": {"input": {"$ref": "#/$defs/importIncompleteSourceInput"}}}},
         {
           "if": {
             "properties": {

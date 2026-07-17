@@ -1693,6 +1693,9 @@ class GoldenV2MappingTests(unittest.TestCase):
                 elif case_id == "RG-02":
                     self.assertEqual(path_map["status"], "approved")
                     self.assertEqual(path_map["expected_output_gate"], "completed")
+                elif case_id == "RG-03":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(path_map["expected_output_gate"], "closed")
                 else:
                     self.assertEqual(path_map["status"], "completed")
                     self.assertEqual(path_map["expected_output_gate"], "completed")

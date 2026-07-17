@@ -171,6 +171,19 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "domain_entities": (1, 0, 0),
         "audit_links": (2, 0, 0),
     },
+    "manual_account_transfer": {
+        "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0), "postings": (3, 0, 0),
+        "confirmations": (1, 0, 0), "posting_reconciliations": (2, 0, 0),
+    },
+    "import_source_record": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
+    "confirm_account_transfer_candidate": {
+        "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "candidates": (0, 1, 0),
+        "confirmations": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (2, 0, 0),
+    },
+    "import_mirror_record": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
+    "import_incomplete_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
 }
 _SET_LIKE_ARRAY_KEYS = {
     "accounts",
@@ -469,7 +482,10 @@ def _attempted_amount(
         pattern = rf"^-?(?:0|[1-9][0-9]*)\.[0-9]{{{precision}}}$"
     if not re.fullmatch(pattern, value):
         _fail(path, f"must use exactly {precision} decimal places for {currency}")
-    return _decimal(value, path)
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        _fail(path, "must be a valid decimal")
 
 
 def _timestamp(value: str, path: str, timezone: ZoneInfo) -> datetime:
@@ -961,6 +977,24 @@ def _validate_references(
     for index, source in enumerate(state["sources"]):
         payload = source["payload"]
         source_path = f"{path}.sources[{index}].payload"
+        if source["type"] == "account_credit_observation":
+            account = accounts.get(payload["account_id"])
+            if account is None:
+                _fail(source_path + ".account_id", "dangling account reference")
+            if not (account["owned_by_user"] and account["real_account"] and account["kind"] in {"asset", "liability"}):
+                _fail(source_path + ".account_id", "must be an owned real financial account")
+            if payload["currency"] != account["currency"]:
+                _fail(source_path + ".currency", "must match the observed account currency")
+            credit = _amount(payload["credit_amount"], payload["currency"], source_path + ".credit_amount", precisions)
+            if credit <= 0:
+                _fail(source_path + ".credit_amount", "must be positive")
+            _timestamp(payload["observed_at"], source_path + ".observed_at", timezone)
+            evidence = indexes["evidence"].get(payload["evidence_id"])
+            if evidence is None or evidence["type"] != "transfer_record":
+                _fail(source_path + ".evidence_id", "must reference transfer_record evidence")
+            if evidence["source_ids"] != [source["id"]] or evidence["payload"]["observed_at"] != payload["observed_at"]:
+                _fail(source_path + ".evidence_id", "transfer evidence must bind this source and observed_at")
+            continue
         if source["type"] == "account_transfer":
             source_account = accounts.get(payload["source_account_id"])
             if source_account is None:
@@ -1060,6 +1094,13 @@ def _validate_references(
                     candidate_path + ".status_history",
                     "must be exactly pending_confirmation or pending_confirmation followed by confirmed",
                 )
+            if history_statuses[-1] == "confirmed":
+                transaction_id = payload.get("transaction_id")
+                transaction = transactions.get(transaction_id) if transaction_id is not None else None
+                if transaction is None or transaction["type"] != "account_transfer":
+                    _fail(candidate_path + ".payload.transaction_id", "confirmed transfer candidate must bind its formal account_transfer")
+            elif "transaction_id" in payload:
+                _fail(candidate_path + ".payload.transaction_id", "pending transfer candidate cannot bind a formal transaction")
             confirmation_owners = [
                 confirmation
                 for confirmation in state["confirmations"]
@@ -1138,8 +1179,8 @@ def _validate_references(
             if len(evidence["source_ids"]) != 1:
                 _fail(evidence_path + ".source_ids", "must contain exactly one transfer source reference")
             source = sources[evidence["source_ids"][0]]
-            if source["type"] != "account_transfer":
-                _fail(evidence_path + ".source_ids[0]", "must reference an account_transfer source")
+            if source["type"] not in {"account_transfer", "account_credit_observation"}:
+                _fail(evidence_path + ".source_ids[0]", "must reference a transfer or account-credit source")
             if source["payload"]["evidence_id"] != evidence["id"]:
                 _fail(evidence_path + ".source_ids[0]", "must match the transfer source evidence identity")
             if source["payload"]["observed_at"] != evidence["payload"]["observed_at"]:
@@ -2043,6 +2084,17 @@ def _validate_reports(
             "ordinary_expense",
             "ordinary_income",
         },
+        "RG-03": {
+            "balance_adjustment_net_worth_change",
+            "budget",
+            "cash_inflow",
+            "cash_outflow",
+            "consumption",
+            "internal_transfer_amount",
+            "net_worth_change",
+            "ordinary_expense",
+            "ordinary_income",
+        },
     }
     for report_index, report in enumerate(state["reports"]):
         report_path = f"{path}.reports[{report_index}]"
@@ -2527,6 +2579,66 @@ def _validate_rejected_manual_income_attempt(
         )
 
 
+def _transfer_account_failure(
+    input_value: dict[str, Any], accounts: dict[str, dict[str, Any]], *, attempted: bool
+) -> tuple[str, str] | None:
+    source_id = input_value.get("source_account_id")
+    destination_id = input_value.get("destination_account_id")
+    if source_id is None:
+        return "source_account_id", "required"
+    if destination_id is None:
+        return "destination_account_id", "required"
+    if source_id == destination_id:
+        return "destination_account_id", "distinct_own_real_financial_accounts_required"
+    for field, account_id in (("source_account_id", source_id), ("destination_account_id", destination_id)):
+        account = accounts.get(account_id)
+        if account is None:
+            return field, "known_account_required"
+        if not (account["real_account"] and account["kind"] in {"asset", "liability"}):
+            return field, "real_financial_account_required"
+        if not account["owned_by_user"]:
+            return field, "own_account_required"
+    if attempted:
+        destination_amount = input_value.get("destination_credit_amount")
+        if destination_amount is not None and Decimal(destination_amount) <= 0:
+            return "destination_credit_amount", "must_be_positive"
+        source_amount = input_value.get("source_debit_amount")
+        fee_amount = input_value.get("fee_amount")
+        if None not in (source_amount, destination_amount, fee_amount) and Decimal(source_amount) != Decimal(destination_amount) + Decimal(fee_amount):
+            return "fee_amount", "amounts_must_balance"
+        source_currency = input_value.get("source_currency", input_value.get("currency"))
+        destination_currency = input_value.get("destination_currency", input_value.get("currency"))
+        if source_currency is not None and destination_currency is not None and source_currency != destination_currency:
+            return "destination_currency", "same_currency_required"
+    return None
+
+
+def _validate_rejected_manual_account_transfer_attempt(
+    operation: dict[str, Any], operation_path: str, baseline: dict[str, Any], precisions: dict[str, int], timezone: ZoneInfo
+) -> None:
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    for field in ("currency", "source_currency", "destination_currency"):
+        if field in attempted and attempted[field] not in precisions:
+            _fail(attempted_path + f".{field}", "undeclared currency")
+    currency = attempted.get("currency")
+    if currency is not None:
+        for field in ("source_debit_amount", "destination_credit_amount", "fee_amount"):
+            if attempted.get(field) is not None:
+                _attempted_amount(attempted[field], currency, attempted_path + f".{field}", precisions)
+    if "occurred_at" in attempted:
+        _timestamp(attempted["occurred_at"], attempted_path + ".occurred_at", timezone)
+    failure = _transfer_account_failure(attempted, accounts, attempted=True)
+    if failure is None:
+        _fail(attempted_path, "does not match a registered rejected manual_account_transfer failure")
+    field, reason = failure
+    if operation["outcome"]["field_path"] != f"$.attempted_input.{field}":
+        _fail(operation_path + ".outcome.field_path", "must identify the first failing attempted field")
+    if operation["outcome"]["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", "must match the first failing attempted reason")
+
+
 def _validate_rg10_structural_input(
     input_value: dict[str, Any],
     input_path: str,
@@ -2766,6 +2878,10 @@ def _validate_action_input(
             _validate_rejected_manual_income_attempt(
                 operation, operation_path, baseline, precisions, timezone
             )
+        elif action == "manual_account_transfer":
+            _validate_rejected_manual_account_transfer_attempt(
+                operation, operation_path, baseline, precisions, timezone
+            )
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
                 operation,
@@ -2878,6 +2994,43 @@ def _validate_action_input(
         _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
         for field in ("actual_occurred_at", "discovered_at", "confirmed_at"):
             _timestamp(input_value[field], input_path + f".{field}", timezone)
+    elif action in {"manual_account_transfer", "import_source_record", "confirm_account_transfer_candidate", "import_incomplete_source"}:
+        account_fields = ("source_account_id", "destination_account_id") if action != "import_incomplete_source" else ("source_account_id",)
+        for field in account_fields:
+            if input_value[field] not in accounts:
+                _fail(input_path + f".{field}", "dangling account reference")
+        failure = _transfer_account_failure(input_value, accounts, attempted=False)
+        if failure is not None:
+            _fail(input_path + f".{failure[0]}", failure[1])
+        if action == "import_incomplete_source":
+            if accounts[input_value["source_account_id"]]["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match the source account")
+            _amount(input_value["debit_amount"], input_value["currency"], input_path + ".debit_amount", precisions)
+            if Decimal(input_value["debit_amount"]) <= 0:
+                _fail(input_path + ".debit_amount", "must be positive")
+        else:
+            if any(accounts[input_value[field]]["currency"] != input_value["currency"] for field in account_fields):
+                _fail(input_path + ".currency", "must match both transfer accounts")
+            for field in ("source_debit_amount", "destination_credit_amount", "fee_amount"):
+                _amount(input_value[field], input_value["currency"], input_path + f".{field}", precisions)
+            if Decimal(input_value["destination_credit_amount"]) <= 0:
+                _fail(input_path + ".destination_credit_amount", "must be positive")
+            if Decimal(input_value["fee_amount"]) < 0 or Decimal(input_value["source_debit_amount"]) != Decimal(input_value["destination_credit_amount"]) + Decimal(input_value["fee_amount"]):
+                _fail(input_path + ".fee_amount", "must balance source debit and destination credit")
+            if action in {"manual_account_transfer", "confirm_account_transfer_candidate"}:
+                fee_category = categories.get(input_value["fee_category_id"])
+                fee_account = accounts.get(fee_category["posting_account_id"]) if fee_category and fee_category.get("posting_account_id") else None
+                if fee_category is None or fee_category["parent_id"] is None or not fee_category["active"] or fee_account is None or fee_account["kind"] != "expense":
+                    _fail(input_path + ".fee_category_id", "must reference the active second-level financial fee category")
+        _timestamp(input_value["observed_at"] if "observed_at" in input_value else input_value["occurred_at"], input_path + (".observed_at" if "observed_at" in input_value else ".occurred_at"), timezone)
+    elif action == "import_mirror_record":
+        for field, collection in (("transaction_id", transactions), ("candidate_id", candidates), ("account_id", accounts)):
+            if input_value[field] not in collection:
+                _fail(input_path + f".{field}", "dangling reference")
+        if accounts[input_value["account_id"]]["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match mirror account")
+        _amount(input_value["credit_amount"], input_value["currency"], input_path + ".credit_amount", precisions)
+        _timestamp(input_value["observed_at"], input_path + ".observed_at", timezone)
     elif action == "confirm_explanation_allocation":
         adjustment = entities.get(input_value["adjustment_id"])
         if adjustment is None or adjustment["type"] != "balance_adjustment":
@@ -2968,6 +3121,9 @@ def _validate_append_only_transition(
     baseline: dict[str, Any],
     result: dict[str, Any],
     operation_path: str,
+    *,
+    case_id: str | None = None,
+    action_type: str | None = None,
 ) -> None:
     immutable_collections = {
         "transaction_versions",
@@ -2993,6 +3149,20 @@ def _validate_append_only_transition(
         for item_id in set(before) & set(after):
             item_path = operation_path + f".append_only.{collection_name}[{item_id}]"
             if collection_name in immutable_collections:
+                if (
+                    collection_name == "posting_reconciliations"
+                    and case_id == "RG-03"
+                    and action_type in {"confirm_account_transfer_candidate", "import_mirror_record"}
+                ):
+                    old = before[item_id]
+                    new = after[item_id]
+                    old_identity = {key: value for key, value in old.items() if key != "status"}
+                    new_identity = {key: value for key, value in new.items() if key != "status"}
+                    if not _contract_equivalent(old_identity, new_identity):
+                        _fail(item_path, "RG-03 reconciliation transition may change status only")
+                    if (old["status"], new["status"]) != ("pending", "matched"):
+                        _fail(item_path + ".status", "RG-03 reconciliation transition must be pending to matched")
+                    continue
                 if not _contract_equivalent(before[item_id], after[item_id]):
                     _fail(item_path, f"existing {collection_name} entities are immutable")
             elif collection_name == "candidates":
@@ -3310,6 +3480,8 @@ def _validate_registered_action_effects(
     created_type_by_action = {
         "manual_expense": "expense",
         "manual_income": "income",
+        "manual_account_transfer": "account_transfer",
+        "confirm_account_transfer_candidate": "account_transfer",
         "confirm_balance_adjustment": "balance_adjustment",
         "confirm_real_transfer": "account_transfer",
         "confirm_explanation_allocation": "balance_adjustment_reversal",
@@ -3345,10 +3517,18 @@ def _validate_registered_action_effects(
             f"{action} posting set must contain exactly the postings added by the action",
         )
 
-    if action in {"manual_expense", "manual_income"}:
+    if action in {"manual_expense", "manual_income", "manual_account_transfer"}:
         confirmation = validate_confirmation(
             "explicit_manual_save", "operation", operation["id"]
         )
+    elif action == "confirm_account_transfer_candidate":
+        candidate_id = operation["input"]["candidate_id"]
+        if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
+            _fail(effect_path("candidates"), "candidate confirmation may only append status to its input candidate")
+        candidate = result_candidates[candidate_id]
+        if candidate["status_history"][-1]["status"] != "confirmed":
+            _fail(effect_path("candidates"), "confirmed candidate history must end in confirmed")
+        confirmation = validate_confirmation("candidate_confirmation", "candidate", candidate_id)
     elif action == "confirm_balance_adjustment":
         candidate_id = operation["input"]["candidate_id"]
         if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
@@ -3440,6 +3620,14 @@ def _validate_registered_action_effects(
             f"{action} confirmation must own the created transaction version",
         )
 
+    if action in {"manual_account_transfer", "confirm_account_transfer_candidate"}:
+        expected_returned = [
+            {"kind": "confirmation", "id": confirmation["id"]},
+            {"kind": "transaction", "id": transaction["id"]},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", f"{action} must return exactly its confirmation and created transaction")
+
     if action == "manual_income" and not _contract_equivalent(
         {"returned_ids": operation["returned_ids"]},
         {"returned_ids": [{"kind": "transaction", "id": transaction["id"]}]},
@@ -3449,7 +3637,7 @@ def _validate_registered_action_effects(
             "manual_income must return exactly its created transaction",
         )
 
-    if action in {"manual_expense", "manual_income", "confirm_real_transfer"}:
+    if action in {"manual_expense", "manual_income", "confirm_real_transfer", "manual_account_transfer", "confirm_account_transfer_candidate"}:
         reconciliations = [
             result_reconciliations[item_id]
             for item_id in expected_entities["posting_reconciliations"]["added_ids"]
@@ -3457,13 +3645,17 @@ def _validate_registered_action_effects(
         eligible_posting_ids = {
             item["id"] for item in added_postings if item["reconciliation_eligible"]
         }
-        if (
-            {item["posting_id"] for item in reconciliations} != eligible_posting_ids
-            or any(item["status"] != "pending" for item in reconciliations)
-        ):
+        statuses_ok = all(item["status"] == "pending" for item in reconciliations)
+        if action == "confirm_account_transfer_candidate":
+            roles_by_posting = {item["id"]: item.get("role") for item in added_postings}
+            statuses_ok = all(
+                item["status"] == ("matched" if roles_by_posting.get(item["posting_id"]) == "transfer_principal_out" else "pending")
+                for item in reconciliations
+            )
+        if {item["posting_id"] for item in reconciliations} != eligible_posting_ids or not statuses_ok:
             _fail(
                 effect_path("posting_reconciliations"),
-                f"{action} reconciliations must cover exactly its eligible postings as pending",
+                f"{action} reconciliations must cover exactly its eligible postings with the registered statuses",
             )
 
 
@@ -3487,6 +3679,8 @@ def _validate_action_semantics(
     result_versions = {item["id"]: item for item in result["transaction_versions"]}
     result_sets = {item["id"]: item for item in result["posting_sets"]}
     result_postings = {item["id"]: item for item in result["postings"]}
+    baseline_reconciliations = {item["id"]: item for item in baseline["posting_reconciliations"]}
+    result_reconciliations = {item["id"]: item for item in result["posting_reconciliations"]}
 
     def transaction_parts(transaction_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         transaction = result_transactions[transaction_id]
@@ -3497,7 +3691,177 @@ def _validate_action_semantics(
         ]
         return version, postings
 
-    if action == "manual_expense":
+    if action in {"manual_account_transfer", "confirm_account_transfer_candidate"}:
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1 or result_transactions[added[0]]["type"] != "account_transfer":
+            _fail(operation_path + ".result_state_id", "must add one account_transfer transaction")
+        version, postings = transaction_parts(added[0])
+        if any(version[field] != input_value["occurred_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.occurred_at", "must own every economic time role")
+        roles = {posting.get("role"): posting for posting in postings}
+        if set(roles) != {"transfer_principal_out", "transfer_principal_in", "transfer_fee"}:
+            _fail(operation_path + ".result_state_id", "must contain exact transfer principal and fee roles")
+        expected = {
+            "transfer_principal_out": (input_value["source_account_id"], -Decimal(input_value["source_debit_amount"])),
+            "transfer_principal_in": (input_value["destination_account_id"], Decimal(input_value["destination_credit_amount"])),
+        }
+        for role, (account_id, amount) in expected.items():
+            if roles[role]["account_id"] != account_id or Decimal(roles[role]["amount"]) != amount:
+                _fail(operation_path + ".result_state_id", f"{role} does not match input")
+        fee_category = input_value.get("fee_category_id")
+        if action == "manual_account_transfer" and fee_category is None:
+            _fail(operation_path + ".input.fee_category_id", "manual transfer requires a fee category")
+        if fee_category is not None:
+            category = baseline_categories.get(fee_category)
+            if category is None or not category["active"] or category["posting_account_id"] != roles["transfer_fee"]["account_id"]:
+                _fail(operation_path + ".input.fee_category_id", "must own the transfer-fee posting account")
+        elif baseline_accounts.get(roles["transfer_fee"]["account_id"], {}).get("kind") != "expense":
+            _fail(operation_path + ".result_state_id", "transfer_fee must post to an expense account")
+        if Decimal(roles["transfer_fee"]["amount"]) != Decimal(input_value["fee_amount"]):
+            _fail(operation_path + ".input.fee_amount", "does not match transfer_fee posting")
+        if action == "confirm_account_transfer_candidate":
+            candidate = baseline_candidates.get(input_value["candidate_id"])
+            if candidate is None or candidate["type"] != "account_transfer":
+                _fail(operation_path + ".input.candidate_id", "must reference the pending transfer candidate")
+            if [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]:
+                _fail(operation_path + ".input.candidate_id", "must reference a pending transfer candidate")
+            for field in ("source_account_id", "destination_account_id", "source_debit_amount", "destination_credit_amount", "fee_amount", "currency"):
+                if candidate["payload"][field] != input_value[field]:
+                    _fail(operation_path + f".input.{field}", "must exactly match the pending transfer candidate")
+            after_candidate = next(item for item in result["candidates"] if item["id"] == candidate["id"])
+            if [item["status"] for item in after_candidate["status_history"]] != ["pending_confirmation", "confirmed"]:
+                _fail(operation_path + ".result_state_id", "must append the confirmed candidate history")
+            if after_candidate["payload"].get("transaction_id") != added[0]:
+                _fail(operation_path + ".result_state_id", "confirmed candidate must bind the created account_transfer")
+            added_link_id = expected_entities["evidence_links"]["added_ids"][0]
+            added_link = next(item for item in result["evidence_links"] if item["id"] == added_link_id)
+            if added_link["evidence_id"] != candidate["payload"]["evidence_refs"][0] or added_link["target_kind"] != "posting" or added_link["role"] != "real_account_posting":
+                _fail(operation_path + ".result_state_id", "candidate confirmation must bind source evidence to a real account posting")
+            source_postings = {
+                item["id"]: item for item in postings
+                if item.get("role") == "transfer_principal_out" and item["account_id"] == input_value["source_account_id"]
+            }
+            if added_link["target_id"] not in source_postings or source_postings[added_link["target_id"]]["amount"] != "-" + input_value["source_debit_amount"]:
+                _fail(operation_path + ".result_state_id", "candidate confirmation evidence must target the source principal posting")
+    elif action == "import_source_record":
+        source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
+        candidate = next(item for item in result["candidates"] if item["id"] in expected_entities["candidates"]["added_ids"])
+        evidence = next(item for item in result["evidence"] if item["id"] in expected_entities["evidence"]["added_ids"])
+        if source["id"] != input_value["source_id"] or evidence["id"] != input_value["evidence_id"] or candidate["source_ids"] != [source["id"]]:
+            _fail(operation_path + ".result_state_id", "intake identities must be owned by the action input")
+        expected_source_payload = {
+            "source_account_id": input_value["source_account_id"],
+            "destination_account_id": input_value["destination_account_id"],
+            "source_debit_amount": input_value["source_debit_amount"],
+            "destination_credit_amount": input_value["destination_credit_amount"],
+            "fee_amount": input_value["fee_amount"],
+            "currency": input_value["currency"],
+            "completeness": "complete",
+            "observed_at": input_value["observed_at"],
+            "evidence_id": input_value["evidence_id"],
+        }
+        if source["type"] != "account_transfer" or source["payload"] != expected_source_payload:
+            _fail(operation_path + ".result_state_id", "complete intake source must exactly equal the action input")
+        if evidence["type"] != "transfer_record" or evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_value["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "complete intake evidence must exactly equal the source identity and observed_at")
+        expected_candidate_payload = {
+            "source_account_id": input_value["source_account_id"],
+            "destination_account_id": input_value["destination_account_id"],
+            "source_debit_amount": input_value["source_debit_amount"],
+            "destination_credit_amount": input_value["destination_credit_amount"],
+            "fee_amount": input_value["fee_amount"],
+            "currency": input_value["currency"],
+            "evidence_refs": [input_value["evidence_id"]],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["formal_transaction_creation"],
+        }
+        if candidate["type"] != "account_transfer" or candidate["confidence"] != "1.00" or candidate["payload"] != expected_candidate_payload:
+            _fail(operation_path + ".result_state_id", "complete intake candidate must exactly equal the source-derived candidate contract")
+        if [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]:
+            _fail(operation_path + ".result_state_id", "complete intake must remain pending")
+    elif action == "import_incomplete_source":
+        source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
+        candidate = next(item for item in result["candidates"] if item["id"] in expected_entities["candidates"]["added_ids"])
+        if source["id"] != input_value["source_id"] or candidate["source_ids"] != [source["id"]] or "destination_account_id" in candidate["payload"]:
+            _fail(operation_path + ".result_state_id", "incomplete intake must not guess a destination")
+        expected_source_payload = {
+            "source_account_id": input_value["source_account_id"],
+            "debit_amount": input_value["debit_amount"],
+            "currency": input_value["currency"],
+            "completeness": "missing_destination",
+            "observed_at": input_value["observed_at"],
+            "evidence_id": input_value["evidence_id"],
+        }
+        if source["type"] != "account_transfer" or source["payload"] != expected_source_payload:
+            _fail(operation_path + ".result_state_id", "incomplete intake source must exactly equal the action input and omit destination")
+        evidence = next(item for item in result["evidence"] if item["id"] in expected_entities["evidence"]["added_ids"])
+        if evidence["type"] != "transfer_record" or evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_value["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "incomplete intake evidence must exactly equal the source identity and observed_at")
+        expected_candidate_payload = {
+            "source_account_id": input_value["source_account_id"],
+            "debit_amount": input_value["debit_amount"],
+            "currency": input_value["currency"],
+            "evidence_refs": [input_value["evidence_id"]],
+            "provenance": {"rule": "complete_transfer_source", "rule_version": 1},
+            "requires_confirmation": ["destination_account_id", "formal_transaction_creation"],
+        }
+        if candidate["type"] != "account_transfer" or candidate["confidence"] != "1.00" or candidate["payload"] != expected_candidate_payload:
+            _fail(operation_path + ".result_state_id", "incomplete intake candidate must exactly equal the source-derived incomplete contract")
+    elif action == "import_mirror_record":
+        transaction = baseline_transactions[input_value["transaction_id"]]
+        if transaction["type"] != "account_transfer":
+            _fail(operation_path + ".input.transaction_id", "must reference account_transfer")
+        candidate = baseline_candidates.get(input_value["candidate_id"])
+        if candidate is None:
+            _fail(operation_path + ".input.candidate_id", "must reference transfer candidate")
+        if candidate["type"] != "account_transfer" or candidate["status_history"][-1]["status"] != "confirmed" or candidate["payload"].get("transaction_id") != input_value["transaction_id"]:
+            _fail(operation_path + ".input.candidate_id", "must bind the confirmed candidate to the input account_transfer")
+        if len(expected_entities["transactions"]["added_ids"]) or len(expected_entities["postings"]["added_ids"]):
+            _fail(operation_path + ".deltas.entity_changes", "mirror evidence cannot create another transfer")
+        baseline_version = next(item for item in baseline["transaction_versions"] if item["id"] == transaction["current_version_id"])
+        baseline_set = next(item for item in baseline["posting_sets"] if item["id"] == baseline_version["posting_set_id"])
+        current_postings = [item for item in baseline["postings"] if item["id"] in baseline_set["posting_ids"]]
+        source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
+        evidence = next(item for item in result["evidence"] if item["id"] in expected_entities["evidence"]["added_ids"])
+        link = next(item for item in result["evidence_links"] if item["id"] in expected_entities["evidence_links"]["added_ids"])
+        source_payload = source["payload"]
+        if source["type"] != "account_credit_observation" or source["id"] != input_value["source_id"]:
+            _fail(operation_path + ".result_state_id", "mirror source must be account_credit_observation with the input identity")
+        if set(source_payload) != {"account_id", "credit_amount", "currency", "observed_at", "evidence_id"}:
+            _fail(operation_path + ".result_state_id", "mirror source payload must be closed to account-credit observation fields")
+        if source_payload["account_id"] != input_value["account_id"] or source_payload["credit_amount"] != input_value["credit_amount"] or source_payload["currency"] != input_value["currency"] or source_payload["observed_at"] != input_value["observed_at"] or source_payload["evidence_id"] != input_value["evidence_id"]:
+            _fail(operation_path + ".result_state_id", "mirror source payload must exactly preserve the source record")
+        if evidence["type"] != "transfer_record" or evidence["id"] != input_value["evidence_id"] or evidence["source_ids"] != [source["id"]] or evidence["payload"]["observed_at"] != source_payload["observed_at"]:
+            _fail(operation_path + ".result_state_id", "mirror evidence must bind exactly to the mirror source")
+        if link["evidence_id"] != evidence["id"] or link["target_kind"] != "posting" or link["role"] != "destination_asset_posting":
+            _fail(operation_path + ".result_state_id", "mirror evidence link must target the destination asset posting")
+        destination_postings = [
+            item for item in current_postings
+            if item.get("role") == "transfer_principal_in"
+            and item["account_id"] == input_value["account_id"]
+            and item["amount"] == input_value["credit_amount"]
+        ]
+        if len(destination_postings) != 1 or link["target_id"] != destination_postings[0]["id"]:
+            _fail(operation_path + ".result_state_id", "mirror evidence link must target the unique destination posting in the transaction current posting set")
+        if any(item["id"] == link["target_id"] for item in baseline["postings"] if item["id"] not in baseline_set["posting_ids"]):
+            _fail(operation_path + ".result_state_id", "mirror evidence cannot target an unrelated same-account same-amount posting")
+        changed_reconciliation_ids = expected_entities["posting_reconciliations"]["changed_ids"]
+        if len(changed_reconciliation_ids) > 1:
+            _fail(operation_path + ".deltas.entity_changes.posting_reconciliations", "mirror may change at most its destination reconciliation")
+        if changed_reconciliation_ids:
+            reconciliation_id = changed_reconciliation_ids[0]
+            before_reconciliation = baseline_reconciliations[reconciliation_id]
+            after_reconciliation = result_reconciliations[reconciliation_id]
+            if before_reconciliation["posting_id"] != link["target_id"] or before_reconciliation["status"] != "pending" or after_reconciliation["status"] != "matched":
+                _fail(operation_path + ".result_state_id", "mirror reconciliation must match the existing destination posting pending-to-matched transition")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "evidence_link", "id": link["id"]},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", "mirror must return exactly its new source, evidence, link, and reconciliation identities")
+    elif action == "manual_expense":
         category = baseline_categories.get(input_value["category_id"])
         if category is None:
             _fail(operation_path + ".input.category_id", "dangling category reference")
@@ -3899,7 +4263,13 @@ def _validate_operations(
                 operation, operation_path, baseline, precisions, timezone
             )
             expected_entities = _expected_entity_changes(baseline, result)
-            _validate_append_only_transition(baseline, result, operation_path)
+            _validate_append_only_transition(
+                baseline,
+                result,
+                operation_path,
+                case_id=case["case"]["id"],
+                action_type=operation["action_type"],
+            )
             if operation["outcome"]["status"] in {"rejected", "no_change"} and not _contract_equivalent(
                 _state_payload(baseline), _state_payload(result)
             ):
@@ -4015,12 +4385,13 @@ def validate_golden_case_v2(
             "balance_adjustment",
             "balance_adjustment_reversal",
         },
+        "RG-03": {"opening_balance", "account_transfer"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
         _fail(
             "$.case.id",
-            "semantic prototype supports only RG-01, RG-02, and RG-09 representative cases",
+            "semantic prototype supports only RG-01, RG-02, RG-03, and RG-09 representative cases",
         )
 
     precisions: dict[str, int] = {}
