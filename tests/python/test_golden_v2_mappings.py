@@ -1244,7 +1244,7 @@ class GoldenV2MappingTests(unittest.TestCase):
         }
         gap_paths = set(gaps["RG10-GAP-04"]["affected_source_paths"])
         self.assertTrue(replay_gated.issubset(gap_paths))
-        self.assertEqual(len(gap_paths), 140)
+        self.assertEqual(len(gap_paths), 137)
         for source_path in replay_gated:
             entry = entries[source_path]
             with self.subTest(source_path=source_path, boundary="operation gap"):
@@ -1258,6 +1258,52 @@ class GoldenV2MappingTests(unittest.TestCase):
                         for target in entry["target_paths"]
                     )
                 )
+
+    def test_rg10_bonus_expiry_roles_close_topology_but_not_verification_status(self):
+        path_map = json.loads(
+            (ROOT / "docs" / "migrations" / "golden-v2" / "rg-10-path-map.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        gap = next(
+            item for item in path_map["unresolved_contract_gaps"] if item["id"] == "RG10-GAP-06"
+        )
+        prefixes = (
+            "$.canonical_states.recharge_confirmed.evidence_links[*]",
+            "$.canonical_states.spend_confirmed.evidence_links[*]",
+            "$.canonical_states.expiry_confirmed.evidence_links[*]",
+        )
+        status_paths = {f"{prefix}.status" for prefix in prefixes}
+        self.assertEqual(set(gap["affected_source_paths"]), status_paths)
+        self.assertEqual(len(status_paths), 3)
+
+        for prefix in prefixes:
+            for field in ("id", "lot_id", "role", "target_id"):
+                entry = entries[f"{prefix}.{field}"]
+                with self.subTest(prefix=prefix, field=field):
+                    self.assertEqual(entry["disposition"], "ready")
+                    self.assertEqual(entry["contract_gap_ids"], [])
+                    self.assertFalse(
+                        any(target.startswith(PLANNED_CONTRACT_PREFIX) for target in entry["target_paths"])
+                    )
+            status = entries[f"{prefix}.status"]
+            self.assertEqual(status["contract_gap_ids"], ["RG10-GAP-06"])
+            self.assertEqual(status["disposition"], "requires_contract_amendment")
+
+        bonus_amount_paths = {
+            entry["source_path"]
+            for entry in path_map["entries"]
+            if entry["source_path"].endswith(".bonus_amount")
+            and entry["target_paths"] == ["$.states[*].domain_entities[*].payload.amount"]
+        }
+        self.assertEqual(len(bonus_amount_paths), 7)
+        self.assertTrue(all(entries[path]["disposition"] == "ready" for path in bonus_amount_paths))
+        gaps = {item["id"]: item for item in path_map["unresolved_contract_gaps"]}
+        self.assertEqual(len(gaps["RG10-GAP-02"]["affected_source_paths"]), 71)
+        self.assertEqual(len(gaps["RG10-GAP-04"]["affected_source_paths"]), 137)
+        self.assertEqual(path_map["disposition_counts"]["ready"], 318)
+        self.assertEqual(path_map["disposition_counts"]["requires_contract_amendment"], 842)
 
     def test_rg09_fingerprint_paths_remain_gated_until_mandatory_generation(self):
         path_map = json.loads(
@@ -1512,13 +1558,9 @@ class GoldenV2MappingTests(unittest.TestCase):
                         "stored_value_expiry_confirmation",
                     }
                 ):
-                    self.assertIn("RG10-GAP-06", entry["contract_gap_ids"])
-                    self.assertTrue(
-                        any(
-                            target.startswith(PLANNED_CONTRACT_PREFIX)
-                            for target in targets
-                        )
-                    )
+                    self.assertEqual(entry["disposition"], "ready")
+                    self.assertEqual(entry["contract_gap_ids"], [])
+                    self.assertIn("target_kind=domain_entity", semantic_text)
                     self.assertIn(
                         "never generate another stored_value_lot_fact link",
                         semantic_text,

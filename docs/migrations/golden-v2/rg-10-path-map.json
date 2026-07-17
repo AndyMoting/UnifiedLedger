@@ -25,8 +25,8 @@
     "reject": 1
   },
   "disposition_counts": {
-    "requires_contract_amendment": 861,
-    "ready": 299,
+    "requires_contract_amendment": 842,
+    "ready": 318,
     "test_only_exclusion": 1
   },
   "contract_gap_count": 6,
@@ -570,7 +570,6 @@
       "required_change": "Register append-only lot, consumption, allocation, expiry, and rename payloads with stable identity, evidence, deterministic ordering, and no composition inference.",
       "risk": "Collapsing lifecycle facts into postings or relations would lose allocation provenance and permit unaudited inference.",
       "affected_source_paths": [
-        "$.canonical_states.expiry_confirmed.lots[*].bonus_amount",
         "$.canonical_states.expiry_confirmed.lots[*].composition_status",
         "$.canonical_states.expiry_confirmed.lots[*].expires_at",
         "$.canonical_states.expiry_confirmed.lots[*].history[*].amount",
@@ -589,7 +588,6 @@
         "$.canonical_states.expiry_confirmed.transactions[*].lot_consumptions[*].evidence_id",
         "$.canonical_states.expiry_confirmed.transactions[*].lot_consumptions[*].lot_id",
         "$.canonical_states.expiry_confirmed.transactions[*].lot_consumptions[*].paid_bonus_composition",
-        "$.canonical_states.recharge_confirmed.lots[*].bonus_amount",
         "$.canonical_states.recharge_confirmed.lots[*].composition_status",
         "$.canonical_states.recharge_confirmed.lots[*].expires_at",
         "$.canonical_states.recharge_confirmed.lots[*].history[*].amount",
@@ -603,7 +601,6 @@
         "$.canonical_states.recharge_confirmed.lots[*].remaining_bonus_amount",
         "$.canonical_states.recharge_confirmed.lots[*].remaining_face_value",
         "$.canonical_states.recharge_confirmed.lots[*].remaining_paid_amount",
-        "$.canonical_states.spend_confirmed.lots[*].bonus_amount",
         "$.canonical_states.spend_confirmed.lots[*].composition_status",
         "$.canonical_states.spend_confirmed.lots[*].expires_at",
         "$.canonical_states.spend_confirmed.lots[*].history[*].amount",
@@ -641,7 +638,6 @@
         "$.secondary_cases.merchant_evidenced_allocation.states.allocated.lots[*].remaining_face_value",
         "$.secondary_cases.merchant_evidenced_allocation.states.baseline.lots[*].expires_at",
         "$.secondary_cases.merchant_evidenced_allocation.states.baseline.lots[*].remaining_face_value",
-        "$.secondary_cases.multi_lot_allocation.base.lots[*].bonus_amount",
         "$.secondary_cases.multi_lot_allocation.base.lots[*].expires_at",
         "$.secondary_cases.multi_lot_allocation.base.lots[*].paid_amount",
         "$.secondary_cases.multi_lot_allocation.base.lots[*].remaining_face_value"
@@ -823,7 +819,6 @@
         "$.canonical_states.expiry_confirmed.preserved_source_record_ids[*]",
         "$.canonical_states.expiry_confirmed.transactions[*].allocation_source",
         "$.canonical_states.expiry_confirmed.transactions[*].amount",
-        "$.canonical_states.expiry_confirmed.transactions[*].bonus_amount",
         "$.canonical_states.expiry_confirmed.transactions[*].category_id",
         "$.canonical_states.expiry_confirmed.transactions[*].composition_status",
         "$.canonical_states.expiry_confirmed.transactions[*].confirmed_expired_amount",
@@ -852,7 +847,6 @@
         "$.canonical_states.recharge_confirmed.confirmations[*].transaction_id",
         "$.canonical_states.recharge_confirmed.preserved_evidence_ids[*]",
         "$.canonical_states.recharge_confirmed.preserved_source_record_ids[*]",
-        "$.canonical_states.recharge_confirmed.transactions[*].bonus_amount",
         "$.canonical_states.recharge_confirmed.transactions[*].created_at",
         "$.canonical_states.recharge_confirmed.transactions[*].credited_amount",
         "$.canonical_states.recharge_confirmed.transactions[*].effective",
@@ -871,7 +865,6 @@
         "$.canonical_states.spend_confirmed.confirmations[*].transaction_id",
         "$.canonical_states.spend_confirmed.transactions[*].allocation_source",
         "$.canonical_states.spend_confirmed.transactions[*].amount",
-        "$.canonical_states.spend_confirmed.transactions[*].bonus_amount",
         "$.canonical_states.spend_confirmed.transactions[*].category_id",
         "$.canonical_states.spend_confirmed.transactions[*].composition_status",
         "$.canonical_states.spend_confirmed.transactions[*].created_at",
@@ -931,25 +924,13 @@
       "id": "RG10-GAP-06",
       "title": "Bonus-component and expiry-confirmation evidence roles and domain targets",
       "status": "unresolved",
-      "capability_boundary": "Current evidence-link roles cover bank payment, stored-value asset posting, stored-value lot, and activation balance facts, but not bonus-component or expiry-confirmation business facts and their domain targets.",
-      "required_change": "Register distinct stored_value_bonus_component and stored_value_expiry_confirmation evidence roles with exact domain_entity target subtypes and business-status ownership; do not alias either to stored_value_lot_fact or posting reconciliation.",
+      "capability_boundary": "Current v2 owns bonus and expiry domain facts plus their exact typed evidence links, but the legacy link status has no current business-evidence verification owner.",
+      "required_change": "Register evidence-verification state and operations independently from expiry economic confirmation; do not map business evidence status to posting reconciliation.",
       "risk": "Reusing the lot role would create duplicate lot evidence, while targeting a transaction or posting would incorrectly grant financial reconciliation authority.",
       "affected_source_paths": [
-        "$.canonical_states.expiry_confirmed.evidence_links[*].id",
-        "$.canonical_states.expiry_confirmed.evidence_links[*].lot_id",
-        "$.canonical_states.expiry_confirmed.evidence_links[*].role",
         "$.canonical_states.expiry_confirmed.evidence_links[*].status",
-        "$.canonical_states.expiry_confirmed.evidence_links[*].target_id",
-        "$.canonical_states.recharge_confirmed.evidence_links[*].id",
-        "$.canonical_states.recharge_confirmed.evidence_links[*].lot_id",
-        "$.canonical_states.recharge_confirmed.evidence_links[*].role",
         "$.canonical_states.recharge_confirmed.evidence_links[*].status",
-        "$.canonical_states.recharge_confirmed.evidence_links[*].target_id",
-        "$.canonical_states.spend_confirmed.evidence_links[*].id",
-        "$.canonical_states.spend_confirmed.evidence_links[*].lot_id",
-        "$.canonical_states.spend_confirmed.evidence_links[*].role",
-        "$.canonical_states.spend_confirmed.evidence_links[*].status",
-        "$.canonical_states.spend_confirmed.evidence_links[*].target_id"
+        "$.canonical_states.spend_confirmed.evidence_links[*].status"
       ]
     }
   ],
@@ -2940,16 +2921,13 @@
       "occurrence_count": 4,
       "classification": "map",
       "target_paths": [
-        "$.states[*].evidence_links[*].id",
-        "$.planned_contract.states[*].evidence_links[*].id"
+        "$.states[*].evidence_links[*].id"
       ],
-      "transform": "Preserve bank link IDs; deterministically replace each legacy mixed merchant link ID with separate posting-link and lot-link IDs; preserve future bonus/expiry link identity only under their registered roles.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Independent targets require independent link identities; future roles cannot be emitted through a current role alias.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Preserve or deterministically derive an independent ID for every posting, lot, bonus-component, and expiry-confirmation evidence link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Every current typed evidence link has an independent stable identity.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.evidence_links[*].lot_id",
@@ -2963,17 +2941,13 @@
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
         "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].domain_entities[*].payload.lot_id"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map lot identity into the closed bonus or expiry domain payload and emit its exact target_kind=domain_entity typed link; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Current domain facts own lot identity and current evidence links target those exact facts.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.evidence_links[*].role",
@@ -2986,18 +2960,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map stored_value_credit_lot to two independently identified links with role=stored_value_asset_posting and role=stored_value_lot_fact. Map stored_value_bonus_component and stored_value_expiry_confirmation to their exact target_kind=domain_entity subtypes; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Both D-068 role tokens and exact domain target subtypes are closed and semantically enforced.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.evidence_links[*].source_id",
@@ -3024,10 +2993,10 @@
       "classification": "derive",
       "target_paths": [
         "$.states[*].posting_reconciliations[*].status",
-        "$.planned_contract.states[*].domain_entities[*].payload.evidence_status"
+        "$.planned_contract.states[*].evidence_verifications[*].status"
       ],
-      "transform": "Map pending only to the bank or stored-value posting reconciliation record. Emit no reconciliation record for stored_value_lot_fact. Preserve bonus-component and expiry-confirmation business evidence status only in their future domain contracts.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Map pending only for posting roles to posting reconciliation. Keep bonus-component and expiry-confirmation evidence verification in a separate planned owner; domain lifecycle and evidence links do not acquire reconciliation state.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
       "disposition": "requires_contract_amendment",
       "rationale": "Posting reconciliation and business-fact evidence status have different owners and cannot share a generic link status.",
       "contract_gap_ids": [
@@ -3045,18 +3014,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Replace legacy lot or transaction aliases with the stable ID of the exact bonus-component or expiry-event domain target; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation rejects transaction, posting, lot, and wrong-subtype aliases for both roles.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.id",
@@ -3084,15 +3048,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].domain_entities[*].payload.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map lot lifecycle, consumption, and merchant allocation to domain entities with stable identities.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Business allocation is domain data; relations may link identities/member refs only and never own lifecycle state.",
-      "contract_gap_ids": [
-        "RG10-GAP-02"
-      ]
+      "transform": "Map the immutable bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "The bonus fact binds exact lot, recharge transaction, currency, and bonus-income posting amount.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.lots[*].composition_status",
@@ -3951,15 +3913,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].rg10.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map this frozen stored-value semantic assertion through an explicit contract amendment.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "No current closed v2 owner exists without duplicating lifecycle ownership.",
-      "contract_gap_ids": [
-        "RG10-GAP-04"
-      ]
+      "transform": "Map the recharge business bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation binds the fact amount to the exact recharge bonus-income postings.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.expiry_confirmed.transactions[*].category_id",
@@ -5457,16 +5417,13 @@
       "occurrence_count": 3,
       "classification": "map",
       "target_paths": [
-        "$.states[*].evidence_links[*].id",
-        "$.planned_contract.states[*].evidence_links[*].id"
+        "$.states[*].evidence_links[*].id"
       ],
-      "transform": "Preserve bank link IDs; deterministically replace each legacy mixed merchant link ID with separate posting-link and lot-link IDs; preserve future bonus/expiry link identity only under their registered roles.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Independent targets require independent link identities; future roles cannot be emitted through a current role alias.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Preserve or deterministically derive an independent ID for every posting, lot, bonus-component, and expiry-confirmation evidence link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Every current typed evidence link has an independent stable identity.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.evidence_links[*].lot_id",
@@ -5480,17 +5437,13 @@
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
         "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].domain_entities[*].payload.lot_id"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map lot identity into the closed bonus or expiry domain payload and emit its exact target_kind=domain_entity typed link; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Current domain facts own lot identity and current evidence links target those exact facts.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.evidence_links[*].role",
@@ -5503,18 +5456,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map stored_value_credit_lot to two independently identified links with role=stored_value_asset_posting and role=stored_value_lot_fact. Map stored_value_bonus_component and stored_value_expiry_confirmation to their exact target_kind=domain_entity subtypes; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Both D-068 role tokens and exact domain target subtypes are closed and semantically enforced.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.evidence_links[*].source_id",
@@ -5541,10 +5489,10 @@
       "classification": "derive",
       "target_paths": [
         "$.states[*].posting_reconciliations[*].status",
-        "$.planned_contract.states[*].domain_entities[*].payload.evidence_status"
+        "$.planned_contract.states[*].evidence_verifications[*].status"
       ],
-      "transform": "Map pending only to the bank or stored-value posting reconciliation record. Emit no reconciliation record for stored_value_lot_fact. Preserve bonus-component and expiry-confirmation business evidence status only in their future domain contracts.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Map pending only for posting roles to posting reconciliation. Keep bonus-component and expiry-confirmation evidence verification in a separate planned owner; domain lifecycle and evidence links do not acquire reconciliation state.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
       "disposition": "requires_contract_amendment",
       "rationale": "Posting reconciliation and business-fact evidence status have different owners and cannot share a generic link status.",
       "contract_gap_ids": [
@@ -5562,18 +5510,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Replace legacy lot or transaction aliases with the stable ID of the exact bonus-component or expiry-event domain target; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation rejects transaction, posting, lot, and wrong-subtype aliases for both roles.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.id",
@@ -5601,15 +5544,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].domain_entities[*].payload.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map lot lifecycle, consumption, and merchant allocation to domain entities with stable identities.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Business allocation is domain data; relations may link identities/member refs only and never own lifecycle state.",
-      "contract_gap_ids": [
-        "RG10-GAP-02"
-      ]
+      "transform": "Map the immutable bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "The bonus fact binds exact lot, recharge transaction, currency, and bonus-income posting amount.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.lots[*].composition_status",
@@ -6346,15 +6287,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].rg10.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map this frozen stored-value semantic assertion through an explicit contract amendment.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "No current closed v2 owner exists without duplicating lifecycle ownership.",
-      "contract_gap_ids": [
-        "RG10-GAP-04"
-      ]
+      "transform": "Map the recharge business bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation binds the fact amount to the exact recharge bonus-income postings.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.recharge_confirmed.transactions[*].created_at",
@@ -7158,16 +7097,13 @@
       "occurrence_count": 3,
       "classification": "map",
       "target_paths": [
-        "$.states[*].evidence_links[*].id",
-        "$.planned_contract.states[*].evidence_links[*].id"
+        "$.states[*].evidence_links[*].id"
       ],
-      "transform": "Preserve bank link IDs; deterministically replace each legacy mixed merchant link ID with separate posting-link and lot-link IDs; preserve future bonus/expiry link identity only under their registered roles.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Independent targets require independent link identities; future roles cannot be emitted through a current role alias.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Preserve or deterministically derive an independent ID for every posting, lot, bonus-component, and expiry-confirmation evidence link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Every current typed evidence link has an independent stable identity.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.evidence_links[*].lot_id",
@@ -7181,17 +7117,13 @@
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
         "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].domain_entities[*].payload.lot_id"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map lot identity into the closed bonus or expiry domain payload and emit its exact target_kind=domain_entity typed link; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Current domain facts own lot identity and current evidence links target those exact facts.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.evidence_links[*].role",
@@ -7204,18 +7136,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Map stored_value_credit_lot to two independently identified links with role=stored_value_asset_posting and role=stored_value_lot_fact. Map stored_value_bonus_component and stored_value_expiry_confirmation to their exact target_kind=domain_entity subtypes; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Both D-068 role tokens and exact domain target subtypes are closed and semantically enforced.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.evidence_links[*].source_id",
@@ -7242,10 +7169,10 @@
       "classification": "derive",
       "target_paths": [
         "$.states[*].posting_reconciliations[*].status",
-        "$.planned_contract.states[*].domain_entities[*].payload.evidence_status"
+        "$.planned_contract.states[*].evidence_verifications[*].status"
       ],
-      "transform": "Map pending only to the bank or stored-value posting reconciliation record. Emit no reconciliation record for stored_value_lot_fact. Preserve bonus-component and expiry-confirmation business evidence status only in their future domain contracts.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
+      "transform": "Map pending only for posting roles to posting reconciliation. Keep bonus-component and expiry-confirmation evidence verification in a separate planned owner; domain lifecycle and evidence links do not acquire reconciliation state.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
       "disposition": "requires_contract_amendment",
       "rationale": "Posting reconciliation and business-fact evidence status have different owners and cannot share a generic link status.",
       "contract_gap_ids": [
@@ -7263,18 +7190,13 @@
         "$.states[*].evidence_links[*].evidence_id",
         "$.states[*].evidence_links[*].target_kind",
         "$.states[*].evidence_links[*].target_id",
-        "$.states[*].evidence_links[*].role",
-        "$.planned_contract.states[*].evidence_links[*].target_kind",
-        "$.planned_contract.states[*].evidence_links[*].target_id",
-        "$.planned_contract.states[*].evidence_links[*].role"
+        "$.states[*].evidence_links[*].role"
       ],
-      "transform": "Map each occurrence by legacy role, preserving occurrence order and discriminator: bank_payment_posting -> one target_kind=posting link to the bank posting with role=bank_payment_posting; stored_value_credit_lot -> two independently identified links, one target_kind=posting to the stored-value asset posting with role=stored_value_asset_posting and one target_kind=domain_entity to the stored_value_lot with role=stored_value_lot_fact; stored_value_bonus_component -> future target_kind=domain_entity bonus-component fact with its distinct role; stored_value_expiry_confirmation -> future target_kind=domain_entity expiry-confirmation fact with its distinct role. The bonus and expiry occurrences never generate another stored_value_lot_fact link.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Current v2 supports bank, stored-value posting, and lot roles; bonus-component and expiry-confirmation evidence roles/targets require their own registration.",
-      "contract_gap_ids": [
-        "RG10-GAP-06"
-      ]
+      "transform": "Replace legacy lot or transaction aliases with the stable ID of the exact bonus-component or expiry-event domain target; never generate another stored_value_lot_fact link.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-043, D-044, D-045, D-047, D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation rejects transaction, posting, lot, and wrong-subtype aliases for both roles.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.id",
@@ -7302,15 +7224,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].domain_entities[*].payload.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map lot lifecycle, consumption, and merchant allocation to domain entities with stable identities.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Business allocation is domain data; relations may link identities/member refs only and never own lifecycle state.",
-      "contract_gap_ids": [
-        "RG10-GAP-02"
-      ]
+      "transform": "Map the immutable bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "The bonus fact binds exact lot, recharge transaction, currency, and bonus-income posting amount.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.lots[*].composition_status",
@@ -8099,15 +8019,13 @@
       "occurrence_count": 1,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].rg10.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map this frozen stored-value semantic assertion through an explicit contract amendment.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "No current closed v2 owner exists without duplicating lifecycle ownership.",
-      "contract_gap_ids": [
-        "RG10-GAP-04"
-      ]
+      "transform": "Map the recharge business bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Semantic validation binds the fact amount to the exact recharge bonus-income postings.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.canonical_states.spend_confirmed.transactions[*].category_id",
@@ -22279,15 +22197,13 @@
       "occurrence_count": 4,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].domain_entities[*].payload.bonus_amount"
+        "$.states[*].domain_entities[*].payload.amount"
       ],
-      "transform": "Map lot lifecycle, consumption, and merchant allocation to domain entities with stable identities.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Business allocation is domain data; relations may link identities/member refs only and never own lifecycle state.",
-      "contract_gap_ids": [
-        "RG10-GAP-02"
-      ]
+      "transform": "Map each immutable lot bonus amount to stored_value_bonus_component.payload.amount.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; GOLDEN_TESTS; D-050, D-064, D-068.",
+      "disposition": "ready",
+      "rationale": "Each current bonus fact binds a stable lot and exact recharge business amount without inferring consumption composition.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.secondary_cases.multi_lot_allocation.base.lots[*].expires_at",

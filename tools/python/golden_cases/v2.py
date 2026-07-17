@@ -839,6 +839,10 @@ def _validate_references(
     sources = indexes["sources"]
     transactions = indexes["transactions"]
     domain_entities = indexes["domain_entities"]
+    domain_entity_paths = {
+        entity["id"]: f"{path}.domain_entities[{index}]"
+        for index, entity in enumerate(state["domain_entities"])
+    }
 
     for index, source in enumerate(state["sources"]):
         payload = source["payload"]
@@ -907,8 +911,16 @@ def _validate_references(
                 _fail(f"{evidence_path}.source_ids[{source_index}]", "dangling source reference")
         _timestamp(evidence["payload"]["observed_at"], evidence_path + ".payload.observed_at", timezone)
 
+    evidence_link_keys: set[tuple[str, str, str]] = set()
     for index, link in enumerate(state["evidence_links"]):
         link_path = f"{path}.evidence_links[{index}]"
+        link_key = (link["evidence_id"], link["target_id"], link["role"])
+        if link_key in evidence_link_keys:
+            _fail(
+                link_path,
+                f"evidence {link['evidence_id']!r} has a duplicate evidence link for the same target and role",
+            )
+        evidence_link_keys.add(link_key)
         if link["evidence_id"] not in indexes["evidence"]:
             _fail(link_path + ".evidence_id", "dangling evidence reference")
         role_target_kinds = {
@@ -924,6 +936,8 @@ def _validate_references(
             "item_allocation_fact": "domain_entity",
             "stored_value_asset_posting": "posting",
             "stored_value_lot_fact": "domain_entity",
+            "stored_value_bonus_component": "domain_entity",
+            "stored_value_expiry_confirmation": "domain_entity",
         }
         expected_kind = role_target_kinds[link["role"]]
         if link["target_kind"] != expected_kind:
@@ -977,6 +991,8 @@ def _validate_references(
         domain_role_targets = {
             "item_allocation_fact": "item_allocation",
             "stored_value_lot_fact": "stored_value_lot",
+            "stored_value_bonus_component": "stored_value_bonus_component",
+            "stored_value_expiry_confirmation": "stored_value_expiry_event",
         }
         if link["role"] in domain_role_targets:
             expected_type = domain_role_targets[link["role"]]
@@ -987,6 +1003,8 @@ def _validate_references(
             "item_allocation_fact": "item_receipt",
             "stored_value_asset_posting": "merchant_stored_value_credit",
             "stored_value_lot_fact": "merchant_stored_value_credit",
+            "stored_value_bonus_component": "merchant_stored_value_credit",
+            "stored_value_expiry_confirmation": "confirmed_actual_expiry",
         }
         if (
             link["role"] in evidence_role_types
@@ -1010,10 +1028,19 @@ def _validate_references(
                 )
         if evidence["type"] == "merchant_stored_value_credit":
             roles = [link["role"] for link in links]
-            if sorted(roles) != ["stored_value_asset_posting", "stored_value_lot_fact"]:
+            allowed_roles = {
+                "stored_value_asset_posting",
+                "stored_value_lot_fact",
+                "stored_value_bonus_component",
+            }
+            if (
+                roles.count("stored_value_asset_posting") != 1
+                or roles.count("stored_value_lot_fact") != 1
+                or any(role not in allowed_roles for role in roles)
+            ):
                 _fail(
                     path + ".evidence_links",
-                    f"merchant credit evidence {evidence['id']!r} must have one asset-posting link and one lot-fact link",
+                    f"merchant credit evidence {evidence['id']!r} must have one asset-posting link, one lot-fact link, and only optional bonus-component links",
                 )
             posting_link = next(
                 link for link in links if link["role"] == "stored_value_asset_posting"
@@ -1022,11 +1049,19 @@ def _validate_references(
             posting = indexes["postings"][posting_link["target_id"]]
             lot = domain_entities[lot_link["target_id"]]
             lot_payload = lot["payload"]
+            for bonus_link in (
+                link for link in links if link["role"] == "stored_value_bonus_component"
+            ):
+                bonus = domain_entities[bonus_link["target_id"]]
+                if bonus["payload"]["lot_id"] != lot["id"]:
+                    _fail(
+                        domain_entity_paths[bonus["id"]] + ".payload.lot_id",
+                        f"merchant credit evidence {evidence['id']!r} bonus component must belong to its linked lot",
+                    )
             recharge = transactions.get(lot_payload["recharge_transaction_id"])
             if recharge is None or recharge["type"] != "stored_value_recharge":
-                lot_index = state["domain_entities"].index(lot)
                 _fail(
-                    f"{path}.domain_entities[{lot_index}].payload.recharge_transaction_id",
+                    domain_entity_paths[lot["id"]] + ".payload.recharge_transaction_id",
                     "must reference a stored_value_recharge transaction",
                 )
             version = indexes["transaction_versions"][recharge["current_version_id"]]
@@ -1054,6 +1089,12 @@ def _validate_references(
                 _fail(
                     path + ".evidence_links",
                     f"merchant credit evidence {evidence['id']!r} lot face_value must match its positive asset posting",
+                )
+        if evidence["type"] == "confirmed_actual_expiry":
+            if len(links) != 1 or links[0]["role"] != "stored_value_expiry_confirmation":
+                _fail(
+                    path + ".evidence_links",
+                    f"confirmed expiry evidence {evidence['id']!r} must link exactly one expiry event",
                 )
 
     activation_transactions: dict[str, str] = {}
@@ -1099,6 +1140,29 @@ def _validate_references(
 
     reconstruction_adjustments: dict[str, str] = {}
     reconstructions: list[tuple[int, dict[str, Any]]] = []
+    bonus_amounts_by_recharge: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    bonus_paths_by_recharge: dict[tuple[str, str], str] = {}
+    expiry_loss_owners: dict[str, str] = {}
+    expiry_history_owners: dict[str, str] = {}
+
+    for entity in state["domain_entities"]:
+        if entity["type"] != "stored_value_expiry_event":
+            continue
+        history_path = domain_entity_paths[entity["id"]] + ".payload.status_history"
+        for history_index, event in enumerate(entity["payload"]["status_history"]):
+            prior_owner = expiry_history_owners.get(event["id"])
+            if prior_owner is not None:
+                _fail(
+                    f"{history_path}[{history_index}].id",
+                    f"status_history ID is already owned by expiry event {prior_owner!r}; it cannot belong to more than one expiry event",
+                )
+            expiry_history_owners[event["id"]] = entity["id"]
+
+    def current_postings(transaction: dict[str, Any]) -> list[dict[str, Any]]:
+        version = indexes["transaction_versions"][transaction["current_version_id"]]
+        posting_set = indexes["posting_sets"][version["posting_set_id"]]
+        return [indexes["postings"][posting_id] for posting_id in posting_set["posting_ids"]]
+
     for index, entity in enumerate(state["domain_entities"]):
         entity_path = f"{path}.domain_entities[{index}].payload"
         payload = entity["payload"]
@@ -1189,6 +1253,159 @@ def _validate_references(
                     entity_path + ".loaded_at",
                     "must match the recharge current version occurred_at",
                 )
+        elif entity["type"] == "stored_value_bonus_component":
+            lot = domain_entities.get(payload["lot_id"])
+            if lot is None or lot["type"] != "stored_value_lot":
+                _fail(entity_path + ".lot_id", "must reference a stored_value_lot")
+            if payload["recharge_transaction_id"] != lot["payload"]["recharge_transaction_id"]:
+                _fail(
+                    entity_path + ".recharge_transaction_id",
+                    "must match the lot recharge transaction",
+                )
+            recharge = transactions.get(payload["recharge_transaction_id"])
+            if recharge is None or recharge["type"] != "stored_value_recharge":
+                _fail(
+                    entity_path + ".recharge_transaction_id",
+                    "must reference a stored_value_recharge transaction",
+                )
+            if payload["currency"] != lot["payload"]["currency"]:
+                _fail(entity_path + ".currency", "must match the lot currency")
+            amount = _amount(
+                payload["amount"], payload["currency"], entity_path + ".amount", precisions
+            )
+            if amount < 0:
+                _fail(entity_path + ".amount", "must be zero or positive")
+            bonus_key = (payload["recharge_transaction_id"], payload["currency"])
+            bonus_amounts_by_recharge[bonus_key] += amount
+            bonus_paths_by_recharge[bonus_key] = entity_path
+        elif entity["type"] == "stored_value_expiry_event":
+            lot = domain_entities.get(payload["lot_id"])
+            if lot is None or lot["type"] != "stored_value_lot":
+                _fail(entity_path + ".lot_id", "must reference a stored_value_lot")
+            if payload["currency"] != lot["payload"]["currency"]:
+                _fail(entity_path + ".currency", "must match the lot currency")
+            amount = _amount(
+                payload["amount"], payload["currency"], entity_path + ".amount", precisions
+            )
+            if amount <= 0:
+                _fail(entity_path + ".amount", "must be positive")
+
+            history = payload["status_history"]
+            _unique_index(history, entity_path + ".status_history")
+            if [event["sequence"] for event in history] != list(
+                range(1, len(history) + 1)
+            ):
+                _fail(
+                    entity_path + ".status_history",
+                    "sequence must be contiguous and ordered from 1",
+                )
+            statuses = [event["status"] for event in history]
+            if statuses not in (["reminder"], ["reminder", "confirmed"]):
+                _fail(
+                    entity_path + ".status_history",
+                    "must be reminder or the append-only transition reminder then confirmed",
+                )
+            previous_recorded_at: datetime | None = None
+            for history_index, event in enumerate(history):
+                recorded_at = _timestamp(
+                    event["recorded_at"],
+                    entity_path + f".status_history[{history_index}].recorded_at",
+                    timezone,
+                )
+                if previous_recorded_at is not None and recorded_at <= previous_recorded_at:
+                    _fail(
+                        entity_path + f".status_history[{history_index}].recorded_at",
+                        "must be strictly later than the previous history event",
+                    )
+                previous_recorded_at = recorded_at
+
+            if statuses[-1] == "confirmed":
+                transaction_id = history[-1]["loss_transaction_id"]
+                transaction = transactions.get(transaction_id)
+                if transaction is None or transaction["type"] != "stored_value_expiry_loss":
+                    _fail(
+                        entity_path + ".status_history[-1].loss_transaction_id",
+                        "must reference a stored_value_expiry_loss transaction",
+                    )
+                prior_owner = expiry_loss_owners.get(transaction_id)
+                if prior_owner is not None:
+                    _fail(
+                        entity_path + ".status_history[-1].loss_transaction_id",
+                        f"expiry loss transaction is already owned by {prior_owner!r}",
+                    )
+                expiry_loss_owners[transaction_id] = entity["id"]
+                loss_postings = current_postings(transaction)
+                if (
+                    len(loss_postings) != 2
+                    or sum(
+                        posting.get("role") == "stored_value_expiry_loss"
+                        for posting in loss_postings
+                    )
+                    != 1
+                    or sum(
+                        posting.get("role") == "stored_value_asset"
+                        for posting in loss_postings
+                    )
+                    != 1
+                ):
+                    _fail(
+                        entity_path + ".status_history[-1].loss_transaction_id",
+                        "expiry loss transaction must contain exactly two postings: one loss and one stored-value asset leg",
+                    )
+                if any(posting["currency"] != payload["currency"] for posting in loss_postings):
+                    _fail(entity_path + ".currency", "must match every loss transaction posting")
+                loss_amount = sum(
+                    (
+                        _decimal(posting["amount"], entity_path + ".amount")
+                        for posting in loss_postings
+                        if posting.get("role") == "stored_value_expiry_loss"
+                    ),
+                    Decimal(0),
+                )
+                asset_amount = sum(
+                    (
+                        _decimal(posting["amount"], entity_path + ".amount")
+                        for posting in loss_postings
+                        if posting.get("role") == "stored_value_asset"
+                    ),
+                    Decimal(0),
+                )
+                if loss_amount != amount or asset_amount != -amount:
+                    _fail(
+                        entity_path + ".amount",
+                        "must match the loss and stored-value postings",
+                    )
+                recharge = transactions[lot["payload"]["recharge_transaction_id"]]
+                recharge_accounts = {
+                    posting["account_id"]
+                    for posting in current_postings(recharge)
+                    if posting.get("role") == "stored_value_asset"
+                }
+                loss_accounts = {
+                    posting["account_id"]
+                    for posting in loss_postings
+                    if posting.get("role") == "stored_value_asset"
+                }
+                if loss_accounts != recharge_accounts:
+                    _fail(
+                        entity_path + ".lot_id",
+                        "loss transaction must target the lot stored-value account",
+                    )
+                face_value = _amount(
+                    lot["payload"]["face_value"],
+                    lot["payload"]["currency"],
+                    entity_path + ".lot_id.face_value",
+                    precisions,
+                )
+                if amount > face_value:
+                    _fail(entity_path + ".amount", "must not exceed the lot face_value")
+                version = indexes["transaction_versions"][transaction["current_version_id"]]
+                for time_field in ("occurred_at", "statistics_at", "effective_at"):
+                    if _timestamp_instant(version[time_field]) != previous_recorded_at:
+                        _fail(
+                            path + f".transaction_versions[{version['id']}].{time_field}",
+                            "must match the confirmed expiry recorded_at instant",
+                        )
         elif entity["type"] == "activation_adjustment":
             transaction = transactions.get(payload["transaction_id"])
             if (
@@ -1278,6 +1495,44 @@ def _validate_references(
                     entity_path + ".active_mode",
                     "must match the latest reconstruction history event",
                 )
+
+    business_bonus_amounts: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    business_bonus_paths: dict[tuple[str, str], str] = {}
+    for transaction_index, transaction in enumerate(state["transactions"]):
+        if transaction["type"] != "stored_value_recharge":
+            continue
+        for posting in current_postings(transaction):
+            if posting.get("role") != "stored_value_bonus_income":
+                continue
+            bonus_key = (transaction["id"], posting["currency"])
+            business_bonus_amounts[bonus_key] -= _decimal(
+                posting["amount"], path + ".postings.amount"
+            )
+            business_bonus_paths[bonus_key] = (
+                f"{path}.transactions[{transaction_index}].bonus_component"
+            )
+    for bonus_key in set(bonus_amounts_by_recharge) | set(business_bonus_amounts):
+        fact_amount = bonus_amounts_by_recharge.get(bonus_key, Decimal(0))
+        business_amount = business_bonus_amounts.get(bonus_key, Decimal(0))
+        bonus_path = (
+            bonus_paths_by_recharge.get(bonus_key)
+            or business_bonus_paths[bonus_key]
+        )
+        if fact_amount != business_amount:
+            _fail(
+                bonus_path + ".amount",
+                "bonus-income postings must be exactly covered by bonus components",
+            )
+
+    for transaction_index, transaction in enumerate(state["transactions"]):
+        if (
+            transaction["type"] == "stored_value_expiry_loss"
+            and transaction["id"] not in expiry_loss_owners
+        ):
+            _fail(
+                f"{path}.transactions[{transaction_index}].type",
+                "stored_value_expiry_loss transaction must be owned by exactly one confirmed expiry event",
+            )
 
     audit_rules = {
         "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),

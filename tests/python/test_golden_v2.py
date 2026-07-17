@@ -342,6 +342,182 @@ def add_second_rg10_recharge(case: dict) -> None:
     )
 
 
+def provenance_contract_case(confirmed: bool = True) -> dict:
+    case = rg10_contract_case()
+    state = case["states"][0]
+    state["catalog"]["accounts"].extend(
+        [
+            {
+                "id": "income-stored-value-bonus",
+                "name": "Stored-value bonus",
+                "kind": "income",
+                "currency": "CNY",
+                "owned_by_user": False,
+                "real_account": False,
+                "reconciliation_eligible": False,
+                "system_role": "stored_value_bonus_right_income",
+            },
+            {
+                "id": "expense-stored-value-expiry",
+                "name": "Stored-value expiry",
+                "kind": "expense",
+                "currency": "CNY",
+                "owned_by_user": False,
+                "real_account": False,
+                "reconciliation_eligible": False,
+                "system_role": "stored_value_expiry_loss",
+            },
+        ]
+    )
+    stored_value_posting = next(
+        item for item in state["postings"] if item["id"] == "posting-stored-value"
+    )
+    stored_value_posting["amount"] = "45.80"
+    state["posting_sets"][0]["posting_ids"].append("posting-bonus-income")
+    state["postings"].append(
+        {
+            "id": "posting-bonus-income",
+            "posting_set_id": "posting-set-recharge",
+            "account_id": "income-stored-value-bonus",
+            "amount": "-10.00",
+            "currency": "CNY",
+            "role": "stored_value_bonus_income",
+            "reconciliation_eligible": False,
+        }
+    )
+    state["sources"][0]["payload"]["target_amount"] = "45.80"
+    state["domain_entities"][0]["payload"]["face_value"] = "45.80"
+    state["domain_entities"].extend(
+        [
+            {
+                "id": "bonus-component-recharge",
+                "type": "stored_value_bonus_component",
+                "payload": {
+                    "lot_id": "lot-recharge",
+                    "recharge_transaction_id": "transaction-recharge",
+                    "amount": "10.00",
+                    "currency": "CNY",
+                },
+            },
+            {
+                "id": "expiry-event-recharge",
+                "type": "stored_value_expiry_event",
+                "payload": {
+                    "lot_id": "lot-recharge",
+                    "amount": "5.00",
+                    "currency": "CNY",
+                    "status_history": [
+                        {
+                            "id": "expiry-event-history-reminder",
+                            "sequence": 1,
+                            "status": "reminder",
+                            "recorded_at": "2026-01-16T09:00:00+08:00",
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    state["evidence_links"].append(
+        {
+            "id": "link-merchant-bonus",
+            "evidence_id": "evidence-merchant-credit",
+            "target_kind": "domain_entity",
+            "target_id": "bonus-component-recharge",
+            "role": "stored_value_bonus_component",
+        }
+    )
+    if not confirmed:
+        return case
+
+    confirmed_at = "2026-01-17T09:00:00+08:00"
+    state["transactions"].append(
+        {
+            "id": "transaction-expiry-loss",
+            "type": "stored_value_expiry_loss",
+            "current_version_id": "version-expiry-loss-v1",
+        }
+    )
+    state["transaction_versions"].append(
+        {
+            "id": "version-expiry-loss-v1",
+            "transaction_id": "transaction-expiry-loss",
+            "version_number": 1,
+            "posting_set_id": "posting-set-expiry-loss",
+            "occurred_at": confirmed_at,
+            "statistics_at": confirmed_at,
+            "effective_at": confirmed_at,
+        }
+    )
+    state["posting_sets"].append(
+        {
+            "id": "posting-set-expiry-loss",
+            "posting_ids": ["posting-expiry-loss", "posting-stored-value-expiry"],
+        }
+    )
+    state["postings"].extend(
+        [
+            {
+                "id": "posting-expiry-loss",
+                "posting_set_id": "posting-set-expiry-loss",
+                "account_id": "expense-stored-value-expiry",
+                "amount": "5.00",
+                "currency": "CNY",
+                "role": "stored_value_expiry_loss",
+                "reconciliation_eligible": False,
+            },
+            {
+                "id": "posting-stored-value-expiry",
+                "posting_set_id": "posting-set-expiry-loss",
+                "account_id": "asset-stored-value",
+                "amount": "-5.00",
+                "currency": "CNY",
+                "role": "stored_value_asset",
+                "reconciliation_eligible": True,
+            },
+        ]
+    )
+    state["domain_entities"][-1]["payload"]["status_history"].append(
+        {
+            "id": "expiry-event-history-confirmed",
+            "sequence": 2,
+            "status": "confirmed",
+            "recorded_at": confirmed_at,
+            "loss_transaction_id": "transaction-expiry-loss",
+        }
+    )
+    state["sources"].append(
+        {
+            "id": "source-expiry-confirmation",
+            "type": "explicit_balance_observation",
+            "payload": {
+                "account_id": "asset-stored-value",
+                "target_amount": "40.80",
+                "currency": "CNY",
+                "target_observed_at": confirmed_at,
+            },
+        }
+    )
+    state["evidence"].append(
+        {
+            "id": "evidence-expiry-confirmation",
+            "type": "confirmed_actual_expiry",
+            "source_ids": ["source-expiry-confirmation"],
+            "payload": {"observed_at": confirmed_at},
+        }
+    )
+    state["evidence_links"].append(
+        {
+            "id": "link-expiry-confirmation",
+            "evidence_id": "evidence-expiry-confirmation",
+            "target_kind": "domain_entity",
+            "target_id": "expiry-event-recharge",
+            "role": "stored_value_expiry_confirmation",
+        }
+    )
+    return case
+
+
 def reconstruction_contract_case() -> dict:
     case = rg10_contract_case()
     state = case["states"][0]
@@ -1527,6 +1703,414 @@ class GoldenV2LedgerSemanticTests(unittest.TestCase):
         for case, path in cases:
             with self.subTest(path=path):
                 assert_invalid(self, case, path)
+
+    def test_bonus_and_expiry_domain_payloads_and_roles_are_closed(self):
+        for case in (provenance_contract_case(False), provenance_contract_case()):
+            with self.subTest(confirmed=len(case["states"][0]["transactions"]) > 1):
+                self.assertEqual(schema_errors(case), [])
+                validate_contract_state(case)
+
+        unknown = provenance_contract_case(False)
+        unknown["states"][0]["domain_entities"][-2]["payload"]["merchant_id"] = (
+            "merchant-not-owned-here"
+        )
+        self.assertTrue(schema_errors(unknown))
+
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        roles = set(schema["$defs"]["evidenceLink"]["properties"]["role"]["enum"])
+        self.assertTrue(
+            {
+                "stored_value_bonus_component",
+                "stored_value_expiry_confirmation",
+            }.issubset(roles)
+        )
+        self.assertNotIn("stored_value_expiry_event", roles)
+
+    def test_bonus_component_binds_exact_lot_recharge_amount_and_currency(self):
+        valid = provenance_contract_case(False)
+        validate_contract_state(valid)
+
+        cases = []
+        dangling_lot = provenance_contract_case(False)
+        dangling_lot["states"][0]["domain_entities"][-2]["payload"]["lot_id"] = (
+            "missing-lot"
+        )
+        cases.append((dangling_lot, r"lot_id"))
+
+        wrong_recharge = provenance_contract_case(False)
+        wrong_recharge["states"][0]["domain_entities"][-2]["payload"][
+            "recharge_transaction_id"
+        ] = "missing-recharge"
+        cases.append((wrong_recharge, r"recharge_transaction_id"))
+
+        negative = provenance_contract_case(False)
+        negative["states"][0]["domain_entities"][-2]["payload"]["amount"] = "-1.00"
+        cases.append((negative, r"amount"))
+
+        mismatched = provenance_contract_case(False)
+        mismatched["states"][0]["domain_entities"][-2]["payload"]["amount"] = "9.99"
+        cases.append((mismatched, r"amount"))
+
+        wrong_currency = provenance_contract_case(False)
+        wrong_currency["states"][0]["domain_entities"][-2]["payload"]["currency"] = (
+            "USD"
+        )
+        cases.append((wrong_currency, r"currency"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+        missing_fact = provenance_contract_case(False)
+        state = missing_fact["states"][0]
+        state["domain_entities"] = [
+            item
+            for item in state["domain_entities"]
+            if item["type"] != "stored_value_bonus_component"
+        ]
+        state["evidence_links"] = [
+            item
+            for item in state["evidence_links"]
+            if item["role"] != "stored_value_bonus_component"
+        ]
+        with self.assertRaisesRegex(GoldenCaseError, r"bonus.*component|bonus.*posting"):
+            validate_contract_state(missing_fact)
+
+        zero = rg10_contract_case()
+        zero_state = zero["states"][0]
+        zero_state["domain_entities"].append(
+            {
+                "id": "bonus-component-zero",
+                "type": "stored_value_bonus_component",
+                "payload": {
+                    "lot_id": "lot-recharge",
+                    "recharge_transaction_id": "transaction-recharge",
+                    "amount": "0.00",
+                    "currency": "CNY",
+                },
+            }
+        )
+        zero_state["evidence_links"].append(
+            {
+                "id": "link-merchant-bonus-zero",
+                "evidence_id": "evidence-merchant-credit",
+                "target_kind": "domain_entity",
+                "target_id": "bonus-component-zero",
+                "role": "stored_value_bonus_component",
+            }
+        )
+        validate_contract_state(zero)
+
+    def test_expiry_lifecycle_is_contiguous_monotonic_and_confirmation_owned(self):
+        reminder = provenance_contract_case(False)
+        validate_contract_state(reminder)
+        self.assertFalse(
+            any(
+                item["type"] == "stored_value_expiry_loss"
+                for item in reminder["states"][0]["transactions"]
+            )
+        )
+
+        confirmed = provenance_contract_case()
+        validate_contract_state(confirmed)
+        without_evidence = deepcopy(confirmed)
+        state = without_evidence["states"][0]
+        state["evidence_links"] = [
+            item
+            for item in state["evidence_links"]
+            if item["role"] != "stored_value_expiry_confirmation"
+        ]
+        state["evidence"] = [
+            item for item in state["evidence"] if item["id"] != "evidence-expiry-confirmation"
+        ]
+        validate_contract_state(without_evidence)
+
+        cases = []
+        bad_sequence = provenance_contract_case()
+        bad_sequence["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ][-1]["sequence"] = 3
+        cases.append((bad_sequence, r"status_history"))
+
+        non_increasing = provenance_contract_case()
+        non_increasing["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ][-1]["recorded_at"] = "2026-01-16T09:00:00+08:00"
+        cases.append((non_increasing, r"recorded_at.*strictly later"))
+
+        direct_confirmed = provenance_contract_case()
+        history = direct_confirmed["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ]
+        history.pop(0)
+        history[0]["sequence"] = 1
+        cases.append((direct_confirmed, r"status_history"))
+
+        repeated_reminder = provenance_contract_case(False)
+        repeated_reminder["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ].append(
+            {
+                "id": "expiry-event-history-reminder-2",
+                "sequence": 2,
+                "status": "reminder",
+                "recorded_at": "2026-01-17T09:00:00+08:00",
+            }
+        )
+        cases.append((repeated_reminder, r"status_history"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+        reminder_with_loss = provenance_contract_case(False)
+        reminder_with_loss["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ][0]["loss_transaction_id"] = "transaction-recharge"
+        self.assertTrue(schema_errors(reminder_with_loss))
+
+        confirmed_without_loss = provenance_contract_case()
+        del confirmed_without_loss["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ][-1]["loss_transaction_id"]
+        self.assertTrue(schema_errors(confirmed_without_loss))
+
+        reused_history_id = provenance_contract_case(False)
+        duplicate_event = deepcopy(reused_history_id["states"][0]["domain_entities"][-1])
+        duplicate_event["id"] = "expiry-event-other"
+        reused_history_id["states"][0]["domain_entities"].append(duplicate_event)
+        with self.assertRaisesRegex(GoldenCaseError, r"status_history.*more than one expiry event"):
+            validate_contract_state(reused_history_id)
+
+    def test_confirmed_expiry_binds_exact_loss_transaction_amount_and_currency(self):
+        cases = []
+        dangling = provenance_contract_case()
+        dangling["states"][0]["domain_entities"][-1]["payload"]["status_history"][
+            -1
+        ]["loss_transaction_id"] = "missing-loss"
+        cases.append((dangling, r"loss_transaction_id"))
+
+        wrong_type = provenance_contract_case()
+        wrong_type["states"][0]["transactions"][-1]["type"] = "expense"
+        cases.append((wrong_type, r"loss_transaction_id"))
+
+        wrong_amount = provenance_contract_case()
+        wrong_amount["states"][0]["domain_entities"][-1]["payload"]["amount"] = (
+            "4.99"
+        )
+        cases.append((wrong_amount, r"amount"))
+
+        wrong_currency = provenance_contract_case()
+        wrong_currency["states"][0]["domain_entities"][-1]["payload"]["currency"] = (
+            "USD"
+        )
+        cases.append((wrong_currency, r"currency"))
+
+        for invalid, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(GoldenCaseError, path):
+                    validate_contract_state(invalid)
+
+        split_legs = provenance_contract_case()
+        state = split_legs["states"][0]
+        state["postings"][-2]["amount"] = "4.00"
+        state["postings"][-1]["amount"] = "-4.00"
+        state["posting_sets"][-1]["posting_ids"].extend(
+            ["posting-expiry-loss-split", "posting-stored-value-expiry-split"]
+        )
+        state["postings"].extend(
+            [
+                {
+                    **state["postings"][-2],
+                    "id": "posting-expiry-loss-split",
+                    "amount": "1.00",
+                },
+                {
+                    **state["postings"][-1],
+                    "id": "posting-stored-value-expiry-split",
+                    "amount": "-1.00",
+                },
+            ]
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"exactly two postings"):
+            validate_contract_state(split_legs)
+
+        extra_roles = provenance_contract_case()
+        state = extra_roles["states"][0]
+        state["posting_sets"][-1]["posting_ids"].extend(
+            ["posting-expiry-extra-in", "posting-expiry-extra-out"]
+        )
+        state["postings"].extend(
+            [
+                {
+                    "id": "posting-expiry-extra-in",
+                    "posting_set_id": "posting-set-expiry-loss",
+                    "account_id": "expense-stored-value-expiry",
+                    "amount": "1.00",
+                    "currency": "CNY",
+                    "role": "transfer_fee",
+                    "reconciliation_eligible": False,
+                },
+                {
+                    "id": "posting-expiry-extra-out",
+                    "posting_set_id": "posting-set-expiry-loss",
+                    "account_id": "asset-bank",
+                    "amount": "-1.00",
+                    "currency": "CNY",
+                    "role": "transfer_principal_out",
+                    "reconciliation_eligible": False,
+                },
+            ]
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"exactly two postings"):
+            validate_contract_state(extra_roles)
+
+        over_face_value = provenance_contract_case()
+        state = over_face_value["states"][0]
+        state["domain_entities"][-1]["payload"]["amount"] = "50.00"
+        state["postings"][-2]["amount"] = "50.00"
+        state["postings"][-1]["amount"] = "-50.00"
+        with self.assertRaisesRegex(GoldenCaseError, r"face_value"):
+            validate_contract_state(over_face_value)
+
+    def test_expiry_loss_ownership_is_reverse_closed_and_order_independent(self):
+        for event_first in (True, False):
+            valid = provenance_contract_case()
+            entities = valid["states"][0]["domain_entities"]
+            event = entities.pop()
+            entities.insert(0 if event_first else len(entities), event)
+            with self.subTest(event_first=event_first):
+                validate_contract_state(valid)
+
+        reminder_only = provenance_contract_case()
+        state = reminder_only["states"][0]
+        state["domain_entities"][-1]["payload"]["status_history"].pop()
+        state["evidence_links"].pop()
+        state["evidence"].pop()
+        with self.assertRaisesRegex(GoldenCaseError, r"expiry_loss.*confirmed|expiry loss.*owned"):
+            validate_contract_state(reminder_only)
+
+        no_event = provenance_contract_case()
+        state = no_event["states"][0]
+        state["domain_entities"].pop()
+        state["evidence_links"].pop()
+        state["evidence"].pop()
+        with self.assertRaisesRegex(GoldenCaseError, r"expiry_loss.*confirmed|expiry loss.*owned"):
+            validate_contract_state(no_event)
+
+        for reverse_entities in (True, False):
+            duplicate_owner = provenance_contract_case()
+            state = duplicate_owner["states"][0]
+            duplicate = deepcopy(state["domain_entities"][-1])
+            duplicate["id"] = "expiry-event-duplicate-owner"
+            duplicate["payload"]["status_history"][0]["id"] = "expiry-duplicate-reminder"
+            duplicate["payload"]["status_history"][1]["id"] = "expiry-duplicate-confirmed"
+            state["domain_entities"].append(duplicate)
+            if reverse_entities:
+                state["domain_entities"].reverse()
+            with self.subTest(reverse_entities=reverse_entities):
+                with self.assertRaisesRegex(GoldenCaseError, r"already owned"):
+                    validate_contract_state(duplicate_owner)
+
+    def test_expiry_confirmation_time_matches_loss_transaction_instants(self):
+        equivalent_offsets = replace_timestamp_offset(
+            provenance_contract_case(), "+08:00", "+00:00"
+        )
+        equivalent_offsets["case"]["timezone"] = "UTC"
+        equivalent_offsets["states"][0]["domain_entities"][-1]["payload"][
+            "status_history"
+        ][-1]["recorded_at"] = "2026-01-17T09:00:00Z"
+        validate_contract_state(equivalent_offsets)
+
+        for field in ("occurred_at", "statistics_at", "effective_at"):
+            invalid = provenance_contract_case()
+            invalid["states"][0]["transaction_versions"][-1][field] = (
+                "2026-01-17T09:00:01+08:00"
+            )
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(GoldenCaseError, rf"{field}.*recorded_at"):
+                    validate_contract_state(invalid)
+
+    def test_bonus_and_expiry_evidence_links_are_typed_unique_and_non_financial(self):
+        case = provenance_contract_case()
+        validate_contract_state(case)
+        state = case["states"][0]
+        self.assertEqual(state["posting_reconciliations"], [])
+        self.assertEqual(
+            {
+                (item["role"], item["target_kind"], item["target_id"])
+                for item in state["evidence_links"]
+                if item["role"].startswith("stored_value_")
+            },
+            {
+                ("stored_value_asset_posting", "posting", "posting-stored-value"),
+                ("stored_value_lot_fact", "domain_entity", "lot-recharge"),
+                (
+                    "stored_value_bonus_component",
+                    "domain_entity",
+                    "bonus-component-recharge",
+                ),
+                (
+                    "stored_value_expiry_confirmation",
+                    "domain_entity",
+                    "expiry-event-recharge",
+                ),
+            },
+        )
+
+        wrong_bonus = provenance_contract_case()
+        wrong_bonus["states"][0]["evidence_links"][-2]["target_id"] = "lot-recharge"
+        with self.assertRaisesRegex(GoldenCaseError, r"target_id"):
+            validate_contract_state(wrong_bonus)
+
+        wrong_expiry = provenance_contract_case()
+        wrong_expiry["states"][0]["evidence_links"][-1]["target_id"] = (
+            "bonus-component-recharge"
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"target_id"):
+            validate_contract_state(wrong_expiry)
+
+        duplicate = provenance_contract_case()
+        duplicate_link = deepcopy(duplicate["states"][0]["evidence_links"][-1])
+        duplicate_link["id"] = "link-expiry-confirmation-duplicate"
+        duplicate["states"][0]["evidence_links"].append(duplicate_link)
+        with self.assertRaisesRegex(GoldenCaseError, r"duplicate evidence link"):
+            validate_contract_state(duplicate)
+
+        posting_alias = provenance_contract_case()
+        posting_alias["states"][0]["evidence_links"][-1].update(
+            {"target_kind": "posting", "target_id": "posting-stored-value-expiry"}
+        )
+        self.assertTrue(schema_errors(posting_alias))
+
+        event_as_role = provenance_contract_case()
+        event_as_role["states"][0]["evidence_links"][-1]["role"] = (
+            "stored_value_expiry_event"
+        )
+        self.assertTrue(schema_errors(event_as_role))
+
+    def test_bonus_is_immutable_and_expiry_history_is_append_only(self):
+        baseline = provenance_contract_case(False)["states"][0]
+        result = provenance_contract_case()["states"][0]
+        golden_v2._validate_append_only_transition(baseline, result, "$.operation")
+
+        rewritten_bonus = deepcopy(result)
+        rewritten_bonus["domain_entities"][-2]["payload"]["amount"] = "9.99"
+        with self.assertRaisesRegex(GoldenCaseError, r"domain_entities.*immutable"):
+            golden_v2._validate_append_only_transition(
+                baseline, rewritten_bonus, "$.operation"
+            )
+
+        rewritten_history = deepcopy(result)
+        rewritten_history["domain_entities"][-1]["payload"]["status_history"][0][
+            "recorded_at"
+        ] = "2026-01-16T09:01:00+08:00"
+        with self.assertRaisesRegex(GoldenCaseError, r"status_history.*prefix"):
+            golden_v2._validate_append_only_transition(
+                baseline, rewritten_history, "$.operation"
+            )
 
     def test_reconstruction_domain_and_typed_audit_topology_are_closed(self):
         case = reconstruction_contract_case()
