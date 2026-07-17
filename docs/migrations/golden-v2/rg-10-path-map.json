@@ -25,8 +25,8 @@
     "reject": 1
   },
   "disposition_counts": {
-    "requires_contract_amendment": 868,
-    "ready": 292,
+    "requires_contract_amendment": 863,
+    "ready": 297,
     "test_only_exclusion": 1
   },
   "contract_gap_count": 6,
@@ -921,16 +921,11 @@
     {
       "id": "RG10-GAP-05",
       "status": "unresolved",
-      "title": "Stored-value configuration, category hierarchy, and system-role contract",
-      "capability_boundary": "Current v2 catalogs lack only the closed stored-value configuration fields (enabled, merchant identity, merchant restriction, and stored-value presence/capability), the RG-10 category hierarchy owner, and the three RG-10 stored-value system_role enum values. This gap does not duplicate precision, ledger identity, account kind/real-account ownership, or category posting ownership.",
-      "required_change": "Register closed stored-value configuration for enabled, merchant_id, restricted, and stored_value; resolve category level through a planned hierarchy owner once the pending parent-identity design gate is approved; and extend the current account system_role enum with stored_value_bonus_right_income, stored_value_expiry_loss, and stored_value_pre_activation_adjustment.",
+      "title": "Category parent identity migration",
+      "capability_boundary": "Stored-value account configuration and all three system roles now have current v2 owners. The frozen fixture still supplies only numeric category level and no parent category identity.",
+      "required_change": "Provide an explicit sanitized category parent mapping before level 2 can map to the current parent_id owner; never infer parent identity from level alone.",
       "risk": "Without these six contract additions, stored-value capability and merchant restrictions cannot be validated, the level-2 category has no approved parent identity, and all three frozen stored-value system roles remain outside the closed enum.",
       "affected_source_paths": [
-        "$.catalog.accounts[*].enabled",
-        "$.catalog.accounts[*].merchant_id",
-        "$.catalog.accounts[*].restricted",
-        "$.catalog.accounts[*].stored_value",
-        "$.catalog.accounts[*].system_role",
         "$.catalog.categories[*].level"
       ]
     },
@@ -8782,15 +8777,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.stored_value_config.enabled"
+        "$.states[*].catalog.accounts[*].stored_value.enabled"
       ],
-      "transform": "Map enabled to the planned closed stored_value configuration for each referenced account.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Stored-value operations must distinguish the enabled account from the frozen disabled counterexample, but the current account catalog has no activation field.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "transform": "Map enabled exactly into the same account stored_value configuration.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050. D-066.",
+      "disposition": "ready",
+      "rationale": "D-066 assigns this fact to the single closed per-account stored_value configuration.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].financial",
@@ -8864,15 +8857,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.stored_value_config.merchant_id"
+        "$.states[*].catalog.accounts[*].stored_value.merchant_id"
       ],
-      "transform": "Map merchant_id to the merchant identity in the planned closed stored_value configuration for each referenced account.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "Merchant identity scopes the restricted balance and allocation facts, but the current account catalog has no merchant owner.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "transform": "Map merchant_id exactly into the same account stored_value configuration.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050. D-066.",
+      "disposition": "ready",
+      "rationale": "D-066 assigns this fact to the single closed per-account stored_value configuration.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].name",
@@ -8930,15 +8921,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.stored_value_config.restricted"
+        "$.states[*].catalog.accounts[*].stored_value.merchant_restricted"
       ],
-      "transform": "Map restricted to the merchant-restriction flag in the planned closed stored_value configuration for each referenced account.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "D-050 requires the stored balance to remain merchant-restricted, but the current account catalog cannot express that restriction.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "transform": "Rename restricted to stored_value.merchant_restricted within the same account.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050. D-066.",
+      "disposition": "ready",
+      "rationale": "D-066 assigns merchant restriction to the closed per-account stored_value configuration.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].stored_value",
@@ -8948,15 +8937,13 @@
       "occurrence_count": 2,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.stored_value_config.stored_value"
+        "$.states[*].catalog.accounts[*].stored_value"
       ],
-      "transform": "Map stored_value to the presence/capability flag in the planned closed stored_value configuration for each referenced account.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "The current account catalog cannot distinguish a stored-value capability from an ordinary asset using a closed field.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "transform": "Map true to presence of the account stored_value object; the object is the single capability owner.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050. D-066.",
+      "disposition": "ready",
+      "rationale": "D-066 replaces parallel capability flags with presence of one closed stored_value configuration object.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].system_managed",
@@ -8982,15 +8969,13 @@
       "occurrence_count": 3,
       "classification": "map",
       "target_paths": [
-        "$.planned_contract.states[*].catalog.accounts[*].system_role"
+        "$.states[*].catalog.accounts[*].system_role"
       ],
-      "transform": "Extend the current system_role enum and map stored_value_bonus_right_income, stored_value_expiry_loss, and stored_value_pre_activation_adjustment exactly.",
-      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050.",
-      "disposition": "requires_contract_amendment",
-      "rationale": "All three frozen stored-value roles are absent from the current closed system_role enum, so the existing field owner needs an enum extension rather than a new role field.",
-      "contract_gap_ids": [
-        "RG10-GAP-05"
-      ]
+      "transform": "Map the three stored-value system roles exactly to the extended account system_role enum.",
+      "authority": "RG-10 frozen fixture and design; GOLDEN_SCHEMA 2.0.0; schemas/golden-case-v2.schema.json; ACCOUNTING_RULES; GOLDEN_TESTS; D-034, D-035, D-036, D-037, D-043, D-044, D-050. D-066.",
+      "disposition": "ready",
+      "rationale": "D-066 registers all three frozen stored-value roles on the existing account owner.",
+      "contract_gap_ids": []
     },
     {
       "source_path": "$.catalog.accounts[*].type",

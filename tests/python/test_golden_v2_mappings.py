@@ -1122,7 +1122,7 @@ class GoldenV2MappingTests(unittest.TestCase):
         )
         self.assertEqual(len(fixture_roles), 3)
         self.assertTrue(all(role.startswith("stored_value_") for role in fixture_roles))
-        self.assertEqual(fixture_roles - current_role_enum, fixture_roles)
+        self.assertTrue(fixture_roles.issubset(current_role_enum))
 
         ready_targets = {
             "$.case.precision": {"$.case.currencies[*].precision"},
@@ -1158,17 +1158,24 @@ class GoldenV2MappingTests(unittest.TestCase):
             for source_path in ready_targets
         }
 
-        planned_account_fields = {
-            "enabled",
-            "merchant_id",
-            "restricted",
-            "stored_value",
-            "system_role",
+        new_account_targets = {
+            "$.catalog.accounts[*].enabled": {
+                "$.states[*].catalog.accounts[*].stored_value.enabled"
+            },
+            "$.catalog.accounts[*].merchant_id": {
+                "$.states[*].catalog.accounts[*].stored_value.merchant_id"
+            },
+            "$.catalog.accounts[*].restricted": {
+                "$.states[*].catalog.accounts[*].stored_value.merchant_restricted"
+            },
+            "$.catalog.accounts[*].stored_value": {
+                "$.states[*].catalog.accounts[*].stored_value"
+            },
+            "$.catalog.accounts[*].system_role": {
+                "$.states[*].catalog.accounts[*].system_role"
+            },
         }
-        expected_gap_paths = {
-            "$.catalog.categories[*].level",
-            *(f"$.catalog.accounts[*].{field}" for field in planned_account_fields),
-        }
+        expected_gap_paths = {"$.catalog.categories[*].level"}
         self.maxDiff = None
         with self.subTest(boundary="current owners are ready"):
             self.assertEqual(actual_ready_entries, expected_ready_entries)
@@ -1177,6 +1184,13 @@ class GoldenV2MappingTests(unittest.TestCase):
                 gaps["RG10-GAP-05"]["affected_source_paths"],
                 sorted(expected_gap_paths),
             )
+
+        for source_path, target_paths in new_account_targets.items():
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path, boundary="new owner"):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(set(entry["target_paths"]), target_paths)
+                self.assertEqual(entry["contract_gap_ids"], [])
 
         for source_path in expected_gap_paths:
             entry = entries[source_path]
@@ -1191,6 +1205,74 @@ class GoldenV2MappingTests(unittest.TestCase):
                         for target in entry["target_paths"]
                     )
                 )
+
+    def test_rg09_fingerprint_paths_remain_gated_until_mandatory_generation(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-09-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        gap = next(
+            item
+            for item in path_map["unresolved_contract_gaps"]
+            if item["id"] == "RG09-GAP-02"
+        )
+
+        candidate_paths = {
+            source_path
+            for source_path in entries
+            if source_path.endswith(".candidates[*].ledger_fingerprint")
+        }
+        self.assertTrue(candidate_paths)
+        for source_path in candidate_paths:
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["classification"], "derive")
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertEqual(
+                    entry["target_paths"],
+                    [
+                        "$.planned_contract.states[*].candidates[*].payload."
+                        "ledger_fingerprint"
+                    ],
+                )
+                self.assertIn("RG09-GAP-02", entry["contract_gap_ids"])
+
+        confirmation_fingerprint = entries[
+            "$.main_path.confirmation.input.ledger_fingerprint"
+        ]
+        self.assertEqual(confirmation_fingerprint["classification"], "derive")
+        self.assertEqual(
+            confirmation_fingerprint["disposition"],
+            "requires_contract_amendment",
+        )
+        self.assertEqual(
+            confirmation_fingerprint["target_paths"],
+            ["$.planned_contract.operations[*].input.ledger_fingerprint"],
+        )
+        self.assertEqual(
+            confirmation_fingerprint["contract_gap_ids"], ["RG09-GAP-02"]
+        )
+
+        remaining = set(gap["affected_source_paths"])
+        self.assertTrue(
+            {
+                "$.stale_preview.input.preview_ledger_fingerprint",
+                "$.stale_preview.input.current_ledger_fingerprint",
+                "$.stale_preview.expected.recomputed_replay_amount",
+                "$.stale_preview.expected.recomputed_delta",
+            }.issubset(remaining)
+        )
+        self.assertTrue(candidate_paths.issubset(remaining))
+        self.assertIn(
+            "$.main_path.confirmation.input.ledger_fingerprint", remaining
+        )
+        self.assertEqual(len(remaining), 68)
 
     def test_rg10_absence_dispatch_and_evidence_role_boundaries(self):
         source = json.loads(

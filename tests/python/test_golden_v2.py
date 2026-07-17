@@ -135,6 +135,11 @@ def rg10_contract_case() -> dict:
                     "owned_by_user": True,
                     "real_account": True,
                     "reconciliation_eligible": True,
+                    "stored_value": {
+                        "enabled": True,
+                        "merchant_restricted": True,
+                        "merchant_id": "merchant-contract",
+                    },
                 },
                 {
                     "id": "asset-bank",
@@ -956,6 +961,109 @@ class GoldenV2SchemaTests(unittest.TestCase):
             r"\$\.states\[1\]\.transaction_versions\[0\]\.occurred_at",
         )
 
+    def test_stored_value_catalog_and_fingerprint_foundation_are_closed(self):
+        case = rg10_contract_case()
+        self.assertEqual(schema_errors(case), [])
+
+        for field in ("enabled", "merchant_restricted", "merchant_id"):
+            bad_case = deepcopy(case)
+            del bad_case["states"][0]["catalog"]["accounts"][0]["stored_value"][field]
+            assert_invalid(self, bad_case, rf"stored_value.*{field}")
+
+        unknown = deepcopy(case)
+        unknown["states"][0]["catalog"]["accounts"][0]["stored_value"]["capable"] = True
+        assert_invalid(self, unknown, r"stored_value")
+
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(schema["$defs"]["staleReplayDiagnostics"]["properties"]),
+            {
+                "preview_ledger_fingerprint",
+                "current_ledger_fingerprint",
+                "recomputed_replay_amount",
+                "recomputed_delta",
+            },
+        )
+        self.assertEqual(
+            set(schema["$defs"]["account"]["properties"]["system_role"]["enum"])
+            - {"opening_balance", "balance_adjustments"},
+            {
+                "stored_value_bonus_right_income",
+                "stored_value_expiry_loss",
+                "stored_value_pre_activation_adjustment",
+            },
+        )
+
+        fingerprint_validator = Draft202012Validator(
+            {"$ref": "#/$defs/sha256Fingerprint", "$defs": schema["$defs"]}
+        )
+        self.assertEqual(
+            list(fingerprint_validator.iter_errors("sha256:" + "0" * 64)), []
+        )
+        self.assertTrue(
+            list(fingerprint_validator.iter_errors("sha256:not-a-digest"))
+        )
+
+        projection_validator = Draft202012Validator(
+            {
+                "$ref": "#/$defs/ledgerFingerprintProjection",
+                "$defs": schema["$defs"],
+            }
+        )
+        projection = {
+            "postings": [
+                {
+                    "transaction_id": "transaction-a",
+                    "current_version_id": "version-a-v1",
+                    "effective_at": "2026-01-01T00:00:00+08:00",
+                    "posting_id": "posting-a",
+                    "account_id": "account-a",
+                    "currency": "CNY",
+                    "amount": "1.00",
+                }
+            ]
+        }
+        self.assertEqual(list(projection_validator.iter_errors(projection)), [])
+        projection["postings"][0]["created_at"] = "2026-01-01T01:00:00+08:00"
+        self.assertTrue(list(projection_validator.iter_errors(projection)))
+
+        diagnostics_validator = Draft202012Validator(
+            {"$ref": "#/$defs/staleReplayDiagnostics", "$defs": schema["$defs"]}
+        )
+        diagnostics = {
+            "preview_ledger_fingerprint": "sha256:" + "0" * 64,
+            "current_ledger_fingerprint": "sha256:" + "1" * 64,
+            "recomputed_replay_amount": "105.00",
+            "recomputed_delta": "25.00",
+        }
+        self.assertEqual(list(diagnostics_validator.iter_errors(diagnostics)), [])
+        diagnostics["original_preview_delta"] = "30.00"
+        self.assertTrue(list(diagnostics_validator.iter_errors(diagnostics)))
+
+        fingerprint_case = load_rg09()
+        payload = fingerprint_case["states"][1]["candidates"][0]["payload"]
+        payload["ledger_fingerprint"] = "sha256:" + "0" * 64
+        self.assertTrue(
+            any(
+                "ledger_fingerprint" in error.message
+                for error in schema_errors(fingerprint_case)
+            )
+        )
+
+        confirmation_case = load_rg09()
+        confirmation = next(
+            item
+            for item in confirmation_case["operations"]
+            if item["action_type"] == "confirm_balance_adjustment"
+        )
+        confirmation["input"]["ledger_fingerprint"] = "sha256:" + "0" * 64
+        self.assertTrue(
+            any(
+                "ledger_fingerprint" in error.message
+                for error in schema_errors(confirmation_case)
+            )
+        )
+
 
 class GoldenV2LedgerSemanticTests(unittest.TestCase):
     def test_rejects_root_operation_order_and_cross_root_state_reference(self):
@@ -1021,9 +1129,147 @@ class GoldenV2LedgerSemanticTests(unittest.TestCase):
         bad_category["states"][0]["catalog"]["categories"][1]["posting_account_id"] = "missing-account"
         assert_invalid(self, bad_category, r"\$\.states\[0\]\.catalog\.categories\[1\]\.posting_account_id")
 
+        missing_posting_owner = load_rg01()
+        missing_posting_owner["states"][0]["catalog"]["categories"][1][
+            "posting_account_id"
+        ] = None
+        assert_invalid(
+            self,
+            missing_posting_owner,
+            r"\$\.states\[0\]\.catalog\.categories\[1\]\.posting_account_id",
+        )
+
+        wrong_posting_kind = load_rg01()
+        wrong_posting_kind["states"][0]["catalog"]["categories"][1][
+            "posting_account_id"
+        ] = "asset-bank-a"
+        assert_invalid(
+            self,
+            wrong_posting_kind,
+            r"\$\.states\[0\]\.catalog\.categories\[1\]\.posting_account_id",
+        )
+
         ineligible = load_rg01()
         ineligible["states"][1]["posting_reconciliations"][0]["posting_id"] = "posting-expense-rg01"
         assert_invalid(self, ineligible, r"\$\.states\[1\]\.posting_reconciliations\[0\]\.posting_id")
+
+    def test_catalog_parent_chain_and_posting_roles_have_semantic_owners(self):
+        case = load_rg01()
+        state = case["states"][0]
+        state["catalog"]["categories"].append(
+            {
+                "id": "expense-category-third-level",
+                "name": "Third level",
+                "parent_id": "expense-category-breakfast",
+                "posting_account_id": "expense-account-breakfast",
+                "active": True,
+            }
+        )
+        indexes = golden_v2._state_indexes(state, "$.states[0]")
+        with self.assertRaisesRegex(GoldenCaseError, r"parent_id.*two levels"):
+            golden_v2._validate_catalog(
+                state, "$.states[0]", indexes, {"CNY": 2}
+            )
+
+        stored_value = rg10_contract_case()
+        validate_contract_state(stored_value)
+
+        wrong_asset_role = deepcopy(stored_value)
+        wrong_asset_role["states"][0]["postings"][0]["account_id"] = "asset-bank"
+        with self.assertRaisesRegex(GoldenCaseError, r"stored_value_asset"):
+            validate_contract_state(wrong_asset_role)
+
+        wrong_system_role = deepcopy(stored_value)
+        wrong_system_role["states"][0]["catalog"]["accounts"][0]["system_role"] = (
+            "stored_value_bonus_right_income"
+        )
+        with self.assertRaisesRegex(GoldenCaseError, r"system_role"):
+            validate_contract_state(wrong_system_role)
+
+    def test_target_time_fingerprint_uses_only_current_effective_postings(self):
+        state = deepcopy(load_rg09()["states"][0])
+        effective_at = "2026-01-31T23:59:59+08:00"
+        projection = golden_v2._replay_fingerprint_projection(state, effective_at)
+
+        self.assertEqual(set(projection), {"postings"})
+        self.assertEqual(
+            list(projection["postings"][0]),
+            [
+                "transaction_id",
+                "current_version_id",
+                "effective_at",
+                "posting_id",
+                "account_id",
+                "currency",
+                "amount",
+            ],
+        )
+        self.assertEqual(
+            [item["posting_id"] for item in projection["postings"]],
+            [
+                "posting-opening-a-rg09",
+                "posting-opening-b-rg09",
+                "posting-opening-equity-rg09",
+            ],
+        )
+        self.assertEqual(
+            golden_v2._compute_replay_fingerprint(state, effective_at),
+            "sha256:4d87a55085cfa954c8eedf4209f134ad7d6d8aa6ae9ab3bf8ed13c0e346c78aa",
+        )
+
+        excluded_only = deepcopy(state)
+        excluded_only["transaction_versions"][0]["created_at"] = (
+            "2026-02-01T09:00:00+08:00"
+        )
+        excluded_only["evidence"] = [{"ignored": True}]
+        excluded_only["posting_reconciliations"] = [{"ignored": True}]
+        excluded_only["reports"] = [{"ignored": True}]
+        excluded_only["derived_statuses"] = [{"ignored": True}]
+        self.assertEqual(
+            golden_v2._compute_replay_fingerprint(excluded_only, effective_at),
+            golden_v2._compute_replay_fingerprint(state, effective_at),
+        )
+
+        changed_economic_fact = deepcopy(state)
+        changed_economic_fact["postings"][0]["amount"] = "100.01"
+        self.assertNotEqual(
+            golden_v2._compute_replay_fingerprint(changed_economic_fact, effective_at),
+            golden_v2._compute_replay_fingerprint(state, effective_at),
+        )
+
+        after_target = deepcopy(state)
+        after_target["transaction_versions"][0]["effective_at"] = (
+            "2026-02-01T00:00:00+08:00"
+        )
+        self.assertEqual(
+            golden_v2._replay_fingerprint_projection(after_target, effective_at),
+            {"postings": []},
+        )
+
+        utf16_order = deepcopy(state)
+        utf16_order["posting_sets"][0]["posting_ids"] = [
+            "posting-\ue000",
+            "posting-\U00010000",
+        ]
+        utf16_order["postings"] = [
+            {
+                **utf16_order["postings"][0],
+                "id": "posting-\ue000",
+            },
+            {
+                **utf16_order["postings"][1],
+                "id": "posting-\U00010000",
+            },
+        ]
+        self.assertEqual(
+            [
+                item["posting_id"]
+                for item in golden_v2._replay_fingerprint_projection(
+                    utf16_order, effective_at
+                )["postings"]
+            ],
+            ["posting-\U00010000", "posting-\ue000"],
+        )
 
     def test_rejects_dangling_source_evidence_and_audit_references(self):
         source = load_rg09()
@@ -1430,6 +1676,12 @@ class GoldenV2OperationTests(unittest.TestCase):
             }
             for category in v1["catalog"]["categories"]:
                 if category["id"] not in category_ids:
+                    category = deepcopy(category)
+                    if (
+                        category["parent_id"] is not None
+                        and category["posting_account_id"] is None
+                    ):
+                        category["posting_account_id"] = "expense-account-breakfast"
                     for state in case["states"]:
                         state["catalog"]["categories"].append(deepcopy(category))
             with self.subTest(invalid=invalid["id"]):

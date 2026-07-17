@@ -2,7 +2,7 @@
 
 ## Authority
 
-This path map is governed by the frozen RG-10 fixture, stored-value design, Golden Schema v2, accounting rules, golden tests, and D-034, D-035, D-036, D-037, D-043, D-044, D-050. This artifact authorizes no schema, adapter, expected output, or fixture rewrite.
+This path map is governed by the frozen RG-10 fixture, stored-value design, Golden Schema v2, accounting rules, golden tests, and D-034, D-035, D-036, D-037, D-043, D-044, D-050, and D-066. It records the approved catalog foundation amendment but authorizes no adapter, expected output, or fixture rewrite.
 
 ## Inventory
 
@@ -10,7 +10,7 @@ This path map is governed by the frozen RG-10 fixture, stored-value design, Gold
 - leaf occurrences: 2022
 - classified/unclassified: 1161/0
 - classifications: map 660, derive 491, preserve 9, reject 1
-- dispositions: requires_contract_amendment 868, ready 292, test_only_exclusion 1
+- dispositions: requires_contract_amendment 863, ready 297, test_only_exclusion 1
 
 ## Frozen Semantics
 
@@ -24,7 +24,9 @@ Merchant credit uses two independent typed links: target_kind=posting, target_id
 
 Imported recharge and spend remain pending_confirmation with zero formal effect until behavior/model, owned accounts, exact amounts, actual time, lot facts or allocation, category, evidence, and explicit confirmation are complete. Operation action_type and operation_class remain explicit; rejected forms use sparse attempted_input, and retries retain their originating action. created_at and confirmed_at are mapped only when the fixture has actual evidence.
 
-Current v2 owners close precision, ledger identity, account kind and real-account status, and category posting ownership. RG-10 CNY precision maps exactly to the currency declaration; every source account ledger_id must equal the case ledger_id and is not serialized per account; account type maps to kind; financial maps account-by-account to real_account with asset/liability true and every other kind false; category account_id maps to posting_account_id; and category kind must equal the referenced posting account kind without adding a category kind field.
+Current v2 owners close precision, ledger identity, account kind and real-account status, category posting ownership, stored-value account configuration, and stored-value system roles. RG-10 CNY precision maps exactly to the currency declaration; every source account ledger_id must equal the case ledger_id and is not serialized per account; account type maps to kind; financial maps account-by-account to real_account with asset/liability true and every other kind false; category account_id maps to posting_account_id; and category kind must equal the referenced posting account kind without adding a category kind field. A single optional closed account `stored_value` object owns `enabled`, `merchant_restricted`, and `merchant_id`; object presence owns capability. The account `system_role` registry now owns all three frozen stored-value roles.
+
+Category identity remains `parent_id` plus `posting_account_id`, with at most two levels. A first-level category has neither parent nor posting account; an active second-level category has a non-null parent and must own an expense or income `posting_account_id`. An inactive legacy tombstone may retain its parent while lacking a posting owner, but cannot be selected or referenced by a formal consumption/allocation. Numeric `level` is derived and is never stored. Because the frozen RG-10 fixture has only `level` and no parent category identity, that source path remains unresolved and no parent is guessed.
 
 ## Planned Action Registry
 
@@ -52,7 +54,7 @@ Every retry retains its originating action_type and operation_class, returns the
 2. RG10-GAP-02: Stored-value lot, consumption, allocation, and expiry lifecycle payloads (75 affected paths)
 3. RG10-GAP-03: Stored-value import source, candidate, confirmation, and provenance payloads (109 affected paths)
 4. RG10-GAP-04: Activation boundary and replace-not-append reconstruction semantics (136 affected paths)
-5. RG10-GAP-05: Stored-value configuration, category hierarchy, and system-role contract (6 affected paths). It covers only enabled, merchant identity, merchant restriction, stored-value presence/capability, the pending category hierarchy owner and parent-identity design gate, and the three missing stored-value system_role enum values. It does not duplicate precision, ledger identity, account kind/real-account ownership, or category posting ownership.
+5. RG10-GAP-05: Category parent identity migration (1 affected path). Stored-value configuration and system roles are now ready. The remaining numeric level path cannot map until an explicit sanitized parent identity is supplied; it must not be inferred.
 6. RG10-GAP-06: Bonus-component and expiry-confirmation evidence roles and domain targets (15 affected paths)
 
 ## Gate
@@ -60,4 +62,4 @@ Every retry retains its originating action_type and operation_class, returns the
 - status: needs_contract_amendment
 - expected output gate: closed
 - unresolved gap count: 6
-Expected output remains closed. No schema, adapter, expected output, or fixture rewrite is implemented.
+Expected output remains closed. No adapter, expected output, or fixture rewrite is implemented.

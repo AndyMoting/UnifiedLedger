@@ -20,8 +20,8 @@
   "unclassified_path_count": 0,
   "classification_counts": {
     "preserve": 1292,
-    "derive": 2867,
-    "map": 3284,
+    "derive": 2917,
+    "map": 3234,
     "reject": 2
   },
   "disposition_counts": {
@@ -446,9 +446,9 @@
     },
     {
       "id": "RG09-GAP-02",
-      "title": "Replay fingerprint and explicit validation contract",
-      "capability_boundary": "Current RG-09 action/candidate shapes do not retain the effective-ledger fingerprint, stale-preview old/current fingerprint comparison and recomputed diagnostics, or all explicit counter-account/amount/explanation validation facts present in the frozen fixture.",
-      "required_change": "Add only the missing closed fingerprint, stale diagnostic, and explicit validation fields to the relevant candidate, accepted input, or rejected attempted_input branches. Do not add adjustment lifecycle payloads: explained/remaining values and statuses remain derived from current balance_adjustment and explanation_allocation entities.",
+      "title": "Mandatory replay fingerprint, stale diagnostics, and explicit validation contract",
+      "capability_boundary": "D-065 SHA-256, projection, and stale-diagnostic shapes plus the private deterministic computation are frozen. No candidate or confirmation fingerprint field is exposed. Generation, candidate/input population, mandatory confirmation, stale-preview diagnostics, atomic rejection, and explicit counter-account/amount/explanation facts are not implemented.",
+      "required_change": "When fixture and operation gates open together, add closed mandatory candidate and confirmation fields, generate a valid D-065 digest for every preview, migrate symbolic fixture tokens by recomputation, and add stale diagnostic and atomic rejection branches. Do not introduce optional safety fields or adjustment lifecycle payloads.",
       "risk": "Dropping these validation facts would permit confirmation against a stale replay or infer allocation/account facts that the frozen rule requires the user to confirm explicitly.",
       "status": "unresolved",
       "affected_source_paths": [
@@ -1612,13 +1612,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -3941,13 +3941,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -6422,13 +6422,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -9026,13 +9026,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -11628,13 +11628,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -14232,13 +14232,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -16836,13 +16836,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -19452,13 +19452,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -21851,13 +21851,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -24117,13 +24117,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -27286,13 +27286,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -29107,13 +29107,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -30833,13 +30833,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -32777,13 +32777,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -34758,13 +34758,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -38741,13 +38741,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -41591,13 +41591,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -44483,13 +44483,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -47335,13 +47335,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -50247,13 +50247,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -53099,13 +53099,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -56013,13 +56013,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -58865,13 +58865,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -61891,13 +61891,13 @@
         "string"
       ],
       "occurrence_count": 14,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -65089,13 +65089,13 @@
         "string"
       ],
       "occurrence_count": 14,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -69161,13 +69161,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -71932,13 +71932,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -74580,13 +74580,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -77303,13 +77303,13 @@
         "string"
       ],
       "occurrence_count": 5,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -79761,13 +79761,13 @@
         "string"
       ],
       "occurrence_count": 5,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -82333,13 +82333,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -84691,13 +84691,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -87117,13 +87117,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -89838,13 +89838,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -92723,13 +92723,13 @@
         "string"
       ],
       "occurrence_count": 8,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -95929,13 +95929,13 @@
         "string"
       ],
       "occurrence_count": 8,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -98525,13 +98525,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -100044,13 +100044,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
         "$.planned_contract.operations[*].input.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Populate the confirmation fingerprint only after its closed mandatory action surface and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "No optional confirmation field is exposed in this batch; confirmation population and enforcement remain wholly gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -100379,13 +100379,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -102377,13 +102377,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -104910,13 +104910,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -107040,13 +107040,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -109821,13 +109821,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -112742,13 +112742,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -115596,13 +115596,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -118507,13 +118507,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -120973,13 +120973,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -123501,13 +123501,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-02"
@@ -126500,13 +126500,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-01",
@@ -128309,13 +128309,13 @@
         "string"
       ],
       "occurrence_count": 1,
-      "classification": "map",
+      "classification": "derive",
       "target_paths": [
-        "$.planned_contract.operations[*].input.ledger_fingerprint"
+        "$.planned_contract.states[*].candidates[*].payload.ledger_fingerprint"
       ],
-      "transform": "Preserve the replay fingerprint or stale-preview diagnostic in the closed validation contract.",
-      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json.",
-      "rationale": "Atomic stale rejection requires exact old/current fingerprints and recomputed replay diagnostics; current v2 lacks these fields.",
+      "transform": "Recompute the D-065 digest only after the candidate action surface, mandatory generation, and fixture migration are opened together.",
+      "authority": "RG-09 frozen fixture; RG-09 design; GOLDEN_TESTS; ACCOUNTING_RULES; GOLDEN_SCHEMA 2.0.0; golden-case-v2.schema.json. D-065.",
+      "rationale": "This batch freezes only the computational and data-shape foundation; no candidate field exists on the current closed action surface, so the source path remains gated.",
       "disposition": "requires_contract_amendment",
       "contract_gap_ids": [
         "RG09-GAP-01",

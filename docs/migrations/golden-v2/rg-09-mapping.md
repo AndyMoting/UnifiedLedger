@@ -2,7 +2,7 @@
 
 ## Authority
 
-This mapping is governed by `golden/rules/rg-09.json`, `docs/specs/2026-07-16-rg-09-balance-adjustment-design.md`, `docs/GOLDEN_TESTS.md`, `docs/ACCOUNTING_RULES.md`, `docs/GOLDEN_SCHEMA.md`, and Golden Schema v2. It authorizes no schema amendment, adapter, expected output, or fixture rewrite.
+This mapping is governed by `golden/rules/rg-09.json`, `docs/specs/2026-07-16-rg-09-balance-adjustment-design.md`, `docs/GOLDEN_TESTS.md`, `docs/ACCOUNTING_RULES.md`, `docs/GOLDEN_SCHEMA.md`, Golden Schema v2, and D-065. It records the approved fingerprint foundation amendment but authorizes no adapter, expected output, or fixture rewrite.
 
 ## Inventory
 
@@ -11,7 +11,7 @@ The path map independently parses the v1 fixture, normalizes object members as `
 - normalized paths: `7445`
 - leaf occurrences: `23869`
 - classified/unclassified: `7445/0`
-- classifications: `preserve 1292`, `map 3284`, `derive 2867`, `reject 2`
+- classifications: `preserve 1292`, `map 3234`, `derive 2917`, `reject 2`
 - dispositions: `ready 6519`, `requires_contract_amendment 924`, `test_only_exclusion 2`
 
 ## Canonical Identity Ownership
@@ -25,6 +25,10 @@ Posting-set identity is reconstructed from each transaction version and its post
 Target observations are immutable evidence, never balance overrides. Preview replays effective postings at the observation time and has zero formal effect. Explicit confirmation of a nonzero delta creates one balanced `balance_adjustment` between the target real asset and hidden system-managed `equity-balance-adjustments`. It is not income, expense, consumption, budget/category effect, or external cash flow. Zero delta retains observation, source, evidence, and its typed observation link without creating a zero transaction, version, or posting.
 
 Stale confirmation replays the target time and rejects atomically when earlier effective postings changed. Later real transfers retain their actual economic time and `account_transfer` identity. A separate explicit allocation creates exactly one reverse adjustment at the original target time. The original adjustment transaction, versions, postings, observation, source, evidence, confirmations, and earlier operation states remain unchanged.
+
+The fingerprint computational foundation projects only current-version postings effective at or before the target time. Its container is exactly `{"postings":[...]}`; each item contains only `transaction_id`, `current_version_id`, `effective_at`, `posting_id`, `account_id`, `currency`, and `amount`. Items sort by the frozen tuple using UTF-16 code-unit lexicographic order, matching JCS and Java/Kotlin string comparison, before RFC 8785 JCS serialization and SHA-256. Creation time, evidence, reconciliation, reports, derived state, and state identity are excluded. The v1 symbolic fingerprint tokens are not valid digests and remain classified as derive: migration must recompute them rather than preserve their text.
+
+This batch exposes no fingerprint field on the closed candidate payload or `confirm_balance_adjustment` input. It retains only the independent `sha256Fingerprint`, `ledgerFingerprintProjection`, and `staleReplayDiagnostics` schema definitions and private deterministic projection/hash helpers. Fingerprint generation, candidate/input population, mandatory confirmation, stale diagnostics, and atomic rejection all remain in `RG09-GAP-02`; because the action surfaces are closed, there is no optional safety field to bypass. The future diagnostics names remain frozen as `preview_ledger_fingerprint`, `current_ledger_fingerprint`, `recomputed_replay_amount`, and `recomputed_delta`.
 
 The current `balance_adjustment` entity owns only immutable original facts: observation, original delta, currency, and original transaction. The current `explanation_allocation` entity owns each immutable explanation amount, real transaction, reversal transaction, currency, and confirmation time. `explained_amount` and `remaining_amount` are derived from `original_delta` and the allocation set; they are not serialized as duplicate lifecycle fields. `open`, `partially_explained`, and `fully_explained` use the current `explanation_status` registry. Ordered operations, status changes, and complete snapshots retain append-only behavior without a new lifecycle payload.
 
@@ -51,7 +55,7 @@ Accepted and no-change operations use closed `input`. Rejected operations use cl
 ## Unresolved Gaps
 
 1. `RG09-GAP-01`: closed missing action families and atomic outcomes (`403` affected paths). This covers stale-preview rejection, zero-delta observation save, imported intake and incomplete confirmation, source-aware imported confirmation, posting-evidence binding, invalid attempts, and action-preserving retries.
-2. `RG09-GAP-02`: replay fingerprint and explicit validation contract (`68` affected paths). This is limited to effective-ledger fingerprints, stale-preview comparisons and recomputed diagnostics, and explicit counter-account/amount/explanation validation fields absent from current action schemas. It contains no adjustment lifecycle payload.
+2. `RG09-GAP-02`: mandatory replay fingerprint, stale diagnostics, and explicit validation contract (`68` affected paths). Only computational and independent data-shape definitions exist. Candidate/input fields, preview generation, confirmation population, symbolic-token migration, stale rejection, and explicit counter-account/amount/explanation fields remain gated. It contains no adjustment lifecycle payload.
 3. `RG09-GAP-03`: imported-transfer source, candidate, and evidence provenance (`463` affected paths). This covers closed imported proposal requirements, immutable source digests/times, account-statement evidence, and source-aware candidate/evidence variants.
 
 Every future target references one of these three unresolved gaps, and each gap lists exactly the entries that reference it. The former audit-link gap is removed because the current typed audit contract is sufficient.
@@ -62,4 +66,4 @@ Every future target references one of these three unresolved gaps, and each gap 
 - expected output gate: `closed`
 - unresolved gap count: `3`
 
-No schema, adapter, expected output, or fixture rewrite is implemented.
+No adapter, expected output, or fixture rewrite is implemented.

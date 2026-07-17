@@ -4,6 +4,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -416,6 +417,73 @@ def _timestamp_instant(value: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+def _utf16_lexicographic_key(value: str) -> bytes:
+    return value.encode("utf-16-be", errors="surrogatepass")
+
+
+def _replay_fingerprint_projection(
+    state: dict[str, Any], effective_at: str
+) -> dict[str, list[dict[str, str]]]:
+    try:
+        target_instant = _timestamp_instant(effective_at)
+    except (TypeError, ValueError):
+        _fail("$.effective_at", "must be a valid timezone-aware timestamp")
+    if target_instant.tzinfo is None or target_instant.utcoffset() is None:
+        _fail("$.effective_at", "must be timezone-aware")
+
+    versions = {item["id"]: item for item in state["transaction_versions"]}
+    posting_sets = {item["id"]: item for item in state["posting_sets"]}
+    postings = {item["id"]: item for item in state["postings"]}
+    projection: list[dict[str, str]] = []
+    for transaction in state["transactions"]:
+        version = versions[transaction["current_version_id"]]
+        if _timestamp_instant(version["effective_at"]) > target_instant:
+            continue
+        posting_set = posting_sets[version["posting_set_id"]]
+        for posting_id in posting_set["posting_ids"]:
+            posting = postings[posting_id]
+            projection.append(
+                {
+                    "transaction_id": transaction["id"],
+                    "current_version_id": version["id"],
+                    "effective_at": version["effective_at"],
+                    "posting_id": posting["id"],
+                    "account_id": posting["account_id"],
+                    "currency": posting["currency"],
+                    "amount": posting["amount"],
+                }
+            )
+    projection.sort(
+        key=lambda item: (
+            _utf16_lexicographic_key(item["effective_at"]),
+            _utf16_lexicographic_key(item["transaction_id"]),
+            _utf16_lexicographic_key(item["current_version_id"]),
+            _utf16_lexicographic_key(item["posting_id"]),
+            _utf16_lexicographic_key(item["account_id"]),
+            _utf16_lexicographic_key(item["currency"]),
+            _utf16_lexicographic_key(item["amount"]),
+        )
+    )
+    return {"postings": projection}
+
+
+def _compute_replay_fingerprint(state: dict[str, Any], effective_at: str) -> str:
+    projection = _replay_fingerprint_projection(state, effective_at)
+    try:
+        canonical = json.dumps(
+            projection,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise GoldenCaseError(
+            "ledger fingerprint projection is not RFC 8785 compatible"
+        ) from error
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
 def _normalize_contract_value(value: Any, parent_key: str | None = None) -> Any:
     """Normalize only the contract's declared set-like arrays for equality checks."""
     if isinstance(value, dict):
@@ -507,27 +575,74 @@ def _validate_catalog(
 ) -> None:
     accounts = indexes["catalog_accounts"]
     categories = indexes["catalog_categories"]
+    system_role_kinds = {
+        "opening_balance": "equity",
+        "balance_adjustments": "equity",
+        "stored_value_bonus_right_income": "income",
+        "stored_value_expiry_loss": "expense",
+        "stored_value_pre_activation_adjustment": "equity",
+    }
     for index, account in enumerate(state["catalog"]["accounts"]):
+        account_path = f"{path}.catalog.accounts[{index}]"
         if account["currency"] not in precisions:
-            _fail(f"{path}.catalog.accounts[{index}].currency", "currency is not declared")
+            _fail(account_path + ".currency", "currency is not declared")
         if account["reconciliation_eligible"] and not (
             account["owned_by_user"]
             and account["real_account"]
             and account["kind"] in {"asset", "liability"}
         ):
             _fail(
-                f"{path}.catalog.accounts[{index}].reconciliation_eligible",
+                account_path + ".reconciliation_eligible",
                 "eligible accounts must be owned real asset or liability accounts",
             )
+        if "stored_value" in account and not (
+            account["kind"] == "asset"
+            and account["owned_by_user"]
+            and account["real_account"]
+        ):
+            _fail(
+                account_path + ".stored_value",
+                "stored-value capability belongs to an owned real asset account",
+            )
+        system_role = account.get("system_role")
+        if system_role is not None and account["kind"] != system_role_kinds[system_role]:
+            _fail(
+                account_path + ".system_role",
+                f"{system_role!r} requires account kind {system_role_kinds[system_role]!r}",
+            )
     for index, category in enumerate(state["catalog"]["categories"]):
+        category_path = f"{path}.catalog.categories[{index}]"
         parent_id = category["parent_id"]
         if parent_id is not None and parent_id not in categories:
-            _fail(f"{path}.catalog.categories[{index}].parent_id", "dangling category reference")
+            _fail(category_path + ".parent_id", "dangling category reference")
+        if parent_id is not None and categories[parent_id]["parent_id"] is not None:
+            _fail(
+                category_path + ".parent_id",
+                "category hierarchy is limited to two levels",
+            )
         posting_account_id = category["posting_account_id"]
         if posting_account_id is not None and posting_account_id not in accounts:
             _fail(
-                f"{path}.catalog.categories[{index}].posting_account_id",
+                category_path + ".posting_account_id",
                 "dangling account reference",
+            )
+        if parent_id is None and posting_account_id is not None:
+            _fail(
+                category_path + ".posting_account_id",
+                "top-level categories are grouping nodes and cannot own postings",
+            )
+        if parent_id is not None and posting_account_id is None and category["active"]:
+            _fail(
+                category_path + ".posting_account_id",
+                "active second-level categories must own a posting account",
+            )
+        if posting_account_id is not None and accounts[posting_account_id]["kind"] not in {
+            "expense",
+            "income",
+        }:
+            _fail(
+                category_path + ".posting_account_id",
+                "category posting accounts must be expense or income accounts",
             )
 
 
@@ -652,6 +767,25 @@ def _validate_formal_ledger(
         owner_type = transactions[owner_id]["type"]
         if owner_type != "opening_balance" and "role" not in posting:
             _fail(posting_path + ".role", "role is required outside opening_balance")
+        role = posting.get("role")
+        if role == "stored_value_asset" and not (
+            account.get("stored_value", {}).get("enabled") is True
+        ):
+            _fail(
+                posting_path + ".role",
+                "stored_value_asset requires an enabled stored-value account",
+            )
+        required_system_roles = {
+            "balance_adjustment_counterpart": "balance_adjustments",
+            "balance_adjustment_reversal_counterpart": "balance_adjustments",
+            "stored_value_bonus_income": "stored_value_bonus_right_income",
+            "stored_value_expiry_loss": "stored_value_expiry_loss",
+        }
+        if role in required_system_roles and account.get("system_role") != required_system_roles[role]:
+            _fail(
+                posting_path + ".role",
+                f"{role} requires system_role {required_system_roles[role]!r}",
+            )
 
     replay: dict[str, Decimal] = defaultdict(Decimal)
     for _, _, current_postings in current.values():
@@ -2616,5 +2750,5 @@ def validate_golden_case_v2(
         case, states, operations, state_indexes, precisions, timezone
     )
 
-    # RFC 8785 fingerprints and migration mapping completeness are intentionally
-    # outside this prototype because neither field exists on the approved input surface.
+    # D-065 projection and diagnostic shapes are frozen, but fingerprint action surfaces
+    # remain outside this prototype until fixture and operation gates open together.
