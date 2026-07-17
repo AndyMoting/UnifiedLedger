@@ -1234,6 +1234,283 @@
         "confirmed_at": {"$ref": "#/$defs/timestamp"}
       }
     },
+    "rg10LotAllocationInputItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lot_id", "amount"],
+      "properties": {
+        "lot_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "rg10RechargeInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "model", "payment_account_id", "stored_value_account_id",
+        "paid_amount", "credited_amount", "bonus_amount", "currency", "occurred_at",
+        "created_at", "explicit_confirmation", "confirms_model",
+        "confirms_payment_account", "confirms_stored_value_account", "confirms_paid_amount",
+        "confirms_credited_amount", "confirms_bonus_amount", "confirms_actual_time",
+        "confirms_lot_facts"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "model": {"const": "stored_value_asset"},
+        "payment_account_id": {"$ref": "#/$defs/id"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "paid_amount": {"$ref": "#/$defs/decimal"},
+        "credited_amount": {"$ref": "#/$defs/decimal"},
+        "bonus_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "confirms_model": {"const": true},
+        "confirms_payment_account": {"const": true},
+        "confirms_stored_value_account": {"const": true},
+        "confirms_paid_amount": {"const": true},
+        "confirms_credited_amount": {"const": true},
+        "confirms_bonus_amount": {"const": true},
+        "confirms_actual_time": {"const": true},
+        "confirms_lot_facts": {"const": true}
+      }
+    },
+    "rg10SpendInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "model", "behavior", "stored_value_account_id", "category_id",
+        "amount", "currency", "occurred_at", "created_at", "explicit_confirmation",
+        "confirms_model", "confirms_behavior", "confirms_stored_value_account",
+        "confirms_amount", "confirms_actual_time", "confirms_category",
+        "merchant_allocation_provided", "confirms_lot_allocation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "model": {"const": "stored_value_asset"},
+        "behavior": {"const": "stored_value_spend"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "confirms_model": {"const": true},
+        "confirms_behavior": {"const": true},
+        "confirms_stored_value_account": {"const": true},
+        "confirms_amount": {"const": true},
+        "confirms_actual_time": {"const": true},
+        "confirms_category": {"const": true},
+        "merchant_allocation_provided": {"type": "boolean"},
+        "confirms_lot_allocation": {"const": true}
+      }
+    },
+    "rg10IngestRechargeInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "model", "payment_account_id", "stored_value_account_id",
+        "paid_amount", "credited_amount", "bonus_amount", "currency", "occurred_at",
+        "lot_id", "all_facts_complete", "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "model": {"const": "stored_value_asset"},
+        "payment_account_id": {"$ref": "#/$defs/id"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "paid_amount": {"$ref": "#/$defs/decimal"},
+        "credited_amount": {"$ref": "#/$defs/decimal"},
+        "bonus_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "lot_id": {"$ref": "#/$defs/id"},
+        "all_facts_complete": {"const": true},
+        "explicit_confirmation": {"const": false}
+      }
+    },
+    "rg10IngestSpendInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "model", "behavior", "stored_value_account_id", "category_id",
+        "amount", "currency", "occurred_at", "lot_allocations", "all_facts_complete",
+        "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "model": {"const": "stored_value_asset"},
+        "behavior": {"const": "stored_value_spend"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "lot_allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
+        "all_facts_complete": {"const": true},
+        "explicit_confirmation": {"const": false}
+      }
+    },
+    "rg10ExpiryReminderInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "lot_id", "reminder_status", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "lot_id": {"$ref": "#/$defs/id"},
+        "reminder_status": {"const": "expired_date_reached"},
+        "explicit_confirmation": {"const": false}
+      }
+    },
+    "rg10ExpiryLossInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "lot_id", "amount", "currency", "occurred_at",
+        "explicit_confirmation", "confirms_actual_expiry", "confirms_lot", "confirms_amount"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "lot_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "confirms_actual_expiry": {"const": true},
+        "confirms_lot": {"const": true},
+        "confirms_amount": {"const": true}
+      }
+    },
+    "rg10MerchantReconciliationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "role", "target_posting_id", "explicit_confirmation"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "role": {"const": "stored_value_credit_lot"},
+        "target_posting_id": {"$ref": "#/$defs/id"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "rg10BankReconciliationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "role", "target_posting_id", "explicit_confirmation"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "role": {"const": "bank_payment_posting"},
+        "target_posting_id": {"$ref": "#/$defs/id"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "rg10MerchantAllocationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "amount", "merchant_allocation_provided", "merchant_evidence_id",
+        "allocations", "explicit_confirmation"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "merchant_allocation_provided": {"const": true},
+        "merchant_evidence_id": {"$ref": "#/$defs/id"},
+        "allocations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "rg10ActivationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "request_id", "stored_value_account_id", "existing_balance", "currency",
+        "activation_at", "created_at", "explicit_confirmation", "composition_confirmed"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "existing_balance": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "activation_at": {"$ref": "#/$defs/timestamp"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true},
+        "composition_confirmed": {"type": "boolean"}
+      }
+    },
+    "rg10RenameInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["account_id", "new_account_name", "lot_id", "new_lot_label"],
+      "properties": {
+        "account_id": {"$ref": "#/$defs/id"},
+        "new_account_name": {"type": "string"},
+        "lot_id": {"$ref": "#/$defs/id"},
+        "new_lot_label": {"type": "string"}
+      }
+    },
+    "rg10RechargeAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"},
+        "payment_account_id": {"$ref": "#/$defs/id"}, "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "paid_amount": {"$ref": "#/$defs/attemptedDecimal"}, "credited_amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "bonus_amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}, "created_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"type": "boolean"}, "confirms_model": {"type": "boolean"},
+        "confirms_payment_account": {"type": "boolean"}, "confirms_stored_value_account": {"type": "boolean"},
+        "confirms_paid_amount": {"type": "boolean"}, "confirms_credited_amount": {"type": "boolean"},
+        "confirms_bonus_amount": {"type": "boolean"}, "confirms_actual_time": {"type": "boolean"},
+        "confirms_lot_facts": {"type": "boolean"}
+      }
+    },
+    "rg10SpendAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"}, "behavior": {"type": "string"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}, "created_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"type": "boolean"}, "confirms_model": {"type": "boolean"},
+        "confirms_behavior": {"type": "boolean"}, "confirms_stored_value_account": {"type": "boolean"},
+        "confirms_amount": {"type": "boolean"}, "confirms_actual_time": {"type": "boolean"},
+        "confirms_category": {"type": "boolean"}, "merchant_allocation_provided": {"type": "boolean"},
+        "confirms_lot_allocation": {"type": "boolean"},
+        "lot_allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
+        "all_facts_complete": {"type": "boolean"}
+      }
+    },
+    "rg10IngestRechargeAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"},
+        "payment_account_id": {"$ref": "#/$defs/id"}, "stored_value_account_id": {"$ref": "#/$defs/id"},
+        "paid_amount": {"$ref": "#/$defs/attemptedDecimal"}, "credited_amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "bonus_amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}, "lot_id": {"$ref": "#/$defs/id"},
+        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "rg10IngestSpendAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "model": {"type": "string"}, "behavior": {"type": "string"},
+        "stored_value_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "lot_allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
+        "all_facts_complete": {"type": "boolean"}, "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "rg10ExpiryAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "lot_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"},
+        "confirms_actual_expiry": {"type": "boolean"}, "confirms_lot": {"type": "boolean"},
+        "confirms_amount": {"type": "boolean"}
+      }
+    },
+    "rg10AllocationAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "merchant_allocation_provided": {"type": "boolean"}, "merchant_evidence_id": {"$ref": "#/$defs/id"},
+        "allocations": {"type": "array", "items": {"$ref": "#/$defs/rg10LotAllocationInputItem"}},
+        "explicit_confirmation": {"type": "boolean"}
+      }
+    },
     "operationBase": {
       "type": "object",
       "additionalProperties": false,
@@ -1254,7 +1531,14 @@
         "action_type": {
           "enum": [
             "manual_expense", "transaction_note_update", "preview_target_balance",
-            "confirm_balance_adjustment", "confirm_real_transfer", "confirm_explanation_allocation"
+            "confirm_balance_adjustment", "confirm_real_transfer", "confirm_explanation_allocation",
+            "confirm_stored_value_recharge", "confirm_stored_value_spend",
+            "ingest_stored_value_recharge_candidate", "ingest_stored_value_spend_candidate",
+            "confirm_imported_stored_value_recharge", "confirm_imported_stored_value_spend",
+            "record_expiry_reminder", "confirm_stored_value_expiry_loss",
+            "reconcile_merchant_credit", "reconcile_bank_payment",
+            "apply_merchant_lot_allocation", "confirm_stored_value_activation_balance",
+            "rename_stored_value_labels"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -1321,6 +1605,142 @@
                 "action_type": {"const": "confirm_explanation_allocation"},
                 "operation_class": {"const": "reversal"}
               }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_recharge"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10RechargeInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_recharge"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10RechargeAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_spend"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10SpendInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_spend"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10SpendAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "ingest_stored_value_recharge_candidate"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10IngestRechargeInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "ingest_stored_value_spend_candidate"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10IngestSpendInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_imported_stored_value_recharge"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10IngestRechargeAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_imported_stored_value_spend"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10IngestSpendAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "record_expiry_reminder"},
+                "operation_class": {"const": "status_transition"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10ExpiryReminderInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_expiry_loss"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10ExpiryLossInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_expiry_loss"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10ExpiryAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "reconcile_merchant_credit"},
+                "operation_class": {"const": "reconciliation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10MerchantReconciliationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "reconcile_bank_payment"},
+                "operation_class": {"const": "reconciliation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10BankReconciliationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "apply_merchant_lot_allocation"},
+                "operation_class": {"const": "update"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10MerchantAllocationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "apply_merchant_lot_allocation"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
+                "attempted_input": {"$ref": "#/$defs/rg10AllocationAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_stored_value_activation_balance"},
+                "operation_class": {"const": "adjustment"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10ActivationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "rename_stored_value_labels"},
+                "operation_class": {"const": "update"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/rg10RenameInput"}
+              }
             }
           ]
         },
@@ -1351,13 +1771,18 @@
           },
           "then": {
             "required": ["attempted_input"],
-            "not": {"required": ["input"]},
+            "not": {"required": ["input"]}
+          }
+        },
+        {
+          "if": {
             "properties": {
               "action_type": {"const": "manual_expense"},
-              "operation_class": {"const": "rejection"},
-              "attempted_input": {"$ref": "#/$defs/manualExpenseAttemptedInput"}
-            }
-          }
+              "outcome": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]}
+            },
+            "required": ["action_type", "outcome"]
+          },
+          "then": {"properties": {"attempted_input": {"$ref": "#/$defs/manualExpenseAttemptedInput"}}}
         },
         {
           "if": {

@@ -732,6 +732,164 @@ def validate_contract_state(case: dict) -> None:
     )
 
 
+def rg10_operation_inputs() -> dict[str, dict]:
+    recharge = {
+        "request_id": "request-recharge",
+        "model": "stored_value_asset",
+        "payment_account_id": "asset-bank",
+        "stored_value_account_id": "asset-stored-value",
+        "paid_amount": "35.80",
+        "credited_amount": "45.80",
+        "bonus_amount": "10.00",
+        "currency": "CNY",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "created_at": "2026-01-15T08:31:00+08:00",
+        "explicit_confirmation": True,
+        "confirms_model": True,
+        "confirms_payment_account": True,
+        "confirms_stored_value_account": True,
+        "confirms_paid_amount": True,
+        "confirms_credited_amount": True,
+        "confirms_bonus_amount": True,
+        "confirms_actual_time": True,
+        "confirms_lot_facts": True,
+    }
+    spend = {
+        "request_id": "request-spend",
+        "model": "stored_value_asset",
+        "behavior": "stored_value_spend",
+        "stored_value_account_id": "asset-stored-value",
+        "category_id": "expense-category-meal",
+        "amount": "5.00",
+        "currency": "CNY",
+        "occurred_at": "2026-01-16T08:30:00+08:00",
+        "created_at": "2026-01-16T08:31:00+08:00",
+        "explicit_confirmation": True,
+        "confirms_model": True,
+        "confirms_behavior": True,
+        "confirms_stored_value_account": True,
+        "confirms_amount": True,
+        "confirms_actual_time": True,
+        "confirms_category": True,
+        "merchant_allocation_provided": False,
+        "confirms_lot_allocation": True,
+    }
+    ingest_recharge = {
+        key: value
+        for key, value in recharge.items()
+        if key
+        in {
+            "request_id", "model", "payment_account_id", "stored_value_account_id",
+            "paid_amount", "credited_amount", "bonus_amount", "currency", "occurred_at",
+        }
+    }
+    ingest_recharge.update(
+        {"lot_id": "lot-recharge", "all_facts_complete": True, "explicit_confirmation": False}
+    )
+    ingest_spend = {
+        key: value
+        for key, value in spend.items()
+        if key
+        in {
+            "request_id", "model", "behavior", "stored_value_account_id", "category_id",
+            "amount", "currency", "occurred_at",
+        }
+    }
+    ingest_spend.update(
+        {
+            "lot_allocations": [{"lot_id": "lot-recharge", "amount": "5.00"}],
+            "all_facts_complete": True,
+            "explicit_confirmation": False,
+        }
+    )
+    return {
+        "confirm_stored_value_recharge": recharge,
+        "confirm_stored_value_spend": spend,
+        "ingest_stored_value_recharge_candidate": ingest_recharge,
+        "ingest_stored_value_spend_candidate": ingest_spend,
+        "record_expiry_reminder": {
+            "request_id": "request-reminder",
+            "lot_id": "lot-recharge",
+            "reminder_status": "expired_date_reached",
+            "explicit_confirmation": False,
+        },
+        "confirm_stored_value_expiry_loss": {
+            "request_id": "request-expiry",
+            "lot_id": "lot-recharge",
+            "amount": "5.00",
+            "currency": "CNY",
+            "occurred_at": "2026-01-17T08:30:00+08:00",
+            "explicit_confirmation": True,
+            "confirms_actual_expiry": True,
+            "confirms_lot": True,
+            "confirms_amount": True,
+        },
+        "reconcile_merchant_credit": {
+            "source_id": "source-merchant-credit",
+            "evidence_id": "evidence-merchant-credit",
+            "role": "stored_value_credit_lot",
+            "target_posting_id": "posting-stored-value",
+            "explicit_confirmation": True,
+        },
+        "reconcile_bank_payment": {
+            "source_id": "source-bank-payment",
+            "evidence_id": "evidence-bank-payment",
+            "role": "bank_payment_posting",
+            "target_posting_id": "posting-bank",
+            "explicit_confirmation": True,
+        },
+        "apply_merchant_lot_allocation": {
+            "request_id": "request-allocation",
+            "amount": "5.00",
+            "merchant_allocation_provided": True,
+            "merchant_evidence_id": "evidence-merchant-credit",
+            "allocations": [{"lot_id": "lot-recharge", "amount": "5.00"}],
+            "explicit_confirmation": True,
+        },
+        "confirm_stored_value_activation_balance": {
+            "request_id": "request-activation",
+            "stored_value_account_id": "asset-stored-value",
+            "existing_balance": "45.80",
+            "currency": "CNY",
+            "activation_at": "2026-01-15T08:30:00+08:00",
+            "created_at": "2026-01-15T08:31:00+08:00",
+            "explicit_confirmation": True,
+            "composition_confirmed": False,
+        },
+        "rename_stored_value_labels": {
+            "account_id": "asset-stored-value",
+            "new_account_name": "Stored value renamed",
+            "lot_id": "lot-recharge",
+            "new_lot_label": "Lot renamed",
+        },
+    }
+
+
+def rg10_operation_shell(
+    action: str, operation_class: str, status: str, payload: dict
+) -> dict:
+    operation = deepcopy(load_rg01()["operations"][0])
+    operation["action_type"] = action
+    operation["operation_class"] = operation_class
+    if status == "rejected":
+        operation.pop("input", None)
+        operation["attempted_input"] = payload
+        operation["outcome"] = {
+            "status": "rejected",
+            "reason_code": "invalid_attempt",
+            "field_path": f"$.attempted_input.{next(iter(payload))}",
+        }
+    else:
+        operation.pop("attempted_input", None)
+        operation["input"] = payload
+        operation["outcome"] = (
+            {"status": "accepted"}
+            if status == "accepted"
+            else {"status": "no_change", "reason_code": "idempotent_replay"}
+        )
+    return operation
+
+
 def reconciliation_contract_case(statuses: list[str] | None) -> dict:
     case = load_rg01()
     state = deepcopy(case["states"][0])
@@ -1112,6 +1270,103 @@ class GoldenV2SchemaTests(unittest.TestCase):
             unknown_attempted_field,
             r"\$\.operations\[2\].*attempted_input.*unexpected",
         )
+
+    def test_rg10_operation_registry_closes_action_class_outcome_and_payload_dispatch(self):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(
+            {"$ref": "#/$defs/operation", "$defs": schema["$defs"]}
+        )
+        inputs = rg10_operation_inputs()
+        classes = {
+            "confirm_stored_value_recharge": "creation",
+            "confirm_stored_value_spend": "creation",
+            "ingest_stored_value_recharge_candidate": "creation",
+            "ingest_stored_value_spend_candidate": "creation",
+            "record_expiry_reminder": "status_transition",
+            "confirm_stored_value_expiry_loss": "creation",
+            "reconcile_merchant_credit": "reconciliation",
+            "reconcile_bank_payment": "reconciliation",
+            "apply_merchant_lot_allocation": "update",
+            "confirm_stored_value_activation_balance": "adjustment",
+            "rename_stored_value_labels": "update",
+        }
+        for action, operation_class in classes.items():
+            for status in ("accepted", "no_change"):
+                operation = rg10_operation_shell(
+                    action, operation_class, status, inputs[action]
+                )
+                with self.subTest(action=action, status=status):
+                    self.assertEqual(list(validator.iter_errors(operation)), [])
+
+        rejected = {
+            "confirm_stored_value_recharge": {"paid_amount": "0.00"},
+            "confirm_stored_value_spend": {"amount": "0.00"},
+            "confirm_imported_stored_value_recharge": {"request_id": "request-import-recharge"},
+            "confirm_imported_stored_value_spend": {"request_id": "request-import-spend"},
+            "confirm_stored_value_expiry_loss": {"explicit_confirmation": False},
+            "apply_merchant_lot_allocation": {"amount": "0.00"},
+        }
+        for action, attempted_input in rejected.items():
+            operation = rg10_operation_shell(
+                action, "rejection", "rejected", attempted_input
+            )
+            with self.subTest(action=action, status="rejected"):
+                self.assertEqual(list(validator.iter_errors(operation)), [])
+
+        wrong_class = rg10_operation_shell(
+            "record_expiry_reminder",
+            "creation",
+            "accepted",
+            inputs["record_expiry_reminder"],
+        )
+        self.assertTrue(list(validator.iter_errors(wrong_class)))
+
+        wrong_outcome = rg10_operation_shell(
+            "confirm_stored_value_recharge",
+            "creation",
+            "accepted",
+            inputs["confirm_stored_value_recharge"],
+        )
+        wrong_outcome["outcome"] = {
+            "status": "rejected",
+            "reason_code": "invalid_attempt",
+            "field_path": "$.attempted_input.paid_amount",
+        }
+        self.assertTrue(list(validator.iter_errors(wrong_outcome)))
+
+        for field in ("unexpected", "kind"):
+            unknown = rg10_operation_shell(
+                "confirm_stored_value_spend",
+                "creation",
+                "accepted",
+                inputs["confirm_stored_value_spend"],
+            )
+            unknown["input"][field] = "stored_value_spend"
+            with self.subTest(field=field):
+                self.assertTrue(list(validator.iter_errors(unknown)))
+
+        mixed = rg10_operation_shell(
+            "confirm_stored_value_recharge",
+            "creation",
+            "accepted",
+            inputs["confirm_stored_value_recharge"],
+        )
+        mixed["attempted_input"] = {"paid_amount": "0.00"}
+        self.assertTrue(list(validator.iter_errors(mixed)))
+
+        unknown_attempt = rg10_operation_shell(
+            "confirm_stored_value_recharge",
+            "rejection",
+            "rejected",
+            {"paid_amount": "0.00"},
+        )
+        unknown_attempt["attempted_input"]["unexpected"] = True
+        self.assertTrue(list(validator.iter_errors(unknown_attempt)))
+
+        generic_retry = rg10_operation_shell(
+            "retry", "creation", "no_change", inputs["confirm_stored_value_recharge"]
+        )
+        self.assertTrue(list(validator.iter_errors(generic_retry)))
 
     def test_rejected_operation_requires_rejection_class_and_located_reason(self):
         base = add_rg01_rejected_attempt(
@@ -2449,6 +2704,135 @@ class GoldenV2LedgerSemanticTests(unittest.TestCase):
 
 
 class GoldenV2OperationTests(unittest.TestCase):
+    def test_rg10_structural_actions_fail_closed_in_full_effect_validation(self):
+        inputs = rg10_operation_inputs()
+        classes = {
+            "confirm_stored_value_recharge": "creation",
+            "confirm_stored_value_spend": "creation",
+            "ingest_stored_value_recharge_candidate": "creation",
+            "ingest_stored_value_spend_candidate": "creation",
+            "record_expiry_reminder": "status_transition",
+            "confirm_stored_value_expiry_loss": "creation",
+            "reconcile_merchant_credit": "reconciliation",
+            "reconcile_bank_payment": "reconciliation",
+            "apply_merchant_lot_allocation": "update",
+            "confirm_stored_value_activation_balance": "adjustment",
+            "rename_stored_value_labels": "update",
+        }
+        for action, operation_class in classes.items():
+            case = load_rg01()
+            case["operations"][0] = rg10_operation_shell(
+                action, operation_class, "accepted", inputs[action]
+            )
+            with self.subTest(action=action, operation_class=operation_class):
+                with self.assertRaisesRegex(
+                    GoldenCaseError,
+                    r"structurally registered but economic effects are not implemented",
+                ):
+                    validate_golden_case_v2(case)
+
+        rejected = {
+            "confirm_stored_value_recharge": {"paid_amount": "0.00"},
+            "confirm_stored_value_spend": {"amount": "0.00"},
+            "confirm_imported_stored_value_recharge": {
+                "request_id": "request-import-recharge"
+            },
+            "confirm_imported_stored_value_spend": {
+                "request_id": "request-import-spend"
+            },
+            "confirm_stored_value_expiry_loss": {"explicit_confirmation": False},
+            "apply_merchant_lot_allocation": {"amount": "0.00"},
+        }
+        for action, attempted_input in rejected.items():
+            case = load_rg01()
+            case["operations"][0] = rg10_operation_shell(
+                action, "rejection", "rejected", attempted_input
+            )
+            with self.subTest(action=action, operation_class="rejection"):
+                with self.assertRaisesRegex(
+                    GoldenCaseError,
+                    r"structurally registered but economic effects are not implemented",
+                ):
+                    validate_golden_case_v2(case)
+
+    def test_rg10_structural_inputs_validate_scalars_and_reference_kinds(self):
+        case = provenance_contract_case()
+        baseline = case["states"][0]
+        inputs = rg10_operation_inputs()
+        selected = {
+            "confirm_stored_value_recharge",
+            "record_expiry_reminder",
+            "confirm_stored_value_expiry_loss",
+            "reconcile_merchant_credit",
+            "apply_merchant_lot_allocation",
+            "confirm_stored_value_activation_balance",
+            "rename_stored_value_labels",
+        }
+        for action in selected:
+            operation = {
+                "action_type": action,
+                "outcome": {"status": "accepted"},
+                "input": deepcopy(inputs[action]),
+            }
+            with self.subTest(action=action):
+                golden_v2._validate_action_input(
+                    operation,
+                    "$.operation",
+                    baseline,
+                    {"CNY": 2},
+                    ZoneInfo("Asia/Shanghai"),
+                )
+
+        dangling = {
+            "action_type": "record_expiry_reminder",
+            "outcome": {"status": "accepted"},
+            "input": deepcopy(inputs["record_expiry_reminder"]),
+        }
+        dangling["input"]["lot_id"] = "missing-lot"
+        with self.assertRaisesRegex(GoldenCaseError, r"lot_id"):
+            golden_v2._validate_action_input(
+                dangling,
+                "$.operation",
+                baseline,
+                {"CNY": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+        bad_time = {
+            "action_type": "confirm_stored_value_expiry_loss",
+            "outcome": {"status": "accepted"},
+            "input": deepcopy(inputs["confirm_stored_value_expiry_loss"]),
+        }
+        bad_time["input"]["occurred_at"] = "2026-01-17T08:30:00"
+        with self.assertRaisesRegex(GoldenCaseError, r"occurred_at"):
+            golden_v2._validate_action_input(
+                bad_time,
+                "$.operation",
+                baseline,
+                {"CNY": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+    def test_rg10_rejected_structural_action_is_not_semantically_executable(self):
+        case = add_rg01_rejected_attempt(
+            {"request_id": "request-rg10-rejected", "amount": None},
+            "amount",
+            "missing_required_field",
+        )
+        operation = case["operations"][-1]
+        operation["action_type"] = "confirm_stored_value_expiry_loss"
+        operation["attempted_input"] = {"explicit_confirmation": False}
+        operation["outcome"] = {
+            "status": "rejected",
+            "reason_code": "actual_expiry_requires_explicit_confirmation",
+            "field_path": "$.attempted_input.explicit_confirmation",
+        }
+        with self.assertRaisesRegex(
+            GoldenCaseError,
+            r"structurally registered but economic effects are not implemented",
+        ):
+            validate_golden_case_v2(case)
+
     def test_rejects_inexact_entity_and_value_deltas(self):
         entity_delta = load_rg01()
         entity_delta["operations"][0]["deltas"]["entity_changes"]["transactions"]["added_ids"] = []

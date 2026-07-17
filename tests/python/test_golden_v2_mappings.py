@@ -1302,8 +1302,89 @@ class GoldenV2MappingTests(unittest.TestCase):
         gaps = {item["id"]: item for item in path_map["unresolved_contract_gaps"]}
         self.assertEqual(len(gaps["RG10-GAP-02"]["affected_source_paths"]), 71)
         self.assertEqual(len(gaps["RG10-GAP-04"]["affected_source_paths"]), 137)
-        self.assertEqual(path_map["disposition_counts"]["ready"], 318)
-        self.assertEqual(path_map["disposition_counts"]["requires_contract_amendment"], 842)
+        self.assertEqual(path_map["disposition_counts"]["ready"], 452)
+        self.assertEqual(path_map["disposition_counts"]["requires_contract_amendment"], 708)
+
+    def test_rg10_operation_registry_only_closes_structural_operation_paths(self):
+        path_map = json.loads(
+            (ROOT / "docs" / "migrations" / "golden-v2" / "rg-10-path-map.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        gap = next(
+            item for item in path_map["unresolved_contract_gaps"] if item["id"] == "RG10-GAP-01"
+        )
+
+        operation_type_paths = {
+            "$.main_path.expiry_confirmation.operation_context.operation_type",
+            "$.main_path.expiry_reminder.operation_context.operation_type",
+            "$.main_path.recharge.operation_context.operation_type",
+            "$.main_path.spend.operation_context.operation_type",
+            "$.reconciliation_path.bank_evidence.operation_context.operation_type",
+            "$.reconciliation_path.merchant_evidence.operation_context.operation_type",
+            "$.secondary_cases.activation_boundary.operation_context.operation_type",
+            "$.secondary_cases.merchant_evidenced_allocation.operation_context.operation_type",
+        }
+        for source_path in operation_type_paths:
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(entry["contract_gap_ids"], [])
+                self.assertEqual(
+                    entry["target_paths"],
+                    [
+                        "$.operations[*].action_type",
+                        "$.operations[*].operation_class",
+                    ],
+                )
+
+        expected_targets = {
+            "$.main_path.recharge.input.request_id": "$.operations[*].input.request_id",
+            "$.import_path.incomplete_confirmations[*].input.amount": (
+                "$.operations[*].attempted_input.amount"
+            ),
+            "$.import_path.complete_unconfirmed[*].input.lot_allocations[*].lot_id": (
+                "$.operations[*].input.lot_allocations[*].lot_id"
+            ),
+            "$.secondary_cases.merchant_evidenced_allocation.input.allocations[*].amount": (
+                "$.operations[*].input.allocations[*].amount"
+            ),
+            "$.main_path.spend.expected.accepted": "$.operations[*].outcome.status",
+        }
+        for source_path, target in expected_targets.items():
+            entry = entries[source_path]
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(entry["contract_gap_ids"], [])
+                self.assertIn(target, entry["target_paths"])
+                self.assertFalse(
+                    any(path.startswith(PLANNED_CONTRACT_PREFIX) for path in entry["target_paths"])
+                )
+
+        still_gated = {
+            "$.idempotency.recharge_retry.input_id",
+            "$.import_path.incomplete_confirmations[*].expected.reason",
+            "$.invalid_inputs[*].expected.reason",
+            "$.main_path.recharge.expected.resulting_state_id",
+            "$.main_path.spend.expected.consumption[*].amount",
+            "$.main_path.expiry_reminder.expected.status",
+            "$.secondary_cases.merchant_evidenced_allocation.expected.consumptions[*].amount",
+        }
+        self.assertTrue(still_gated.issubset(set(gap["affected_source_paths"])))
+        for source_path in {
+            "$.import_path.incomplete_confirmations[*].expected.reason",
+            "$.invalid_inputs[*].expected.reason",
+        }:
+            with self.subTest(source_path=source_path):
+                self.assertEqual(
+                    entries[source_path]["disposition"],
+                    "requires_contract_amendment",
+                )
+                self.assertIn("RG10-GAP-01", entries[source_path]["contract_gap_ids"])
+        self.assertEqual(len(gap["affected_source_paths"]), 387)
+        self.assertEqual(path_map["disposition_counts"]["ready"], 452)
+        self.assertEqual(path_map["disposition_counts"]["requires_contract_amendment"], 708)
 
     def test_rg09_fingerprint_paths_remain_gated_until_mandatory_generation(self):
         path_map = json.loads(
@@ -1416,7 +1497,7 @@ class GoldenV2MappingTests(unittest.TestCase):
             ROOT / "docs" / "migrations" / "golden-v2" / "rg-10-mapping.md"
         ).read_text(encoding="utf-8")
         registry_section = mapping_markdown.split(
-            "## Planned Action Registry", 1
+            "## Structural Action Registry", 1
         )[1].split("## Unresolved Gaps", 1)[0]
         registry_rows = re.findall(
             r"^\|\s*([a-z0-9_]+)\s*\|\s*([^|]+?)\s*\|",
@@ -1479,7 +1560,7 @@ class GoldenV2MappingTests(unittest.TestCase):
             )
             with self.subTest(action_type=pair[0], operation_class=pair[1]):
                 self.assertIn(
-                    "$.planned_contract.operations[*].action_type",
+                    "$.operations[*].action_type",
                     aggregate_targets,
                 )
                 self.assertIn(

@@ -49,6 +49,29 @@ _ENTITY_COLLECTIONS = {
     "posting_reconciliations": ("posting_reconciliations",),
 }
 _ENTITY_CHANGE_FIELDS = ("added_ids", "changed_ids", "removed_ids")
+_RG10_STRUCTURAL_ACTIONS = {
+    "confirm_stored_value_recharge",
+    "confirm_stored_value_spend",
+    "ingest_stored_value_recharge_candidate",
+    "ingest_stored_value_spend_candidate",
+    "confirm_imported_stored_value_recharge",
+    "confirm_imported_stored_value_spend",
+    "record_expiry_reminder",
+    "confirm_stored_value_expiry_loss",
+    "reconcile_merchant_credit",
+    "reconcile_bank_payment",
+    "apply_merchant_lot_allocation",
+    "confirm_stored_value_activation_balance",
+    "rename_stored_value_labels",
+}
+_RG10_REJECTED_ACTIONS = {
+    "confirm_stored_value_recharge",
+    "confirm_stored_value_spend",
+    "confirm_imported_stored_value_recharge",
+    "confirm_imported_stored_value_spend",
+    "confirm_stored_value_expiry_loss",
+    "apply_merchant_lot_allocation",
+}
 _ACCEPTED_ACTION_ENTITY_COUNTS = {
     "manual_expense": {
         "transactions": (1, 0, 0),
@@ -2201,6 +2224,88 @@ def _validate_rejected_manual_expense_attempt(
         )
 
 
+def _validate_rg10_structural_input(
+    input_value: dict[str, Any],
+    input_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+    *,
+    attempted: bool,
+) -> None:
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    lots = {
+        item["id"]: item
+        for item in baseline["domain_entities"]
+        if item["type"] == "stored_value_lot"
+    }
+    references = {
+        "account_id": accounts,
+        "payment_account_id": accounts,
+        "stored_value_account_id": accounts,
+        "category_id": categories,
+        "lot_id": lots,
+        "source_id": {item["id"]: item for item in baseline["sources"]},
+        "evidence_id": {item["id"]: item for item in baseline["evidence"]},
+        "merchant_evidence_id": {item["id"]: item for item in baseline["evidence"]},
+        "target_posting_id": {item["id"]: item for item in baseline["postings"]},
+    }
+    for field, collection in references.items():
+        if field in input_value and input_value[field] not in collection:
+            _fail(input_path + f".{field}", f"dangling or mistyped {field} reference")
+
+    stored_value_account_id = input_value.get("stored_value_account_id")
+    if stored_value_account_id in accounts and not accounts[stored_value_account_id].get(
+        "stored_value", {}
+    ).get("enabled", False):
+        _fail(input_path + ".stored_value_account_id", "must reference an enabled stored-value account")
+
+    currency = input_value.get("currency")
+    if currency is not None and currency not in precisions:
+        _fail(input_path + ".currency", "undeclared currency")
+    for field in (
+        "amount",
+        "paid_amount",
+        "credited_amount",
+        "bonus_amount",
+        "existing_balance",
+    ):
+        value = input_value.get(field)
+        if value is None:
+            continue
+        if attempted:
+            if currency is not None:
+                _attempted_amount(value, currency, input_path + f".{field}", precisions)
+            else:
+                _decimal(value, input_path + f".{field}")
+        elif currency is not None:
+            _amount(value, currency, input_path + f".{field}", precisions)
+        else:
+            _decimal(value, input_path + f".{field}")
+
+    for field in ("occurred_at", "created_at", "activation_at"):
+        if field in input_value:
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+
+    for index, allocation in enumerate(input_value.get("allocations", [])):
+        allocation_path = input_path + f".allocations[{index}]"
+        if allocation["lot_id"] not in lots:
+            _fail(allocation_path + ".lot_id", "dangling or mistyped lot reference")
+        if currency is not None:
+            _amount(allocation["amount"], currency, allocation_path + ".amount", precisions)
+        else:
+            _decimal(allocation["amount"], allocation_path + ".amount")
+    for index, allocation in enumerate(input_value.get("lot_allocations", [])):
+        allocation_path = input_path + f".lot_allocations[{index}]"
+        if allocation["lot_id"] not in lots:
+            _fail(allocation_path + ".lot_id", "dangling or mistyped lot reference")
+        if currency is not None:
+            _amount(allocation["amount"], currency, allocation_path + ".amount", precisions)
+        else:
+            _decimal(allocation["amount"], allocation_path + ".amount")
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -2210,11 +2315,21 @@ def _validate_action_input(
 ) -> None:
     action = operation["action_type"]
     if operation["outcome"]["status"] == "rejected":
-        if action != "manual_expense":
+        if action == "manual_expense":
+            _validate_rejected_manual_expense_attempt(
+                operation, operation_path, baseline, precisions, timezone
+            )
+        elif action in _RG10_REJECTED_ACTIONS:
+            _validate_rg10_structural_input(
+                operation["attempted_input"],
+                operation_path + ".attempted_input",
+                baseline,
+                precisions,
+                timezone,
+                attempted=True,
+            )
+        else:
             _fail(operation_path + ".action_type", "unregistered rejected action")
-        _validate_rejected_manual_expense_attempt(
-            operation, operation_path, baseline, precisions, timezone
-        )
         return
     input_value = operation["input"]
     input_path = operation_path + ".input"
@@ -2309,6 +2424,15 @@ def _validate_action_input(
             )
         for field in ("actual_occurred_at", "target_observed_at", "confirmed_at"):
             _timestamp(input_value[field], input_path + f".{field}", timezone)
+    elif action in _RG10_STRUCTURAL_ACTIONS:
+        _validate_rg10_structural_input(
+            input_value,
+            input_path,
+            baseline,
+            precisions,
+            timezone,
+            attempted=False,
+        )
 
 
 def _validate_history_prefix(
@@ -2473,16 +2597,23 @@ def _validate_no_change_retry(
 ) -> None:
     if operation["outcome"]["status"] != "no_change":
         return
-    request_id = operation["input"]["request_id"]
+    request_id = operation["input"].get("request_id")
     prior = [
         item
         for item in earlier_operations
         if item["outcome"]["status"] == "accepted"
         and item["action_type"] == operation["action_type"]
-        and item["input"]["request_id"] == request_id
+        and (
+            (request_id is not None and item["input"].get("request_id") == request_id)
+            or (request_id is None and _contract_equivalent(item["input"], operation["input"]))
+        )
     ]
     if not prior:
-        _fail(operation_path + ".input.request_id", "no prior accepted operation matches this action and request_id")
+        identity_path = ".input.request_id" if request_id is not None else ".input"
+        _fail(
+            operation_path + identity_path,
+            "no prior accepted operation matches this action and closed input identity",
+        )
     accepted = prior[-1]
     if not _contract_equivalent(operation["input"], accepted["input"]):
         _fail(
@@ -2505,6 +2636,11 @@ def _validate_registered_action_effects(
     expected_entities: dict[str, dict[str, list[str]]],
 ) -> None:
     action = operation["action_type"]
+    if action in _RG10_STRUCTURAL_ACTIONS:
+        _fail(
+            operation_path + ".action_type",
+            "is structurally registered but economic effects are not implemented",
+        )
     accepted = operation["outcome"]["status"] == "accepted"
     registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
     if registered_counts is None:
@@ -3088,6 +3224,12 @@ def _validate_operations(
                 _fail(operation_path + ".result_state_id", "must reference a same-root state")
             if result["as_of_operation_id"] != operation["id"]:
                 _fail(operation_path + ".result_state_id", "result state as_of_operation_id must match")
+
+            if operation["action_type"] in _RG10_STRUCTURAL_ACTIONS:
+                _fail(
+                    operation_path + ".action_type",
+                    "is structurally registered but economic effects are not implemented",
+                )
 
             _validate_action_input(
                 operation, operation_path, baseline, precisions, timezone
