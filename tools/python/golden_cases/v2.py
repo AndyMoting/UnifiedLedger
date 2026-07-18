@@ -776,6 +776,108 @@ def _validate_catalog(
                 )
 
 
+def _validate_transaction_posting_semantics(
+    transaction: dict[str, Any],
+    postings: list[dict[str, Any]],
+    accounts: dict[str, dict[str, Any]],
+    path: str,
+    precisions: dict[str, int],
+) -> None:
+    def account_for(posting: dict[str, Any], role: str) -> dict[str, Any]:
+        account_id = posting["account_id"]
+        account = accounts.get(account_id)
+        if account is None:
+            _fail(
+                f"{path}.posting_set.{role}.account_id",
+                f"dangling account reference {account_id!r}",
+            )
+        return account
+
+    transaction_type = transaction["type"]
+    roles = [posting.get("role") for posting in postings]
+    mixed_roles = {"mixed_expense_asset_funding", "mixed_expense_credit_funding"}
+    if transaction_type == "expense" and not mixed_roles.intersection(roles):
+        return
+
+    if transaction_type == "expense":
+        expected_roles = {"expense", *mixed_roles}
+        if len(postings) != 3 or set(roles) != expected_roles:
+            _fail(path + ".posting_set", "mixed expense requires exactly one category and two funding postings")
+        by_role = {posting["role"]: posting for posting in postings}
+        expense = by_role["expense"]
+        expense_account = account_for(expense, "expense")
+        if not (
+            expense_account["kind"] == "expense"
+            and not expense_account["owned_by_user"]
+            and not expense_account["real_account"]
+            and expense["reconciliation_eligible"] is False
+        ):
+            _fail(path + ".posting_set", "expense role requires a non-real category account and no reconciliation")
+        expected_kinds = {
+            "mixed_expense_asset_funding": "asset",
+            "mixed_expense_credit_funding": "liability",
+        }
+        for role, kind in expected_kinds.items():
+            posting = by_role[role]
+            account = account_for(posting, role)
+            if not (
+                account["owned_by_user"]
+                and account["real_account"]
+                and account["kind"] == kind
+                and posting["reconciliation_eligible"] is True
+            ):
+                _fail(path + ".posting_set", f"{role} requires an eligible owned real {kind} account")
+            if _decimal(posting["amount"], path + ".posting_set") >= 0:
+                _fail(path + ".posting_set", f"{role} must be negative")
+        expense_amount = _decimal(expense["amount"], path + ".posting_set")
+        if expense_amount <= 0:
+            _fail(path + ".posting_set", "expense role must be positive")
+        if len({posting["currency"] for posting in postings}) != 1:
+            _fail(path + ".posting_set", "mixed expense postings must use the same currency")
+        currency = postings[0]["currency"]
+        total = sum(
+            (_amount(posting["amount"], currency, path + ".posting_set", precisions) for posting in postings),
+            Decimal(0),
+        )
+        if total != 0:
+            _fail(path + ".posting_set", f"mixed expense postings must balance for {currency}")
+        return
+
+    if transaction_type == "credit_repayment":
+        expected_roles = {
+            "credit_repayment_asset_outflow",
+            "credit_repayment_liability_principal",
+        }
+        if len(postings) != 2 or set(roles) != expected_roles:
+            _fail(path + ".posting_set", "credit repayment requires exactly one asset outflow and one liability principal")
+        by_role = {posting["role"]: posting for posting in postings}
+        expected_kinds = {
+            "credit_repayment_asset_outflow": ("asset", -1),
+            "credit_repayment_liability_principal": ("liability", 1),
+        }
+        for role, (kind, sign) in expected_kinds.items():
+            posting = by_role[role]
+            account = account_for(posting, role)
+            amount = _decimal(posting["amount"], path + ".posting_set")
+            if not (
+                account["owned_by_user"]
+                and account["real_account"]
+                and account["kind"] == kind
+                and posting["reconciliation_eligible"] is True
+                and ((amount < 0) if sign < 0 else (amount > 0))
+            ):
+                _fail(path + ".posting_set", f"{role} has invalid account, eligibility, or sign")
+        if len({posting["currency"] for posting in postings}) != 1:
+            _fail(path + ".posting_set", "credit repayment postings must use the same currency")
+        currency = postings[0]["currency"]
+        total = sum(
+            (_amount(posting["amount"], currency, path + ".posting_set", precisions) for posting in postings),
+            Decimal(0),
+        )
+        if total != 0:
+            _fail(path + ".posting_set", f"credit repayment postings must balance for {currency}")
+
+
 def _validate_formal_ledger(
     state: dict[str, Any],
     path: str,
@@ -848,6 +950,14 @@ def _validate_formal_ledger(
             transaction,
             current_version,
             current_postings,
+        )
+
+        _validate_transaction_posting_semantics(
+            transaction,
+            current_postings,
+            accounts,
+            transaction_path,
+            precisions,
         )
 
     referenced_postings: dict[str, str] = {}
@@ -2092,10 +2202,26 @@ def _report_values(
             values["ordinary_expense"] += expense
             values["expense"] += expense
             values["net_worth_change"] -= expense
-            values["cash_outflow"] += sum(
-                (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["real_account"] and _decimal(item["amount"], "$.postings.amount") < 0),
+            mixed_asset_funding = sum(
+                (
+                    -_decimal(item["amount"], "$.postings.amount")
+                    for item in selected
+                    if item.get("role") == "mixed_expense_asset_funding"
+                ),
                 Decimal(0),
             )
+            if mixed_asset_funding:
+                values["cash_outflow"] += mixed_asset_funding
+            else:
+                values["cash_outflow"] += sum(
+                    (
+                        -_decimal(item["amount"], "$.postings.amount")
+                        for item in selected
+                        if accounts[item["account_id"]]["real_account"]
+                        and _decimal(item["amount"], "$.postings.amount") < 0
+                    ),
+                    Decimal(0),
+                )
         elif transaction_type == "income":
             income = sum(
                 (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["kind"] == "income"),
@@ -2144,7 +2270,11 @@ def _report_values(
             values["net_worth_change"] -= correction
         elif transaction_type == "credit_repayment":
             values["cash_outflow"] += sum(
-                (-_decimal(item["amount"], "$.postings.amount") for item in selected if accounts[item["account_id"]]["kind"] == "asset" and _decimal(item["amount"], "$.postings.amount") < 0),
+                (
+                    -_decimal(item["amount"], "$.postings.amount")
+                    for item in selected
+                    if item.get("role") == "credit_repayment_asset_outflow"
+                ),
                 Decimal(0),
             )
     values["budget"] += Decimal(0)

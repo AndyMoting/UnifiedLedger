@@ -1,4 +1,5 @@
 from copy import deepcopy
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -84,6 +85,58 @@ def mixed_payment_relation_fixture() -> tuple[dict, dict]:
         indexes["transaction_versions"]["version-expense-rg01-v2"],
         [indexes["postings"][asset["id"]], indexes["postings"][credit["id"]]],
     )}
+    return state, {"indexes": indexes, "current": current, "precisions": {"CNY": 2, "USD": 2}}
+
+
+def rg04_posting_semantics_fixture(transaction_type: str) -> tuple[dict, dict]:
+    case = load_rg01()
+    state = deepcopy(case["states"][-1])
+    liability = {
+        "id": "liability-card-rg04-semantics",
+        "name": "Card account",
+        "kind": "liability",
+        "currency": "CNY",
+        "owned_by_user": True,
+        "real_account": True,
+        "reconciliation_eligible": True,
+    }
+    state["catalog"]["accounts"].append(liability)
+    transaction = next(item for item in state["transactions"] if item["id"] == "tx-expense-rg01")
+    transaction["type"] = transaction_type
+    posting_set = next(item for item in state["posting_sets"] if item["id"] == "posting-set-expense-rg01")
+    asset = next(item for item in state["postings"] if item["id"] == "posting-bank-rg01")
+    other = next(item for item in state["postings"] if item["id"] == "posting-expense-rg01")
+    state["relations"] = []
+    if transaction_type == "expense":
+        asset.update(amount="-70.00", role="mixed_expense_asset_funding", reconciliation_eligible=True)
+        other.update(amount="120.00", role="expense", reconciliation_eligible=False)
+        credit = {
+            "id": "posting-credit-rg04-semantics",
+            "posting_set_id": posting_set["id"],
+            "account_id": liability["id"],
+            "amount": "-50.00",
+            "currency": "CNY",
+            "role": "mixed_expense_credit_funding",
+            "reconciliation_eligible": True,
+        }
+        state["postings"].append(credit)
+        posting_set["posting_ids"].append(credit["id"])
+    else:
+        asset.update(amount="-50.00", role="credit_repayment_asset_outflow", reconciliation_eligible=True)
+        other.update(
+            account_id=liability["id"],
+            amount="50.00",
+            role="credit_repayment_liability_principal",
+            reconciliation_eligible=True,
+        )
+    indexes = golden_v2._state_indexes(state, "$.states[0]")
+    current = {
+        transaction["id"]: (
+            indexes["transactions"][transaction["id"]],
+            indexes["transaction_versions"]["version-expense-rg01-v2"],
+            [indexes["postings"][posting_id] for posting_id in posting_set["posting_ids"]],
+        )
+    }
     return state, {"indexes": indexes, "current": current, "precisions": {"CNY": 2, "USD": 2}}
 
 
@@ -2669,6 +2722,137 @@ class GoldenV2SchemaTests(unittest.TestCase):
                 with self.assertRaises(GoldenCaseError):
                     golden_v2._validate_relations(
                         invalid, "$.states[0]", indexes, current, {"CNY": 2, "USD": 2}
+                    )
+
+    def test_rg04_mixed_expense_posting_semantics(self):
+        state, context = rg04_posting_semantics_fixture("expense")
+        replay, current = golden_v2._validate_formal_ledger(
+            state,
+            "$.states[0]",
+            context["indexes"],
+            context["precisions"],
+            ZoneInfo("Asia/Shanghai"),
+        )
+        postings = current["tx-expense-rg01"][2]
+        self.assertEqual(
+            sum(Decimal(posting["amount"]) for posting in postings if posting["account_id"] == "asset-bank-a"),
+            Decimal("-70.00"),
+        )
+        report = {"period_type": "month", "period": "2026-01"}
+        values = golden_v2._report_values(
+            current, context["indexes"]["catalog_accounts"], report, "CNY"
+        )
+        self.assertEqual(values["consumption"], 120)
+        self.assertEqual(values["ordinary_expense"], 120)
+        self.assertEqual(values["expense"], 120)
+        self.assertEqual(values["cash_outflow"], 70)
+        self.assertEqual(values["internal_transfer_amount"], 0)
+        self.assertEqual(values["net_worth_change"], -120)
+        self.assertEqual(
+            {posting["role"] for posting in postings},
+            {
+                "expense",
+                "mixed_expense_asset_funding",
+                "mixed_expense_credit_funding",
+            },
+        )
+
+        mutations = []
+        invalid = deepcopy(state)
+        invalid["postings"][0]["role"] = "mixed_expense_credit_funding"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        next(item for item in invalid["postings"] if item["id"] == "posting-credit-rg04-semantics")["account_id"] = "expense-account-breakfast"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["reconciliation_eligible"] = True
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"] = [
+            item for item in invalid["postings"] if item["id"] != "posting-credit-rg04-semantics"
+        ]
+        invalid["posting_sets"][0]["posting_ids"].remove("posting-credit-rg04-semantics")
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["amount"] = "110.00"
+        mutations.append(invalid)
+        for invalid in mutations:
+            with self.subTest(mutation=invalid):
+                indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_formal_ledger(
+                        invalid,
+                        "$.states[0]",
+                        indexes,
+                        context["precisions"],
+                        ZoneInfo("Asia/Shanghai"),
+                    )
+
+        for posting_id, account_id, expected_path in (
+            ("posting-expense-rg01", "account-missing-expense", "expense.account_id"),
+            ("posting-credit-rg04-semantics", "account-missing-funding", "mixed_expense_credit_funding.account_id"),
+        ):
+            invalid = deepcopy(state)
+            next(item for item in invalid["postings"] if item["id"] == posting_id)["account_id"] = account_id
+            indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+            transaction = indexes["transactions"]["tx-expense-rg01"]
+            postings = [
+                indexes["postings"][posting_id]
+                for posting_id in indexes["posting_sets"]["posting-set-expense-rg01"]["posting_ids"]
+            ]
+            with self.subTest(account_id=account_id):
+                with self.assertRaisesRegex(GoldenCaseError, rf"\$\.states\[0\]\.transactions\[0\]\.posting_set\.{expected_path}"):
+                    golden_v2._validate_transaction_posting_semantics(
+                        transaction,
+                        postings,
+                        indexes["catalog_accounts"],
+                        "$.states[0].transactions[0]",
+                        context["precisions"],
+                    )
+
+    def test_rg04_credit_repayment_posting_semantics(self):
+        state, context = rg04_posting_semantics_fixture("credit_repayment")
+        _, current = golden_v2._validate_formal_ledger(
+            state,
+            "$.states[0]",
+            context["indexes"],
+            context["precisions"],
+            ZoneInfo("Asia/Shanghai"),
+        )
+        values = golden_v2._report_values(
+            current,
+            context["indexes"]["catalog_accounts"],
+            {"period_type": "month", "period": "2026-01"},
+            "CNY",
+        )
+        self.assertEqual(values["cash_outflow"], 50)
+        self.assertEqual(values["consumption"], 0)
+        self.assertEqual(values["ordinary_expense"], 0)
+        self.assertEqual(values["net_worth_change"], 0)
+
+        mutations = []
+        invalid = deepcopy(state)
+        invalid["postings"][0]["role"] = "credit_repayment_liability_principal"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["account_id"] = "expense-account-breakfast"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["amount"] = "-50.00"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["reconciliation_eligible"] = False
+        mutations.append(invalid)
+        for invalid in mutations:
+            with self.subTest(mutation=invalid):
+                indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_formal_ledger(
+                        invalid,
+                        "$.states[0]",
+                        indexes,
+                        context["precisions"],
+                        ZoneInfo("Asia/Shanghai"),
                     )
 
     def test_all_confirmation_subtypes_allow_an_unknown_confirmation_time(self):
