@@ -4,9 +4,9 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-项目处于正式文档迁移与核心规则验证阶段。仓库当前包含 Python 编写的金额、来源事实、证据和状态原语，用于冻结行为、整理规则和建立黄金测试；它不是最终客户端账务核心。
+Python 实现仍是迁移、规则验证和黄金结果基线；仓库现已建立首个可构建的 Kotlin Multiplatform 模块 `ledger-domain`。该模块目前是带 JVM 测试目标的纯共享领域库，已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建，以及当前分录余额重放这一有限切片。
 
-Android 与 Desktop 工程尚未建立。具体数据库、UI、导航、依赖注入和同步实现将在黄金测试与模块接口稳定后选择。
+这不是完整的正式账务核心；持久化、报表、对账、导入、UI 和平台客户端运行时均尚未实现。Android 与 Desktop 工程仍未建立，具体数据库、UI、导航、依赖注入和同步实现将在相应接口与验收边界稳定后选择。
 
 ## 核心原则
 
@@ -19,7 +19,21 @@ Android 与 Desktop 工程尚未建立。具体数据库、UI、导航、依赖�
 
 ## 验证
 
-运行完整测试：
+Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 运行 `ledger-domain` JVM 测试：
+
+```powershell
+.\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+运行当前全部 Gradle 检查：
+
+```powershell
+.\gradlew.bat check --rerun-tasks --warning-mode all
+```
+
+依赖和 Gradle 分发包已在本机缓存时，可以为上述命令追加 `--offline`。`ledger-domain` 是库模块，当前没有应用模块，因此尚无应用运行命令。
+
+运行完整 Python 测试：
 
 ```powershell
 $env:PYTHONPATH="tools\python"
