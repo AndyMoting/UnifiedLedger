@@ -31,6 +31,7 @@ SCHEMA_PATH = REPOSITORY_ROOT / "schemas" / "golden-case-v2.schema.json"
 RG01_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-01.json"
 RG09_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-09.json"
 RG01_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-01.json"
+RG04_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-04.json"
 RG10_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-10.json"
 RG01_PATH_MAP = REPOSITORY_ROOT / "docs" / "migrations" / "golden-v2" / "rg-01-path-map.json"
 
@@ -138,6 +139,254 @@ def rg04_posting_semantics_fixture(transaction_type: str) -> tuple[dict, dict]:
         )
     }
     return state, {"indexes": indexes, "current": current, "precisions": {"CNY": 2, "USD": 2}}
+
+
+def rg04_creation_case(action: str) -> tuple[dict, dict, dict]:
+    case = load_rg01()
+    case["case"]["id"] = "RG-04"
+    case["case"]["currencies"] = [{"code": "CNY", "precision": 2}]
+    case["roots"] = [{"id": "root-rg04-test", "purpose": "synthetic RG04 action", "initial_state_id": "state-rg04-opening", "operation_ids": ["operation-rg04-test"]}]
+    baseline = deepcopy(case["states"][0])
+    baseline["id"] = "state-rg04-opening"
+    baseline["root_id"] = "root-rg04-test"
+    baseline["as_of_operation_id"] = None
+    baseline["catalog"]["accounts"].append({
+        "id": "liability-credit-b", "name": "Credit", "kind": "liability", "currency": "CNY",
+        "owned_by_user": True, "real_account": True, "reconciliation_eligible": True,
+    })
+    baseline["catalog"]["categories"][0]["id"] = "expense-category-living"
+    baseline["catalog"]["categories"][1].update(id="expense-category-daily", parent_id="expense-category-living")
+    baseline["catalog"]["accounts"][2]["id"] = "expense-account-daily"
+    baseline["catalog"]["categories"][1]["posting_account_id"] = "expense-account-daily"
+    baseline["balances"].append({"account_id": "liability-credit-b", "currency": "CNY", "amount": "0.00"})
+
+    operation_id = "operation-rg04-test"
+    occurred_at = "2026-01-20T10:00:00+08:00"
+    if action == "manual_mixed_expense":
+        input_value = {
+            "request_id": "request-rg04-test-expense", "asset_account_id": "asset-bank-a",
+            "liability_account_id": "liability-credit-b", "asset_funding_amount": "70.00",
+            "liability_funding_amount": "50.00", "total_amount": "120.00", "currency": "CNY",
+            "category_id": "expense-category-daily", "occurred_at": occurred_at,
+            "settlement_explanation": {"original_amount": "135.00", "discount_amount": "15.00", "settled_amount": "120.00"},
+            "explicit_confirmation": True,
+        }
+        transaction_id, version_id, posting_set_id = "tx-rg04-expense", "version-rg04-expense-v1", "posting-set-rg04-expense"
+        postings = [
+            {"id": "posting-rg04-expense", "posting_set_id": posting_set_id, "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
+            {"id": "posting-rg04-asset", "posting_set_id": posting_set_id, "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY", "role": "mixed_expense_asset_funding", "reconciliation_eligible": True},
+            {"id": "posting-rg04-credit", "posting_set_id": posting_set_id, "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY", "role": "mixed_expense_credit_funding", "reconciliation_eligible": True},
+        ]
+        balances = {"asset-bank-a": "930.00", "expense-account-daily": "120.00", "liability-credit-b": "-50.00"}
+        report_amounts = {"cash_outflow": "70.00", "consumption": "120.00", "income": "0.00", "net_worth_change": "-120.00"}
+        tx_type = "expense"
+    else:
+        input_value = {
+            "request_id": "request-rg04-test-repayment", "asset_account_id": "asset-bank-a",
+            "liability_account_id": "liability-credit-b", "principal_amount": "50.00", "currency": "CNY",
+            "occurred_at": occurred_at, "explicit_confirmation": True,
+        }
+        transaction_id, version_id, posting_set_id = "tx-rg04-repayment", "version-rg04-repayment-v1", "posting-set-rg04-repayment"
+        postings = [
+            {"id": "posting-rg04-repayment-asset", "posting_set_id": posting_set_id, "account_id": "asset-bank-a", "amount": "-50.00", "currency": "CNY", "role": "credit_repayment_asset_outflow", "reconciliation_eligible": True},
+            {"id": "posting-rg04-repayment-credit", "posting_set_id": posting_set_id, "account_id": "liability-credit-b", "amount": "50.00", "currency": "CNY", "role": "credit_repayment_liability_principal", "reconciliation_eligible": True},
+        ]
+        balances = {"asset-bank-a": "950.00", "liability-credit-b": "50.00"}
+        report_amounts = {"cash_outflow": "50.00", "consumption": "0.00", "income": "0.00", "net_worth_change": "0.00"}
+        tx_type = "credit_repayment"
+
+    result = deepcopy(baseline)
+    result.update(id="state-rg04-result", root_id="root-rg04-test", as_of_operation_id=operation_id)
+    result["transactions"].append({"id": transaction_id, "type": tx_type, "current_version_id": version_id})
+    result["transaction_versions"].append({
+        "id": version_id, "transaction_id": transaction_id, "version_number": 1,
+        "posting_set_id": posting_set_id, "occurred_at": occurred_at, "statistics_at": occurred_at,
+        "effective_at": occurred_at, "confirmation_id": "confirmation-rg04-test",
+    })
+    result["posting_sets"].append({"id": posting_set_id, "posting_ids": [item["id"] for item in postings]})
+    result["postings"].extend(postings)
+    result["confirmations"].append({"id": "confirmation-rg04-test", "type": "explicit_manual_save", "operation_id": operation_id, "subject": {"kind": "operation", "id": operation_id}, "payload": {}})
+    result["posting_reconciliations"].extend([
+        {"id": f"reconciliation-rg04-{index}", "posting_id": item["id"], "status": "pending"}
+        for index, item in enumerate(postings, 1) if item["reconciliation_eligible"]
+    ])
+    for balance in result["balances"]:
+        if balance["account_id"] in balances:
+            balance["amount"] = balances[balance["account_id"]]
+    result["reports"][0]["period"] = "2026-01"
+    for metric in result["reports"][0]["metrics"]:
+        if metric["metric"] in report_amounts:
+            metric["amount"] = report_amounts[metric["metric"]]
+    result["derived_statuses"].append({"id": "derived-rg04-test", "target_kind": "transaction", "target_id": transaction_id, "status_name": "reconciliation_summary", "value": "pending"})
+    operation = deepcopy(case["operations"][0])
+    operation.update(id=operation_id, root_id="root-rg04-test", baseline_state_id=baseline["id"], result_state_id=result["id"], action_type=action, input=input_value)
+    operation["status_changes"] = [{"target_kind": "transaction", "target_id": transaction_id, "status_name": "reconciliation_summary", "before": None, "after": "pending"}]
+    operation["deltas"]["entity_changes"] = golden_v2._expected_entity_changes(baseline, result)
+    operation["deltas"]["value_changes"] = {"balances": [], "reports": [], "derived_statuses": [{"key": {"kind": "transaction", "target_id": transaction_id, "status_name": "reconciliation_summary"}, "before": None, "after": "pending"}]}
+    for before in baseline["balances"]:
+        after = next(item for item in result["balances"] if item["account_id"] == before["account_id"] and item["currency"] == before["currency"])
+        if before["amount"] != after["amount"]:
+            operation["deltas"]["value_changes"]["balances"].append({"key": {"account_id": before["account_id"], "currency": before["currency"]}, "before": before["amount"], "after": after["amount"]})
+    for metric, amount in report_amounts.items():
+        if amount != "0.00":
+            operation["deltas"]["value_changes"]["reports"].append({"key": {"period_type": "month", "period": "2026-01", "metric": metric, "currency": "CNY"}, "before": {"applicability": "applicable", "currency": "CNY", "amount": "0.00"}, "after": {"applicability": "applicable", "currency": "CNY", "amount": amount}})
+    operation["returned_ids"] = [{"kind": "confirmation", "id": "confirmation-rg04-test"}, {"kind": "transaction", "id": transaction_id}]
+    case["states"] = [baseline, result]
+    case["operations"] = [operation]
+    return case, baseline, result
+
+
+def _rg04_value_changes(before: dict, after: dict) -> dict:
+    def changes_for(before_map, after_map, key_builder):
+        changes = []
+        for key, (old, new) in sorted(golden_v2._changes(before_map, after_map).items()):
+            changes.append({"key": key_builder(key), "before": old, "after": new})
+        return changes
+
+    return {
+        "balances": changes_for(
+            golden_v2._balance_map(before),
+            golden_v2._balance_map(after),
+            lambda key: {"account_id": key[0], "currency": key[1]},
+        ),
+        "reports": changes_for(
+            golden_v2._report_map(before),
+            golden_v2._report_map(after),
+            lambda key: {
+                "period_type": key[0],
+                "period": key[1],
+                "metric": key[2],
+                **({"currency": key[3]} if key[3] is not None else {}),
+            },
+        ),
+        "derived_statuses": changes_for(
+            golden_v2._status_map(before),
+            golden_v2._status_map(after),
+            lambda key: {"kind": key[0], "target_id": key[1], "status_name": key[2]},
+        ),
+    }
+
+
+def _rg04_action(case: dict, baseline: dict, result: dict, action: str, input_value: dict, operation_id: str, outcome: dict | None = None) -> dict:
+    operation = deepcopy(case["operations"][0])
+    operation.update(
+        id=operation_id,
+        sequence=1,
+        root_id=baseline["root_id"],
+        action_type=action,
+        operation_class="reconciliation" if action == "merge_mixed_payment_mirror_evidence" else "creation",
+        baseline_state_id=baseline["id"],
+        result_state_id=result["id"],
+        input=input_value,
+        outcome=outcome or {"status": "accepted"},
+        status_changes=[],
+        deltas={
+            "entity_changes": golden_v2._expected_entity_changes(baseline, result),
+            "value_changes": _rg04_value_changes(baseline, result),
+        },
+    )
+    return operation
+
+
+def _rg04_import_baseline() -> tuple[dict, dict]:
+    case, baseline, _ = rg04_creation_case("manual_mixed_expense")
+    v1 = json.loads(RG04_V1_PATH.read_text(encoding="utf-8"))
+    baseline["catalog"]["association_group_types"] = v1["catalog"]["association_group_types"]
+    return case, baseline
+
+
+def _rg04_complete_source(source_id: str = "source-record-rg04-complete", evidence_id: str = "evidence-rg04-asset-debit") -> dict:
+    return {
+        "id": source_id,
+        "evidence_id": evidence_id,
+        "observed_at": "2026-02-11T12:00:00+08:00",
+        "total_amount": "120.00",
+        "currency": "CNY",
+        "suggested_category_id": "expense-category-daily",
+        "funding_components": [
+            {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY", "evidence_available": True},
+            {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY", "evidence_available": False},
+        ],
+        "completeness": "complete",
+    }
+
+
+def _rg04_missing_source() -> dict:
+    return {
+        "id": "source-record-rg04-missing-leg",
+        "evidence_id": "evidence-rg04-known-asset-debit",
+        "observed_at": "2026-02-12T12:00:00+08:00",
+        "total_amount": "120.00",
+        "known_asset_funding_amount": "70.00",
+        "currency": "CNY",
+        "completeness": "missing_funding_leg",
+    }
+
+
+def _rg04_ingested_state(baseline: dict, source_record: dict, candidate_id: str, confidence: str, payload: dict) -> dict:
+    result = deepcopy(baseline)
+    result["id"] = f"state-{candidate_id}"
+    result["as_of_operation_id"] = f"operation-{candidate_id}-ingest"
+    source = {"id": source_record["id"], "type": "mixed_payment", "payload": {key: value for key, value in source_record.items() if key != "id"}}
+    evidence = {"id": source_record["evidence_id"], "type": "asset_funding_debit", "source_ids": [source["id"]], "payload": {"observed_at": source_record["observed_at"]}}
+    candidate = {
+        "id": candidate_id,
+        "type": "mixed_payment",
+        "source_ids": [source["id"]],
+        "confidence": confidence,
+        "payload": payload,
+        "status_history": [{"id": f"status-{candidate_id}-pending", "sequence": 1, "status": "pending_confirmation"}],
+    }
+    result["sources"].append(source)
+    result["evidence"].append(evidence)
+    result["candidates"].append(candidate)
+    return result
+
+
+def _rg04_complete_candidate_payload(source: dict) -> dict:
+    return {
+        "total_amount": source["total_amount"],
+        "currency": source["currency"],
+        "suggested_category_id": source["suggested_category_id"],
+        "known_funding_components": source["funding_components"],
+        "provenance": {"rule": "complete_mixed_payment_source", "rule_version": 1},
+        "evidence_refs": [source["evidence_id"]],
+        "requires_confirmation": ["category_id", "funding_components", "formal_transaction_creation"],
+    }
+
+
+def _rg04_missing_candidate_payload(source: dict) -> dict:
+    return {
+        "total_amount": source["total_amount"],
+        "currency": source["currency"],
+        "known_funding_amount": source["known_asset_funding_amount"],
+        "missing_funding_amount": "50.00",
+        "provenance": {"rule": "incomplete_mixed_payment_source", "rule_version": 1},
+        "evidence_refs": [source["evidence_id"]],
+        "requires_confirmation": ["funding_account_id", "missing_funding_amount", "category_id", "formal_transaction_creation"],
+    }
+
+
+def _rg04_confirmed_state(baseline: dict) -> dict:
+    result = deepcopy(baseline)
+    result["id"] = "state-rg04-confirmed"
+    result["as_of_operation_id"] = "operation-rg04-confirm"
+    candidate = next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04")
+    candidate["status_history"].append({"id": "status-candidate-purchase-rg04-confirmed", "sequence": 2, "status": "confirmed"})
+    candidate["payload"]["transaction_id"] = "tx-purchase-rg04-imported"
+    result["transactions"].append({"id": "tx-purchase-rg04-imported", "type": "expense", "current_version_id": "version-purchase-rg04-imported-v1"})
+    result["transaction_versions"].append({"id": "version-purchase-rg04-imported-v1", "transaction_id": "tx-purchase-rg04-imported", "version_number": 1, "posting_set_id": "posting-set-purchase-rg04-imported", "occurred_at": "2026-02-11T12:00:00+08:00", "statistics_at": "2026-02-11T12:00:00+08:00", "effective_at": "2026-02-11T12:00:00+08:00", "confirmation_id": "confirmation-rg04-confirm"})
+    posting_ids = ["posting-expense-rg04-imported", "posting-asset-rg04-imported", "posting-liability-rg04-imported"]
+    result["posting_sets"].append({"id": "posting-set-purchase-rg04-imported", "posting_ids": posting_ids})
+    result["postings"].extend([
+        {"id": posting_ids[0], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
+        {"id": posting_ids[1], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY", "role": "mixed_expense_asset_funding", "reconciliation_eligible": True},
+        {"id": posting_ids[2], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY", "role": "mixed_expense_credit_funding", "reconciliation_eligible": True},
+    ])
+    result["confirmations"].append({"id": "confirmation-rg04-confirm", "type": "candidate_confirmation", "operation_id": "operation-rg04-confirm", "subject": {"kind": "candidate", "id": "candidate-purchase-rg04"}, "payload": {}})
+    result["relations"].append({"id": "relation-rg04-imported", "type": "mixed_payment", "member_refs": [{"kind": "transaction", "id": "tx-purchase-rg04-imported"}, {"kind": "posting", "id": posting_ids[1]}, {"kind": "posting", "id": posting_ids[2]}], "payload": {"system_managed": True, "display_name": "Mixed payment", "generic_order_lifecycle": False, "payment_composition_total": "120.00", "funding_components": [{"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY", "posting_id": posting_ids[1]}, {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY", "posting_id": posting_ids[2]}]}})
+    result["posting_reconciliations"].extend([{"id": "reconciliation-rg04-imported-asset", "posting_id": posting_ids[1], "status": "pending"}, {"id": "reconciliation-rg04-imported-liability", "posting_id": posting_ids[2], "status": "pending"}])
+    return result
 
 
 def rg03_full_manual_case() -> dict:
@@ -5862,6 +6111,502 @@ class GoldenV2DependencyIsolationTests(unittest.TestCase):
         self.assertTrue(callable(golden_cases.migration_semantic_key))
         self.assertTrue(callable(golden_cases.deterministic_v2_root_id))
         self.assertTrue(callable(golden_cases.deterministic_v2_migration_id))
+
+class GoldenV2RG04GapTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        cls.schema_defs = {"$defs": schema["$defs"]}
+
+    def test_rg04_closed_input_registry_and_strict_confirmation(self):
+        samples = {
+            "manualMixedExpenseInput": {
+                "request_id": "req", "asset_account_id": "asset", "liability_account_id": "liability",
+                "asset_funding_amount": "70.00", "liability_funding_amount": "50.00", "total_amount": "120.00",
+                "currency": "CNY", "category_id": "category", "occurred_at": "2026-01-20T10:00:00+08:00",
+                "settlement_explanation": {"original_amount": "130.00", "discount_amount": "10.00", "settled_amount": "120.00"},
+                "explicit_confirmation": True,
+            },
+            "manualMixedExpenseAttemptedInput": {
+                "request_id": "req", "total_amount": "120.00", "currency": "CNY", "category_id": "category",
+                "funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY"}],
+            },
+            "creditPrincipalRepaymentInput": {"request_id": "req", "asset_account_id": "asset", "liability_account_id": "liability", "principal_amount": "50.00", "currency": "CNY", "occurred_at": "2026-01-20T10:00:00+08:00", "explicit_confirmation": True},
+            "confirmMixedPaymentCandidateInput": {"request_id": "req", "candidate_id": "candidate", "confirmed_funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY"}], "explicit_confirmation": True},
+        }
+        for definition, sample in samples.items():
+            with self.subTest(definition=definition):
+                validator = Draft202012Validator({**self.schema_defs, "$ref": f"#/$defs/{definition}"})
+                self.assertTrue(validator.is_valid(sample))
+                invalid = deepcopy(sample)
+                invalid["unexpected"] = True
+                self.assertFalse(validator.is_valid(invalid))
+
+    def test_rg04_source_variants_require_complete_or_single_known_leg(self):
+        validator = Draft202012Validator({**self.schema_defs, "$ref": "#/$defs/source"})
+        base = {"id": "source", "type": "mixed_payment", "payload": {"evidence_id": "evidence", "observed_at": "2026-01-20T10:00:00+08:00", "total_amount": "120.00", "currency": "CNY", "suggested_category_id": "category", "completeness": "complete", "funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY", "evidence_available": True}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY", "evidence_available": True}]}}
+        self.assertEqual(base["id"], "source")
+        self.assertNotIn("id", base["payload"])
+        self.assertTrue(validator.is_valid(base))
+        incomplete = deepcopy(base)
+        incomplete["payload"]["completeness"] = "missing_funding_leg"
+        incomplete["payload"].pop("suggested_category_id")
+        incomplete["payload"].pop("funding_components")
+        incomplete["payload"]["known_asset_funding_amount"] = "70.00"
+        self.assertTrue(validator.is_valid(incomplete))
+        forbidden = deepcopy(incomplete)
+        forbidden["payload"]["known_asset_funding_amount"] = None
+        self.assertFalse(validator.is_valid(forbidden))
+
+    def test_rg04_operation_registry_has_no_generic_kind_escape(self):
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        actions = schema["$defs"]["operationBase"]["properties"]["action_type"]["enum"]
+        self.assertIn("manual_mixed_expense", actions)
+        self.assertIn("credit_principal_repayment", actions)
+        self.assertIn("ingest_mixed_payment_source", actions)
+        self.assertIn("confirm_mixed_payment_candidate", actions)
+        self.assertIn("merge_mixed_payment_mirror_evidence", actions)
+        self.assertNotIn("kind", schema["$defs"]["operationBase"]["properties"])
+
+    def test_rg04_manual_mixed_expense_creation_has_exact_effects(self):
+        case, baseline, result = rg04_creation_case("manual_mixed_expense")
+        operation = case["operations"][0]
+        expected = golden_v2._expected_entity_changes(baseline, result)
+        golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2}, ZoneInfo("Asia/Shanghai"))
+        golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
+        golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
+        self.assertEqual(operation["returned_ids"][1], {"kind": "transaction", "id": "tx-rg04-expense"})
+        self.assertTrue(operation["input"]["explicit_confirmation"])
+        self.assertEqual({item["role"] for item in result["postings"][-3:]}, {"expense", "mixed_expense_asset_funding", "mixed_expense_credit_funding"})
+        self.assertEqual({item["account_id"]: item["amount"] for item in result["balances"] if item["account_id"] in {"asset-bank-a", "liability-credit-b"}}, {"asset-bank-a": "930.00", "liability-credit-b": "-50.00"})
+        self.assertEqual({item["key"]["metric"]: item["after"]["amount"] for item in operation["deltas"]["value_changes"]["reports"]}, {"cash_outflow": "70.00", "consumption": "120.00", "net_worth_change": "-120.00"})
+
+    def test_rg04_credit_principal_repayment_creation_has_no_consumption(self):
+        case, baseline, result = rg04_creation_case("credit_principal_repayment")
+        operation = case["operations"][0]
+        expected = golden_v2._expected_entity_changes(baseline, result)
+        golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2}, ZoneInfo("Asia/Shanghai"))
+        golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
+        golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
+        self.assertEqual(operation["returned_ids"][1], {"kind": "transaction", "id": "tx-rg04-repayment"})
+        self.assertEqual({item["role"] for item in result["postings"][-2:]}, {"credit_repayment_asset_outflow", "credit_repayment_liability_principal"})
+        self.assertEqual({item["key"]["metric"]: item["after"]["amount"] for item in operation["deltas"]["value_changes"]["reports"]}, {"cash_outflow": "50.00"})
+
+    def test_rg04_creation_rejects_missing_confirmation_and_wrong_accounts_or_roles(self):
+        case, baseline, result = rg04_creation_case("manual_mixed_expense")
+        missing_confirmation = deepcopy(case)
+        missing_confirmation["operations"][0]["input"]["explicit_confirmation"] = False
+        with self.assertRaisesRegex(GoldenCaseError, "explicit_confirmation"):
+            validate_golden_case_v2(missing_confirmation)
+
+        operation = case["operations"][0]
+        with self.assertRaisesRegex(GoldenCaseError, "matching owned real account"):
+            invalid = deepcopy(operation)
+            invalid["input"]["liability_account_id"] = "asset-bank-a"
+            golden_v2._validate_action_input(invalid, "$.operations[0]", baseline, {"CNY": 2}, ZoneInfo("Asia/Shanghai"))
+
+        expected = golden_v2._expected_entity_changes(baseline, result)
+        invalid_result = deepcopy(result)
+        invalid_result["postings"][-1]["role"] = "expense"
+        with self.assertRaisesRegex(GoldenCaseError, "exact expense and two funding roles"):
+            golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, invalid_result, expected)
+
+    def test_rg04_ingest_action_input_validates_complete_and_missing_leg_variants(self):
+        _, baseline = _rg04_import_baseline()
+        complete = {
+            "request_id": "request-rg04-complete-input",
+            "source_record": _rg04_complete_source(),
+        }
+        missing = {
+            "request_id": "request-rg04-missing-input",
+            "source_record": _rg04_missing_source(),
+        }
+
+        def validate(source_input):
+            golden_v2._validate_action_input(
+                {"action_type": "ingest_mixed_payment_source", "input": source_input, "outcome": {"status": "accepted"}},
+                "$.operations[0]",
+                baseline,
+                {"CNY": 2, "USD": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+        validate(complete)
+        validate(missing)
+
+        invalid_complete = []
+        mutation = deepcopy(complete)
+        mutation["source_record"]["funding_components"][0]["account_id"] = "unknown-account"
+        invalid_complete.append(mutation)
+        mutation = deepcopy(complete)
+        mutation["source_record"]["funding_components"][0]["account_id"] = "expense-account-breakfast"
+        invalid_complete.append(mutation)
+        mutation = deepcopy(complete)
+        mutation["source_record"]["funding_components"][1]["account_id"] = "asset-bank-a"
+        invalid_complete.append(mutation)
+        mutation = deepcopy(complete)
+        mutation["source_record"]["funding_components"][1]["currency"] = "USD"
+        invalid_complete.append(mutation)
+        for invalid in invalid_complete:
+            with self.subTest(mutation=invalid):
+                with self.assertRaises(GoldenCaseError):
+                    validate(invalid)
+
+        for amount in ("0.00", "120.00", "130.00"):
+            invalid = deepcopy(missing)
+            invalid["source_record"]["known_asset_funding_amount"] = amount
+            with self.subTest(known_asset_funding_amount=amount):
+                with self.assertRaises(GoldenCaseError):
+                    validate(invalid)
+
+    def test_rg04_ingest_complete_and_missing_inputs_create_pending_candidates_only(self):
+        case, baseline = _rg04_import_baseline()
+        cases = (
+            (_rg04_complete_source(), "candidate-rg04-complete", "1.00", _rg04_complete_candidate_payload),
+            (_rg04_missing_source(), "candidate-rg04-missing", "0.50", _rg04_missing_candidate_payload),
+        )
+        for source, candidate_id, confidence, payload_builder in cases:
+            with self.subTest(source_id=source["id"]):
+                result = _rg04_ingested_state(
+                    baseline,
+                    source,
+                    candidate_id,
+                    confidence,
+                    payload_builder(source),
+                )
+                operation = _rg04_action(
+                    case,
+                    baseline,
+                    result,
+                    "ingest_mixed_payment_source",
+                    {"request_id": f"request-{candidate_id}", "source_record": source},
+                    f"operation-{candidate_id}-ingest",
+                )
+                operation["returned_ids"] = [
+                    {"kind": "source", "id": source["id"]},
+                    {"kind": "evidence", "id": source["evidence_id"]},
+                    {"kind": "candidate", "id": candidate_id},
+                ]
+                expected = golden_v2._expected_entity_changes(baseline, result)
+                golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
+                golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
+                golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
+                self.assertEqual(result["candidates"][-1]["status_history"][-1]["status"], "pending_confirmation")
+                self.assertEqual(result["transactions"], baseline["transactions"])
+                self.assertEqual(golden_v2._balance_map(result), golden_v2._balance_map(baseline))
+                self.assertEqual(golden_v2._report_map(result), golden_v2._report_map(baseline))
+
+    def test_rg04_confirm_candidate_creates_expense_roles_and_mixed_payment_relation(self):
+        case, baseline = _rg04_import_baseline()
+        source = _rg04_complete_source()
+        baseline = _rg04_ingested_state(
+            baseline,
+            source,
+            "candidate-purchase-rg04",
+            "1.00",
+            _rg04_complete_candidate_payload(source),
+        )
+        result = _rg04_confirmed_state(baseline)
+        input_value = {
+            "request_id": "request-rg04-confirm",
+            "candidate_id": "candidate-purchase-rg04",
+            "confirmed_funding_components": [
+                {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+                {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"},
+            ],
+            "explicit_confirmation": True,
+        }
+        operation = _rg04_action(case, baseline, result, "confirm_mixed_payment_candidate", input_value, "operation-rg04-confirm")
+        operation["returned_ids"] = [
+            {"kind": "confirmation", "id": "confirmation-rg04-confirm"},
+            {"kind": "transaction", "id": "tx-purchase-rg04-imported"},
+        ]
+        expected = golden_v2._expected_entity_changes(baseline, result)
+        golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
+        golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
+        golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
+        self.assertEqual(
+            {posting["role"] for posting in result["postings"][-3:]},
+            {"expense", "mixed_expense_asset_funding", "mixed_expense_credit_funding"},
+        )
+        self.assertEqual(result["relations"][-1]["type"], "mixed_payment")
+        self.assertEqual(
+            {item["kind"] for item in result["relations"][-1]["member_refs"]},
+            {"transaction", "posting"},
+        )
+
+    def test_rg04_mirror_adds_credit_liability_evidence_and_matches_one_reconciliation(self):
+        case, baseline = _rg04_import_baseline()
+        source = _rg04_complete_source()
+        baseline = _rg04_ingested_state(
+            baseline,
+            source,
+            "candidate-purchase-rg04",
+            "1.00",
+            _rg04_complete_candidate_payload(source),
+        )
+        baseline = _rg04_confirmed_state(baseline)
+        result = deepcopy(baseline)
+        result["id"] = "state-rg04-mirror"
+        result["as_of_operation_id"] = "operation-rg04-mirror"
+        mirror_source = _rg04_complete_source("source-rg04-credit-mirror", "evidence-rg04-credit-mirror")
+        result["sources"].append({"id": mirror_source["id"], "type": "mixed_payment", "payload": {key: value for key, value in mirror_source.items() if key != "id"}})
+        result["evidence"].append({"id": mirror_source["evidence_id"], "type": "credit_liability_mirror", "source_ids": [mirror_source["id"]], "payload": {"observed_at": mirror_source["observed_at"]}})
+        result["evidence_links"].append({"id": "link-rg04-credit-mirror", "evidence_id": mirror_source["evidence_id"], "target_kind": "posting", "target_id": "posting-liability-rg04-imported", "role": "real_account_posting"})
+        next(item for item in result["posting_reconciliations"] if item["posting_id"] == "posting-liability-rg04-imported")["status"] = "matched"
+        operation = _rg04_action(case, baseline, result, "merge_mixed_payment_mirror_evidence", {
+            "request_id": "request-rg04-credit-mirror", "source_record_id": mirror_source["id"], "evidence_id": mirror_source["evidence_id"],
+            "transaction_id": "tx-purchase-rg04-imported", "candidate_id": "candidate-purchase-rg04", "account_id": "liability-credit-b",
+            "amount": "50.00", "currency": "CNY", "observed_at": mirror_source["observed_at"],
+        }, "operation-rg04-mirror")
+        operation["returned_ids"] = [
+            {"kind": "source", "id": mirror_source["id"]},
+            {"kind": "evidence", "id": mirror_source["evidence_id"]},
+            {"kind": "evidence_link", "id": "link-rg04-credit-mirror"},
+        ]
+        expected = golden_v2._expected_entity_changes(baseline, result)
+        golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
+        golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
+        golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
+        self.assertEqual(result["transactions"], baseline["transactions"])
+        self.assertEqual(result["postings"], baseline["postings"])
+        self.assertEqual(result["relations"], baseline["relations"])
+        self.assertEqual(expected["posting_reconciliations"]["changed_ids"], ["reconciliation-rg04-imported-liability"])
+        self.assertEqual(
+            next(item for item in result["posting_reconciliations"] if item["id"] == "reconciliation-rg04-imported-liability")["status"],
+            "matched",
+        )
+
+        for mutation, message in (("status", "matched"), ("target", "posting-asset-rg04-imported")):
+            invalid_result = deepcopy(result)
+            reconciliation = next(
+                item for item in invalid_result["posting_reconciliations"]
+                if item["id"] == "reconciliation-rg04-imported-liability"
+            )
+            if mutation == "status":
+                reconciliation["status"] = "pending"
+            else:
+                reconciliation["posting_id"] = message
+            invalid_expected = golden_v2._expected_entity_changes(baseline, invalid_result)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_registered_action_effects(
+                        operation, "$.operations[0]", invalid_result, invalid_expected
+                    )
+
+    def test_rg04_mirror_requires_confirmed_bound_candidate_and_exact_liability_funding(self):
+        _, baseline = _rg04_import_baseline()
+        source = _rg04_complete_source()
+        baseline = _rg04_ingested_state(
+            baseline,
+            source,
+            "candidate-purchase-rg04",
+            "1.00",
+            _rg04_complete_candidate_payload(source),
+        )
+        baseline = _rg04_confirmed_state(baseline)
+        valid = {
+            "request_id": "request-rg04-mirror-validation",
+            "source_record_id": source["id"],
+            "evidence_id": source["evidence_id"],
+            "transaction_id": "tx-purchase-rg04-imported",
+            "candidate_id": "candidate-purchase-rg04",
+            "account_id": "liability-credit-b",
+            "amount": "50.00",
+            "currency": "CNY",
+            "observed_at": source["observed_at"],
+        }
+        mutations = []
+        mutation = deepcopy(baseline)
+        mutation["candidates"][0]["status_history"][-1]["status"] = "pending_confirmation"
+        mutations.append((mutation, valid, "confirmed mixed payment candidate"))
+        mutation = deepcopy(baseline)
+        mutation["candidates"][0]["payload"]["transaction_id"] = "unknown-transaction"
+        mutations.append((mutation, valid, "confirmed candidate transaction"))
+        invalid = deepcopy(valid)
+        invalid["account_id"] = "asset-bank-a"
+        invalid["amount"] = "70.00"
+        mutations.append((baseline, invalid, "liability funding account"))
+        invalid = deepcopy(valid)
+        invalid["amount"] = "49.99"
+        mutations.append((baseline, invalid, "liability funding posting"))
+        invalid = deepcopy(valid)
+        invalid["currency"] = "USD"
+        mutations.append((baseline, invalid, "liability funding posting"))
+        for state, input_value, message in mutations:
+            with self.subTest(input=input_value, message=message):
+                operation = {"action_type": "merge_mixed_payment_mirror_evidence", "input": input_value, "outcome": {"status": "accepted"}}
+                with self.assertRaisesRegex(GoldenCaseError, message):
+                    golden_v2._validate_action_input(operation, "$.operations[0]", state, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
+
+    def test_rg04_no_change_retry_preserves_the_accepted_ingest_result_exactly(self):
+        case, baseline = _rg04_import_baseline()
+        source = _rg04_complete_source()
+        accepted_result = _rg04_ingested_state(
+            baseline,
+            source,
+            "candidate-rg04-retry",
+            "1.00",
+            _rg04_complete_candidate_payload(source),
+        )
+        input_value = {"request_id": "request-rg04-retry", "source_record": source}
+        accepted = _rg04_action(case, baseline, accepted_result, "ingest_mixed_payment_source", input_value, "operation-rg04-accepted")
+        accepted["returned_ids"] = [{"kind": "source", "id": source["id"]}, {"kind": "evidence", "id": source["evidence_id"]}, {"kind": "candidate", "id": "candidate-rg04-retry"}]
+        retry_result = deepcopy(accepted_result)
+        retry_result["id"] = "state-rg04-retry"
+        retry_result["as_of_operation_id"] = "operation-rg04-retry"
+        retry = _rg04_action(case, accepted_result, retry_result, "ingest_mixed_payment_source", input_value, "operation-rg04-retry", {"status": "no_change", "reason_code": "idempotent_replay"})
+        retry["sequence"] = 2
+        retry["returned_ids"] = deepcopy(accepted["returned_ids"])
+        expected = golden_v2._expected_entity_changes(accepted_result, retry_result)
+        golden_v2._validate_action_input(retry, "$.operations[1]", accepted_result, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
+        golden_v2._validate_registered_action_effects(retry, "$.operations[1]", retry_result, expected)
+        golden_v2._validate_action_semantics(retry, "$.operations[1]", accepted_result, retry_result, expected)
+        golden_v2._validate_no_change_retry(retry, "$.operations[1]", [accepted])
+        self.assertEqual(retry_result["transactions"], accepted_result["transactions"])
+        self.assertEqual(golden_v2._balance_map(retry_result), golden_v2._balance_map(accepted_result))
+        self.assertEqual(golden_v2._report_map(retry_result), golden_v2._report_map(accepted_result))
+
+    def test_rg04_invalid_manual_inputs_are_atomic_and_match_first_failure(self):
+        case, initial, _ = rg04_creation_case("manual_mixed_expense")
+        initial = deepcopy(initial)
+        initial["id"] = "state-rg04-invalid-initial"
+        initial["root_id"] = "root-rg04-invalid"
+        initial["as_of_operation_id"] = None
+        initial["catalog"]["accounts"].extend([
+            {
+                "id": "asset-external-x", "name": "External asset", "kind": "asset",
+                "currency": "CNY", "owned_by_user": False, "real_account": True,
+                "reconciliation_eligible": False,
+            },
+            {
+                "id": "expense-account-inactive", "name": "Inactive expense", "kind": "expense",
+                "currency": "CNY", "owned_by_user": False, "real_account": False,
+                "reconciliation_eligible": False,
+            },
+            {
+                "id": "income-account", "name": "Income", "kind": "income",
+                "currency": "CNY", "owned_by_user": False, "real_account": False,
+                "reconciliation_eligible": False,
+            },
+        ])
+        initial["catalog"]["categories"].extend([
+            {
+                "id": "expense-category-inactive", "name": "Inactive expense",
+                "parent_id": "expense-category-living", "posting_account_id": "expense-account-inactive",
+                "active": False,
+            },
+            {
+                "id": "income-category-general", "name": "Income", "parent_id": None,
+                "posting_account_id": None, "active": True,
+            },
+            {
+                "id": "income-category-other", "name": "Other income",
+                "parent_id": "income-category-general", "posting_account_id": "income-account",
+                "active": True,
+            },
+        ])
+        initial["balances"].extend([
+            {"account_id": "asset-external-x", "currency": "CNY", "amount": "0.00"},
+            {"account_id": "expense-account-inactive", "currency": "CNY", "amount": "0.00"},
+            {"account_id": "income-account", "currency": "CNY", "amount": "0.00"},
+        ])
+        funding_mismatch_operation = None
+        for invalid in json.loads((REPOSITORY_ROOT / "golden" / "rules" / "rg-04.json").read_text(encoding="utf-8"))["invalid_manual_inputs"]:
+            attempted = {"request_id": f"request-rg04-invalid-{invalid['id']}"}
+            attempted.update(invalid["input"])
+            operation_id = f"operation-rg04-invalid-{invalid['id']}"
+            result = deepcopy(initial)
+            result["id"] = f"state-rg04-invalid-{invalid['id']}"
+            result["root_id"] = "root-rg04-invalid"
+            result["as_of_operation_id"] = operation_id
+            operation = {
+                "id": operation_id, "root_id": "root-rg04-invalid", "sequence": 1,
+                "operation_class": "rejection", "action_type": "manual_mixed_expense",
+                "baseline_state_id": initial["id"], "result_state_id": result["id"],
+                "attempted_input": attempted,
+                "outcome": {"status": "rejected", "reason_code": invalid["expected"]["reason"], "field_path": f"$.attempted_input.{invalid['expected']['field']}"},
+                "status_changes": [], "deltas": {"entity_changes": {name: {"added_ids": [], "changed_ids": [], "removed_ids": []} for name in ("catalog_accounts", "catalog_categories", "transactions", "transaction_versions", "posting_sets", "postings", "sources", "candidates", "confirmations", "evidence", "evidence_links", "relations", "domain_entities", "audit_links", "posting_reconciliations")}, "value_changes": {"balances": [], "reports": [], "derived_statuses": []}},
+                "returned_ids": [],
+            }
+            with self.subTest(invalid=invalid["id"]):
+                golden_v2._validate_rejected_manual_mixed_expense_attempt(
+                    operation, "$.operations[0]", initial
+                )
+                self.assertEqual(operation["attempted_input"], attempted)
+                self.assertEqual(operation["outcome"]["field_path"], f"$.attempted_input.{invalid['expected']['field']}")
+                self.assertEqual(operation["outcome"]["reason_code"], invalid["expected"]["reason"])
+                before_payload = deepcopy(initial)
+                after_payload = deepcopy(result)
+                before_payload.pop("id")
+                before_payload.pop("as_of_operation_id")
+                after_payload.pop("id")
+                after_payload.pop("as_of_operation_id")
+                self.assertEqual(after_payload, before_payload)
+                self.assertEqual(operation["returned_ids"], [])
+                for changes in operation["deltas"]["entity_changes"].values():
+                    self.assertEqual(changes, {"added_ids": [], "changed_ids": [], "removed_ids": []})
+                self.assertEqual(operation["deltas"]["value_changes"], {"balances": [], "reports": [], "derived_statuses": []})
+                if invalid["id"] == "funding-total-mismatch":
+                    funding_mismatch_operation = deepcopy(operation)
+
+        full_case = load_rg01()
+        full_root_id = "root-rg04-full-invalid"
+        full_operation_id = "operation-rg04-full-invalid-missing-secondary-category"
+        full_initial = deepcopy(full_case["states"][0])
+        full_initial["id"] = "state-rg04-full-invalid-initial"
+        full_initial["root_id"] = full_root_id
+        full_initial["as_of_operation_id"] = None
+        full_result = deepcopy(full_initial)
+        full_result["id"] = "state-rg04-full-invalid-result"
+        full_result["as_of_operation_id"] = full_operation_id
+        frozen_invalid = next(
+            item
+            for item in json.loads(RG04_V1_PATH.read_text(encoding="utf-8"))["invalid_manual_inputs"]
+            if item["id"] == "missing-secondary-category"
+        )
+        full_operation = {
+            "id": full_operation_id,
+            "root_id": full_root_id,
+            "sequence": 1,
+            "operation_class": "rejection",
+            "action_type": "manual_mixed_expense",
+            "baseline_state_id": full_initial["id"],
+            "result_state_id": full_result["id"],
+            "attempted_input": {
+                "request_id": "request-rg04-full-invalid-missing-secondary-category",
+                **frozen_invalid["input"],
+            },
+            "outcome": {
+                "status": "rejected",
+                "reason_code": "secondary_category_required",
+                "field_path": "$.attempted_input.category_id",
+            },
+            "status_changes": [],
+            "deltas": {
+                "entity_changes": {
+                    name: {"added_ids": [], "changed_ids": [], "removed_ids": []}
+                    for name in (
+                        "catalog_accounts", "catalog_categories", "transactions",
+                        "transaction_versions", "posting_sets", "postings", "sources",
+                        "candidates", "confirmations", "evidence", "evidence_links",
+                        "relations", "domain_entities", "audit_links",
+                        "posting_reconciliations",
+                    )
+                },
+                "value_changes": {"balances": [], "reports": [], "derived_statuses": []},
+            },
+            "returned_ids": [],
+        }
+        full_case["roots"] = [{
+            "id": full_root_id,
+            "purpose": "full rejected manual input",
+            "initial_state_id": full_initial["id"],
+            "operation_ids": [full_operation_id],
+        }]
+        full_case["states"] = [full_initial, full_result]
+        full_case["operations"] = [full_operation]
+        validate_golden_case_v2(full_case)
 
 
 if __name__ == "__main__":

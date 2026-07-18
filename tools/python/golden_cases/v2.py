@@ -184,6 +184,11 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
     },
     "import_mirror_record": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
     "import_incomplete_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
+    "manual_mixed_expense": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "confirmations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
+    "credit_principal_repayment": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (2, 0, 0), "confirmations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
+    "ingest_mixed_payment_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
+    "confirm_mixed_payment_candidate": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "candidates": (0, 1, 0), "confirmations": (1, 0, 0), "relations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
+    "merge_mixed_payment_mirror_evidence": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
 }
 _SET_LIKE_ARRAY_KEYS = {
     "accounts",
@@ -2336,6 +2341,11 @@ def _validate_reports(
             "ordinary_expense",
             "ordinary_income",
         },
+        "RG-04": {
+            "balance_adjustment_net_worth_change", "budget", "cash_inflow", "cash_outflow",
+            "consumption", "income", "internal_transfer_amount", "net_worth_change",
+            "ordinary_expense", "ordinary_income",
+        },
     }
     for report_index, report in enumerate(state["reports"]):
         report_path = f"{path}.reports[{report_index}]"
@@ -2885,6 +2895,98 @@ def _validate_rejected_manual_account_transfer_attempt(
         _fail(operation_path + ".outcome.reason_code", "must match the first failing attempted reason")
 
 
+def _validate_rejected_manual_mixed_expense_attempt(
+    operation: dict[str, Any], operation_path: str, baseline: dict[str, Any]
+) -> None:
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+
+    category_id = attempted.get("category_id")
+    category = categories.get(category_id) if category_id is not None else None
+    if category_id is not None and category is None:
+        _fail(attempted_path + ".category_id", "dangling category reference")
+
+    if "funding_components" in attempted:
+        components = attempted["funding_components"]
+    else:
+        components = []
+        for account_field, amount_field in (
+            ("asset_account_id", "asset_funding_amount"),
+            ("liability_account_id", "liability_funding_amount"),
+        ):
+            if account_field in attempted or amount_field in attempted:
+                components.append({
+                    "account_id": attempted.get(account_field),
+                    "funding_amount": attempted.get(amount_field),
+                    "currency": attempted.get("currency"),
+                })
+
+    total = attempted.get("total_amount")
+    failure: tuple[str, str] | None = None
+    if category_id is None or (category is not None and category["parent_id"] is None):
+        failure = ("category_id", "secondary_category_required")
+    elif category is not None and not category["active"]:
+        failure = ("category_id", "category_inactive")
+    elif category is not None and (
+        category["posting_account_id"] is None
+        or accounts[category["posting_account_id"]]["kind"] != "expense"
+    ):
+        failure = ("category_id", "expense_category_required")
+    elif total is not None and Decimal(total) <= 0:
+        failure = ("total_amount", "must_be_positive")
+
+    if failure is None:
+        for component in components:
+            amount = component.get("funding_amount")
+            if amount is not None and Decimal(amount) <= 0:
+                failure = ("funding_components", "funding_leg_must_be_positive")
+                break
+
+    if failure is None and total is not None and all(
+        component.get("funding_amount") is not None for component in components
+    ):
+        if sum((Decimal(component["funding_amount"]) for component in components), Decimal("0")) != Decimal(total):
+            failure = ("funding_components", "funding_total_must_equal_expense")
+
+    if failure is None:
+        seen_accounts: set[str] = set()
+        for component in components:
+            account_id = component.get("account_id")
+            account = accounts.get(account_id)
+            if account is None:
+                failure = ("funding_components", "unknown_real_account")
+                break
+            if not account["real_account"] or account["kind"] not in {"asset", "liability"}:
+                failure = ("funding_components", "real_financial_account_required")
+                break
+            if not account["owned_by_user"]:
+                failure = ("funding_components", "owned_account_required")
+                break
+            if account_id in seen_accounts:
+                failure = ("funding_components", "duplicate_funding_account")
+                break
+            seen_accounts.add(account_id)
+
+    if failure is None:
+        currencies = {component.get("currency") for component in components}
+        if len(currencies) > 1 or (
+            currencies and attempted.get("currency") not in currencies
+        ):
+            failure = ("funding_components", "single_currency_required")
+
+    if failure is None:
+        _fail(attempted_path, "does not match a registered rejected manual_mixed_expense failure")
+
+    field, reason = failure
+    expected_path = f"$.attempted_input.{field}"
+    if operation["outcome"]["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r} for the first failing attempted field")
+    if operation["outcome"]["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r} for the first failing attempted field")
+
+
 def _validate_rg10_structural_input(
     input_value: dict[str, Any],
     input_path: str,
@@ -3128,6 +3230,11 @@ def _validate_action_input(
             _validate_rejected_manual_account_transfer_attempt(
                 operation, operation_path, baseline, precisions, timezone
             )
+        elif action == "manual_mixed_expense":
+            _validate_rejected_manual_mixed_expense_attempt(
+                operation, operation_path, baseline
+            )
+            return
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
                 operation,
@@ -3147,7 +3254,141 @@ def _validate_action_input(
     candidates = {item["id"]: item for item in baseline["candidates"]}
     entities = {item["id"]: item for item in baseline["domain_entities"]}
 
-    if action in {"manual_expense", "manual_income"}:
+    if action == "manual_mixed_expense":
+        for field in ("asset_account_id", "liability_account_id"):
+            account = accounts.get(input_value[field])
+            if account is None or account["kind"] != ("asset" if field.startswith("asset") else "liability") or not account["owned_by_user"] or not account["real_account"]:
+                _fail(input_path + "." + field, "must reference the matching owned real account")
+            if account["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match both funding accounts")
+        category = categories.get(input_value["category_id"])
+        if category is None or category["parent_id"] is None or not category["active"]:
+            _fail(input_path + ".category_id", "must reference an active second-level category")
+        for field in ("asset_funding_amount", "liability_funding_amount", "total_amount"):
+            _amount(input_value[field], input_value["currency"], input_path + "." + field, precisions)
+        if Decimal(input_value["asset_funding_amount"]) + Decimal(input_value["liability_funding_amount"]) != Decimal(input_value["total_amount"]):
+            _fail(input_path + ".total_amount", "must equal the two funding components")
+        explanation = input_value["settlement_explanation"]
+        if Decimal(explanation["original_amount"]) - Decimal(explanation["discount_amount"]) != Decimal(explanation["settled_amount"]) or Decimal(explanation["settled_amount"]) != Decimal(input_value["total_amount"]):
+            _fail(input_path + ".settlement_explanation", "must reconcile original, discount, settled, and total amounts")
+        _timestamp(input_value["occurred_at"], input_path + ".occurred_at", timezone)
+    elif action == "credit_principal_repayment":
+        for field, kind in (("asset_account_id", "asset"), ("liability_account_id", "liability")):
+            account = accounts.get(input_value[field])
+            if account is None or account["kind"] != kind or not account["owned_by_user"] or not account["real_account"]:
+                _fail(input_path + "." + field, "must reference the matching owned real account")
+            if account["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match both repayment accounts")
+        _amount(input_value["principal_amount"], input_value["currency"], input_path + ".principal_amount", precisions)
+        _timestamp(input_value["occurred_at"], input_path + ".occurred_at", timezone)
+    elif action == "ingest_mixed_payment_source":
+        record = input_value["source_record"]
+        _timestamp(record["observed_at"], input_path + ".source_record.observed_at", timezone)
+        source_path = input_path + ".source_record"
+        currency = record["currency"]
+        total = _amount(record["total_amount"], currency, source_path + ".total_amount", precisions)
+        if total <= 0:
+            _fail(source_path + ".total_amount", "must be positive")
+
+        if record["completeness"] == "missing_funding_leg":
+            known = _amount(
+                record["known_asset_funding_amount"],
+                currency,
+                source_path + ".known_asset_funding_amount",
+                precisions,
+            )
+            if known <= 0:
+                _fail(source_path + ".known_asset_funding_amount", "must be positive")
+            missing = total - known
+            if missing <= 0:
+                _fail(source_path + ".known_asset_funding_amount", "must be less than total_amount")
+        else:
+            components = record["funding_components"]
+            if len(components) != 2:
+                _fail(source_path + ".funding_components", "complete source must contain exactly two components")
+            seen_accounts: set[str] = set()
+            component_total = Decimal(0)
+            for index, component in enumerate(components):
+                component_path = f"{source_path}.funding_components[{index}]"
+                account_id = component["account_id"]
+                account = accounts.get(account_id)
+                if account is None:
+                    _fail(component_path + ".account_id", "must reference a known account")
+                if not (account["owned_by_user"] and account["real_account"] and account["kind"] in {"asset", "liability"}):
+                    _fail(component_path + ".account_id", "must reference an owned real asset or liability account")
+                if account_id in seen_accounts:
+                    _fail(component_path + ".account_id", "funding accounts must be distinct")
+                seen_accounts.add(account_id)
+                if component["currency"] != currency or account["currency"] != currency:
+                    _fail(component_path + ".currency", "must match source and account currency")
+                amount = _amount(
+                    component["funding_amount"],
+                    component["currency"],
+                    component_path + ".funding_amount",
+                    precisions,
+                )
+                if amount <= 0:
+                    _fail(component_path + ".funding_amount", "must be positive")
+                component_total += amount
+            if component_total != total:
+                _fail(source_path + ".funding_components", "funding amounts must sum to total_amount")
+    elif action == "confirm_mixed_payment_candidate":
+        candidate = candidates.get(input_value["candidate_id"])
+        if candidate is None or candidate["type"] != "mixed_payment":
+            _fail(input_path + ".candidate_id", "must reference a mixed payment candidate")
+    elif action == "merge_mixed_payment_mirror_evidence":
+        for field, collection in (("transaction_id", transactions), ("candidate_id", candidates), ("account_id", accounts)):
+            if input_value[field] not in collection:
+                _fail(input_path + "." + field, "dangling reference")
+        candidate = candidates[input_value["candidate_id"]]
+        if candidate["type"] != "mixed_payment":
+            _fail(input_path + ".candidate_id", "must reference a mixed payment candidate")
+        if candidate["status_history"][-1]["status"] != "confirmed":
+            _fail(input_path + ".candidate_id", "must reference a confirmed mixed payment candidate")
+        if candidate["payload"].get("transaction_id") != input_value["transaction_id"]:
+            _fail(input_path + ".transaction_id", "must match the confirmed candidate transaction")
+
+        transaction = transactions[input_value["transaction_id"]]
+        if transaction["type"] != "expense":
+            _fail(input_path + ".transaction_id", "must reference an expense mixed payment transaction")
+        versions = {item["id"]: item for item in baseline["transaction_versions"]}
+        posting_sets = {item["id"]: item for item in baseline["posting_sets"]}
+        postings = {item["id"]: item for item in baseline["postings"]}
+        version = versions.get(transaction["current_version_id"])
+        posting_set = posting_sets.get(version["posting_set_id"]) if version else None
+        current_postings = [postings[posting_id] for posting_id in posting_set["posting_ids"]] if posting_set else []
+        postings_by_role = {posting.get("role"): posting for posting in current_postings}
+        if set(postings_by_role) != {"expense", "mixed_expense_asset_funding", "mixed_expense_credit_funding"}:
+            _fail(input_path + ".transaction_id", "must reference a mixed payment expense transaction")
+        liability_posting = postings_by_role["mixed_expense_credit_funding"]
+        liability_account = accounts[input_value["account_id"]]
+        if liability_account["kind"] != "liability" or not liability_account["owned_by_user"] or not liability_account["real_account"]:
+            _fail(input_path + ".account_id", "must reference the mixed payment liability funding account")
+        if liability_posting["account_id"] != input_value["account_id"]:
+            _fail(input_path + ".account_id", "must match the transaction liability funding posting")
+        if liability_posting["currency"] != input_value["currency"] or liability_account["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match the transaction liability funding posting")
+        amount = _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        if amount != -Decimal(liability_posting["amount"]):
+            _fail(input_path + ".amount", "must match the transaction liability funding posting")
+        mixed_payment_relations = [
+            relation
+            for relation in baseline["relations"]
+            if relation["type"] == "mixed_payment"
+            and {ref["id"] for ref in relation["member_refs"] if ref["kind"] == "transaction"} == {input_value["transaction_id"]}
+        ]
+        if len(mixed_payment_relations) != 1:
+            _fail(input_path + ".transaction_id", "must reference the transaction's mixed_payment relation")
+        relation_posting_ids = {
+            ref["id"] for ref in mixed_payment_relations[0]["member_refs"] if ref["kind"] == "posting"
+        }
+        if relation_posting_ids != {
+            postings_by_role["mixed_expense_asset_funding"]["id"],
+            liability_posting["id"],
+        }:
+            _fail(input_path + ".transaction_id", "must reference the transaction's funding postings")
+        _timestamp(input_value["observed_at"], input_path + ".observed_at", timezone)
+    elif action in {"manual_expense", "manual_income"}:
         category = categories.get(input_value["category_id"])
         if category is None:
             _fail(input_path + ".category_id", "dangling category reference")
@@ -3813,6 +4054,80 @@ def _validate_registered_action_effects(
             _fail(operation_path + ".returned_ids", "complete intake must return exactly its source, evidence, and candidate")
         return
 
+    if action == "ingest_mixed_payment_source":
+        input_record = operation["input"]["source_record"]
+        source = added_item("sources", {item["id"]: item for item in result["sources"]})
+        candidate = added_item("candidates", result_candidates)
+        evidence = added_item("evidence", {item["id"]: item for item in result["evidence"]})
+        expected_payload = {key: value for key, value in input_record.items() if key != "id"}
+        if source["id"] != input_record["id"] or source["type"] != "mixed_payment" or source["payload"] != expected_payload:
+            _fail(operation_path + ".result_state_id", "mixed payment source must exactly preserve the source record")
+        if evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_record["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "mixed payment evidence must bind source identity and observed_at")
+        if candidate["type"] != "mixed_payment" or candidate["source_ids"] != [source["id"]] or candidate["status_history"][-1]["status"] != "pending_confirmation":
+            _fail(operation_path + ".result_state_id", "mixed payment candidate must remain pending")
+        return
+
+    if action == "merge_mixed_payment_mirror_evidence":
+        for collection_name in ("transactions", "transaction_versions", "posting_sets", "postings", "relations"):
+            changes = expected_entities[collection_name]
+            if changes["added_ids"] or changes["changed_ids"] or changes["removed_ids"]:
+                _fail(operation_path + ".deltas.entity_changes", "mirror evidence cannot change formal ledger or relation effects")
+        source = added_item("sources", {item["id"]: item for item in result["sources"]})
+        evidence = added_item("evidence", {item["id"]: item for item in result["evidence"]})
+        link = added_item("evidence_links", {item["id"]: item for item in result["evidence_links"]})
+        input_value = operation["input"]
+        candidate = next(item for item in result["candidates"] if item["id"] == input_value["candidate_id"])
+        if candidate["type"] != "mixed_payment" or candidate["status_history"][-1]["status"] != "confirmed" or candidate["payload"].get("transaction_id") != input_value["transaction_id"]:
+            _fail(operation_path + ".input.candidate_id", "must bind a confirmed mixed payment candidate to the input transaction")
+        transaction = next(item for item in result["transactions"] if item["id"] == input_value["transaction_id"])
+        if transaction["type"] != "expense":
+            _fail(operation_path + ".input.transaction_id", "must reference an expense mixed payment transaction")
+        if source["id"] != input_value["source_record_id"] or evidence["id"] != input_value["evidence_id"]:
+            _fail(operation_path + ".result_state_id", "mirror identities must exactly match the action input")
+        if source["type"] != "mixed_payment" or source["payload"].get("evidence_id") != evidence["id"] or source["payload"].get("observed_at") != input_value["observed_at"]:
+            _fail(operation_path + ".result_state_id", "mirror source must preserve the mixed payment evidence identity and observed_at")
+        if evidence["type"] != "credit_liability_mirror" or evidence["source_ids"] != [source["id"]] or evidence["payload"] != {"observed_at": input_value["observed_at"]}:
+            _fail(operation_path + ".result_state_id", "mirror evidence must bind the mixed source and observed_at")
+        if link["evidence_id"] != evidence["id"] or link["target_kind"] != "posting" or link["role"] != "real_account_posting":
+            _fail(operation_path + ".result_state_id", "mirror evidence link must use the RG04 real_account_posting role")
+        versions = {item["id"]: item for item in result["transaction_versions"]}
+        posting_sets = {item["id"]: item for item in result["posting_sets"]}
+        postings = {item["id"]: item for item in result["postings"]}
+        version = versions[transaction["current_version_id"]]
+        posting_set = posting_sets[version["posting_set_id"]]
+        current_postings = {posting_id: postings[posting_id] for posting_id in posting_set["posting_ids"]}
+        liability_postings = [
+            posting for posting in current_postings.values()
+            if posting.get("role") == "mixed_expense_credit_funding"
+            and posting["account_id"] == input_value["account_id"]
+            and posting["currency"] == input_value["currency"]
+            and -Decimal(posting["amount"]) == Decimal(input_value["amount"])
+        ]
+        if len(liability_postings) != 1 or link["target_id"] != liability_postings[0]["id"]:
+            _fail(operation_path + ".result_state_id", "mirror evidence link must target the exact liability funding posting")
+        reconciliation_changes = expected_entities["posting_reconciliations"]
+        changed_reconciliation_ids = reconciliation_changes["changed_ids"]
+        if (
+            reconciliation_changes["added_ids"]
+            or reconciliation_changes["removed_ids"]
+            or len(changed_reconciliation_ids) != 1
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes.posting_reconciliations",
+                "mirror evidence must change exactly one existing reconciliation",
+            )
+        changed_reconciliation = result_reconciliations[changed_reconciliation_ids[0]]
+        if (
+            changed_reconciliation["posting_id"] != liability_postings[0]["id"]
+            or changed_reconciliation["status"] != "matched"
+        ):
+            _fail(
+                operation_path + ".result_state_id",
+                "mirror reconciliation must target the liability funding posting and be matched",
+            )
+        return
+
     if action == "import_incomplete_source":
         input_value = operation["input"]
         source = next(item for item in result["sources"] if item["id"] in expected_entities["sources"]["added_ids"])
@@ -3854,6 +4169,9 @@ def _validate_registered_action_effects(
         "confirm_balance_adjustment": "balance_adjustment",
         "confirm_real_transfer": "account_transfer",
         "confirm_explanation_allocation": "balance_adjustment_reversal",
+        "manual_mixed_expense": "expense",
+        "credit_principal_repayment": "credit_repayment",
+        "confirm_mixed_payment_candidate": "expense",
     }
     expected_type = created_type_by_action[action]
     added_transactions = expected_entities["transactions"]["added_ids"]
@@ -3886,10 +4204,70 @@ def _validate_registered_action_effects(
             f"{action} posting set must contain exactly the postings added by the action",
         )
 
-    if action in {"manual_expense", "manual_income", "manual_account_transfer"}:
+    if action in {"manual_expense", "manual_income", "manual_account_transfer", "manual_mixed_expense", "credit_principal_repayment"}:
         confirmation = validate_confirmation(
             "explicit_manual_save", "operation", operation["id"]
         )
+    elif action == "confirm_mixed_payment_candidate":
+        candidate_id = operation["input"]["candidate_id"]
+        if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
+            _fail(
+                effect_path("candidates"),
+                "mixed payment confirmation may only append status to its input candidate",
+            )
+        candidate = result_candidates[candidate_id]
+        if candidate["status_history"][-1]["status"] != "confirmed":
+            _fail(
+                effect_path("candidates"),
+                "confirmed mixed payment candidate history must end in confirmed",
+            )
+        confirmation = validate_confirmation(
+            "candidate_confirmation", "candidate", candidate_id
+        )
+        transaction_id = expected_entities["transactions"]["added_ids"]
+        if len(transaction_id) != 1:
+            _fail(
+                effect_path("transactions"),
+                "mixed payment confirmation must add exactly one transaction",
+            )
+        transaction_id = transaction_id[0]
+        if candidate["payload"].get("transaction_id") != transaction_id:
+            _fail(
+                effect_path("candidates"),
+                "confirmed mixed payment candidate must bind the created transaction",
+            )
+        version = result_versions[expected_entities["transaction_versions"]["added_ids"][0]]
+        if (
+            version["transaction_id"] != transaction_id
+            or version.get("confirmation_id") != confirmation["id"]
+        ):
+            _fail(
+                effect_path("transaction_versions"),
+                "candidate confirmation must own the created transaction version",
+            )
+        relation = added_item("relations", {item["id"]: item for item in result["relations"]})
+        posting_ids = expected_entities["postings"]["added_ids"]
+        expected_members = {
+            ("transaction", transaction_id),
+            *[("posting", posting_id) for posting_id in posting_ids if result_postings[posting_id]["role"] != "expense"],
+        }
+        actual_members = {
+            (item["kind"], item["id"]) for item in relation["member_refs"]
+        }
+        if relation["type"] != "mixed_payment" or actual_members != expected_members:
+            _fail(
+                effect_path("relations"),
+                "candidate confirmation must add a mixed_payment relation for the transaction funding postings",
+            )
+        expected_returned = [
+            {"kind": "confirmation", "id": confirmation["id"]},
+            {"kind": "transaction", "id": transaction_id},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(
+                operation_path + ".returned_ids",
+                "candidate confirmation must return exactly its confirmation and transaction",
+            )
     elif action == "confirm_account_transfer_candidate":
         candidate_id = operation["input"]["candidate_id"]
         if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
@@ -3989,7 +4367,7 @@ def _validate_registered_action_effects(
             f"{action} confirmation must own the created transaction version",
         )
 
-    if action in {"manual_account_transfer", "confirm_account_transfer_candidate"}:
+    if action in {"manual_account_transfer", "confirm_account_transfer_candidate", "manual_mixed_expense", "credit_principal_repayment", "confirm_mixed_payment_candidate"}:
         expected_returned = [
             {"kind": "confirmation", "id": confirmation["id"]},
             {"kind": "transaction", "id": transaction["id"]},
@@ -4021,6 +4399,8 @@ def _validate_registered_action_effects(
                 item["status"] == ("matched" if roles_by_posting.get(item["posting_id"]) == "transfer_principal_out" else "pending")
                 for item in reconciliations
             )
+        elif action in {"manual_mixed_expense", "credit_principal_repayment", "confirm_mixed_payment_candidate"}:
+            statuses_ok = all(item["status"] == "pending" for item in reconciliations)
         if {item["posting_id"] for item in reconciliations} != eligible_posting_ids or not statuses_ok:
             _fail(
                 effect_path("posting_reconciliations"),
@@ -4059,6 +4439,36 @@ def _validate_action_semantics(
             for posting_id in result_sets[version["posting_set_id"]]["posting_ids"]
         ]
         return version, postings
+
+    if action in {"manual_mixed_expense", "credit_principal_repayment", "confirm_mixed_payment_candidate"}:
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1:
+            _fail(operation_path + ".result_state_id", "RG04 action must add exactly one transaction")
+        version, postings = transaction_parts(added[0])
+        if "occurred_at" in input_value and version["occurred_at"] != input_value["occurred_at"]:
+            _fail(operation_path + ".input.occurred_at", "must own the economic time")
+        by_role = {posting.get("role"): posting for posting in postings}
+        if action in {"manual_mixed_expense", "confirm_mixed_payment_candidate"}:
+            required = {"expense", "mixed_expense_asset_funding", "mixed_expense_credit_funding"}
+            if set(by_role) != required:
+                _fail(operation_path + ".result_state_id", "mixed expense must use exact expense and two funding roles")
+            if "total_amount" in input_value and Decimal(by_role["expense"]["amount"]) != Decimal(input_value["total_amount"]):
+                _fail(operation_path + ".result_state_id", "expense posting must equal total amount")
+            if action == "manual_mixed_expense":
+                if by_role["expense"]["account_id"] != baseline_categories[input_value["category_id"]]["posting_account_id"]:
+                    _fail(operation_path + ".result_state_id", "expense posting must target the selected category account")
+                if by_role["mixed_expense_asset_funding"]["account_id"] != input_value["asset_account_id"] or -Decimal(by_role["mixed_expense_asset_funding"]["amount"]) != Decimal(input_value["asset_funding_amount"]):
+                    _fail(operation_path + ".result_state_id", "asset funding posting must exactly match the input")
+                if by_role["mixed_expense_credit_funding"]["account_id"] != input_value["liability_account_id"] or -Decimal(by_role["mixed_expense_credit_funding"]["amount"]) != Decimal(input_value["liability_funding_amount"]):
+                    _fail(operation_path + ".result_state_id", "liability funding posting must exactly match the input")
+        else:
+            if set(by_role) != {"credit_repayment_asset_outflow", "credit_repayment_liability_principal"}:
+                _fail(operation_path + ".result_state_id", "repayment must use exact principal roles")
+            if -Decimal(by_role["credit_repayment_asset_outflow"]["amount"]) != Decimal(input_value["principal_amount"]):
+                _fail(operation_path + ".result_state_id", "asset outflow must equal principal amount")
+            if by_role["credit_repayment_asset_outflow"]["account_id"] != input_value["asset_account_id"] or by_role["credit_repayment_liability_principal"]["account_id"] != input_value["liability_account_id"]:
+                _fail(operation_path + ".result_state_id", "repayment postings must preserve both account identities")
+        return
 
     if action in {"manual_account_transfer", "confirm_account_transfer_candidate"}:
         added = expected_entities["transactions"]["added_ids"]
@@ -4757,12 +5167,13 @@ def validate_golden_case_v2(
             "balance_adjustment_reversal",
         },
         "RG-03": {"opening_balance", "account_transfer"},
+        "RG-04": {"opening_balance", "expense", "credit_repayment"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
         _fail(
             "$.case.id",
-            "semantic prototype supports only RG-01, RG-02, RG-03, and RG-09 representative cases",
+            "semantic prototype supports only RG-01 through RG-04 and RG-09 representative cases",
         )
 
     precisions: dict[str, int] = {}
