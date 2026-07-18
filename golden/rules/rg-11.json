@@ -15314,6 +15314,7 @@
       "input": {
         "request_id": "main-correct-request",
         "transaction_id": "main-recognition-01",
+        "correction_kind": "statistics_time",
         "statistics_at": "2026-02-01T00:00:00+08:00",
         "explicit_confirmation": true
       },

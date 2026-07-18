@@ -331,7 +331,8 @@
         {"$ref": "#/$defs/accountCreditObservationSource"},
         {"$ref": "#/$defs/completeMixedPaymentSource"},
         {"$ref": "#/$defs/missingFundingLegMixedPaymentSource"},
-        {"$ref": "#/$defs/mixedPaymentMirrorSource"}
+        {"$ref": "#/$defs/mixedPaymentMirrorSource"},
+        {"$ref": "#/$defs/reconciliationEvidenceSource"}
       ]
     },
     "mixedPaymentFundingComponent": {
@@ -1013,7 +1014,8 @@
         {"$ref": "#/$defs/storedValueReconstruction"},
         {"$ref": "#/$defs/periodicAllocationSchedule"},
         {"$ref": "#/$defs/periodicAllocationRevision"},
-        {"$ref": "#/$defs/periodicAllocationInstallment"}
+        {"$ref": "#/$defs/periodicAllocationInstallment"},
+        {"$ref": "#/$defs/reconciliationMatch"}
       ]
     },
     "periodicAllocationAnchor": {
@@ -1034,6 +1036,13 @@
             "start_at": {"$ref": "#/$defs/timestamp"}, "anchor": {"$ref": "#/$defs/periodicAllocationAnchor"}
           }
         }
+      }
+    },
+    "reconciliationEvidenceSource": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "reconciliation_evidence"},
+        "payload": {"type": "object", "additionalProperties": false, "required": ["observed_at"], "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}}
       }
     },
     "periodicAllocationRevision": {
@@ -1323,21 +1332,62 @@
       }
     },
     "auditLink": {
-      "type": "object",
-      "additionalProperties": false,
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "from", "to", "payload"],
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "type": {
+              "enum": [
+                "adjustment_transaction", "explanation_transaction", "allocation_reversal",
+                "reconstruction_adjustment", "reconstruction_transaction",
+                "periodic_allocation_recognition"
+              ]
+            },
+            "from": {"$ref": "#/$defs/ref"},
+            "to": {"$ref": "#/$defs/ref"},
+            "payload": {"$ref": "#/$defs/emptyPayload"}
+          }
+        },
+        {"$ref": "#/$defs/postingReplacement"}
+      ]
+    },
+    "postingReplacement": {
+      "type": "object", "additionalProperties": false,
       "required": ["id", "type", "from", "to", "payload"],
       "properties": {
-        "id": {"$ref": "#/$defs/id"},
-        "type": {
-          "enum": [
-            "adjustment_transaction", "explanation_transaction", "allocation_reversal",
-            "reconstruction_adjustment", "reconstruction_transaction",
-            "periodic_allocation_recognition"
-          ]
-        },
-        "from": {"$ref": "#/$defs/ref"},
-        "to": {"$ref": "#/$defs/ref"},
-        "payload": {"$ref": "#/$defs/emptyPayload"}
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "posting_replacement"},
+        "from": {"$ref": "#/$defs/ref"}, "to": {"$ref": "#/$defs/ref"},
+        "payload": {"type": "object", "additionalProperties": false,
+          "required": ["reconciliation_effect"],
+          "properties": {"reconciliation_effect": {"enum": ["preserved", "invalidated", "not_applicable"]}}
+        }
+      }
+    },
+    "reconciliationMatchHistoryEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status", "at", "reason"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["matched", "invalidated"]}, "at": {"$ref": "#/$defs/timestamp"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "reconciliationMatch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "reconciliation_match"},
+        "payload": {"type": "object", "additionalProperties": false,
+          "required": ["posting_id", "evidence_id", "status_history"],
+          "properties": {
+            "posting_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"},
+            "status_history": {"type": "array", "minItems": 1, "maxItems": 2,
+              "items": {"$ref": "#/$defs/reconciliationMatchHistoryEvent"}}
+          }
+        }
       }
     },
     "postingReconciliation": {
@@ -1375,7 +1425,7 @@
         "consumption", "cash_outflow", "cash_inflow", "income", "ordinary_income",
         "ordinary_expense", "expense", "special_income", "expiry_loss", "net_worth_change",
         "principal_consumption", "principal_external_cash_flow",
-        "balance_adjustment_net_worth_change", "internal_transfer_amount", "budget", "category_effect"
+        "balance_adjustment_net_worth_change", "internal_transfer_amount", "budget", "category_effect", "category_consumption"
       ]
     },
     "reportMetric": {
@@ -1507,7 +1557,7 @@
             "reason_code": {"type": "string", "minLength": 1},
             "field_path": {
               "type": "string",
-              "pattern": "^\\$\\.attempted_input\\.[A-Za-z_][A-Za-z0-9_]*$"
+              "pattern": "^\\$\\.attempted_input\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$"
             }
           }
         },
@@ -1775,10 +1825,21 @@
       "required": ["request_id", "schedule_id", "recognized_through", "remaining_amount", "currency", "remaining_installment_count", "explicit_confirmation"],
       "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "recognized_through": {"$ref": "#/$defs/id"}, "remaining_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "remaining_installment_count": {"type": "integer", "minimum": 1}, "explicit_confirmation": {"const": true}}
     },
-    "correctTransactionVersionInput": {
+    "replacementPostingInput": {
       "type": "object", "additionalProperties": false,
-      "required": ["request_id", "transaction_id", "statistics_at", "explicit_confirmation"],
-      "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}}
+      "required": ["source_posting_id", "account_id", "amount", "currency", "role"],
+      "properties": {"source_posting_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "role": {"enum": ["expense", "payment_asset", "income_classification", "receiving_asset", "transfer_principal_in", "transfer_principal_out", "transfer_fee", "destination_asset", "funding_asset", "bank_payment", "lending_receivable", "lending_principal_in", "lending_principal_out", "lending_interest", "lending_fee", "balance_adjustment_target", "balance_adjustment_counterpart", "balance_adjustment_reversal_target", "balance_adjustment_reversal_counterpart", "stored_value_asset", "stored_value_bonus_income", "stored_value_expiry_loss", "mixed_expense_asset_funding", "mixed_expense_credit_funding", "credit_repayment_asset_outflow", "credit_repayment_liability_principal", "prepaid_asset"]}, "category_id": {"$ref": "#/$defs/id"}}
+    },
+    "replacementPostingAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_posting_id", "account_id", "amount", "currency", "role"],
+      "properties": {"source_posting_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}]}, "currency": {"type": "string", "minLength": 1}, "role": {"type": "string", "minLength": 1}, "category_id": {"$ref": "#/$defs/id"}}
+    },
+    "correctTransactionVersionInput": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["request_id", "transaction_id", "correction_kind", "statistics_at", "explicit_confirmation"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "correction_kind": {"const": "statistics_time"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}}},
+        {"type": "object", "additionalProperties": false, "required": ["request_id", "transaction_id", "correction_kind", "corrected_at", "replacement_postings", "explicit_confirmation"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "correction_kind": {"const": "posting_facts"}, "corrected_at": {"$ref": "#/$defs/timestamp"}, "replacement_postings": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/replacementPostingInput"}}, "explicit_confirmation": {"const": true}}}
+      ]
     },
     "periodicAllocationAttemptedAmount": {
       "anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}]
@@ -1807,9 +1868,24 @@
       "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "recognized_through": {"$ref": "#/$defs/id"}, "remaining_amount": {"$ref": "#/$defs/periodicAllocationAttemptedAmount"}, "currency": {"type": "string", "minLength": 1}, "remaining_installment_count": {"type": "integer"}, "explicit_confirmation": {"type": "boolean"}}
     },
     "correctTransactionVersionAttemptedInput": {
-      "type": "object", "additionalProperties": false,
-      "required": ["request_id", "transaction_id", "statistics_at", "explicit_confirmation"],
-      "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"}}
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["request_id", "transaction_id", "correction_kind", "statistics_at", "explicit_confirmation"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "correction_kind": {"const": "statistics_time"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["request_id", "transaction_id", "correction_kind", "corrected_at", "replacement_postings"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "correction_kind": {"const": "posting_facts"}, "corrected_at": {"$ref": "#/$defs/timestamp"}, "replacement_postings": {"type": "array", "items": {"$ref": "#/$defs/replacementPostingAttemptedInput"}}, "explicit_confirmation": {"type": "boolean"}, "history_mutation": {"type": "object"}}}
+      ]
+    },
+    "correctTransactionVersionRejectedOutcome": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"],
+      "properties": {"status": {"const": "rejected"}, "reason_code": {"type": "string"}, "field_path": {"type": "string"}},
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "complete_replacement_postings_required"}, "field_path": {"const": "$.attempted_input.replacement_postings"}}},
+        {"properties": {"reason_code": {"const": "replacement_postings_must_balance"}, "field_path": {"const": "$.attempted_input.replacement_postings"}}},
+        {"properties": {"reason_code": {"const": "duplicate_source_posting_id"}, "field_path": {"pattern": "^\\$.attempted_input\\.replacement_postings\\[[0-9]+\\]\\.source_posting_id$"}}},
+        {"properties": {"reason_code": {"enum": ["known_account_required", "owned_account_required", "account_currency_mismatch"]}, "field_path": {"pattern": "^\\$.attempted_input\\.replacement_postings\\[[0-9]+\\]\\.account_id$"}}},
+        {"properties": {"reason_code": {"const": "matched_unaffected_posting_must_be_preserved"}, "field_path": {"pattern": "^\\$.attempted_input\\.replacement_postings\\[[0-9]+\\]$"}}},
+        {"properties": {"reason_code": {"const": "explicit_confirmation_required"}, "field_path": {"const": "$.attempted_input.explicit_confirmation"}}},
+        {"properties": {"reason_code": {"const": "exact_decimal_string_required"}, "field_path": {"pattern": "^\\$.attempted_input\\.replacement_postings\\[[0-9]+\\]\\.amount$"}}},
+        {"properties": {"reason_code": {"const": "historical_facts_immutable"}, "field_path": {"const": "$.attempted_input.history_mutation"}}}
+      ]
     },
     "periodicAllocationRejectedOutcome": {
       "type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"],
@@ -2475,7 +2551,7 @@
             {"properties": {"action_type": {"const": "revise_periodic_allocation"}, "operation_class": {"const": "update"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/revisePeriodicAllocationInput"}}},
             {"properties": {"action_type": {"const": "revise_periodic_allocation"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/revisePeriodicAllocationAttemptedInput"}}},
             {"properties": {"action_type": {"const": "correct_transaction_version"}, "operation_class": {"const": "update"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/correctTransactionVersionInput"}}},
-            {"properties": {"action_type": {"const": "correct_transaction_version"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/correctTransactionVersionAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "correct_transaction_version"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/correctTransactionVersionRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/correctTransactionVersionAttemptedInput"}}},
             {
               "properties": {
                 "action_type": {"const": "manual_income"},

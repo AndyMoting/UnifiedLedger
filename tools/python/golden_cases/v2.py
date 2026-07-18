@@ -205,6 +205,102 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "confirmations": (1, 0, 0),
     },
 }
+
+
+def _posting_facts_correction_failure(
+    attempted: dict[str, Any],
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    *,
+    reject_changed_asset: bool = True,
+) -> tuple[str, str] | None:
+    """Return the frozen first failure for a posting-facts correction attempt."""
+    transactions = {item["id"]: item for item in baseline["transactions"]}
+    versions = {item["id"]: item for item in baseline["transaction_versions"]}
+    posting_sets = {item["id"]: item for item in baseline["posting_sets"]}
+    postings = {item["id"]: item for item in baseline["postings"]}
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    transaction = transactions.get(attempted.get("transaction_id"))
+    if transaction is None:
+        return "complete_replacement_postings_required", "replacement_postings"
+    version = versions.get(transaction["current_version_id"])
+    posting_set = posting_sets.get(version["posting_set_id"]) if version else None
+    old_postings = (
+        [postings[item_id] for item_id in posting_set["posting_ids"]]
+        if posting_set and all(item_id in postings for item_id in posting_set["posting_ids"])
+        else []
+    )
+    replacements = attempted.get("replacement_postings")
+    if not isinstance(replacements, list):
+        return "complete_replacement_postings_required", "replacement_postings"
+    source_ids = [item.get("source_posting_id") for item in replacements if isinstance(item, dict)]
+    old_ids = [item["id"] for item in old_postings]
+    if len(replacements) != len(old_ids):
+        return "complete_replacement_postings_required", "replacement_postings"
+
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    balanceable = True
+    for item in replacements:
+        if not isinstance(item, dict):
+            balanceable = False
+            break
+        try:
+            totals[item.get("currency")] += Decimal(str(item.get("amount")))
+        except (InvalidOperation, TypeError):
+            balanceable = False
+            break
+    if not balanceable or any(total != 0 for total in totals.values()):
+        return "replacement_postings_must_balance", "replacement_postings"
+
+    seen_sources: set[str] = set()
+    for index, source_id in enumerate(source_ids):
+        if not isinstance(source_id, str) or source_id in seen_sources:
+            return "duplicate_source_posting_id", f"replacement_postings[{index}].source_posting_id"
+        seen_sources.add(source_id)
+    if set(source_ids) != set(old_ids):
+        return "complete_replacement_postings_required", "replacement_postings"
+
+    for index, item in enumerate(replacements):
+        account = accounts.get(item.get("account_id"))
+        if account is None:
+            return "known_account_required", f"replacement_postings[{index}].account_id"
+        if not account["owned_by_user"] and not (
+            account["kind"] == "expense" and account["real_account"] is False
+        ):
+            return "owned_account_required", f"replacement_postings[{index}].account_id"
+        if account["currency"] != item.get("currency"):
+            return "account_currency_mismatch", f"replacement_postings[{index}].account_id"
+
+    reconciliations = {
+        item["posting_id"]: item["status"]
+        for item in baseline["posting_reconciliations"]
+    }
+    old_by_id = {item["id"]: item for item in old_postings}
+    for index, item in enumerate(replacements):
+        old = old_by_id[item["source_posting_id"]]
+        facts = ("account_id", "amount", "currency", "role", "category_id")
+        replacement_facts = tuple(item.get(field) for field in facts)
+        old_facts = tuple(old.get(field) for field in facts)
+        if (
+            reject_changed_asset
+            and
+            reconciliations.get(old["id"]) == "matched"
+            and accounts[old["account_id"]]["kind"] == "asset"
+            and replacement_facts != old_facts
+        ):
+            return "matched_unaffected_posting_must_be_preserved", f"replacement_postings[{index}]"
+
+    if attempted.get("explicit_confirmation") is not True:
+        return "explicit_confirmation_required", "explicit_confirmation"
+
+    for index, item in enumerate(replacements):
+        value = item.get("amount")
+        currency = item.get("currency")
+        if _attempted_decimal_value(value, currency, precisions) is None:
+            return "exact_decimal_string_required", f"replacement_postings[{index}].amount"
+    if "history_mutation" in attempted:
+        return "historical_facts_immutable", "history_mutation"
+    return None
 _SET_LIKE_ARRAY_KEYS = {
     "accounts",
     "categories",
@@ -743,13 +839,12 @@ def _validate_catalog(
         if account["currency"] not in precisions:
             _fail(account_path + ".currency", "currency is not declared")
         if account["reconciliation_eligible"] and not (
-            account["owned_by_user"]
-            and account["real_account"]
+            account["real_account"]
             and account["kind"] in {"asset", "liability"}
         ):
             _fail(
                 account_path + ".reconciliation_eligible",
-                "eligible accounts must be owned real asset or liability accounts",
+                "eligible accounts must be real asset or liability accounts",
             )
         if "stored_value" in account and not (
             account["kind"] == "asset"
@@ -1510,6 +1605,9 @@ def _validate_references(
                 if known <= 0 or known >= total:
                     _fail(source_path + ".known_asset_funding_amount", "must be positive and less than total_amount")
             continue
+        if source["type"] == "reconciliation_evidence":
+            _timestamp(payload["observed_at"], source_path + ".observed_at", timezone)
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(source_path + ".account_id", "dangling account reference")
@@ -1840,10 +1938,15 @@ def _validate_references(
     for evidence in state["evidence"]:
         links = links_by_evidence[evidence["id"]]
         if evidence["type"] == "item_receipt":
-            if len(links) != 1 or links[0]["role"] != "item_allocation_fact":
+            reconciliation_evidence = (
+                len(evidence["source_ids"]) == 1
+                and indexes["sources"][evidence["source_ids"][0]]["type"] == "reconciliation_evidence"
+            )
+            expected_role = "real_account_posting" if reconciliation_evidence else "item_allocation_fact"
+            if len(links) != 1 or links[0]["role"] != expected_role:
                 _fail(
                     path + ".evidence_links",
-                    f"item receipt evidence {evidence['id']!r} must link exactly one item_allocation fact",
+                    f"item receipt evidence {evidence['id']!r} must link exactly one {expected_role}",
                 )
         if evidence["type"] == "merchant_stored_value_credit":
             roles = [link["role"] for link in links]
@@ -1985,7 +2088,51 @@ def _validate_references(
     for index, entity in enumerate(state["domain_entities"]):
         entity_path = f"{path}.domain_entities[{index}].payload"
         payload = entity["payload"]
-        if entity["type"] == "target_balance_observation":
+        if entity["type"] == "reconciliation_match":
+            posting = indexes["postings"].get(payload["posting_id"])
+            evidence = indexes["evidence"].get(payload["evidence_id"])
+            if posting is None:
+                _fail(entity_path + ".posting_id", "dangling posting reference")
+            account = accounts[posting["account_id"]]
+            if not (
+                posting["reconciliation_eligible"]
+                and account["reconciliation_eligible"]
+                and account["owned_by_user"]
+                and account["real_account"]
+            ):
+                _fail(entity_path + ".posting_id", "must reference an eligible owned real account posting")
+            if evidence is None:
+                _fail(entity_path + ".evidence_id", "dangling evidence reference")
+            direct_evidence_link = any(
+                link["evidence_id"] == evidence["id"]
+                and link["target_kind"] == "posting"
+                and link["target_id"] == posting["id"]
+                for link in state["evidence_links"]
+            )
+            inherited_evidence_link = any(
+                replacement["type"] == "posting_replacement"
+                and replacement["to"]["id"] == posting["id"]
+                and replacement["payload"]["reconciliation_effect"] in {"preserved", "invalidated"}
+                and any(
+                    link["evidence_id"] == evidence["id"]
+                    and link["target_kind"] == "posting"
+                    and link["target_id"] == replacement["from"]["id"]
+                    for link in state["evidence_links"]
+                )
+                for replacement in state["audit_links"]
+            )
+            if not direct_evidence_link and not inherited_evidence_link:
+                _fail(entity_path + ".evidence_id", "must have an exact evidence link to its posting")
+            history = payload["status_history"]
+            _unique_index(history, entity_path + ".status_history")
+            if [item["sequence"] for item in history] != list(range(1, len(history) + 1)):
+                _fail(entity_path + ".status_history", "sequence must be contiguous and ordered from 1")
+            statuses = [item["status"] for item in history]
+            if statuses not in (["matched"], ["matched", "invalidated"]):
+                _fail(entity_path + ".status_history", "must start matched and may append one invalidated event")
+            for history_index, event in enumerate(history):
+                _timestamp(event["at"], f"{entity_path}.status_history[{history_index}].at", timezone)
+        elif entity["type"] == "target_balance_observation":
             if payload["account_id"] not in accounts:
                 _fail(entity_path + ".account_id", "dangling account reference")
             if payload["source_id"] not in sources:
@@ -2353,6 +2500,20 @@ def _validate_references(
                 "stored_value_expiry_loss transaction must be owned by exactly one confirmed expiry event",
             )
 
+    active_match_owners: dict[str, str] = {}
+    active_matches_by_posting: dict[str, dict[str, Any]] = {}
+    for entity in state["domain_entities"]:
+        if entity["type"] != "reconciliation_match":
+            continue
+        payload = entity["payload"]
+        if payload["status_history"][-1]["status"] == "matched":
+            key = payload["posting_id"]
+            prior = active_match_owners.get(key)
+            if prior is not None:
+                _fail(path + ".domain_entities", f"active reconciliation match {key!r} is already owned by {prior!r}")
+            active_match_owners[key] = entity["id"]
+            active_matches_by_posting[key] = entity
+
     audit_rules = {
         "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),
         "explanation_transaction": ("explanation_allocation", "account_transfer"),
@@ -2363,6 +2524,48 @@ def _validate_references(
     }
     for index, link in enumerate(state["audit_links"]):
         link_path = f"{path}.audit_links[{index}]"
+        if link["type"] == "posting_replacement":
+            if link["from"]["kind"] != "posting" or link["to"]["kind"] != "posting":
+                _fail(link_path, "posting replacement endpoints must both be postings")
+            old = indexes["postings"].get(link["from"]["id"])
+            new = indexes["postings"].get(link["to"]["id"])
+            if old is None or new is None:
+                _fail(link_path, "posting replacement endpoints must exist")
+            posting_to_version = {
+                posting_id: version
+                for version in versions.values()
+                for posting_id in indexes["posting_sets"][version["posting_set_id"]]["posting_ids"]
+            }
+            old_version = posting_to_version.get(old["id"])
+            new_version = posting_to_version.get(new["id"])
+            if (
+                old_version is None
+                or new_version is None
+                or old_version["transaction_id"] != new_version["transaction_id"]
+                or new_version["version_number"] != old_version["version_number"] + 1
+            ):
+                _fail(link_path, "replacement endpoints must be consecutive versions of one transaction")
+            effect = link["payload"]["reconciliation_effect"]
+            facts = ("account_id", "amount", "currency", "role", "category_id")
+            same_facts = all(old.get(field) == new.get(field) for field in facts)
+            old_account = accounts[old["account_id"]]
+            is_real = old_account["owned_by_user"] and old_account["real_account"]
+            if effect == "not_applicable" and is_real:
+                _fail(link_path + ".payload.reconciliation_effect", "not_applicable is limited to non-real postings")
+            if effect == "preserved" and not same_facts:
+                _fail(link_path + ".payload.reconciliation_effect", "preserved requires unchanged posting facts")
+            if effect == "preserved":
+                predecessor = active_matches_by_posting.get(old["id"])
+                successor = active_matches_by_posting.get(new["id"])
+                if (
+                    predecessor is None
+                    or successor is None
+                    or predecessor["payload"]["evidence_id"] != successor["payload"]["evidence_id"]
+                ):
+                    _fail(link_path + ".payload.reconciliation_effect", "preserved requires an active predecessor and inherited successor match for the same evidence")
+            if effect == "invalidated" and (not is_real or same_facts):
+                _fail(link_path + ".payload.reconciliation_effect", "invalidated requires a changed reconciliation-relevant real posting")
+            continue
         if link["type"] in {
             "reconstruction_adjustment",
             "reconstruction_transaction",
@@ -2723,6 +2926,7 @@ def _report_values(
                 Decimal(0),
             )
             values["consumption"] += expense
+            values["category_consumption"] += expense
             values["ordinary_expense"] += expense
             values["expense"] += expense
             values["net_worth_change"] -= expense
@@ -2742,6 +2946,7 @@ def _report_values(
                         -_decimal(item["amount"], "$.postings.amount")
                         for item in selected
                         if accounts[item["account_id"]]["real_account"]
+                        and accounts[item["account_id"]]["kind"] == "asset"
                         and _decimal(item["amount"], "$.postings.amount") < 0
                     ),
                     Decimal(0),
@@ -2812,6 +3017,7 @@ def _report_values(
                 Decimal(0),
             )
             values["consumption"] += expense
+            values["category_consumption"] += expense
             values["ordinary_expense"] += expense
             values["expense"] += expense
             values["budget"] += expense
@@ -3925,9 +4131,22 @@ def _validate_action_input(
                 timezone,
             )
         elif action in _PERIODIC_ALLOCATION_ACTIONS:
-            _validate_rejected_periodic_allocation_attempt(
-                operation, operation_path, baseline, precisions, timezone
-            )
+            if action == "correct_transaction_version" and operation["attempted_input"].get("correction_kind") == "posting_facts":
+                failure = _posting_facts_correction_failure(
+                    operation["attempted_input"], baseline, precisions
+                )
+                if failure is None:
+                    _fail(operation_path + ".attempted_input", "does not reproduce a registered rejection")
+                reason, field = failure
+                if operation["outcome"]["reason_code"] != reason:
+                    _fail(operation_path + ".outcome.reason_code", f"must be {reason!r} for the first failing attempted field")
+                expected_path = f"$.attempted_input.{field}"
+                if operation["outcome"]["field_path"] != expected_path:
+                    _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+            else:
+                _validate_rejected_periodic_allocation_attempt(
+                    operation, operation_path, baseline, precisions, timezone
+                )
         else:
             _fail(operation_path + ".action_type", "unregistered rejected action")
         return
@@ -4242,10 +4461,29 @@ def _validate_action_input(
         if input_value["remaining_installment_count"] < 1:
             _fail(input_path + ".remaining_installment_count", "must be at least 1")
     elif action == "correct_transaction_version":
-        transaction = transactions.get(input_value["transaction_id"])
-        if transaction is None or transaction["type"] != "prepaid_recognition":
-            _fail(input_path + ".transaction_id", "must reference a prepaid recognition transaction")
-        _timestamp(input_value["statistics_at"], input_path + ".statistics_at", timezone)
+        if input_value["correction_kind"] == "statistics_time":
+            transaction = transactions.get(input_value["transaction_id"])
+            if transaction is None or transaction["type"] != "prepaid_recognition":
+                _fail(input_path + ".transaction_id", "must reference a prepaid recognition transaction")
+            _timestamp(input_value["statistics_at"], input_path + ".statistics_at", timezone)
+        else:
+            if operation["outcome"]["status"] == "no_change":
+                _timestamp(input_value["corrected_at"], input_path + ".corrected_at", timezone)
+                return
+            failure = _posting_facts_correction_failure(
+                input_value, baseline, precisions, reject_changed_asset=False
+            )
+            if failure is not None:
+                _, field = failure
+                _fail(input_path + "." + field, "does not satisfy the complete posting-facts correction contract")
+            _timestamp(input_value["corrected_at"], input_path + ".corrected_at", timezone)
+            for index, item in enumerate(input_value["replacement_postings"]):
+                account = accounts[item["account_id"]]
+                category_id = item.get("category_id")
+                if category_id is not None:
+                    category = categories.get(category_id)
+                    if category is None or not category["active"] or category["posting_account_id"] != account["id"]:
+                        _fail(f"{input_path}.replacement_postings[{index}].category_id", "must reference an active category owned by the replacement account")
     elif action in {"manual_expense", "manual_income"}:
         category = categories.get(input_value["category_id"])
         if category is None:
@@ -4759,6 +4997,16 @@ def _validate_registered_action_effects(
         registered_counts = {
             **registered_counts,
             "domain_entities": (operation["input"]["remaining_installment_count"] + 1, 0, 0),
+        }
+    elif accepted and action == "correct_transaction_version" and operation["input"]["correction_kind"] == "posting_facts":
+        posting_count = len(operation["input"]["replacement_postings"])
+        registered_counts = {
+            **registered_counts,
+            "posting_sets": (1, 0, 0),
+            "postings": (posting_count, 0, 0),
+            "domain_entities": (2, len(expected_entities["domain_entities"]["changed_ids"]), 0),
+            "audit_links": (posting_count, 0, 0),
+            "posting_reconciliations": (2, 0, 0),
         }
 
     for collection_name, changes in expected_entities.items():
@@ -5334,6 +5582,64 @@ def _validate_registered_action_effects(
             )
 
 
+def _validate_mixed_expense_postings(
+    postings: list[dict[str, Any]],
+    accounts: dict[str, dict[str, Any]],
+    categories: dict[str, dict[str, Any]],
+    path: str,
+) -> None:
+    expected_roles = {"expense", "mixed_expense_asset_funding", "mixed_expense_credit_funding"}
+    if len(postings) != 3 or {posting.get("role") for posting in postings} != expected_roles:
+        _fail(path, "correction must preserve an expense with exactly two mixed-payment funding roles")
+    by_role = {posting["role"]: posting for posting in postings}
+    expense = by_role["expense"]
+    expense_account = accounts.get(expense["account_id"])
+    category = categories.get(expense.get("category_id"))
+    if not (
+        expense_account is not None
+        and expense_account["kind"] == "expense"
+        and expense_account["owned_by_user"] is False
+        and expense_account["real_account"] is False
+        and expense["reconciliation_eligible"] is False
+        and category is not None
+        and category["active"] is True
+        and category["parent_id"] is not None
+        and category["posting_account_id"] == expense["account_id"]
+    ):
+        _fail(path + ".expense", "must be a valid non-owned non-real expense category posting")
+    if _decimal(expense["amount"], path) <= 0:
+        _fail(path + ".expense.amount", "must be positive")
+    expected_kinds = {
+        "mixed_expense_asset_funding": "asset",
+        "mixed_expense_credit_funding": "liability",
+    }
+    currencies = {posting["currency"] for posting in postings}
+    if len(currencies) != 1:
+        _fail(path, "mixed expense postings must use one currency")
+    currency = next(iter(currencies))
+    total = Decimal(0)
+    for role, kind in expected_kinds.items():
+        posting = by_role[role]
+        account = accounts.get(posting["account_id"])
+        if posting.get("category_id") is not None:
+            _fail(path + f".{role}.category_id", "funding postings must not carry category_id")
+        if not (
+            account is not None
+            and account["kind"] == kind
+            and account["owned_by_user"] is True
+            and account["real_account"] is True
+            and account["currency"] == currency
+            and posting["currency"] == currency
+            and posting["reconciliation_eligible"] is True
+            and _decimal(posting["amount"], path) < 0
+        ):
+            _fail(path + f".{role}", "must be an eligible owned real funding posting with the correct kind and sign")
+        total += _decimal(posting["amount"], path)
+    total += _decimal(expense["amount"], path)
+    if total != 0:
+        _fail(path, "mixed expense postings must balance exactly per currency")
+
+
 def _validate_action_semantics(
     operation: dict[str, Any],
     operation_path: str,
@@ -5356,8 +5662,12 @@ def _validate_action_semantics(
     result_postings = {item["id"]: item for item in result["postings"]}
     result_candidates = {item["id"]: item for item in result["candidates"]}
     result_confirmations = {item["id"]: item for item in result["confirmations"]}
+    result_entities = {item["id"]: item for item in result["domain_entities"]}
+    result_audit_links = {item["id"]: item for item in result["audit_links"]}
     baseline_reconciliations = {item["id"]: item for item in baseline["posting_reconciliations"]}
     result_reconciliations = {item["id"]: item for item in result["posting_reconciliations"]}
+    baseline_reconciliations_by_posting = {item["posting_id"]: item for item in baseline["posting_reconciliations"]}
+    result_reconciliations_by_posting = {item["posting_id"]: item for item in result["posting_reconciliations"]}
 
     def transaction_parts(transaction_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         transaction = result_transactions[transaction_id]
@@ -5688,17 +5998,150 @@ def _validate_action_semantics(
         new_version = result_versions[after["current_version_id"]]
         confirmation_id = expected_entities["confirmations"]["added_ids"][0]
         confirmation = result_confirmations[confirmation_id]
-        if confirmation != {"id": confirmation_id, "type": "explicit_operation_confirmation", "operation_id": operation["id"], "subject": {"kind": "operation", "id": operation["id"]}, "payload": {}}:
+        expected_confirmation = {"id": confirmation_id, "type": "explicit_operation_confirmation", "operation_id": operation["id"], "subject": {"kind": "operation", "id": operation["id"]}, "payload": {}}
+        if input_value["correction_kind"] == "posting_facts":
+            expected_confirmation["confirmed_at"] = input_value["corrected_at"]
+        if confirmation != expected_confirmation:
             _fail(operation_path + ".result_state_id", "correction requires its exact operation confirmation owner")
-        expected_version = deepcopy(old_version)
-        expected_version.update({
-            "id": new_version["id"],
-            "version_number": old_version["version_number"] + 1,
-            "statistics_at": input_value["statistics_at"],
-            "confirmation_id": confirmation_id,
-        })
-        if new_version != expected_version:
-            _fail(operation_path + ".result_state_id", "correction may change only id, next version_number, statistics_at, and confirmation ownership")
+        if input_value["correction_kind"] == "statistics_time":
+            expected_version = deepcopy(old_version)
+            expected_version.update({
+                "id": new_version["id"],
+                "version_number": old_version["version_number"] + 1,
+                "statistics_at": input_value["statistics_at"],
+                "confirmation_id": confirmation_id,
+            })
+            if new_version != expected_version:
+                _fail(operation_path + ".result_state_id", "statistics-time correction may change only id, next version_number, statistics_at, and confirmation ownership")
+        else:
+            old_set = next(item for item in baseline["posting_sets"] if item["id"] == old_version["posting_set_id"])
+            old_postings = {item["id"]: item for item in baseline["postings"] if item["id"] in old_set["posting_ids"]}
+            new_set = result_sets.get(new_version["posting_set_id"])
+            if new_set is None:
+                _fail(operation_path + ".result_state_id", "posting-facts correction must append a posting set")
+            new_postings = {item["id"]: item for item in result_postings.values() if item["id"] in new_set["posting_ids"]}
+            _validate_mixed_expense_postings(
+                list(new_postings.values()),
+                baseline_accounts,
+                baseline_categories,
+                operation_path + ".result_state_id.posting_set",
+            )
+            if set(old_postings) != {item["source_posting_id"] for item in input_value["replacement_postings"]}:
+                _fail(operation_path + ".input.replacement_postings", "must cover the old current posting set exactly once")
+            if len(new_postings) != len(input_value["replacement_postings"]):
+                _fail(operation_path + ".result_state_id", "must create exactly one replacement posting per source posting")
+            if any(old_postings[item_id] != result_postings.get(item_id) for item_id in old_postings):
+                _fail(operation_path + ".result_state_id", "old postings are immutable historical facts")
+            links = [
+                result_audit_links[item_id]
+                for item_id in expected_entities["audit_links"]["added_ids"]
+            ]
+            links_by_old = {link["from"]["id"]: link for link in links}
+            if set(links_by_old) != set(old_postings) or len(links_by_old) != len(links):
+                _fail(operation_path + ".result_state_id", "must add one replacement link for every old current posting")
+            link_targets = {link["to"]["id"] for link in links}
+            if link_targets != set(new_postings) or len(link_targets) != len(links):
+                _fail(operation_path + ".result_state_id", "every new current posting must have exactly one source replacement link")
+            baseline_matches = {
+                item["payload"]["posting_id"]: item
+                for item in baseline["domain_entities"]
+                if item["type"] == "reconciliation_match"
+            }
+            result_matches = {
+                item["payload"]["posting_id"]: item
+                for item in result["domain_entities"]
+                if item["type"] == "reconciliation_match"
+            }
+            for item in input_value["replacement_postings"]:
+                old = old_postings[item["source_posting_id"]]
+                link = links_by_old[old["id"]]
+                new = new_postings.get(link["to"]["id"])
+                if new is None:
+                    _fail(operation_path + ".result_state_id", "replacement link must target the new current posting set")
+                expected_posting = {key: value for key, value in item.items() if key != "source_posting_id"}
+                actual_posting = {key: value for key, value in new.items() if key not in {"id", "posting_set_id", "reconciliation_eligible"}}
+                if actual_posting != expected_posting:
+                    _fail(operation_path + ".result_state_id", "new postings must exactly equal the explicit replacement input")
+                old_account = baseline_accounts[old["account_id"]]
+                same_facts = all(old.get(field) == new.get(field) for field in ("account_id", "amount", "currency", "role", "category_id"))
+                effect = link["payload"]["reconciliation_effect"]
+                old_reconciliation = baseline_reconciliations_by_posting.get(old["id"])
+                result_old_reconciliation = result_reconciliations_by_posting.get(old["id"])
+                new_reconciliation = result_reconciliations_by_posting.get(new["id"])
+                old_match = baseline_matches.get(old["id"])
+                result_old_match = result_matches.get(old["id"])
+                result_new_match = result_matches.get(new["id"])
+                eligible_real = (
+                    old_account["owned_by_user"] is True
+                    and old_account["real_account"] is True
+                    and old_reconciliation is not None
+                )
+                if not eligible_real:
+                    if effect != "not_applicable" or new_reconciliation is not None or result_new_match is not None:
+                        _fail(operation_path + ".result_state_id", "non-real replacement postings must be not_applicable and unreconciled")
+                    continue
+                if old_match is None or old_match["payload"]["status_history"][-1]["status"] != "matched":
+                    _fail(operation_path + ".result_state_id", "eligible real replacement requires an active predecessor reconciliation match")
+                if result_old_reconciliation != old_reconciliation:
+                    _fail(operation_path + ".result_state_id", "old posting reconciliation facts must remain unchanged")
+                if same_facts:
+                    if effect != "preserved" or old_reconciliation["status"] != "matched" or new_reconciliation is None or new_reconciliation["status"] != "matched":
+                        _fail(operation_path + ".result_state_id", "unchanged eligible real posting must preserve a matched reconciliation")
+                    if result_old_match != old_match:
+                        _fail(operation_path + ".result_state_id", "preserved correction must leave the predecessor match unchanged")
+                    if (
+                        result_new_match is None
+                        or result_new_match["payload"]["evidence_id"] != old_match["payload"]["evidence_id"]
+                        or result_new_match["payload"]["status_history"][-1]["status"] != "matched"
+                    ):
+                        _fail(operation_path + ".result_state_id", "preserved correction must inherit the active predecessor evidence match")
+                else:
+                    if effect != "invalidated" or new_reconciliation is None or new_reconciliation["status"] != "pending":
+                        _fail(operation_path + ".result_state_id", "changed eligible real posting must invalidate and leave the replacement pending")
+                    if result_new_match is not None and result_new_match["payload"]["status_history"][-1]["status"] == "matched":
+                        _fail(operation_path + ".result_state_id", "invalidated correction cannot inherit an active match")
+                    if result_old_match is None:
+                        _fail(operation_path + ".result_state_id", "changed eligible real posting must retain its predecessor match history")
+                    old_history = old_match["payload"]["status_history"]
+                    result_history = result_old_match["payload"]["status_history"]
+                    if (
+                        result_old_match.get("id") != old_match.get("id")
+                        or result_old_match["payload"].get("posting_id") != old_match["payload"].get("posting_id")
+                        or result_old_match["payload"].get("evidence_id") != old_match["payload"].get("evidence_id")
+                        or result_history[: len(old_history)] != old_history
+                        or len(result_history) != len(old_history) + 1
+                        or result_history[-1]["status"] != "invalidated"
+                        or result_history[-1]["sequence"] != len(old_history) + 1
+                        or result_history[-1]["at"] != input_value["corrected_at"]
+                    ):
+                        _fail(operation_path + ".result_state_id", "changed eligible real posting must append exactly one invalidation event to its predecessor match")
+            if any(new_version[field] != old_version[field] for field in ("occurred_at", "statistics_at", "effective_at")):
+                _fail(operation_path + ".result_state_id", "posting-facts correction must preserve economic time roles")
+            expected_version = deepcopy(old_version)
+            expected_version.update({
+                "id": new_version["id"], "version_number": old_version["version_number"] + 1,
+                "posting_set_id": new_set["id"], "created_at": input_value["corrected_at"],
+                "confirmation_id": confirmation_id,
+            })
+            if new_version != expected_version:
+                _fail(operation_path + ".result_state_id", "posting-facts correction must preserve version facts and use corrected_at as creation time")
+            changed_entities = [result_entities[item_id] for item_id in expected_entities["domain_entities"]["changed_ids"]]
+            added_entities = [result_entities[item_id] for item_id in expected_entities["domain_entities"]["added_ids"]]
+            changed_match_ids = {
+                old["id"]
+                for item in input_value["replacement_postings"]
+                for old in [old_postings[item["source_posting_id"]]]
+                if old["id"] in baseline_matches
+                and baseline_matches[old["id"]]["id"]
+                and not all(old.get(field) == new_postings[links_by_old[old["id"]]["to"]["id"]].get(field) for field in ("account_id", "amount", "currency", "role", "category_id"))
+            }
+            actual_changed_match_ids = {
+                entity["id"] for entity in changed_entities if entity["type"] == "reconciliation_match"
+            }
+            if any(entity["type"] != "reconciliation_match" for entity in changed_entities) or actual_changed_match_ids != {baseline_matches[posting_id]["id"] for posting_id in changed_match_ids}:
+                _fail(operation_path + ".result_state_id", "every changed matched eligible posting must append exactly its predecessor match history")
+            if sum(entity["type"] == "consumption_record" for entity in added_entities) != 1:
+                _fail(operation_path + ".result_state_id", "correction must add exactly one replacement consumption record")
         if operation["returned_ids"] != [{"kind": "transaction_version", "id": new_version["id"]}]:
             _fail(operation_path + ".returned_ids", "correction must return exactly its appended transaction version")
     elif action == "manual_expense":
@@ -6229,6 +6672,7 @@ def validate_golden_case_v2(
         "RG-03": {"opening_balance", "account_transfer"},
         "RG-04": {"opening_balance", "expense", "credit_repayment"},
         "RG-11": {"opening_balance", "prepaid_purchase", "prepaid_recognition"},
+        "RG-12": {"expense"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:

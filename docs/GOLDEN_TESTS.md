@@ -159,6 +159,8 @@
 
 混合支付的一条账户分录已有证据，另一条缺少资料；随后用户修改第二条分录金额。验证第一条匹配保持有效，第二条旧匹配历史保留并重新进入匹配，系统不自动补平差异。
 
+Direct-v2 validation covers complete replacement posting input, append-only `reconciliation_match` history, `posting_replacement` reconciliation effects, original-period report recomputation, idempotent retry IDs, and atomic rejected attempts with frozen first-failure reason/path pairs.
+
 ## 首批 8 个本地真实来源场景
 
 以下场景的输入和冻结答案只存在于本地测试区。公开仓库不得保存其真实来源标识或私人解释。
