@@ -110,7 +110,7 @@ def rg04_posting_semantics_fixture(transaction_type: str) -> tuple[dict, dict]:
     state["relations"] = []
     if transaction_type == "expense":
         asset.update(amount="-70.00", role="mixed_expense_asset_funding", reconciliation_eligible=True)
-        other.update(amount="120.00", role="expense", reconciliation_eligible=False)
+        other.update(amount="120.00", category_id="expense-category-breakfast", role="expense", reconciliation_eligible=False)
         credit = {
             "id": "posting-credit-rg04-semantics",
             "posting_set_id": posting_set["id"],
@@ -158,6 +158,7 @@ def rg04_creation_case(action: str) -> tuple[dict, dict, dict]:
     baseline["catalog"]["categories"][1].update(id="expense-category-daily", parent_id="expense-category-living")
     baseline["catalog"]["accounts"][2]["id"] = "expense-account-daily"
     baseline["catalog"]["categories"][1]["posting_account_id"] = "expense-account-daily"
+    next(item for item in baseline["balances"] if item["account_id"] == "expense-account-breakfast")["account_id"] = "expense-account-daily"
     baseline["balances"].append({"account_id": "liability-credit-b", "currency": "CNY", "amount": "0.00"})
 
     operation_id = "operation-rg04-test"
@@ -173,7 +174,7 @@ def rg04_creation_case(action: str) -> tuple[dict, dict, dict]:
         }
         transaction_id, version_id, posting_set_id = "tx-rg04-expense", "version-rg04-expense-v1", "posting-set-rg04-expense"
         postings = [
-            {"id": "posting-rg04-expense", "posting_set_id": posting_set_id, "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
+            {"id": "posting-rg04-expense", "posting_set_id": posting_set_id, "account_id": "expense-account-daily", "category_id": "expense-category-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
             {"id": "posting-rg04-asset", "posting_set_id": posting_set_id, "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY", "role": "mixed_expense_asset_funding", "reconciliation_eligible": True},
             {"id": "posting-rg04-credit", "posting_set_id": posting_set_id, "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY", "role": "mixed_expense_credit_funding", "reconciliation_eligible": True},
         ]
@@ -269,6 +270,7 @@ def _rg04_value_changes(before: dict, after: dict) -> dict:
 
 def _rg04_action(case: dict, baseline: dict, result: dict, action: str, input_value: dict, operation_id: str, outcome: dict | None = None) -> dict:
     operation = deepcopy(case["operations"][0])
+    value_changes = _rg04_value_changes(baseline, result)
     operation.update(
         id=operation_id,
         sequence=1,
@@ -279,10 +281,19 @@ def _rg04_action(case: dict, baseline: dict, result: dict, action: str, input_va
         result_state_id=result["id"],
         input=input_value,
         outcome=outcome or {"status": "accepted"},
-        status_changes=[],
+        status_changes=[
+            {
+                "target_kind": change["key"]["kind"],
+                "target_id": change["key"]["target_id"],
+                "status_name": change["key"]["status_name"],
+                "before": change["before"],
+                "after": change["after"],
+            }
+            for change in value_changes["derived_statuses"]
+        ],
         deltas={
             "entity_changes": golden_v2._expected_entity_changes(baseline, result),
-            "value_changes": _rg04_value_changes(baseline, result),
+            "value_changes": value_changes,
         },
     )
     return operation
@@ -290,8 +301,18 @@ def _rg04_action(case: dict, baseline: dict, result: dict, action: str, input_va
 
 def _rg04_import_baseline() -> tuple[dict, dict]:
     case, baseline, _ = rg04_creation_case("manual_mixed_expense")
-    v1 = json.loads(RG04_V1_PATH.read_text(encoding="utf-8"))
-    baseline["catalog"]["association_group_types"] = v1["catalog"]["association_group_types"]
+    required_metrics = {
+        "balance_adjustment_net_worth_change", "budget", "cash_inflow", "cash_outflow",
+        "consumption", "income", "internal_transfer_amount", "net_worth_change",
+        "ordinary_expense", "ordinary_income",
+    }
+    for report in baseline["reports"]:
+        by_name = {item["metric"]: item for item in report["metrics"]}
+        for metric in required_metrics:
+            if metric not in by_name:
+                report["metrics"].append({"metric": metric, "applicability": "applicable", "currency": "CNY", "amount": "0.00"})
+        budget = next(item for item in report["metrics"] if item["metric"] == "budget")
+        budget.update(applicability="applicable", currency="CNY", amount="0.00")
     return case, baseline
 
 
@@ -323,6 +344,17 @@ def _rg04_missing_source() -> dict:
     }
 
 
+def _rg04_mirror_source() -> dict:
+    return {
+        "id": "source-rg04-credit-mirror",
+        "evidence_id": "evidence-rg04-credit-mirror",
+        "observed_at": "2026-02-11T12:00:00+08:00",
+        "account_id": "liability-credit-b",
+        "amount": "50.00",
+        "currency": "CNY",
+    }
+
+
 def _rg04_ingested_state(baseline: dict, source_record: dict, candidate_id: str, confidence: str, payload: dict) -> dict:
     result = deepcopy(baseline)
     result["id"] = f"state-{candidate_id}"
@@ -340,6 +372,13 @@ def _rg04_ingested_state(baseline: dict, source_record: dict, candidate_id: str,
     result["sources"].append(source)
     result["evidence"].append(evidence)
     result["candidates"].append(candidate)
+    result["derived_statuses"].append({
+        "id": f"derived-{candidate_id}-confirmation",
+        "target_kind": "candidate",
+        "target_id": candidate_id,
+        "status_name": "confirmation_status",
+        "value": "pending_confirmation",
+    })
     return result
 
 
@@ -374,19 +413,234 @@ def _rg04_confirmed_state(baseline: dict) -> dict:
     candidate = next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04")
     candidate["status_history"].append({"id": "status-candidate-purchase-rg04-confirmed", "sequence": 2, "status": "confirmed"})
     candidate["payload"]["transaction_id"] = "tx-purchase-rg04-imported"
+    next(
+        item
+        for item in result["derived_statuses"]
+        if item["target_kind"] == "candidate"
+        and item["target_id"] == candidate["id"]
+        and item["status_name"] == "confirmation_status"
+    )["value"] = "confirmed"
     result["transactions"].append({"id": "tx-purchase-rg04-imported", "type": "expense", "current_version_id": "version-purchase-rg04-imported-v1"})
-    result["transaction_versions"].append({"id": "version-purchase-rg04-imported-v1", "transaction_id": "tx-purchase-rg04-imported", "version_number": 1, "posting_set_id": "posting-set-purchase-rg04-imported", "occurred_at": "2026-02-11T12:00:00+08:00", "statistics_at": "2026-02-11T12:00:00+08:00", "effective_at": "2026-02-11T12:00:00+08:00", "confirmation_id": "confirmation-rg04-confirm"})
+    source_id = candidate["source_ids"][0]
+    observed_at = next(item for item in result["sources"] if item["id"] == source_id)["payload"]["observed_at"]
+    result["transaction_versions"].append({"id": "version-purchase-rg04-imported-v1", "transaction_id": "tx-purchase-rg04-imported", "version_number": 1, "posting_set_id": "posting-set-purchase-rg04-imported", "occurred_at": observed_at, "statistics_at": observed_at, "effective_at": observed_at, "confirmation_id": "confirmation-rg04-confirm"})
     posting_ids = ["posting-expense-rg04-imported", "posting-asset-rg04-imported", "posting-liability-rg04-imported"]
     result["posting_sets"].append({"id": "posting-set-purchase-rg04-imported", "posting_ids": posting_ids})
     result["postings"].extend([
-        {"id": posting_ids[0], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "expense-account-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
+        {"id": posting_ids[0], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "expense-account-daily", "category_id": "expense-category-daily", "amount": "120.00", "currency": "CNY", "role": "expense", "reconciliation_eligible": False},
         {"id": posting_ids[1], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "asset-bank-a", "amount": "-70.00", "currency": "CNY", "role": "mixed_expense_asset_funding", "reconciliation_eligible": True},
         {"id": posting_ids[2], "posting_set_id": "posting-set-purchase-rg04-imported", "account_id": "liability-credit-b", "amount": "-50.00", "currency": "CNY", "role": "mixed_expense_credit_funding", "reconciliation_eligible": True},
     ])
     result["confirmations"].append({"id": "confirmation-rg04-confirm", "type": "candidate_confirmation", "operation_id": "operation-rg04-confirm", "subject": {"kind": "candidate", "id": "candidate-purchase-rg04"}, "payload": {}})
     result["relations"].append({"id": "relation-rg04-imported", "type": "mixed_payment", "member_refs": [{"kind": "transaction", "id": "tx-purchase-rg04-imported"}, {"kind": "posting", "id": posting_ids[1]}, {"kind": "posting", "id": posting_ids[2]}], "payload": {"system_managed": True, "display_name": "Mixed payment", "generic_order_lifecycle": False, "payment_composition_total": "120.00", "funding_components": [{"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY", "posting_id": posting_ids[1]}, {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY", "posting_id": posting_ids[2]}]}})
     result["posting_reconciliations"].extend([{"id": "reconciliation-rg04-imported-asset", "posting_id": posting_ids[1], "status": "pending"}, {"id": "reconciliation-rg04-imported-liability", "posting_id": posting_ids[2], "status": "pending"}])
+    balance_amounts = {"asset-bank-a": "930.00", "expense-account-daily": "120.00", "liability-credit-b": "-50.00"}
+    for balance in result["balances"]:
+        if balance["account_id"] in balance_amounts:
+            balance["amount"] = balance_amounts[balance["account_id"]]
+    period = observed_at[:7]
+    report = next((item for item in result["reports"] if item["period_type"] == "month" and item["period"] == period), None)
+    if report is None:
+        report = deepcopy(result["reports"][0])
+        report["period"] = period
+        result["reports"].append(report)
+    report_amounts = {"cash_outflow": "70.00", "consumption": "120.00", "income": "0.00", "net_worth_change": "-120.00", "ordinary_expense": "120.00"}
+    for metric in report["metrics"]:
+        if metric["metric"] in report_amounts:
+            metric["amount"] = report_amounts[metric["metric"]]
+    result["derived_statuses"].append({"id": "derived-rg04-imported", "target_kind": "transaction", "target_id": "tx-purchase-rg04-imported", "status_name": "reconciliation_summary", "value": "pending"})
     return result
+
+
+def _rg04_confirmation_case() -> tuple[dict, dict, dict, dict, dict]:
+    case, baseline = _rg04_import_baseline()
+    source = _rg04_complete_source()
+    baseline = _rg04_ingested_state(
+        baseline,
+        source,
+        "candidate-purchase-rg04",
+        "1.00",
+        _rg04_complete_candidate_payload(source),
+    )
+    result = _rg04_confirmed_state(baseline)
+    input_value = {
+        "request_id": "request-rg04-confirm",
+        "candidate_id": "candidate-purchase-rg04",
+        "category_id": "expense-category-daily",
+        "confirmed_funding_components": [
+            {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"},
+        ],
+        "explicit_confirmation": True,
+    }
+    operation = _rg04_action(
+        case,
+        baseline,
+        result,
+        "confirm_mixed_payment_candidate",
+        input_value,
+        "operation-rg04-confirm",
+    )
+    operation["returned_ids"] = [
+        {"kind": "confirmation", "id": "confirmation-rg04-confirm"},
+        {"kind": "transaction", "id": "tx-purchase-rg04-imported"},
+    ]
+    return case, baseline, result, input_value, operation
+
+
+def _rg04_public_ingest_case(source: dict, candidate_id: str, confidence: str, payload: dict) -> dict:
+    case, initial = _rg04_import_baseline()
+    result = _rg04_ingested_state(initial, source, candidate_id, confidence, payload)
+    operation_id = result["as_of_operation_id"]
+    operation = _rg04_action(
+        case,
+        initial,
+        result,
+        "ingest_mixed_payment_source",
+        {"request_id": f"request-{candidate_id}", "source_record": source},
+        operation_id,
+    )
+    operation["returned_ids"] = [
+        {"kind": "source", "id": source["id"]},
+        {"kind": "evidence", "id": source["evidence_id"]},
+        {"kind": "candidate", "id": candidate_id},
+    ]
+    case["roots"] = [{"id": initial["root_id"], "purpose": "RG04 public ingest", "initial_state_id": initial["id"], "operation_ids": [operation_id]}]
+    case["states"] = [initial, result]
+    case["operations"] = [operation]
+    return case
+
+
+def _rg04_public_confirmation_case(*, include_replay: bool = False) -> dict:
+    case, initial = _rg04_import_baseline()
+    source = _rg04_complete_source()
+    ingested = _rg04_ingested_state(initial, source, "candidate-purchase-rg04", "1.00", _rg04_complete_candidate_payload(source))
+    ingest_operation = _rg04_action(
+        case,
+        initial,
+        ingested,
+        "ingest_mixed_payment_source",
+        {"request_id": "request-candidate-purchase-rg04", "source_record": source},
+        ingested["as_of_operation_id"],
+    )
+    ingest_operation["returned_ids"] = [
+        {"kind": "source", "id": source["id"]},
+        {"kind": "evidence", "id": source["evidence_id"]},
+        {"kind": "candidate", "id": "candidate-purchase-rg04"},
+    ]
+    confirmed = _rg04_confirmed_state(ingested)
+    input_value = {
+        "request_id": "request-rg04-confirm",
+        "candidate_id": "candidate-purchase-rg04",
+        "category_id": "expense-category-daily",
+        "confirmed_funding_components": [
+            {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
+            {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"},
+        ],
+        "explicit_confirmation": True,
+    }
+    confirm_operation = _rg04_action(case, ingested, confirmed, "confirm_mixed_payment_candidate", input_value, "operation-rg04-confirm")
+    confirm_operation["sequence"] = 2
+    confirm_operation["returned_ids"] = [
+        {"kind": "confirmation", "id": "confirmation-rg04-confirm"},
+        {"kind": "transaction", "id": "tx-purchase-rg04-imported"},
+    ]
+    operations = [ingest_operation, confirm_operation]
+    states = [initial, ingested, confirmed]
+    if include_replay:
+        replay_result = deepcopy(confirmed)
+        replay_result["id"] = "state-rg04-confirm-replay"
+        replay_result["as_of_operation_id"] = "operation-rg04-confirm-replay"
+        replay_operation = _rg04_action(
+            case,
+            confirmed,
+            replay_result,
+            "confirm_mixed_payment_candidate",
+            deepcopy(input_value),
+            "operation-rg04-confirm-replay",
+            {"status": "no_change", "reason_code": "idempotent_replay"},
+        )
+        replay_operation["sequence"] = 3
+        replay_operation["returned_ids"] = deepcopy(confirm_operation["returned_ids"])
+        operations.append(replay_operation)
+        states.append(replay_result)
+    case["roots"] = [{
+        "id": initial["root_id"],
+        "purpose": "RG04 public confirmation",
+        "initial_state_id": initial["id"],
+        "operation_ids": [item["id"] for item in operations],
+    }]
+    case["states"] = states
+    case["operations"] = operations
+    return case
+
+
+def _rg04_public_mirror_case() -> dict:
+    case = _rg04_public_confirmation_case()
+    baseline = case["states"][-1]
+    result = deepcopy(baseline)
+    result["id"] = "state-rg04-mirror"
+    result["as_of_operation_id"] = "operation-rg04-mirror"
+    mirror_source = _rg04_mirror_source()
+    result["sources"].append({
+        "id": mirror_source["id"],
+        "type": "mixed_payment",
+        "payload": {key: value for key, value in mirror_source.items() if key != "id"},
+    })
+    result["evidence"].append({
+        "id": mirror_source["evidence_id"],
+        "type": "credit_liability_mirror",
+        "source_ids": [mirror_source["id"]],
+        "payload": {"observed_at": mirror_source["observed_at"]},
+    })
+    result["evidence_links"].append({
+        "id": "link-rg04-credit-mirror",
+        "evidence_id": mirror_source["evidence_id"],
+        "target_kind": "posting",
+        "target_id": "posting-liability-rg04-imported",
+        "role": "real_account_posting",
+    })
+    next(
+        item
+        for item in result["posting_reconciliations"]
+        if item["posting_id"] == "posting-liability-rg04-imported"
+    )["status"] = "matched"
+    next(
+        item
+        for item in result["derived_statuses"]
+        if item["target_kind"] == "transaction"
+        and item["target_id"] == "tx-purchase-rg04-imported"
+        and item["status_name"] == "reconciliation_summary"
+    )["value"] = "partial"
+    input_value = {
+        "request_id": "request-rg04-credit-mirror",
+        "source_record_id": mirror_source["id"],
+        "evidence_id": mirror_source["evidence_id"],
+        "transaction_id": "tx-purchase-rg04-imported",
+        "candidate_id": "candidate-purchase-rg04",
+        "account_id": mirror_source["account_id"],
+        "amount": mirror_source["amount"],
+        "currency": mirror_source["currency"],
+        "observed_at": mirror_source["observed_at"],
+    }
+    operation = _rg04_action(
+        case,
+        baseline,
+        result,
+        "merge_mixed_payment_mirror_evidence",
+        input_value,
+        "operation-rg04-mirror",
+    )
+    operation["sequence"] = 3
+    operation["returned_ids"] = [
+        {"kind": "source", "id": mirror_source["id"]},
+        {"kind": "evidence", "id": mirror_source["evidence_id"]},
+        {"kind": "evidence_link", "id": "link-rg04-credit-mirror"},
+    ]
+    case["states"].append(result)
+    case["operations"].append(operation)
+    case["roots"][0]["operation_ids"].append(operation["id"])
+    return case
 
 
 def rg03_full_manual_case() -> dict:
@@ -3024,6 +3278,15 @@ class GoldenV2SchemaTests(unittest.TestCase):
         mutations.append(invalid)
         invalid = deepcopy(state)
         invalid["postings"][1]["amount"] = "110.00"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        next(item for item in invalid["postings"] if item["role"] == "expense").pop("category_id")
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        next(item for item in invalid["postings"] if item["role"] == "expense").update(category_id="expense-category-living")
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        next(item for item in invalid["postings"] if item["role"] == "mixed_expense_asset_funding").update(category_id="expense-category-breakfast")
         mutations.append(invalid)
         for invalid in mutations:
             with self.subTest(mutation=invalid):
@@ -6132,7 +6395,7 @@ class GoldenV2RG04GapTests(unittest.TestCase):
                 "funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY"}],
             },
             "creditPrincipalRepaymentInput": {"request_id": "req", "asset_account_id": "asset", "liability_account_id": "liability", "principal_amount": "50.00", "currency": "CNY", "occurred_at": "2026-01-20T10:00:00+08:00", "explicit_confirmation": True},
-            "confirmMixedPaymentCandidateInput": {"request_id": "req", "candidate_id": "candidate", "confirmed_funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY"}], "explicit_confirmation": True},
+            "confirmMixedPaymentCandidateInput": {"request_id": "req", "candidate_id": "candidate", "category_id": "category", "confirmed_funding_components": [{"account_id": "asset", "funding_amount": "70.00", "currency": "CNY"}, {"account_id": "liability", "funding_amount": "50.00", "currency": "CNY"}], "explicit_confirmation": True},
         }
         for definition, sample in samples.items():
             with self.subTest(definition=definition):
@@ -6141,6 +6404,10 @@ class GoldenV2RG04GapTests(unittest.TestCase):
                 invalid = deepcopy(sample)
                 invalid["unexpected"] = True
                 self.assertFalse(validator.is_valid(invalid))
+                if definition == "confirmMixedPaymentCandidateInput":
+                    missing_category = deepcopy(sample)
+                    del missing_category["category_id"]
+                    self.assertFalse(validator.is_valid(missing_category))
 
     def test_rg04_source_variants_require_complete_or_single_known_leg(self):
         validator = Draft202012Validator({**self.schema_defs, "$ref": "#/$defs/source"})
@@ -6157,6 +6424,278 @@ class GoldenV2RG04GapTests(unittest.TestCase):
         forbidden = deepcopy(incomplete)
         forbidden["payload"]["known_asset_funding_amount"] = None
         self.assertFalse(validator.is_valid(forbidden))
+
+    def test_rg04_public_ingest_and_confirmation_validate_end_to_end(self):
+        complete = _rg04_complete_source()
+        missing = _rg04_missing_source()
+        for case in (
+            _rg04_public_ingest_case(complete, "candidate-rg04-complete", "1.00", _rg04_complete_candidate_payload(complete)),
+            _rg04_public_ingest_case(missing, "candidate-rg04-missing", "0.58", _rg04_missing_candidate_payload(missing)),
+            _rg04_public_confirmation_case(),
+        ):
+            with self.subTest(operations=[item["action_type"] for item in case["operations"]]):
+                validate_golden_case_v2(case)
+
+    def test_rg04_public_ingest_confirm_and_mirror_merge_validate_end_to_end(self):
+        case = _rg04_public_mirror_case()
+        validate_golden_case_v2(case)
+        confirmed = case["states"][-2]
+        mirrored = case["states"][-1]
+        self.assertEqual(len(mirrored["candidates"]), len(confirmed["candidates"]))
+        self.assertEqual(mirrored["transactions"], confirmed["transactions"])
+        self.assertEqual(mirrored["transaction_versions"], confirmed["transaction_versions"])
+        self.assertEqual(mirrored["postings"], confirmed["postings"])
+
+        invalid_evidence = deepcopy(case)
+        next(
+            item
+            for item in invalid_evidence["states"][-1]["evidence"]
+            if item["id"] == "evidence-rg04-credit-mirror"
+        )["type"] = "asset_funding_debit"
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(invalid_evidence)
+
+        invalid_payload = deepcopy(case)
+        next(
+            item
+            for item in invalid_payload["states"][-1]["sources"]
+            if item["id"] == "source-rg04-credit-mirror"
+        )["payload"]["amount"] = "49.00"
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(invalid_payload)
+
+        malformed_payload = deepcopy(case)
+        next(
+            item
+            for item in malformed_payload["states"][-1]["sources"]
+            if item["id"] == "source-rg04-credit-mirror"
+        )["payload"]["amount"] = []
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(malformed_payload)
+
+        mirror_candidate = deepcopy(case)
+        next(
+            item
+            for item in mirror_candidate["states"][-1]["candidates"]
+            if item["id"] == "candidate-purchase-rg04"
+        )["source_ids"] = ["source-rg04-credit-mirror"]
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(mirror_candidate)
+
+    def test_rg04_public_ingest_rejects_candidate_contract_drift(self):
+        complete = _rg04_complete_source()
+        missing = _rg04_missing_source()
+        cases = (
+            (_rg04_public_ingest_case(complete, "candidate-rg04-complete", "1.00", _rg04_complete_candidate_payload(complete)), "candidate-rg04-complete"),
+            (_rg04_public_ingest_case(missing, "candidate-rg04-missing", "0.58", _rg04_missing_candidate_payload(missing)), "candidate-rg04-missing"),
+        )
+        mutations = (
+            ("amount", lambda candidate: candidate["payload"].update(total_amount="121.00")),
+            ("provenance", lambda candidate: candidate["payload"]["provenance"].update(rule_version=2)),
+            ("evidence", lambda candidate: candidate["payload"].update(evidence_refs=["evidence-missing"])),
+            ("confirmation_array", lambda candidate: candidate["payload"].update(requires_confirmation=["formal_transaction_creation"])),
+            ("confidence", lambda candidate: candidate.update(confidence="0.75")),
+        )
+        for original, candidate_id in cases:
+            for name, mutation in mutations:
+                invalid = deepcopy(original)
+                candidate = next(item for item in invalid["states"][-1]["candidates"] if item["id"] == candidate_id)
+                mutation(candidate)
+                with self.subTest(candidate_id=candidate_id, mutation=name):
+                    with self.assertRaises(GoldenCaseError):
+                        validate_golden_case_v2(invalid)
+
+        category_drift = _rg04_public_ingest_case(complete, "candidate-rg04-complete", "1.00", _rg04_complete_candidate_payload(complete))
+        next(item for item in category_drift["states"][-1]["candidates"] if item["id"] == "candidate-rg04-complete")["payload"]["suggested_category_id"] = "expense-category-living"
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(category_drift)
+
+        dangling_category = deepcopy(_rg04_complete_source())
+        dangling_category["suggested_category_id"] = "category-missing"
+        dangling_case = _rg04_public_ingest_case(
+            dangling_category,
+            "candidate-rg04-dangling-category",
+            "1.00",
+            _rg04_complete_candidate_payload(dangling_category),
+        )
+        with self.assertRaises(GoldenCaseError):
+            validate_golden_case_v2(dangling_case)
+
+    def test_rg04_confirmation_uses_source_observed_at_for_all_formal_time_roles(self):
+        case = _rg04_public_confirmation_case()
+        validate_golden_case_v2(case)
+        for field in ("occurred_at", "statistics_at", "effective_at"):
+            invalid = deepcopy(case)
+            version = next(item for item in invalid["states"][-1]["transaction_versions"] if item["id"] == "version-purchase-rg04-imported-v1")
+            version[field] = "2026-02-13T12:00:00+08:00"
+            with self.subTest(field=field):
+                with self.assertRaises(GoldenCaseError):
+                    validate_golden_case_v2(invalid)
+
+    def test_rg04_source_time_binding_survives_later_current_replacement_version(self):
+        _, _, state, _, confirmation_operation = _rg04_confirmation_case()
+        transaction = next(
+            item for item in state["transactions"] if item["id"] == "tx-purchase-rg04-imported"
+        )
+        original_version = next(
+            item
+            for item in state["transaction_versions"]
+            if item["id"] == "version-purchase-rg04-imported-v1"
+        )
+        replacement_version = deepcopy(original_version)
+        replacement_version.update(
+            id="version-purchase-rg04-imported-v2",
+            version_number=2,
+            occurred_at="2026-02-13T12:00:00+08:00",
+            statistics_at="2026-02-13T12:00:00+08:00",
+            effective_at="2026-02-13T12:00:00+08:00",
+            created_at="2026-02-13T12:01:00+08:00",
+            confirmation_id="confirmation-rg04-correction",
+        )
+        state["transaction_versions"].append(replacement_version)
+        transaction["current_version_id"] = replacement_version["id"]
+        state["confirmations"].append({
+            "id": "confirmation-rg04-correction",
+            "type": "explicit_manual_save",
+            "operation_id": "operation-rg04-correction",
+            "subject": {"kind": "transaction", "id": transaction["id"]},
+            "payload": {},
+        })
+        operations = {
+            confirmation_operation["id"]: confirmation_operation,
+            "operation-rg04-correction": {
+                "id": "operation-rg04-correction",
+                "root_id": state["root_id"],
+            },
+        }
+        indexes = golden_v2._state_indexes(state, "$.states[0]")
+        golden_v2._validate_formal_ledger(
+            state,
+            "$.states[0]",
+            indexes,
+            {"CNY": 2, "USD": 2},
+            ZoneInfo("Asia/Shanghai"),
+        )
+        golden_v2._validate_references(
+            state,
+            "$.states[0]",
+            indexes,
+            operations,
+            {"CNY": 2, "USD": 2},
+            ZoneInfo("Asia/Shanghai"),
+        )
+
+        invalid = deepcopy(state)
+        next(
+            item
+            for item in invalid["transaction_versions"]
+            if item["id"] == original_version["id"]
+        )["statistics_at"] = "2026-02-12T12:00:00+08:00"
+        invalid_indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+        with self.assertRaisesRegex(GoldenCaseError, "candidate-confirmed version times"):
+            golden_v2._validate_references(
+                invalid,
+                "$.states[0]",
+                invalid_indexes,
+                operations,
+                {"CNY": 2, "USD": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+    def test_rg04_malformed_mixed_payment_shapes_raise_golden_case_error(self):
+        for payload in (None, [], {"currency": "CNY", "total_amount": []}):
+            with self.subTest(payload=payload):
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._mixed_payment_candidate_contract(payload, "$.source")
+
+    def test_rg04_confirm_no_change_replay_accepts_confirmed_bound_candidate(self):
+        validate_golden_case_v2(_rg04_public_confirmation_case(include_replay=True))
+
+    def test_rg04_confirm_replay_allows_inactive_category_but_preserves_category_contract(self):
+        _, fresh_baseline, confirmed, _, operation = _rg04_confirmation_case()
+        category_id = operation["input"]["category_id"]
+        next(
+            item
+            for item in fresh_baseline["catalog"]["categories"]
+            if item["id"] == category_id
+        )["active"] = False
+        with self.assertRaisesRegex(GoldenCaseError, "fresh confirmation requires active"):
+            golden_v2._validate_action_input(
+                operation,
+                "$.operations[0]",
+                fresh_baseline,
+                {"CNY": 2, "USD": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+        replay = deepcopy(operation)
+        replay["outcome"] = {"status": "no_change", "reason_code": "idempotent_replay"}
+        next(
+            item
+            for item in confirmed["catalog"]["categories"]
+            if item["id"] == category_id
+        )["active"] = False
+        golden_v2._validate_action_input(
+            replay,
+            "$.operations[1]",
+            confirmed,
+            {"CNY": 2, "USD": 2},
+            ZoneInfo("Asia/Shanghai"),
+        )
+
+        invalid_replays = []
+        invalid = deepcopy((confirmed, replay))
+        invalid[1]["input"]["category_id"] = "expense-category-living"
+        invalid_replays.append(invalid)
+        invalid = deepcopy((confirmed, replay))
+        next(
+            item
+            for item in invalid[0]["catalog"]["categories"]
+            if item["id"] == category_id
+        )["posting_account_id"] = "asset-bank-a"
+        invalid_replays.append(invalid)
+        invalid = deepcopy((confirmed, replay))
+        next(
+            item
+            for item in invalid[0]["catalog"]["accounts"]
+            if item["id"] == "expense-account-daily"
+        )["currency"] = "USD"
+        invalid_replays.append(invalid)
+        for baseline, invalid_replay in invalid_replays:
+            with self.subTest(input=invalid_replay["input"]):
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_action_input(
+                        invalid_replay,
+                        "$.operations[1]",
+                        baseline,
+                        {"CNY": 2, "USD": 2},
+                        ZoneInfo("Asia/Shanghai"),
+                    )
+
+    def test_rg04_historical_inactive_category_and_global_posting_category_ownership(self):
+        state, context = rg04_posting_semantics_fixture("expense")
+        next(item for item in state["catalog"]["categories"] if item["id"] == "expense-category-breakfast")["active"] = False
+        indexes = golden_v2._state_indexes(state, "$.states[0]")
+        golden_v2._validate_formal_ledger(state, "$.states[0]", indexes, context["precisions"], ZoneInfo("Asia/Shanghai"))
+
+        normal = deepcopy(load_rg01()["states"][-1])
+        expense = next(item for item in normal["postings"] if item["id"] == "posting-expense-rg01")
+        expense["category_id"] = "expense-category-breakfast"
+        indexes = golden_v2._state_indexes(normal, "$.states[0]")
+        golden_v2._validate_formal_ledger(normal, "$.states[0]", indexes, {"CNY": 2}, ZoneInfo("Asia/Shanghai"))
+        for category_id in ("category-missing", "expense-category-food"):
+            invalid = deepcopy(normal)
+            next(item for item in invalid["postings"] if item["id"] == "posting-expense-rg01")["category_id"] = category_id
+            indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+            with self.subTest(category_id=category_id):
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_formal_ledger(invalid, "$.states[0]", indexes, {"CNY": 2}, ZoneInfo("Asia/Shanghai"))
+
+        repayment, repayment_context = rg04_posting_semantics_fixture("credit_repayment")
+        next(item for item in repayment["postings"] if item.get("role") == "credit_repayment_asset_outflow")["category_id"] = "expense-category-breakfast"
+        indexes = golden_v2._state_indexes(repayment, "$.states[0]")
+        with self.assertRaises(GoldenCaseError):
+            golden_v2._validate_formal_ledger(repayment, "$.states[0]", indexes, repayment_context["precisions"], ZoneInfo("Asia/Shanghai"))
 
     def test_rg04_operation_registry_has_no_generic_kind_escape(self):
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -6211,6 +6750,17 @@ class GoldenV2RG04GapTests(unittest.TestCase):
         with self.assertRaisesRegex(GoldenCaseError, "exact expense and two funding roles"):
             golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, invalid_result, expected)
 
+        for mutation, message in (
+            (lambda state: next(item for item in state["postings"] if item.get("role") == "expense").pop("category_id"), "confirmed category"),
+            (lambda state: next(item for item in state["postings"] if item.get("role") == "expense").update(category_id="expense-category-living"), "confirmed category"),
+            (lambda state: next(item for item in state["postings"] if item.get("role") == "mixed_expense_asset_funding").update(category_id="expense-category-daily"), "funding postings"),
+        ):
+            invalid_result = deepcopy(result)
+            mutation(invalid_result)
+            invalid_expected = golden_v2._expected_entity_changes(baseline, invalid_result)
+            with self.assertRaisesRegex(GoldenCaseError, message):
+                golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, invalid_result, invalid_expected)
+
     def test_rg04_ingest_action_input_validates_complete_and_missing_leg_variants(self):
         _, baseline = _rg04_import_baseline()
         complete = {
@@ -6263,7 +6813,7 @@ class GoldenV2RG04GapTests(unittest.TestCase):
         case, baseline = _rg04_import_baseline()
         cases = (
             (_rg04_complete_source(), "candidate-rg04-complete", "1.00", _rg04_complete_candidate_payload),
-            (_rg04_missing_source(), "candidate-rg04-missing", "0.50", _rg04_missing_candidate_payload),
+            (_rg04_missing_source(), "candidate-rg04-missing", "0.58", _rg04_missing_candidate_payload),
         )
         for source, candidate_id, confidence, payload_builder in cases:
             with self.subTest(source_id=source["id"]):
@@ -6292,35 +6842,13 @@ class GoldenV2RG04GapTests(unittest.TestCase):
                 golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
                 golden_v2._validate_action_semantics(operation, "$.operations[0]", baseline, result, expected)
                 self.assertEqual(result["candidates"][-1]["status_history"][-1]["status"], "pending_confirmation")
+                self.assertEqual(result["candidates"][-1]["confidence"], confidence)
                 self.assertEqual(result["transactions"], baseline["transactions"])
                 self.assertEqual(golden_v2._balance_map(result), golden_v2._balance_map(baseline))
                 self.assertEqual(golden_v2._report_map(result), golden_v2._report_map(baseline))
 
     def test_rg04_confirm_candidate_creates_expense_roles_and_mixed_payment_relation(self):
-        case, baseline = _rg04_import_baseline()
-        source = _rg04_complete_source()
-        baseline = _rg04_ingested_state(
-            baseline,
-            source,
-            "candidate-purchase-rg04",
-            "1.00",
-            _rg04_complete_candidate_payload(source),
-        )
-        result = _rg04_confirmed_state(baseline)
-        input_value = {
-            "request_id": "request-rg04-confirm",
-            "candidate_id": "candidate-purchase-rg04",
-            "confirmed_funding_components": [
-                {"account_id": "asset-bank-a", "funding_amount": "70.00", "currency": "CNY"},
-                {"account_id": "liability-credit-b", "funding_amount": "50.00", "currency": "CNY"},
-            ],
-            "explicit_confirmation": True,
-        }
-        operation = _rg04_action(case, baseline, result, "confirm_mixed_payment_candidate", input_value, "operation-rg04-confirm")
-        operation["returned_ids"] = [
-            {"kind": "confirmation", "id": "confirmation-rg04-confirm"},
-            {"kind": "transaction", "id": "tx-purchase-rg04-imported"},
-        ]
+        _, baseline, result, input_value, operation = _rg04_confirmation_case()
         expected = golden_v2._expected_entity_changes(baseline, result)
         golden_v2._validate_action_input(operation, "$.operations[0]", baseline, {"CNY": 2, "USD": 2}, ZoneInfo("Asia/Shanghai"))
         golden_v2._validate_registered_action_effects(operation, "$.operations[0]", result, expected)
@@ -6334,6 +6862,118 @@ class GoldenV2RG04GapTests(unittest.TestCase):
             {item["kind"] for item in result["relations"][-1]["member_refs"]},
             {"transaction", "posting"},
         )
+        expense = next(posting for posting in result["postings"] if posting.get("role") == "expense" and posting["posting_set_id"] == "posting-set-purchase-rg04-imported")
+        self.assertEqual(expense["category_id"], input_value["category_id"])
+
+    def test_rg04_confirm_candidate_rejects_invalid_candidate_category_and_components(self):
+        def validate(baseline, operation):
+            golden_v2._validate_action_input(
+                operation,
+                "$.operations[0]",
+                baseline,
+                {"CNY": 2, "USD": 2},
+                ZoneInfo("Asia/Shanghai"),
+            )
+
+        invalid_cases = []
+
+        _, baseline, _, _, operation = _rg04_confirmation_case()
+        operation["input"]["candidate_id"] = "candidate-missing"
+        invalid_cases.append(("missing_candidate", baseline, operation))
+
+        _, baseline, _, _, operation = _rg04_confirmation_case()
+        operation["input"]["candidate_id"] = []
+        invalid_cases.append(("malformed_candidate_id", baseline, operation))
+
+        for name, mutation in (
+            ("candidate_status", lambda candidate: candidate["status_history"].append({"id": "status-already-confirmed", "sequence": 2, "status": "confirmed"})),
+            ("empty_candidate_status", lambda candidate: candidate.update(status_history=[])),
+            ("candidate_kind", lambda candidate: candidate.update(type="account_transfer")),
+            ("candidate_transaction", lambda candidate: candidate["payload"].update(transaction_id="tx-already-created")),
+        ):
+            _, baseline, _, _, operation = _rg04_confirmation_case()
+            candidate = next(item for item in baseline["candidates"] if item["id"] == operation["input"]["candidate_id"])
+            mutation(candidate)
+            invalid_cases.append((name, baseline, operation))
+
+        for name, category_mutation in (
+            ("missing_category", lambda baseline, operation: operation["input"].update(category_id="category-missing")),
+            ("first_level_category", lambda baseline, operation: operation["input"].update(category_id="expense-category-living")),
+            ("inactive_category", lambda baseline, operation: next(item for item in baseline["catalog"]["categories"] if item["id"] == operation["input"]["category_id"]).update(active=False)),
+            ("dangling_posting_account", lambda baseline, operation: next(item for item in baseline["catalog"]["categories"] if item["id"] == operation["input"]["category_id"]).update(posting_account_id="account-missing")),
+            ("non_expense_posting_account", lambda baseline, operation: next(item for item in baseline["catalog"]["categories"] if item["id"] == operation["input"]["category_id"]).update(posting_account_id="asset-bank-a")),
+        ):
+            _, baseline, _, _, operation = _rg04_confirmation_case()
+            category_mutation(baseline, operation)
+            invalid_cases.append((name, baseline, operation))
+
+        _, baseline, _, _, operation = _rg04_confirmation_case()
+        operation["input"]["category_id"] = []
+        invalid_cases.append(("malformed_category_id", baseline, operation))
+
+        component_mutations = (
+            ("one_component", lambda baseline, components: components.pop()),
+            ("missing_component_currency", lambda baseline, components: components[0].pop("currency")),
+            ("malformed_component_account", lambda baseline, components: components[0].update(account_id=[])),
+            ("duplicate_account", lambda baseline, components: components[1].update(account_id=components[0]["account_id"])),
+            ("wrong_kind", lambda baseline, components: next(item for item in baseline["catalog"]["accounts"] if item["id"] == components[1]["account_id"]).update(kind="asset")),
+            ("not_owned", lambda baseline, components: next(item for item in baseline["catalog"]["accounts"] if item["id"] == components[0]["account_id"]).update(owned_by_user=False)),
+            ("not_real", lambda baseline, components: next(item for item in baseline["catalog"]["accounts"] if item["id"] == components[1]["account_id"]).update(real_account=False)),
+            ("component_currency", lambda baseline, components: components[0].update(currency="USD")),
+            ("account_currency", lambda baseline, components: next(item for item in baseline["catalog"]["accounts"] if item["id"] == components[0]["account_id"]).update(currency="USD")),
+            ("zero_amount", lambda baseline, components: components[0].update(funding_amount="0.00")),
+            ("wrong_sum", lambda baseline, components: components[1].update(funding_amount="49.00")),
+        )
+        for name, component_mutation in component_mutations:
+            _, baseline, _, _, operation = _rg04_confirmation_case()
+            component_mutation(baseline, operation["input"]["confirmed_funding_components"])
+            invalid_cases.append((name, baseline, operation))
+
+        _, baseline, _, _, operation = _rg04_confirmation_case()
+        candidate = next(item for item in baseline["candidates"] if item["id"] == operation["input"]["candidate_id"])
+        candidate["payload"]["currency"] = "USD"
+        invalid_cases.append(("candidate_currency", baseline, operation))
+
+        _, baseline, _, _, operation = _rg04_confirmation_case()
+        operation["input"]["explicit_confirmation"] = False
+        invalid_cases.append(("explicit_confirmation", baseline, operation))
+
+        for name, baseline, operation in invalid_cases:
+            with self.subTest(name=name):
+                with self.assertRaises(GoldenCaseError):
+                    validate(baseline, operation)
+
+    def test_rg04_confirm_candidate_rejects_result_posting_candidate_binding_and_relation_mutations(self):
+        def validate(result, baseline, operation):
+            expected = golden_v2._expected_entity_changes(baseline, result)
+            golden_v2._validate_registered_action_effects(
+                operation, "$.operations[0]", result, expected
+            )
+            golden_v2._validate_action_semantics(
+                operation, "$.operations[0]", baseline, result, expected
+            )
+
+        mutations = (
+            ("expense_category", lambda result: next(item for item in result["postings"] if item.get("role") == "expense").update(category_id="expense-category-other")),
+            ("expense_account", lambda result: next(item for item in result["postings"] if item.get("role") == "expense").update(account_id="asset-bank-a")),
+            ("asset_funding_account", lambda result: next(item for item in result["postings"] if item.get("role") == "mixed_expense_asset_funding").update(account_id="liability-credit-b")),
+            ("asset_funding_amount", lambda result: next(item for item in result["postings"] if item.get("role") == "mixed_expense_asset_funding").update(amount="-69.00")),
+            ("liability_funding_currency", lambda result: next(item for item in result["postings"] if item.get("role") == "mixed_expense_credit_funding").update(currency="USD")),
+            ("candidate_confidence", lambda result: next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04").update(confidence="0.50")),
+            ("candidate_payload", lambda result: next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04")["payload"].update(currency="USD")),
+            ("candidate_binding", lambda result: next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04")["payload"].update(transaction_id="tx-wrong")),
+            ("candidate_history", lambda result: next(item for item in result["candidates"] if item["id"] == "candidate-purchase-rg04")["status_history"][0].update(status="confirmed")),
+            ("transaction_binding", lambda result: next(item for item in result["transactions"] if item["id"] == "tx-purchase-rg04-imported").update(type="account_transfer")),
+            ("relation_transaction", lambda result: result["relations"][-1]["member_refs"][0].update(id="tx-wrong")),
+            ("relation_funding_member", lambda result: result["relations"][-1]["member_refs"][1].update(id="posting-expense-rg04-imported")),
+            ("relation_extra_member", lambda result: result["relations"][-1]["member_refs"].append({"kind": "posting", "id": "posting-expense-rg04-imported"})),
+        )
+        for name, mutation in mutations:
+            _, baseline, result, _, operation = _rg04_confirmation_case()
+            mutation(result)
+            with self.subTest(name=name):
+                with self.assertRaises(GoldenCaseError):
+                    validate(result, baseline, operation)
 
     def test_rg04_mirror_adds_credit_liability_evidence_and_matches_one_reconciliation(self):
         case, baseline = _rg04_import_baseline()
@@ -6349,7 +6989,7 @@ class GoldenV2RG04GapTests(unittest.TestCase):
         result = deepcopy(baseline)
         result["id"] = "state-rg04-mirror"
         result["as_of_operation_id"] = "operation-rg04-mirror"
-        mirror_source = _rg04_complete_source("source-rg04-credit-mirror", "evidence-rg04-credit-mirror")
+        mirror_source = _rg04_mirror_source()
         result["sources"].append({"id": mirror_source["id"], "type": "mixed_payment", "payload": {key: value for key, value in mirror_source.items() if key != "id"}})
         result["evidence"].append({"id": mirror_source["evidence_id"], "type": "credit_liability_mirror", "source_ids": [mirror_source["id"]], "payload": {"observed_at": mirror_source["observed_at"]}})
         result["evidence_links"].append({"id": "link-rg04-credit-mirror", "evidence_id": mirror_source["evidence_id"], "target_kind": "posting", "target_id": "posting-liability-rg04-imported", "role": "real_account_posting"})

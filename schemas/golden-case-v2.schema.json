@@ -301,6 +301,7 @@
         "id": {"$ref": "#/$defs/id"},
         "posting_set_id": {"$ref": "#/$defs/id"},
         "account_id": {"$ref": "#/$defs/id"},
+        "category_id": {"$ref": "#/$defs/id"},
         "amount": {"$ref": "#/$defs/decimal"},
         "currency": {"type": "string", "minLength": 1},
         "role": {
@@ -327,7 +328,8 @@
         {"$ref": "#/$defs/incompleteAccountTransferSource"},
         {"$ref": "#/$defs/accountCreditObservationSource"},
         {"$ref": "#/$defs/completeMixedPaymentSource"},
-        {"$ref": "#/$defs/missingFundingLegMixedPaymentSource"}
+        {"$ref": "#/$defs/missingFundingLegMixedPaymentSource"},
+        {"$ref": "#/$defs/mixedPaymentMirrorSource"}
       ]
     },
     "mixedPaymentFundingComponent": {
@@ -395,6 +397,21 @@
     "missingFundingLegMixedPaymentSource": {
       "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
       "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "mixed_payment"}, "payload": {"$ref": "#/$defs/missingFundingLegMixedPaymentSourcePayload"}}
+    },
+    "mixedPaymentMirrorSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence_id", "observed_at", "account_id", "amount", "currency"],
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1}
+      }
+    },
+    "mixedPaymentMirrorSource": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "mixed_payment"}, "payload": {"$ref": "#/$defs/mixedPaymentMirrorSourcePayload"}}
     },
     "completeMixedPaymentInputSourceRecord": {
       "type": "object", "additionalProperties": false,
@@ -542,6 +559,7 @@
             "currency": {"type": "string", "minLength": 1},
             "suggested_category_id": {"$ref": "#/$defs/id"},
             "known_funding_components": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/mixedPaymentFundingComponent"}},
+            "transaction_id": {"$ref": "#/$defs/id"},
             "provenance": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/provenance"},
             "evidence_refs": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/evidence_refs"},
             "requires_confirmation": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/requires_confirmation"}
@@ -561,6 +579,7 @@
             "currency": {"type": "string", "minLength": 1},
             "known_funding_amount": {"$ref": "#/$defs/positiveDecimal"},
             "missing_funding_amount": {"$ref": "#/$defs/positiveDecimal"},
+            "transaction_id": {"$ref": "#/$defs/id"},
             "provenance": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/provenance"},
             "evidence_refs": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/evidence_refs"},
             "requires_confirmation": {"$ref": "#/$defs/mixedPaymentCandidatePayloadCommon/properties/requires_confirmation"}
@@ -1670,8 +1689,8 @@
       "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_record": {"oneOf": [{"$ref": "#/$defs/completeMixedPaymentInputSourceRecord"}, {"$ref": "#/$defs/missingFundingLegMixedPaymentInputSourceRecord"}]}}
     },
     "confirmMixedPaymentCandidateInput": {
-      "type": "object", "additionalProperties": false, "required": ["request_id", "candidate_id", "confirmed_funding_components", "explicit_confirmation"],
-      "properties": {"request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "confirmed_funding_components": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["account_id", "funding_amount", "currency"], "properties": {"account_id": {"$ref": "#/$defs/id"}, "funding_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}}}}, "explicit_confirmation": {"const": true}}
+      "type": "object", "additionalProperties": false, "required": ["request_id", "candidate_id", "category_id", "confirmed_funding_components", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"}, "confirmed_funding_components": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["account_id", "funding_amount", "currency"], "properties": {"account_id": {"$ref": "#/$defs/id"}, "funding_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}}}}, "explicit_confirmation": {"const": true}}
     },
     "mergeMixedPaymentMirrorEvidenceInput": {
       "type": "object", "additionalProperties": false, "required": ["request_id", "source_record_id", "evidence_id", "transaction_id", "candidate_id", "account_id", "amount", "currency", "observed_at"],
