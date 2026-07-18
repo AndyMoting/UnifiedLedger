@@ -55,12 +55,15 @@ data class TransactionVersion(
     val versionNumber: Int,
     val postingSetId: PostingSetId,
     val times: TransactionTimes,
+    val note: String? = null,
 )
 
 class FormalTransaction private constructor(
     val transaction: Transaction,
     val versions: List<TransactionVersion>,
     val postingSets: List<PostingSet>,
+    private val versionsById: Map<TransactionVersionId, TransactionVersion>,
+    private val postingSetsById: Map<PostingSetId, PostingSet>,
 ) {
     companion object {
         fun create(
@@ -70,35 +73,56 @@ class FormalTransaction private constructor(
         ): DomainResult<FormalTransaction> {
             val versionSnapshot = versions.toList()
             val postingSetSnapshot = postingSets.toList()
-            if (!validateFormalChain(transaction, versionSnapshot, postingSetSnapshot)) {
+            val versionsById = versionSnapshot.associateBy { it.id }
+            val postingSetsById = postingSetSnapshot.associateBy { it.id }
+            if (
+                !validateFormalChain(
+                    transaction = transaction,
+                    versions = versionSnapshot,
+                    postingSetCount = postingSetSnapshot.size,
+                    versionsById = versionsById,
+                    postingSetsById = postingSetsById,
+                )
+            ) {
                 return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
             }
 
             return DomainResult.Success(
-                FormalTransaction(transaction, versionSnapshot, postingSetSnapshot),
+                FormalTransaction(
+                    transaction = transaction,
+                    versions = versionSnapshot,
+                    postingSets = postingSetSnapshot,
+                    versionsById = versionsById,
+                    postingSetsById = postingSetsById,
+                ),
             )
         }
     }
 
     internal fun currentPostingSet(): PostingSet {
-        val currentVersion = versions.single { it.id == transaction.currentVersionId }
-        return postingSets.single { it.id == currentVersion.postingSetId }
+        val currentVersion = versionsById.getValue(transaction.currentVersionId)
+        return postingSetsById.getValue(currentVersion.postingSetId)
     }
 }
 
 private fun validateFormalChain(
     transaction: Transaction,
     versions: List<TransactionVersion>,
-    postingSets: List<PostingSet>,
+    postingSetCount: Int,
+    versionsById: Map<TransactionVersionId, TransactionVersion>,
+    postingSetsById: Map<PostingSetId, PostingSet>,
 ): Boolean {
-    if (versions.isEmpty() || postingSets.isEmpty()) return false
-    if (versions.map { it.id }.toSet().size != versions.size) return false
-    if (postingSets.map { it.id }.toSet().size != postingSets.size) return false
+    if (versions.isEmpty() || postingSetCount == 0) return false
+    if (versionsById.size != versions.size) return false
+    if (postingSetsById.size != postingSetCount) return false
     if (versions.any { it.transactionId != transaction.id || it.versionNumber < 1 }) return false
     if (versions.map { it.versionNumber }.toSet().size != versions.size) return false
-    if (versions.any { version -> postingSets.none { it.id == version.postingSetId } }) return false
+    val sortedVersionNumbers = versions.map { it.versionNumber }.sorted()
+    if (sortedVersionNumbers.withIndex().any { (index, number) -> number != index + 1 }) return false
+    if (versions.any { it.postingSetId !in postingSetsById }) return false
 
-    val currentVersion = versions.singleOrNull { it.id == transaction.currentVersionId }
+    val currentVersion = versionsById[transaction.currentVersionId]
         ?: return false
-    return postingSets.count { it.id == currentVersion.postingSetId } == 1
+    if (currentVersion.versionNumber != versions.size) return false
+    return true
 }
