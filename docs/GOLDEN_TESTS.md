@@ -149,7 +149,9 @@
 
 **级别：** `core_reserved`
 
-长期服务在付款日全额支付并启用按月分摊。验证付款日真实资产全额减少，未确认部分进入预付资产，各期只调整预付与费用且不再次扣减真实资产。
+机器可比较 direct-v2 草案保存在 [`golden/rules/rg-11.json`](../golden/rules/rg-11.json)，状态为 `draft_for_review`；完整设计见 [`RG-11 周期性分摊设计`](specs/2026-07-18-rg-11-periodic-allocation-design.md)。
+
+长期服务在付款日全额支付并启用按月分摊。验证付款日真实资产全额减少，未确认部分进入系统隐藏的预付资产，各期只调整预付与费用且不再次扣减真实资产。验证实际付款时间与分摊开始时间分离、月末与固定日锚点、日历连续性、按期数等分及末期尾差、不可变修订边界、按 installment 的 recognition audit link、严格统计时间版本修正、精确 returned IDs 和幂等重放。独立 rejection root 冻结 malformed/非正金额、币种、锚点、重复确认、预付余额上限及修订边界/期数错误的原子拒绝生命周期。
 
 ### RG-12 部分对账与修正重匹配
 

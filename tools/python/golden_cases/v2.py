@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
+import calendar
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -189,6 +190,20 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
     "ingest_mixed_payment_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
     "confirm_mixed_payment_candidate": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "candidates": (0, 1, 0), "confirmations": (1, 0, 0), "relations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
     "merge_mixed_payment_mirror_evidence": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
+    "create_periodic_allocation": {
+        "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0), "postings": (2, 0, 0),
+        "domain_entities": (5, 0, 0), "posting_reconciliations": (1, 0, 0),
+    },
+    "recognize_periodic_allocation_installment": {
+        "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0), "postings": (2, 0, 0), "audit_links": (1, 0, 0),
+    },
+    "revise_periodic_allocation": {"domain_entities": (4, 0, 0)},
+    "correct_transaction_version": {
+        "transactions": (0, 1, 0), "transaction_versions": (1, 0, 0),
+        "confirmations": (1, 0, 0),
+    },
 }
 _SET_LIKE_ARRAY_KEYS = {
     "accounts",
@@ -524,6 +539,40 @@ def _timestamp_instant(value: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+def _local_datetime(value: str, path: str, timezone: ZoneInfo) -> datetime:
+    return _timestamp(value, path, timezone).astimezone(timezone)
+
+
+def _anchor_day(year: int, month: int, anchor: dict[str, Any]) -> int:
+    if anchor["type"] == "month_end":
+        return calendar.monthrange(year, month)[1]
+    return anchor["day"]
+
+
+def _shift_month(year: int, month: int, offset: int) -> tuple[int, int]:
+    absolute = year * 12 + month - 1 + offset
+    return absolute // 12, absolute % 12 + 1
+
+
+def _anchored_month_date(
+    start: datetime,
+    anchor: dict[str, Any],
+    offset: int,
+) -> tuple[int, int, int]:
+    year, month = _shift_month(start.year, start.month, offset)
+    return year, month, _anchor_day(year, month, anchor)
+
+
+def _equal_split(total: Decimal, count: int, precision: int) -> list[Decimal]:
+    scale = 10 ** precision
+    minor_units = int(total * scale)
+    quotient, remainder = divmod(minor_units, count)
+    return [
+        Decimal(quotient + (remainder if index == count - 1 else 0)) / scale
+        for index in range(count)
+    ]
+
+
 def _utf16_lexicographic_key(value: str) -> bytes:
     return value.encode("utf-16-be", errors="surrogatepass")
 
@@ -815,6 +864,40 @@ def _validate_transaction_posting_semantics(
     roles = [posting.get("role") for posting in postings]
     mixed_roles = {"mixed_expense_asset_funding", "mixed_expense_credit_funding"}
     if transaction_type == "expense" and not mixed_roles.intersection(roles):
+        return
+
+    if transaction_type == "prepaid_purchase":
+        expected_roles = {"payment_asset", "prepaid_asset"}
+        if len(postings) != 2 or set(roles) != expected_roles:
+            _fail(path + ".posting_set", "prepaid purchase requires payment and prepaid asset postings")
+        by_role = {posting["role"]: posting for posting in postings}
+        payment, prepaid = by_role["payment_asset"], by_role["prepaid_asset"]
+        payment_account, prepaid_account = account_for(payment, "payment_asset"), account_for(prepaid, "prepaid_asset")
+        if not (payment_account["kind"] == "asset" and payment_account["owned_by_user"] and payment_account["real_account"] and payment["reconciliation_eligible"] is True and _decimal(payment["amount"], path) < 0):
+            _fail(path + ".posting_set.payment_asset", "must be a negative eligible owned real asset posting")
+        if not (prepaid_account["kind"] == "asset" and prepaid_account["owned_by_user"] and not prepaid_account["real_account"] and prepaid_account.get("hidden") is True and prepaid["reconciliation_eligible"] is False and _decimal(prepaid["amount"], path) > 0):
+            _fail(path + ".posting_set.prepaid_asset", "must be a positive hidden non-real prepaid asset posting")
+        if payment["currency"] != prepaid["currency"] or _decimal(payment["amount"], path) + _decimal(prepaid["amount"], path) != 0:
+            _fail(path + ".posting_set", "prepaid purchase postings must balance in one currency")
+        return
+
+    if transaction_type == "prepaid_recognition":
+        expected_roles = {"expense", "prepaid_asset"}
+        if len(postings) != 2 or set(roles) != expected_roles:
+            _fail(path + ".posting_set", "prepaid recognition requires expense and prepaid asset postings")
+        by_role = {posting["role"]: posting for posting in postings}
+        expense, prepaid = by_role["expense"], by_role["prepaid_asset"]
+        expense_account, prepaid_account = account_for(expense, "expense"), account_for(prepaid, "prepaid_asset")
+        if not (expense_account["kind"] == "expense" and not expense_account["owned_by_user"] and not expense_account["real_account"] and expense["reconciliation_eligible"] is False and _decimal(expense["amount"], path) > 0):
+            _fail(path + ".posting_set.expense", "must be a positive non-owned non-real category expense posting")
+        if categories is not None:
+            category = categories.get(expense.get("category_id"))
+            if category is None or category["parent_id"] is None or category["posting_account_id"] != expense["account_id"]:
+                _fail(path + ".posting_set.expense.category_id", "must match an existing second-level category posting account")
+        if not (prepaid_account["kind"] == "asset" and prepaid_account["owned_by_user"] and not prepaid_account["real_account"] and prepaid_account.get("hidden") is True and prepaid["reconciliation_eligible"] is False and _decimal(prepaid["amount"], path) < 0):
+            _fail(path + ".posting_set.prepaid_asset", "must release the hidden non-real prepaid asset")
+        if expense["currency"] != prepaid["currency"] or _decimal(expense["amount"], path) + _decimal(prepaid["amount"], path) != 0:
+            _fail(path + ".posting_set", "prepaid recognition postings must balance in one currency")
         return
 
     if transaction_type == "expense":
@@ -2274,6 +2357,9 @@ def _validate_references(
         "adjustment_transaction": ("balance_adjustment", "balance_adjustment"),
         "explanation_transaction": ("explanation_allocation", "account_transfer"),
         "allocation_reversal": ("explanation_allocation", "balance_adjustment_reversal"),
+        "periodic_allocation_recognition": (
+            "periodic_allocation_installment", "prepaid_recognition",
+        ),
     }
     for index, link in enumerate(state["audit_links"]):
         link_path = f"{path}.audit_links[{index}]"
@@ -2342,6 +2428,8 @@ def _validate_references(
         target = transactions.get(link["to"]["id"])
         if target is None or target["type"] != to_type:
             _fail(link_path + ".to.id", "dangling or mistyped audit target")
+        if link["type"] == "periodic_allocation_recognition":
+            continue
         if link["type"] == "adjustment_transaction":
             expected_target_id = source["payload"]["transaction_id"]
         elif link["type"] == "explanation_transaction":
@@ -2373,6 +2461,202 @@ def _validate_references(
                 path + ".audit_links",
                 f"reconstruction group {reconstruction['id']!r} must have exactly one typed audit link per endpoint",
             )
+
+
+def _periodic_allocation_statuses(
+    state: dict[str, Any],
+    indexes: dict[str, dict[str, dict[str, Any]]],
+) -> dict[tuple[str, str, str], str]:
+    entities = indexes["domain_entities"]
+    recognized_installments = {
+        link["from"]["id"]
+        for link in state["audit_links"]
+        if link["type"] == "periodic_allocation_recognition"
+    }
+    revisions_by_schedule: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entity in state["domain_entities"]:
+        if entity["type"] == "periodic_allocation_revision":
+            revisions_by_schedule[entity["payload"]["schedule_id"]].append(entity)
+
+    expected: dict[tuple[str, str, str], str] = {}
+    for schedule_id, revisions in revisions_by_schedule.items():
+        current_revision = max(revisions, key=lambda item: item["payload"]["revision_number"])
+        current_ids = set(current_revision["payload"]["installment_ids"])
+        for revision in revisions:
+            for installment_id in revision["payload"]["installment_ids"]:
+                value = (
+                    "recognized" if installment_id in recognized_installments
+                    else "pending" if installment_id in current_ids else "superseded"
+                )
+                expected[("domain_entity", installment_id, "allocation_status")] = value
+        expected[("domain_entity", schedule_id, "allocation_status")] = (
+            "recognized" if all(item_id in recognized_installments for item_id in current_ids) else "active"
+        )
+    return expected
+
+
+def _validate_periodic_allocations(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    entities = indexes["domain_entities"]
+    accounts = indexes["catalog_accounts"]
+    categories = indexes["catalog_categories"]
+    schedules = [item for item in state["domain_entities"] if item["type"] == "periodic_allocation_schedule"]
+    revisions = [item for item in state["domain_entities"] if item["type"] == "periodic_allocation_revision"]
+    installments = [item for item in state["domain_entities"] if item["type"] == "periodic_allocation_installment"]
+    if not schedules and not revisions and not installments:
+        return
+    if not schedules:
+        _fail(path + ".domain_entities", "periodic revisions and installments require a schedule")
+
+    revisions_by_schedule: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    installments_by_revision: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for revision in revisions:
+        revisions_by_schedule[revision["payload"]["schedule_id"]].append(revision)
+    for installment in installments:
+        installments_by_revision[installment["payload"]["revision_id"]].append(installment)
+    schedule_ids = {item["id"] for item in schedules}
+    revision_ids = {item["id"] for item in revisions}
+    if set(revisions_by_schedule) - schedule_ids:
+        _fail(path + ".domain_entities", "periodic revisions must reference an existing schedule")
+    if set(installments_by_revision) - revision_ids:
+        _fail(path + ".domain_entities", "periodic installments must reference an existing revision")
+
+    recognition_links = [
+        item for item in state["audit_links"]
+        if item["type"] == "periodic_allocation_recognition"
+    ]
+    link_by_installment = {item["from"]["id"]: item for item in recognition_links}
+    if len(link_by_installment) != len(recognition_links):
+        _fail(path + ".audit_links", "an installment may have only one recognition link")
+    recognition_transaction_ids = {
+        transaction["id"] for transaction in state["transactions"] if transaction["type"] == "prepaid_recognition"
+    }
+    if {item["to"]["id"] for item in recognition_links} != recognition_transaction_ids:
+        _fail(path + ".audit_links", "each prepaid recognition transaction requires exactly one installment link")
+    if len({item["to"]["id"] for item in recognition_links}) != len(recognition_links):
+        _fail(path + ".audit_links", "a recognition transaction may link to only one installment")
+
+    for schedule in schedules:
+        schedule_path = path + ".domain_entities[" + str(state["domain_entities"].index(schedule)) + "].payload"
+        payload = schedule["payload"]
+        start_local = _local_datetime(payload["start_at"], schedule_path + ".start_at", timezone)
+        if start_local.day != _anchor_day(start_local.year, start_local.month, payload["anchor"]):
+            _fail(schedule_path + ".start_at", "must match the schedule anchor in the case timezone")
+        transaction = current.get(payload["payment_transaction_id"])
+        prepaid_account = accounts.get(payload["prepaid_account_id"])
+        category = categories.get(payload["category_id"])
+        category_account = accounts.get(category["posting_account_id"]) if category else None
+        if transaction is None or transaction[0]["type"] != "prepaid_purchase":
+            _fail(schedule_path + ".payment_transaction_id", "must reference a prepaid purchase transaction")
+        if not (prepaid_account and prepaid_account["kind"] == "asset" and prepaid_account["owned_by_user"] and not prepaid_account["real_account"] and prepaid_account.get("hidden") is True):
+            _fail(schedule_path + ".prepaid_account_id", "must reference an owned non-real system-hidden prepaid asset")
+        if not (category and category["parent_id"] is not None and category["active"] and category_account and category_account["kind"] == "expense" and not category_account["owned_by_user"] and not category_account["real_account"]):
+            _fail(schedule_path + ".category_id", "must reference an active second-level non-owned category posting account")
+        total = _amount(payload["total_amount"], payload["currency"], schedule_path + ".total_amount", precisions)
+        if total <= 0 or prepaid_account["currency"] != payload["currency"] or category_account["currency"] != payload["currency"]:
+            _fail(schedule_path, "schedule amount and referenced accounts must use one positive currency amount")
+        purchase_postings = transaction[2]
+        if {(item.get("role"), item["account_id"], item["amount"]) for item in purchase_postings} != {
+            ("payment_asset", next(item["account_id"] for item in purchase_postings if item.get("role") == "payment_asset"), "-" + payload["total_amount"]),
+            ("prepaid_asset", payload["prepaid_account_id"], payload["total_amount"]),
+        }:
+            _fail(schedule_path + ".payment_transaction_id", "purchase postings must fund this exact prepaid amount")
+        schedule_revisions = sorted(revisions_by_schedule.get(schedule["id"], []), key=lambda item: item["payload"]["revision_number"])
+        if not schedule_revisions or [item["payload"]["revision_number"] for item in schedule_revisions] != list(range(1, len(schedule_revisions) + 1)):
+            _fail(schedule_path, "revisions must start at 1 and remain continuous")
+        seen_sequences: set[int] = set()
+        for revision_index, revision in enumerate(schedule_revisions):
+            revision_path = path + ".domain_entities[" + str(state["domain_entities"].index(revision)) + "].payload"
+            revision_payload = revision["payload"]
+            owned_installments = installments_by_revision.get(revision["id"], [])
+            if revision_payload["currency"] != payload["currency"] or {item["id"] for item in owned_installments} != set(revision_payload["installment_ids"]):
+                _fail(revision_path, "revision must own exactly its schedule currency installments")
+            revision_installments = [entities[item_id] for item_id in revision_payload["installment_ids"]]
+            if revision_index == 0:
+                if revision_payload["recognized_through"] is not None:
+                    _fail(revision_path + ".recognized_through", "revision 1 boundary must be null")
+                first_expected = _anchored_month_date(start_local, payload["anchor"], 0)
+                recognized_before = Decimal(0)
+            else:
+                previous = schedule_revisions[revision_index - 1]
+                previous_installments = [entities[item_id] for item_id in previous["payload"]["installment_ids"]]
+                flags = [item["id"] in link_by_installment for item in previous_installments]
+                if not any(flags) or any(flags[index] and not flags[index - 1] for index in range(1, len(flags))):
+                    _fail(revision_path + ".recognized_through", "previous revision recognition must be a non-empty contiguous prefix")
+                latest_index = max(index for index, recognized in enumerate(flags) if recognized)
+                if any(flags[latest_index + 1 :]):
+                    _fail(revision_path + ".recognized_through", "recognized installments cannot be hidden after the boundary")
+                latest = previous_installments[latest_index]
+                if revision_payload["recognized_through"] != latest["id"]:
+                    _fail(revision_path + ".recognized_through", "must equal the latest contiguous recognized installment in the immediately previous revision")
+                latest_local = _local_datetime(latest["payload"]["scheduled_at"], revision_path + ".recognized_through", timezone)
+                first_expected = _anchored_month_date(latest_local, payload["anchor"], 1)
+                prior_revision_ids = {
+                    item_id
+                    for prior in schedule_revisions[:revision_index]
+                    for item_id in prior["payload"]["installment_ids"]
+                }
+                recognized_before = sum(
+                    (_decimal(entities[item_id]["payload"]["amount"], revision_path) for item_id in prior_revision_ids if item_id in link_by_installment),
+                    Decimal(0),
+                )
+            installment_total = Decimal(0)
+            expected_split = _equal_split(
+                _amount(revision_payload["remaining_amount"], payload["currency"], revision_path + ".remaining_amount", precisions),
+                len(revision_installments),
+                precisions[payload["currency"]],
+            )
+            previous_sequence: int | None = None
+            for installment_index, installment in enumerate(revision_installments):
+                installment_path = path + ".domain_entities[" + str(state["domain_entities"].index(installment)) + "].payload"
+                installment_payload = installment["payload"]
+                if installment_payload["schedule_id"] != schedule["id"] or installment_payload["currency"] != payload["currency"]:
+                    _fail(installment_path, "installment must belong to its schedule and currency")
+                if installment_payload["sequence"] in seen_sequences or (previous_sequence is not None and installment_payload["sequence"] != previous_sequence + 1):
+                    _fail(installment_path + ".sequence", "installment sequences must be unique and consecutive in revision order")
+                seen_sequences.add(installment_payload["sequence"])
+                previous_sequence = installment_payload["sequence"]
+                scheduled_local = _local_datetime(installment_payload["scheduled_at"], installment_path + ".scheduled_at", timezone)
+                expected_date = first_expected if installment_index == 0 else _anchored_month_date(
+                    datetime(first_expected[0], first_expected[1], first_expected[2]),
+                    payload["anchor"],
+                    installment_index,
+                )
+                if (scheduled_local.year, scheduled_local.month, scheduled_local.day) != expected_date or scheduled_local < start_local:
+                    _fail(installment_path + ".scheduled_at", "must be a consecutive anchored monthly local date at or after start_at")
+                amount = _amount(installment_payload["amount"], payload["currency"], installment_path + ".amount", precisions)
+                if amount <= 0 or amount != expected_split[installment_index]:
+                    _fail(installment_path + ".amount", "must use deterministic equal split with final installment remainder")
+                installment_total += amount
+            remaining = _amount(revision_payload["remaining_amount"], payload["currency"], revision_path + ".remaining_amount", precisions)
+            if installment_total != remaining:
+                _fail(revision_path + ".installment_ids", "revision installments must sum to remaining_amount")
+            if revision_payload["revision_number"] == 1 and remaining != total:
+                _fail(revision_path + ".remaining_amount", "initial revision must sum to the schedule total")
+            if revision_payload["revision_number"] > 1 and remaining != total - recognized_before:
+                _fail(revision_path + ".remaining_amount", "must equal schedule total minus all prior immutable recognized amounts")
+
+        recognized_total = Decimal(0)
+        for installment_id, link in link_by_installment.items():
+            installment = entities.get(installment_id)
+            if installment is None or installment["type"] != "periodic_allocation_installment" or installment["payload"]["schedule_id"] != schedule["id"]:
+                continue
+            installment_payload = installment["payload"]
+            transaction, version, postings = current[link["to"]["id"]]
+            by_role = {item.get("role"): item for item in postings}
+            expense = by_role["expense"]
+            prepaid = by_role["prepaid_asset"]
+            if expense.get("category_id") != payload["category_id"] or expense["amount"] != installment_payload["amount"] or prepaid["account_id"] != payload["prepaid_account_id"] or prepaid["amount"] != "-" + installment_payload["amount"] or version["occurred_at"] != installment_payload["scheduled_at"] or version["effective_at"] != installment_payload["scheduled_at"]:
+                _fail(path + ".audit_links", "recognition must release the exact scheduled installment to its category")
+            recognized_total += _decimal(installment_payload["amount"], path)
+        if recognized_total > total:
+            _fail(path + ".audit_links", "recognitions cannot exceed the prepaid purchase amount")
 
 
 def _validate_reconciliations(
@@ -2517,6 +2801,22 @@ def _report_values(
                 ),
                 Decimal(0),
             )
+        elif transaction_type == "prepaid_purchase":
+            values["cash_outflow"] += sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "payment_asset"),
+                Decimal(0),
+            )
+        elif transaction_type == "prepaid_recognition":
+            expense = sum(
+                (_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "expense"),
+                Decimal(0),
+            )
+            values["consumption"] += expense
+            values["ordinary_expense"] += expense
+            values["expense"] += expense
+            values["budget"] += expense
+            values["category_effect"] += expense
+            values["net_worth_change"] -= expense
     values["budget"] += Decimal(0)
     return values
 
@@ -2580,6 +2880,10 @@ def _validate_reports(
             "balance_adjustment_net_worth_change", "budget", "cash_inflow", "cash_outflow",
             "consumption", "income", "internal_transfer_amount", "net_worth_change",
             "ordinary_expense", "ordinary_income",
+        },
+        "RG-11": {
+            "budget", "cash_outflow", "category_effect", "consumption", "income",
+            "net_worth_change",
         },
     }
     for report_index, report in enumerate(state["reports"]):
@@ -2710,6 +3014,7 @@ def _expected_derived_statuses(
             )
             verification = "fully_reconciled" if fully_matched and fully_evidenced else "evidence_incomplete"
         expected[("observation", observation_id, "verification_status")] = verification
+    expected.update(_periodic_allocation_statuses(state, indexes))
     return expected
 
 
@@ -2742,6 +3047,10 @@ def _validate_derived_statuses(
         "confirmation_status": (
             "candidate",
             {"pending_confirmation", "confirmed", "rejected", "incomplete"},
+        ),
+        "allocation_status": (
+            "domain_entity",
+            {"active", "pending", "recognized", "superseded"},
         ),
     }
     _unique_compound(
@@ -3444,6 +3753,143 @@ def _validate_rejected_rg10_attempt(
         )
 
 
+_PERIODIC_ALLOCATION_ACTIONS = {
+    "create_periodic_allocation",
+    "recognize_periodic_allocation_installment",
+    "revise_periodic_allocation",
+    "correct_transaction_version",
+}
+
+
+def _attempted_decimal_value(
+    value: Any,
+    currency: Any,
+    precisions: dict[str, int],
+) -> Decimal | None:
+    if not isinstance(value, str) or not isinstance(currency, str):
+        return None
+    precision = precisions.get(currency)
+    if precision is None:
+        if not re.fullmatch(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$", value):
+            return None
+    else:
+        pattern = r"^-?(?:0|[1-9][0-9]*)$" if precision == 0 else rf"^-?(?:0|[1-9][0-9]*)\.[0-9]{{{precision}}}$"
+        if not re.fullmatch(pattern, value):
+            return None
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        return None
+
+
+def _periodic_allocation_rejection(
+    action: str,
+    attempted: dict[str, Any],
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> tuple[str, str] | None:
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    entities = {item["id"]: item for item in baseline["domain_entities"]}
+    transactions = {item["id"]: item for item in baseline["transactions"]}
+    currency = attempted.get("currency")
+    amount_field = "remaining_amount" if action == "revise_periodic_allocation" else "amount"
+    if action != "correct_transaction_version":
+        amount = _attempted_decimal_value(attempted.get(amount_field), currency, precisions)
+        if amount is None:
+            return "exact_decimal_string_required", amount_field
+        if amount <= 0:
+            return "must_be_positive", amount_field
+        if currency not in precisions:
+            return "unsupported_currency", "currency"
+
+    if action == "create_periodic_allocation":
+        anchor = attempted.get("anchor")
+        if not isinstance(anchor, dict) or set(anchor) not in ({"type"}, {"type", "day"}) or anchor.get("type") not in {"month_end", "day_of_month"} or (anchor.get("type") == "month_end" and set(anchor) != {"type"}) or (anchor.get("type") == "day_of_month" and (set(anchor) != {"type", "day"} or not isinstance(anchor.get("day"), int) or not 1 <= anchor["day"] <= 28)):
+            return "invalid_anchor", "anchor"
+        if not isinstance(attempted.get("installment_count"), int) or attempted["installment_count"] < 1:
+            return "invalid_installment_count", "installment_count"
+        payment = accounts.get(attempted.get("payment_account_id"))
+        prepaid = accounts.get(attempted.get("prepaid_account_id"))
+        if payment is None or prepaid is None or payment["currency"] != currency or prepaid["currency"] != currency:
+            return "currency_mismatch", "currency"
+        start = _local_datetime(attempted["start_at"], "$.attempted_input.start_at", timezone)
+        if start.day != _anchor_day(start.year, start.month, anchor):
+            return "invalid_anchor", "anchor"
+        return None
+
+    if action == "recognize_periodic_allocation_installment":
+        schedule = entities.get(attempted.get("schedule_id"))
+        installment = entities.get(attempted.get("installment_id"))
+        if schedule is None or schedule.get("type") != "periodic_allocation_schedule" or installment is None or installment.get("type") != "periodic_allocation_installment" or installment["payload"]["schedule_id"] != schedule["id"]:
+            return "installment_not_pending", "installment_id"
+        statuses = _periodic_allocation_statuses(baseline, _state_indexes(baseline, "$.attempted_input"))
+        if statuses.get(("domain_entity", installment["id"], "allocation_status")) != "pending":
+            return "installment_not_pending", "installment_id"
+        prepaid_account_id = schedule["payload"]["prepaid_account_id"]
+        balance = next((Decimal(item["amount"]) for item in baseline["balances"] if item["account_id"] == prepaid_account_id and item["currency"] == currency), Decimal(0))
+        if amount > balance:
+            return "exceeds_remaining_prepaid", "amount"
+        if currency != installment["payload"]["currency"]:
+            return "currency_mismatch", "currency"
+        if amount != Decimal(installment["payload"]["amount"]):
+            return "installment_amount_mismatch", "amount"
+        return None
+
+    if action == "revise_periodic_allocation":
+        schedule = entities.get(attempted.get("schedule_id"))
+        if schedule is None or schedule.get("type") != "periodic_allocation_schedule":
+            return "invalid_revision_boundary", "recognized_through"
+        revisions = sorted(
+            (item for item in baseline["domain_entities"] if item["type"] == "periodic_allocation_revision" and item["payload"]["schedule_id"] == schedule["id"]),
+            key=lambda item: item["payload"]["revision_number"],
+        )
+        current_ids = revisions[-1]["payload"]["installment_ids"]
+        recognized = {link["from"]["id"] for link in baseline["audit_links"] if link["type"] == "periodic_allocation_recognition"}
+        flags = [item_id in recognized for item_id in current_ids]
+        if not any(flags) or any(flags[index] and not flags[index - 1] for index in range(1, len(flags))):
+            return "invalid_revision_boundary", "recognized_through"
+        boundary = current_ids[max(index for index, value in enumerate(flags) if value)]
+        if attempted.get("recognized_through") != boundary:
+            return "invalid_revision_boundary", "recognized_through"
+        if not isinstance(attempted.get("remaining_installment_count"), int) or attempted["remaining_installment_count"] < 1:
+            return "invalid_installment_count", "remaining_installment_count"
+        if currency != schedule["payload"]["currency"]:
+            return "currency_mismatch", "currency"
+        recognized_total = sum(
+            (Decimal(entities[item_id]["payload"]["amount"]) for item_id in recognized if item_id in entities and entities[item_id]["payload"].get("schedule_id") == schedule["id"]),
+            Decimal(0),
+        )
+        if amount != Decimal(schedule["payload"]["total_amount"]) - recognized_total:
+            return "remaining_amount_mismatch", "remaining_amount"
+        return None
+
+    transaction = transactions.get(attempted.get("transaction_id"))
+    if transaction is None or transaction["type"] != "prepaid_recognition":
+        return "transaction_not_correctable", "transaction_id"
+    return None
+
+
+def _validate_rejected_periodic_allocation_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    failure = _periodic_allocation_rejection(
+        operation["action_type"], operation["attempted_input"], baseline, precisions, timezone
+    )
+    if failure is None:
+        _fail(operation_path + ".attempted_input", "does not reproduce a registered rejection")
+    reason, field = failure
+    if operation["outcome"]["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r} for the first failing attempted field")
+    expected_path = f"$.attempted_input.{field}"
+    if operation["outcome"]["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -3477,6 +3923,10 @@ def _validate_action_input(
                 baseline,
                 precisions,
                 timezone,
+            )
+        elif action in _PERIODIC_ALLOCATION_ACTIONS:
+            _validate_rejected_periodic_allocation_attempt(
+                operation, operation_path, baseline, precisions, timezone
             )
         else:
             _fail(operation_path + ".action_type", "unregistered rejected action")
@@ -3729,6 +4179,73 @@ def _validate_action_input(
         }:
             _fail(input_path + ".transaction_id", "must reference the transaction's funding postings")
         _timestamp(input_value.get("observed_at"), input_path + ".observed_at", timezone)
+    elif action == "create_periodic_allocation":
+        payment = accounts.get(input_value["payment_account_id"])
+        prepaid = accounts.get(input_value["prepaid_account_id"])
+        category = categories.get(input_value["category_id"])
+        category_account = accounts.get(category["posting_account_id"]) if category else None
+        if not (payment and payment["kind"] == "asset" and payment["owned_by_user"] and payment["real_account"] and payment["reconciliation_eligible"]):
+            _fail(input_path + ".payment_account_id", "must reference an eligible owned real payment asset")
+        if not (prepaid and prepaid["kind"] == "asset" and prepaid["owned_by_user"] and not prepaid["real_account"] and prepaid.get("hidden") is True):
+            _fail(input_path + ".prepaid_account_id", "must reference an owned non-real system-hidden prepaid asset")
+        if not (category and category["parent_id"] is not None and category["active"] and category_account and category_account["kind"] == "expense" and not category_account["owned_by_user"] and not category_account["real_account"]):
+            _fail(input_path + ".category_id", "must reference an active second-level category expense account")
+        amount = _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        if amount <= 0:
+            _fail(input_path + ".amount", "must be positive")
+        if payment["currency"] != input_value["currency"] or prepaid["currency"] != input_value["currency"] or category_account["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match payment, prepaid, and category accounts")
+        _timestamp(input_value["occurred_at"], input_path + ".occurred_at", timezone)
+        _timestamp(input_value["start_at"], input_path + ".start_at", timezone)
+        if input_value["installment_count"] < 1:
+            _fail(input_path + ".installment_count", "must be at least 1")
+    elif action == "recognize_periodic_allocation_installment":
+        schedule = entities.get(input_value["schedule_id"])
+        installment = entities.get(input_value["installment_id"])
+        if schedule is None or schedule["type"] != "periodic_allocation_schedule":
+            _fail(input_path + ".schedule_id", "must reference a periodic allocation schedule")
+        if installment is None or installment["type"] != "periodic_allocation_installment":
+            _fail(input_path + ".installment_id", "must reference a periodic allocation installment")
+        payload = installment["payload"]
+        if payload["schedule_id"] != schedule["id"] or payload["amount"] != input_value["amount"] or payload["currency"] != input_value["currency"]:
+            _fail(input_path, "must exactly match the scheduled installment")
+        status = _periodic_allocation_statuses(baseline, _state_indexes(baseline, input_path))
+        value = status.get(("domain_entity", installment["id"], "allocation_status"))
+        if operation["outcome"]["status"] == "accepted" and value != "pending":
+            _fail(input_path + ".installment_id", "must reference a current pending installment")
+        if operation["outcome"]["status"] == "no_change" and value != "recognized":
+            _fail(input_path + ".installment_id", "idempotent replay requires an already recognized installment")
+    elif action == "revise_periodic_allocation":
+        schedule = entities.get(input_value["schedule_id"])
+        if schedule is None or schedule["type"] != "periodic_allocation_schedule":
+            _fail(input_path + ".schedule_id", "must reference a periodic allocation schedule")
+        schedule_payload = schedule["payload"]
+        if input_value["currency"] != schedule_payload["currency"]:
+            _fail(input_path + ".currency", "must match the schedule currency")
+        revision_entities = [item for item in baseline["domain_entities"] if item["type"] == "periodic_allocation_revision" and item["payload"]["schedule_id"] == schedule["id"]]
+        current_revision = max(revision_entities, key=lambda item: item["payload"]["revision_number"])
+        recognized_links = {
+            link["from"]["id"]
+            for link in baseline["audit_links"]
+            if link["type"] == "periodic_allocation_recognition"
+        }
+        recognized_ids = [item_id for item_id in current_revision["payload"]["installment_ids"] if item_id in recognized_links]
+        if input_value["recognized_through"] not in recognized_ids:
+            _fail(input_path + ".recognized_through", "must identify a recognized installment in the current revision")
+        remaining = _amount(input_value["remaining_amount"], input_value["currency"], input_path + ".remaining_amount", precisions)
+        expected_remaining = _amount(schedule_payload["total_amount"], input_value["currency"], input_path + ".schedule_id", precisions) - sum(
+            (_decimal(entities[item_id]["payload"]["amount"], input_path) for item_id in recognized_links if item_id in entities and entities[item_id]["type"] == "periodic_allocation_installment" and entities[item_id]["payload"]["schedule_id"] == schedule["id"]),
+            Decimal(0),
+        )
+        if remaining != expected_remaining:
+            _fail(input_path + ".remaining_amount", "must exactly redistribute the unrecognized schedule remainder")
+        if input_value["remaining_installment_count"] < 1:
+            _fail(input_path + ".remaining_installment_count", "must be at least 1")
+    elif action == "correct_transaction_version":
+        transaction = transactions.get(input_value["transaction_id"])
+        if transaction is None or transaction["type"] != "prepaid_recognition":
+            _fail(input_path + ".transaction_id", "must reference a prepaid recognition transaction")
+        _timestamp(input_value["statistics_at"], input_path + ".statistics_at", timezone)
     elif action in {"manual_expense", "manual_income"}:
         category = categories.get(input_value["category_id"])
         if category is None:
@@ -4233,6 +4750,16 @@ def _validate_registered_action_effects(
         registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
     if registered_counts is None:
         _fail(operation_path + ".action_type", "unregistered action type")
+    if accepted and action == "create_periodic_allocation":
+        registered_counts = {
+            **registered_counts,
+            "domain_entities": (operation["input"]["installment_count"] + 2, 0, 0),
+        }
+    elif accepted and action == "revise_periodic_allocation":
+        registered_counts = {
+            **registered_counts,
+            "domain_entities": (operation["input"]["remaining_installment_count"] + 1, 0, 0),
+        }
 
     for collection_name, changes in expected_entities.items():
         required = registered_counts.get(collection_name, (0, 0, 0)) if accepted else (0, 0, 0)
@@ -4548,6 +5075,14 @@ def _validate_registered_action_effects(
             _fail(operation_path + ".returned_ids", "incomplete intake must return exactly its source, evidence, and candidate")
         return
 
+    if action in {
+        "create_periodic_allocation",
+        "recognize_periodic_allocation_installment",
+        "revise_periodic_allocation",
+        "correct_transaction_version",
+    }:
+        return
+
     created_type_by_action = {
         "manual_expense": "expense",
         "manual_income": "income",
@@ -4820,6 +5355,7 @@ def _validate_action_semantics(
     result_sets = {item["id"]: item for item in result["posting_sets"]}
     result_postings = {item["id"]: item for item in result["postings"]}
     result_candidates = {item["id"]: item for item in result["candidates"]}
+    result_confirmations = {item["id"]: item for item in result["confirmations"]}
     baseline_reconciliations = {item["id"]: item for item in baseline["posting_reconciliations"]}
     result_reconciliations = {item["id"]: item for item in result["posting_reconciliations"]}
 
@@ -5080,6 +5616,91 @@ def _validate_action_semantics(
         ]
         if operation["returned_ids"] != expected_returned:
             _fail(operation_path + ".returned_ids", "mirror must return exactly its new source, evidence, link, and reconciliation identities")
+    elif action == "create_periodic_allocation":
+        transaction_id = expected_entities["transactions"]["added_ids"][0]
+        transaction = result_transactions[transaction_id]
+        if transaction["type"] != "prepaid_purchase":
+            _fail(operation_path + ".result_state_id", "must add one prepaid purchase transaction")
+        version, postings = transaction_parts(transaction_id)
+        by_role = {item.get("role"): item for item in postings}
+        if set(by_role) != {"payment_asset", "prepaid_asset"}:
+            _fail(operation_path + ".result_state_id", "purchase must use the exact payment and prepaid posting roles")
+        if any(version[field] != input_value["occurred_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.occurred_at", "must own all payment transaction time roles")
+        if by_role["payment_asset"]["account_id"] != input_value["payment_account_id"] or by_role["payment_asset"]["amount"] != "-" + input_value["amount"] or by_role["prepaid_asset"]["account_id"] != input_value["prepaid_account_id"] or by_role["prepaid_asset"]["amount"] != input_value["amount"]:
+            _fail(operation_path + ".result_state_id", "purchase postings must match the closed input")
+        added_entities = {
+            item["id"]: item for item in result["domain_entities"]
+            if item["id"] in expected_entities["domain_entities"]["added_ids"]
+        }
+        schedules = [item for item in added_entities.values() if item["type"] == "periodic_allocation_schedule"]
+        revisions = [item for item in added_entities.values() if item["type"] == "periodic_allocation_revision"]
+        installments = [item for item in added_entities.values() if item["type"] == "periodic_allocation_installment"]
+        if len(schedules) != 1 or len(revisions) != 1 or len(installments) != input_value["installment_count"]:
+            _fail(operation_path + ".result_state_id", "creation must add one schedule, one initial revision, and its installments")
+        schedule = schedules[0]["payload"]
+        for input_key, payload_key in (("prepaid_account_id", "prepaid_account_id"), ("category_id", "category_id"), ("amount", "total_amount"), ("currency", "currency"), ("start_at", "start_at"), ("anchor", "anchor"), ("cadence", "cadence")):
+            if schedule[payload_key] != input_value[input_key]:
+                _fail(operation_path + ".result_state_id", "created schedule must exactly preserve the closed input")
+        if schedule["payment_transaction_id"] != transaction_id:
+            _fail(operation_path + ".result_state_id", "schedule must own the created purchase transaction")
+        expected_returned = [
+            {"kind": "transaction", "id": transaction_id},
+            {"kind": "domain_entity", "id": schedules[0]["id"]},
+        ]
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", "creation must return its transaction and schedule in contract order")
+    elif action == "recognize_periodic_allocation_installment":
+        transaction_id = expected_entities["transactions"]["added_ids"][0]
+        transaction = result_transactions[transaction_id]
+        version, postings = transaction_parts(transaction_id)
+        by_role = {item.get("role"): item for item in postings}
+        schedule = baseline_entities[input_value["schedule_id"]]["payload"]
+        if transaction["type"] != "prepaid_recognition" or set(by_role) != {"expense", "prepaid_asset"}:
+            _fail(operation_path + ".result_state_id", "must add one prepaid recognition with exact release roles")
+        if by_role["expense"].get("category_id") != schedule["category_id"] or by_role["expense"]["amount"] != input_value["amount"] or by_role["prepaid_asset"]["account_id"] != schedule["prepaid_account_id"] or by_role["prepaid_asset"]["amount"] != "-" + input_value["amount"]:
+            _fail(operation_path + ".result_state_id", "recognition postings must match the schedule installment")
+        installment = baseline_entities[input_value["installment_id"]]["payload"]
+        if version["occurred_at"] != installment["scheduled_at"] or version["statistics_at"] != installment["scheduled_at"] or version["effective_at"] != installment["scheduled_at"]:
+            _fail(operation_path + ".result_state_id", "recognition must use the installment economic time")
+        audit_id = expected_entities["audit_links"]["added_ids"][0]
+        audit = next(item for item in result["audit_links"] if item["id"] == audit_id)
+        if audit != {"id": audit_id, "type": "periodic_allocation_recognition", "from": {"kind": "domain_entity", "id": input_value["installment_id"]}, "to": {"kind": "transaction", "id": transaction_id}, "payload": {}}:
+            _fail(operation_path + ".result_state_id", "recognition must add the exact installment audit link")
+        if operation["returned_ids"] != [{"kind": "transaction", "id": transaction_id}]:
+            _fail(operation_path + ".returned_ids", "recognition must return exactly its created transaction")
+    elif action == "revise_periodic_allocation":
+        added_entities = [item for item in result["domain_entities"] if item["id"] in expected_entities["domain_entities"]["added_ids"]]
+        revisions = [item for item in added_entities if item["type"] == "periodic_allocation_revision"]
+        installments = [item for item in added_entities if item["type"] == "periodic_allocation_installment"]
+        if len(revisions) != 1 or len(installments) != input_value["remaining_installment_count"]:
+            _fail(operation_path + ".result_state_id", "revision must add exactly one revision and its immutable installments")
+        revision = revisions[0]["payload"]
+        if revision["schedule_id"] != input_value["schedule_id"] or revision["recognized_through"] != input_value["recognized_through"] or revision["remaining_amount"] != input_value["remaining_amount"] or revision["currency"] != input_value["currency"]:
+            _fail(operation_path + ".result_state_id", "new revision must exactly preserve the closed remainder input")
+        if operation["returned_ids"] != [{"kind": "domain_entity", "id": revisions[0]["id"]}]:
+            _fail(operation_path + ".returned_ids", "revision must return exactly its new revision")
+    elif action == "correct_transaction_version":
+        transaction_id = input_value["transaction_id"]
+        before = baseline_transactions[transaction_id]
+        after = result_transactions[transaction_id]
+        old_version = next(item for item in baseline["transaction_versions"] if item["id"] == before["current_version_id"])
+        new_version = result_versions[after["current_version_id"]]
+        confirmation_id = expected_entities["confirmations"]["added_ids"][0]
+        confirmation = result_confirmations[confirmation_id]
+        if confirmation != {"id": confirmation_id, "type": "explicit_operation_confirmation", "operation_id": operation["id"], "subject": {"kind": "operation", "id": operation["id"]}, "payload": {}}:
+            _fail(operation_path + ".result_state_id", "correction requires its exact operation confirmation owner")
+        expected_version = deepcopy(old_version)
+        expected_version.update({
+            "id": new_version["id"],
+            "version_number": old_version["version_number"] + 1,
+            "statistics_at": input_value["statistics_at"],
+            "confirmation_id": confirmation_id,
+        })
+        if new_version != expected_version:
+            _fail(operation_path + ".result_state_id", "correction may change only id, next version_number, statistics_at, and confirmation ownership")
+        if operation["returned_ids"] != [{"kind": "transaction_version", "id": new_version["id"]}]:
+            _fail(operation_path + ".returned_ids", "correction must return exactly its appended transaction version")
     elif action == "manual_expense":
         category = baseline_categories.get(input_value["category_id"])
         if category is None:
@@ -5607,6 +6228,7 @@ def validate_golden_case_v2(
         },
         "RG-03": {"opening_balance", "account_transfer"},
         "RG-04": {"opening_balance", "expense", "credit_repayment"},
+        "RG-11": {"opening_balance", "prepaid_purchase", "prepaid_recognition"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
@@ -5660,6 +6282,9 @@ def validate_golden_case_v2(
         _validate_balances(state, state_path, indexes, replay, precisions)
         _validate_references(
             state, state_path, indexes, operations, precisions, timezone
+        )
+        _validate_periodic_allocations(
+            state, state_path, indexes, current, precisions, timezone
         )
         reconciliation_by_posting = _validate_reconciliations(state, state_path, indexes)
         _validate_reports(

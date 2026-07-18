@@ -253,7 +253,8 @@
             "opening_balance", "expense", "income", "account_transfer", "credit_repayment",
             "refund_receipt", "lending_disbursement", "lending_collection", "balance_adjustment",
             "balance_adjustment_reversal", "stored_value_recharge", "stored_value_spend",
-            "stored_value_expiry_loss", "stored_value_pre_activation_balance_adjustment"
+            "stored_value_expiry_loss", "stored_value_pre_activation_balance_adjustment",
+            "prepaid_purchase", "prepaid_recognition"
           ]
         },
         "current_version_id": {"$ref": "#/$defs/id"}
@@ -315,7 +316,8 @@
             "balance_adjustment_reversal_counterpart", "stored_value_asset",
             "stored_value_bonus_income", "stored_value_expiry_loss",
             "mixed_expense_asset_funding", "mixed_expense_credit_funding",
-            "credit_repayment_asset_outflow", "credit_repayment_liability_principal"
+            "credit_repayment_asset_outflow", "credit_repayment_liability_principal",
+            "prepaid_asset"
           ]
         },
         "reconciliation_eligible": {"type": "boolean"}
@@ -1008,8 +1010,58 @@
         {"$ref": "#/$defs/storedValueBonusComponent"},
         {"$ref": "#/$defs/storedValueExpiryEvent"},
         {"$ref": "#/$defs/activationAdjustment"},
-        {"$ref": "#/$defs/storedValueReconstruction"}
+        {"$ref": "#/$defs/storedValueReconstruction"},
+        {"$ref": "#/$defs/periodicAllocationSchedule"},
+        {"$ref": "#/$defs/periodicAllocationRevision"},
+        {"$ref": "#/$defs/periodicAllocationInstallment"}
       ]
+    },
+    "periodicAllocationAnchor": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "month_end"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "day"], "properties": {"type": {"const": "day_of_month"}, "day": {"type": "integer", "minimum": 1, "maximum": 28}}}
+      ]
+    },
+    "periodicAllocationSchedule": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "periodic_allocation_schedule"},
+        "payload": {"type": "object", "additionalProperties": false,
+          "required": ["payment_transaction_id", "prepaid_account_id", "category_id", "total_amount", "currency", "cadence", "start_at", "anchor"],
+          "properties": {
+            "payment_transaction_id": {"$ref": "#/$defs/id"}, "prepaid_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+            "total_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "cadence": {"const": "monthly"},
+            "start_at": {"$ref": "#/$defs/timestamp"}, "anchor": {"$ref": "#/$defs/periodicAllocationAnchor"}
+          }
+        }
+      }
+    },
+    "periodicAllocationRevision": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "periodic_allocation_revision"},
+        "payload": {"type": "object", "additionalProperties": false,
+          "required": ["schedule_id", "revision_number", "recognized_through", "remaining_amount", "currency", "installment_ids"],
+          "properties": {
+            "schedule_id": {"$ref": "#/$defs/id"}, "revision_number": {"type": "integer", "minimum": 1},
+            "recognized_through": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "remaining_amount": {"$ref": "#/$defs/positiveDecimal"},
+            "currency": {"type": "string", "minLength": 1}, "installment_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+          }
+        }
+      }
+    },
+    "periodicAllocationInstallment": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "periodic_allocation_installment"},
+        "payload": {"type": "object", "additionalProperties": false,
+          "required": ["schedule_id", "revision_id", "sequence", "scheduled_at", "amount", "currency"],
+          "properties": {
+            "schedule_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1},
+            "scheduled_at": {"$ref": "#/$defs/timestamp"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}
+          }
+        }
+      }
     },
     "targetBalanceObservation": {
       "type": "object",
@@ -1279,7 +1331,8 @@
         "type": {
           "enum": [
             "adjustment_transaction", "explanation_transaction", "allocation_reversal",
-            "reconstruction_adjustment", "reconstruction_transaction"
+            "reconstruction_adjustment", "reconstruction_transaction",
+            "periodic_allocation_recognition"
           ]
         },
         "from": {"$ref": "#/$defs/ref"},
@@ -1394,6 +1447,13 @@
             "target_kind": {"const": "candidate"},
             "status_name": {"const": "confirmation_status"},
             "value": {"enum": ["pending_confirmation", "confirmed", "rejected", "incomplete"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "allocation_status"},
+            "value": {"enum": ["active", "pending", "recognized", "superseded"]}
           }
         }
       ]
@@ -1695,6 +1755,79 @@
     "mergeMixedPaymentMirrorEvidenceInput": {
       "type": "object", "additionalProperties": false, "required": ["request_id", "source_record_id", "evidence_id", "transaction_id", "candidate_id", "account_id", "amount", "currency", "observed_at"],
       "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_record_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "createPeriodicAllocationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "payment_account_id", "prepaid_account_id", "category_id", "amount", "currency", "occurred_at", "start_at", "anchor", "cadence", "installment_count", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "payment_account_id": {"$ref": "#/$defs/id"}, "prepaid_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "start_at": {"$ref": "#/$defs/timestamp"},
+        "anchor": {"$ref": "#/$defs/periodicAllocationAnchor"}, "cadence": {"const": "monthly"}, "installment_count": {"type": "integer", "minimum": 1}, "explicit_confirmation": {"const": true}
+      }
+    },
+    "recognizePeriodicAllocationInstallmentInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "schedule_id", "installment_id", "amount", "currency", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "installment_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "explicit_confirmation": {"const": true}}
+    },
+    "revisePeriodicAllocationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "schedule_id", "recognized_through", "remaining_amount", "currency", "remaining_installment_count", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "recognized_through": {"$ref": "#/$defs/id"}, "remaining_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "remaining_installment_count": {"type": "integer", "minimum": 1}, "explicit_confirmation": {"const": true}}
+    },
+    "correctTransactionVersionInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "transaction_id", "statistics_at", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}}
+    },
+    "periodicAllocationAttemptedAmount": {
+      "anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}]
+    },
+    "periodicAllocationAttemptedAnchor": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "properties": {"type": {"type": "string", "minLength": 1}, "day": {"type": "integer"}}
+    },
+    "createPeriodicAllocationAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "payment_account_id", "prepaid_account_id", "category_id", "amount", "currency", "occurred_at", "start_at", "anchor", "cadence", "installment_count", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "payment_account_id": {"$ref": "#/$defs/id"}, "prepaid_account_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/periodicAllocationAttemptedAmount"}, "currency": {"type": "string", "minLength": 1}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "start_at": {"$ref": "#/$defs/timestamp"},
+        "anchor": {"$ref": "#/$defs/periodicAllocationAttemptedAnchor"}, "cadence": {"type": "string", "minLength": 1}, "installment_count": {"type": "integer"}, "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "recognizePeriodicAllocationInstallmentAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "schedule_id", "installment_id", "amount", "currency", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "installment_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/periodicAllocationAttemptedAmount"}, "currency": {"type": "string", "minLength": 1}, "explicit_confirmation": {"type": "boolean"}}
+    },
+    "revisePeriodicAllocationAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "schedule_id", "recognized_through", "remaining_amount", "currency", "remaining_installment_count", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "schedule_id": {"$ref": "#/$defs/id"}, "recognized_through": {"$ref": "#/$defs/id"}, "remaining_amount": {"$ref": "#/$defs/periodicAllocationAttemptedAmount"}, "currency": {"type": "string", "minLength": 1}, "remaining_installment_count": {"type": "integer"}, "explicit_confirmation": {"type": "boolean"}}
+    },
+    "correctTransactionVersionAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "transaction_id", "statistics_at", "explicit_confirmation"],
+      "properties": {"request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "statistics_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"type": "boolean"}}
+    },
+    "periodicAllocationRejectedOutcome": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"],
+      "properties": {"status": {"const": "rejected"}, "reason_code": {"type": "string"}, "field_path": {"type": "string"}},
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "exact_decimal_string_required"}, "field_path": {"enum": ["$.attempted_input.amount", "$.attempted_input.remaining_amount"]}}},
+        {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"enum": ["$.attempted_input.amount", "$.attempted_input.remaining_amount"]}}},
+        {"properties": {"reason_code": {"const": "unsupported_currency"}, "field_path": {"const": "$.attempted_input.currency"}}},
+        {"properties": {"reason_code": {"const": "currency_mismatch"}, "field_path": {"const": "$.attempted_input.currency"}}},
+        {"properties": {"reason_code": {"const": "invalid_anchor"}, "field_path": {"const": "$.attempted_input.anchor"}}},
+        {"properties": {"reason_code": {"const": "invalid_installment_count"}, "field_path": {"enum": ["$.attempted_input.installment_count", "$.attempted_input.remaining_installment_count"]}}},
+        {"properties": {"reason_code": {"const": "installment_not_pending"}, "field_path": {"const": "$.attempted_input.installment_id"}}},
+        {"properties": {"reason_code": {"const": "exceeds_remaining_prepaid"}, "field_path": {"const": "$.attempted_input.amount"}}},
+        {"properties": {"reason_code": {"const": "installment_amount_mismatch"}, "field_path": {"const": "$.attempted_input.amount"}}},
+        {"properties": {"reason_code": {"const": "invalid_revision_boundary"}, "field_path": {"const": "$.attempted_input.recognized_through"}}},
+        {"properties": {"reason_code": {"const": "remaining_amount_mismatch"}, "field_path": {"const": "$.attempted_input.remaining_amount"}}},
+        {"properties": {"reason_code": {"const": "transaction_not_correctable"}, "field_path": {"const": "$.attempted_input.transaction_id"}}}
+      ]
     },
     "manualIncomeInput": {
       "type": "object",
@@ -2283,7 +2416,9 @@
             "rename_stored_value_labels", "manual_account_transfer", "import_source_record",
             "confirm_account_transfer_candidate", "import_mirror_record", "import_incomplete_source",
             "manual_mixed_expense", "credit_principal_repayment", "ingest_mixed_payment_source",
-            "confirm_mixed_payment_candidate", "merge_mixed_payment_mirror_evidence"
+            "confirm_mixed_payment_candidate", "merge_mixed_payment_mirror_evidence",
+            "create_periodic_allocation", "recognize_periodic_allocation_installment",
+            "revise_periodic_allocation", "correct_transaction_version"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -2333,6 +2468,14 @@
             {"properties": {"action_type": {"const": "ingest_mixed_payment_source"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
             {"properties": {"action_type": {"const": "confirm_mixed_payment_candidate"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
             {"properties": {"action_type": {"const": "merge_mixed_payment_mirror_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "create_periodic_allocation"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/createPeriodicAllocationInput"}}},
+            {"properties": {"action_type": {"const": "create_periodic_allocation"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/createPeriodicAllocationAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "recognize_periodic_allocation_installment"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/recognizePeriodicAllocationInstallmentInput"}}},
+            {"properties": {"action_type": {"const": "recognize_periodic_allocation_installment"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/recognizePeriodicAllocationInstallmentAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "revise_periodic_allocation"}, "operation_class": {"const": "update"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/revisePeriodicAllocationInput"}}},
+            {"properties": {"action_type": {"const": "revise_periodic_allocation"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/revisePeriodicAllocationAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "correct_transaction_version"}, "operation_class": {"const": "update"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/correctTransactionVersionInput"}}},
+            {"properties": {"action_type": {"const": "correct_transaction_version"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/correctTransactionVersionAttemptedInput"}}},
             {
               "properties": {
                 "action_type": {"const": "manual_income"},

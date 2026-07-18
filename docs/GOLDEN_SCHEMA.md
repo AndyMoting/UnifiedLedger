@@ -87,6 +87,8 @@ Canonical transaction registry:
 | `stored_value_spend` | Reduces stored-value asset and recognizes the applicable consumption. |
 | `stored_value_expiry_loss` | User-confirmed actual expiry loss; reminders alone cannot create it. |
 | `stored_value_pre_activation_balance_adjustment` | Preserved canonical type for the confirmed pre-activation balance boundary; it is not ordinary income or recharge. |
+| `prepaid_purchase` | Actual payment reduces an eligible real asset and increases an owned non-real hidden prepaid asset; it is cash outflow only. |
+| `prepaid_recognition` | A scheduled installment decreases that prepaid asset and increases its exact categorized expense; it has no real-account or cash-flow leg. |
 
 Canonical posting-role registry:
 
@@ -99,6 +101,7 @@ Canonical posting-role registry:
 | `balance_adjustment_target`, `balance_adjustment_counterpart` | Original target-account adjustment and dedicated equity counterpart. |
 | `balance_adjustment_reversal_target`, `balance_adjustment_reversal_counterpart` | Allocated counter-adjustment and its dedicated equity counterpart. |
 | `stored_value_asset`, `stored_value_bonus_income`, `stored_value_expiry_loss` | Stored-value face asset, separately reported bonus, and confirmed expiry-loss leg. |
+| `prepaid_asset` | The owned non-real hidden prepaid-asset leg used only by the periodic allocation transaction types. |
 
 An absent posting role is permitted only for `opening_balance`. Any new transaction type or posting role requires a contract amendment before Schema or adapter work.
 
@@ -139,7 +142,11 @@ Representative subtype payloads are fully frozen:
 | domain entity `consumption_record` | `expense_posting_id`, `category_id`, `amount`, `currency`, `statistics_at` |
 | domain entity `item_allocation` | `consumption_record_id`, `expense_posting_id`, `category_id`, `amount`, `currency` |
 | domain entity `stored_value_lot` | `recharge_transaction_id`, `loaded_at`, `face_value`, `currency` |
+| domain entity `periodic_allocation_schedule` | `payment_transaction_id`, `prepaid_account_id`, `category_id`, `total_amount`, `currency`, `cadence:"monthly"`, `start_at`, and exactly one `anchor` (`month_end` or `day_of_month` 1..28) |
+| domain entity `periodic_allocation_revision` | `schedule_id`, continuous `revision_number`, `recognized_through`, `remaining_amount`, `currency`, and exact `installment_ids` |
+| domain entity `periodic_allocation_installment` | `schedule_id`, `revision_id`, unique sequence, `scheduled_at`, positive `amount`, and `currency`; recognition state is derived, not payload data |
 | audit link `adjustment_transaction`, `explanation_transaction`, `allocation_reversal` | empty payload; endpoint kinds must match the role semantics |
+| audit link `periodic_allocation_recognition` | empty payload from one periodic-allocation installment to its exact `prepaid_recognition` transaction |
 
 The remaining approved type registry reserves these semantics without claiming their full RG payloads are frozen:
 
@@ -147,7 +154,7 @@ The remaining approved type registry reserves these semantics without claiming t
 - Domain entity types still reserved without a closed payload are `funding_component`, `installment_payment`, `refund_relationship`, `counterparty`, `lending_position`, `lending_settlement`, `settlement_component`, `lot_consumption`, `stored_value_consumption`, `activation_adjustment`, and `merchant_allocation`. The registered `consumption_record`, `item_allocation`, and `stored_value_lot` payloads above are intentionally minimal migration contracts, not complete business lifecycles.
 - Evidence-link roles: `target_balance_observation`, `real_account_posting`, `payment_asset_posting`, `destination_asset_posting`, `funding_asset_posting`, `bank_payment_posting`, `refund_relationship`, `counterparty_lending_relationship`, `stored_value_activation_balance_fact`, `item_allocation_fact`, `stored_value_asset_posting`, and `stored_value_lot_fact`. Each may target only the exact fact named by the role.
 - Confirmation types reserved for later payload registration: `refund_relationship_confirmation`, `lending_event_confirmation`, `lending_settlement_confirmation`, `stored_value_activation_balance_confirmation`, `stored_value_expiry_confirmation`, `stored_value_recharge_confirmation`, and `stored_value_spend_confirmation`. Every confirmation requires `operation_id` and an exact subject. Across every confirmation subtype, `confirmed_at` is present only when an actual time was recorded; omission preserves an unknown time, while any present value remains strictly validated.
-- Audit link types currently registered are only `adjustment_transaction`, `explanation_transaction`, and `allocation_reversal`.
+- Audit link types currently registered are `adjustment_transaction`, `explanation_transaction`, `allocation_reversal`, `reconstruction_adjustment`, `reconstruction_transaction`, and `periodic_allocation_recognition`.
 
 Reserved-but-unregistered payloads cannot appear in a v2 document. A later independent contract amendment may register them without changing the representative examples or treating those examples as migration output.
 
@@ -164,7 +171,7 @@ Transfer-source and account-transfer-candidate records are provenance only. They
 | report metric, inapplicable | `{metric, applicability:"not_applicable"}` |
 | `derived_statuses` | `{id, target_kind, target_id, status_name, value}`; target kind is a `ref.kind`; value is a registered status string |
 
-The RG-09 verification-status registry used here is `balanced_with_unexplained_adjustment`, `difference_pending_explanation_confirmation`, `evidence_incomplete`, and `fully_reconciled`. Explanation status is `open`, `partially_explained`, or `fully_explained`. Transaction reconciliation summary is `pending`, `partial`, `matched`, or `has_difference` and remains derived.
+The RG-09 verification-status registry used here is `balanced_with_unexplained_adjustment`, `difference_pending_explanation_confirmation`, `evidence_incomplete`, and `fully_reconciled`. Explanation status is `open`, `partially_explained`, or `fully_explained`. Transaction reconciliation summary is `pending`, `partial`, `matched`, or `has_difference` and remains derived. Periodic allocation derives `allocation_status`: schedules are `active` or `recognized`; installments are `pending`, `recognized`, or `superseded`. The highest revision owns future installments and typed recognition links own confirmed facts; no payload persists this status.
 
 ### Action registry
 
@@ -188,10 +195,18 @@ For `accepted` and `no_change`, operation `input` is closed per `action_type` an
 | `ingest_mixed_payment_source` | `creation` | `request_id`, `source_record` (`complete` source with two funding components or `missing_funding_leg` source with one known asset amount) |
 | `confirm_mixed_payment_candidate` | `creation` | `request_id`, `candidate_id`, `category_id`, `confirmed_funding_components` (exactly one owned real asset and one owned real liability), `explicit_confirmation:true` |
 | `merge_mixed_payment_mirror_evidence` | `reconciliation` | `request_id`, `source_record_id`, `evidence_id`, `transaction_id`, `candidate_id`, `account_id`, `amount`, `currency`, `observed_at` |
+| `create_periodic_allocation` | `creation` | `request_id`, `payment_account_id`, `prepaid_account_id`, `category_id`, positive `amount`, `currency`, actual payment `occurred_at`, allocation `start_at`, exact `anchor`, `cadence:"monthly"`, `installment_count >= 1`, `explicit_confirmation:true` |
+| `recognize_periodic_allocation_installment` | `creation` | `request_id`, `schedule_id`, current pending `installment_id`, exact installment `amount`, `currency`, `explicit_confirmation:true` |
+| `revise_periodic_allocation` | `update` | `request_id`, `schedule_id`, exact latest contiguous `recognized_through`, exact `remaining_amount`, `currency`, `remaining_installment_count >= 1`, `explicit_confirmation:true` |
+| `correct_transaction_version` | `update` | `request_id`, correctable `transaction_id`, replacement `statistics_at`, `explicit_confirmation:true` |
+
+Periodic creation binds all three payment-version time roles to input `occurred_at`; `start_at` controls only the allocation calendar. `installment_count` and `remaining_installment_count` determine exact domain-entity cardinality and deterministic equal splits, with all minor-unit remainder assigned to the final installment. Creation returns the new purchase transaction then schedule; recognition returns its new transaction; revision returns its new revision; correction returns its new transaction version. These ordered responses may not contain unrelated existing identities. Correction also creates one `explicit_operation_confirmation`; compared with the prior version, only `id`, consecutive `version_number`, `statistics_at`, and `confirmation_id` may differ.
 
 For `confirm_explanation_allocation`, `allocation_direction` is currently `same_as_original_adjustment`; required booleans are `confirms_target_account`, `confirms_actual_occurred_at`, `confirms_real_transaction_amount`, `confirms_currency`, `confirms_target_observed_at`, `confirms_allocation_direction`, and `confirms_explanation_amount`. None of these facts may be inherited from the transaction, candidate, or prior operation.
 
-Registered rejected actions are `manual_expense` and `manual_account_transfer`. They use `operation_class=rejection`, forbid strict `input`, and require a closed sparse `attempted_input`.
+Registered rejected actions include `manual_expense`, `manual_account_transfer`, and the four periodic-allocation actions above. They use `operation_class=rejection`, forbid strict `input`, and require their closed `attempted_input`. A rejected periodic operation carries the same complete submitted fields as its accepted input, while attempted decimal fields additionally admit a JSON number so malformed numeric representation can be preserved and rejected.
+
+Periodic rejected outcomes close `reason_code` and `field_path` to these pairs: `exact_decimal_string_required` on `amount` or `remaining_amount`; `must_be_positive` on the same fields; `unsupported_currency` or `currency_mismatch` on `currency`; `invalid_anchor` on `anchor`; `invalid_installment_count` on `installment_count` or `remaining_installment_count`; `installment_not_pending` on `installment_id`; `exceeds_remaining_prepaid` or `installment_amount_mismatch` on `amount`; `invalid_revision_boundary` on `recognized_through`; `remaining_amount_mismatch` on `remaining_amount`; and `transaction_not_correctable` on `transaction_id`. The semantic validator recomputes the first applicable failure from attempted input and baseline state. The result is a distinct state snapshot with identical semantic payload, zero entity/value/status deltas, and no returned IDs.
 
 | Field | Presence and type |
 | --- | --- |
@@ -250,7 +265,7 @@ The single formal chain is:
 
 A legacy `occurred_at` may expand into `occurred_at`, `statistics_at`, and `effective_at` only when a frozen fixture plus an approved per-RG mapping proves that exact legacy field simultaneously carried all three economic meanings. The exact source timestamp text is copied byte-for-byte into those approved roles. This is not a general default, does not permit copying an arbitrary available time, and never permits generation of `created_at` or `confirmed_at`. RG-01 v1 is explicitly approved for this three-role expansion; its note-only replacement reuses the prior version's three economic times.
 
-Canonical transaction types include `opening_balance`, `expense`, `income`, `account_transfer`, `credit_repayment`, `refund_receipt`, `lending_disbursement`, `lending_collection`, `balance_adjustment`, `balance_adjustment_reversal`, `stored_value_recharge`, `stored_value_spend`, `stored_value_expiry_loss`, and `stored_value_pre_activation_balance_adjustment`. The last token is preserved as a canonical type; migration must not alias or replace it silently.
+Canonical transaction types include `opening_balance`, `expense`, `income`, `account_transfer`, `credit_repayment`, `refund_receipt`, `lending_disbursement`, `lending_collection`, `balance_adjustment`, `balance_adjustment_reversal`, `stored_value_recharge`, `stored_value_spend`, `stored_value_expiry_loss`, `stored_value_pre_activation_balance_adjustment`, `prepaid_purchase`, and `prepaid_recognition`. The pre-activation token is preserved as a canonical type; migration must not alias or replace it silently.
 
 ### Cross-domain posting rules
 
@@ -269,7 +284,7 @@ The following collections have distinct identities and cannot be collapsed into 
 - `evidence_links` connect one evidence object to exactly one typed target with one role. Target kinds are `posting`, `observation`, `relation`, or `domain_entity`.
 - `relations` express typed links among existing identities. They do not own business amounts, lifecycle state, evidence, or audit history.
 - `domain_entities` own business data and append-only lifecycle history, such as a target observation, balance adjustment, explanation allocation, lending position, refund relationship, or stored-value lot.
-- `audit_links` are non-evidentiary links among formal and domain identities. Examples are `adjustment_transaction`, `explanation_transaction`, and `allocation_reversal`.
+- `audit_links` are non-evidentiary links among formal and domain identities. Examples are `adjustment_transaction`, `explanation_transaction`, `allocation_reversal`, and `periodic_allocation_recognition`.
 
 All targets must exist in the same root state and have the declared target kind. An evidence role cannot be used as a relation role, confirmation provenance, or audit role. Later evidence can change reconciliation facts but cannot change balances or reports.
 
