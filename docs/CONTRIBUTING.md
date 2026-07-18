@@ -5,10 +5,33 @@
 - Git
 - Python 3.12
 - PowerShell 7
+- JDK 21
+- Gradle Wrapper 9.5.0
+- Kotlin Multiplatform 插件 2.4.10
 
-所有命令从仓库根目录使用 PowerShell 7 执行。Android 与 Desktop 工程尚未建立，因此当前没有正式的 Gradle 构建、测试或运行命令。首次引入 Gradle Wrapper 的提交必须同时补充经过实际验证的初始化、构建、测试和运行命令。
+所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前仅有 `ledger-domain` 库模块，没有 Android 或 Desktop 应用模块，因此没有应用运行命令。
 
-## 完整测试
+## Kotlin 验证
+
+确认 Gradle 使用 JDK 21：
+
+```powershell
+.\gradlew.bat --version
+```
+
+运行 `ledger-domain` JVM 测试：
+
+```powershell
+.\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+运行当前全部 Gradle 检查：
+
+```powershell
+.\gradlew.bat check --rerun-tasks --warning-mode all
+```
+
+## 完整 Python 测试
 
 从仓库根目录执行：
 
