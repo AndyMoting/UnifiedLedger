@@ -42,6 +42,51 @@ def load_rg09() -> dict:
     return load_golden_case_v2(RG09_V2_PATH)
 
 
+def mixed_payment_relation_fixture() -> tuple[dict, dict]:
+    case = load_rg01()
+    state = deepcopy(case["states"][-1])
+    liability = {
+        "id": "liability-card-rg04",
+        "name": "Card account",
+        "kind": "liability",
+        "currency": "CNY",
+        "owned_by_user": True,
+        "real_account": True,
+        "reconciliation_eligible": True,
+    }
+    state["catalog"]["accounts"].append(liability)
+    asset = next(item for item in state["postings"] if item["id"] == "posting-bank-rg01")
+    credit = next(item for item in state["postings"] if item["id"] == "posting-expense-rg01")
+    asset.update(amount="-70.00", role="mixed_expense_asset_funding")
+    credit.update(account_id=liability["id"], amount="-50.00", role="mixed_expense_credit_funding")
+    state["relations"] = [{
+        "id": "relation-rg04-semantic",
+        "type": "mixed_payment",
+        "member_refs": [
+            {"kind": "transaction", "id": "tx-expense-rg01"},
+            {"kind": "posting", "id": asset["id"]},
+            {"kind": "posting", "id": credit["id"]},
+        ],
+        "payload": {
+            "system_managed": True,
+            "display_name": "Mixed payment",
+            "generic_order_lifecycle": False,
+            "payment_composition_total": "120.00",
+            "funding_components": [
+                {"account_id": asset["account_id"], "funding_amount": "70.00", "currency": "CNY", "posting_id": asset["id"]},
+                {"account_id": credit["account_id"], "funding_amount": "50.00", "currency": "CNY", "posting_id": credit["id"]},
+            ],
+        },
+    }]
+    indexes = golden_v2._state_indexes(state, "$.states[0]")
+    current = {"tx-expense-rg01": (
+        indexes["transactions"]["tx-expense-rg01"],
+        indexes["transaction_versions"]["version-expense-rg01-v2"],
+        [indexes["postings"][asset["id"]], indexes["postings"][credit["id"]]],
+    )}
+    return state, {"indexes": indexes, "current": current, "precisions": {"CNY": 2, "USD": 2}}
+
+
 def rg03_full_manual_case() -> dict:
     case = deepcopy(load_rg09())
     case["case"]["id"] = "RG-03"
@@ -2552,6 +2597,79 @@ class GoldenV2SchemaTests(unittest.TestCase):
             invalid = deepcopy(relation)
             invalid["payload"]["funding_components"][0]["funding_amount"] = amount
             self.assertFalse(validator.is_valid(invalid))
+
+    def test_rg04_mixed_payment_relation_semantics(self):
+        state, context = mixed_payment_relation_fixture()
+        golden_v2._validate_relations(
+            state, "$.states[0]", context["indexes"], context["current"], context["precisions"]
+        )
+
+        mutations = []
+        invalid = deepcopy(state)
+        invalid["relations"][0]["member_refs"][2] = deepcopy(invalid["relations"][0]["member_refs"][1])
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["member_refs"][1]["id"] = "posting-missing"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["member_refs"] = invalid["relations"][0]["member_refs"][:2]
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["role"] = "expense"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["transactions"][0]["type"] = "account_transfer"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["catalog"]["accounts"][0]["owned_by_user"] = False
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["catalog"]["accounts"][0]["kind"] = "liability"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["catalog"]["accounts"][-1]["kind"] = "asset"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][0]["amount"] = "70.00"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["postings"][1]["currency"] = "USD"
+        invalid["catalog"]["accounts"][-1]["currency"] = "USD"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["payment_composition_total"] = "119.99"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["system_managed"] = False
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["generic_order_lifecycle"] = True
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["funding_components"] = invalid["relations"][0]["payload"]["funding_components"][:1]
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["funding_components"][0]["account_id"] = "liability-card-rg04"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["funding_components"][0]["funding_amount"] = "69.00"
+        mutations.append(invalid)
+        invalid = deepcopy(state)
+        invalid["relations"][0]["payload"]["funding_components"][1]["posting_id"] = invalid["relations"][0]["payload"]["funding_components"][0]["posting_id"]
+        mutations.append(invalid)
+
+        for invalid in mutations:
+            with self.subTest(mutation=invalid):
+                indexes = golden_v2._state_indexes(invalid, "$.states[0]")
+                current = {"tx-expense-rg01": (
+                    indexes["transactions"]["tx-expense-rg01"],
+                    indexes["transaction_versions"]["version-expense-rg01-v2"],
+                    [indexes["postings"]["posting-bank-rg01"], indexes["postings"]["posting-expense-rg01"]],
+                )}
+                with self.assertRaises(GoldenCaseError):
+                    golden_v2._validate_relations(
+                        invalid, "$.states[0]", indexes, current, {"CNY": 2, "USD": 2}
+                    )
 
     def test_all_confirmation_subtypes_allow_an_unknown_confirmation_time(self):
         case = load_rg09()

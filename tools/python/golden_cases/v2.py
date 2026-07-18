@@ -926,6 +926,108 @@ def _validate_formal_ledger(
     return replay, current
 
 
+def _validate_relations(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    precisions: dict[str, int],
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    transactions = indexes["transactions"]
+    postings = indexes["postings"]
+    for index, relation in enumerate(state["relations"]):
+        if relation["type"] != "mixed_payment":
+            continue
+        relation_path = f"{path}.relations[{index}]"
+        member_refs = relation["member_refs"]
+        transaction_refs = [ref for ref in member_refs if ref["kind"] == "transaction"]
+        posting_refs = [ref for ref in member_refs if ref["kind"] == "posting"]
+        if len(transaction_refs) != 1 or len(posting_refs) != 2:
+            _fail(relation_path + ".member_refs", "mixed_payment requires exactly one transaction and two postings")
+        if len({ref["id"] for ref in member_refs}) != len(member_refs):
+            _fail(relation_path + ".member_refs", "contains duplicate references")
+
+        transaction_id = transaction_refs[0]["id"]
+        if transaction_id not in transactions:
+            _fail(relation_path + ".member_refs", "mixed_payment transaction reference is dangling")
+        if transactions[transaction_id]["type"] != "expense":
+            _fail(relation_path + ".member_refs", "mixed_payment must reference an expense transaction")
+        current_entry = current.get(transaction_id)
+        if current_entry is None:
+            _fail(relation_path + ".member_refs", "mixed_payment transaction is not current")
+        current_postings = current_entry[2]
+        referenced_posting_ids = [ref["id"] for ref in posting_refs]
+        if any(posting_id not in postings for posting_id in referenced_posting_ids):
+            _fail(relation_path + ".member_refs", "mixed_payment posting reference is dangling")
+        if {posting["id"] for posting in current_postings} != set(referenced_posting_ids) or len(current_postings) != 2:
+            _fail(relation_path + ".member_refs", "must reference exactly the current transaction posting set")
+
+        posting_by_role: dict[str, dict[str, Any]] = {}
+        for posting in (postings[posting_id] for posting_id in referenced_posting_ids):
+            role = posting.get("role")
+            if role not in {"mixed_expense_asset_funding", "mixed_expense_credit_funding"}:
+                _fail(relation_path + ".member_refs", "postings must have mixed payment funding roles")
+            if role in posting_by_role:
+                _fail(relation_path + ".member_refs", "funding roles must be unique")
+            account = accounts.get(posting["account_id"])
+            expected_kind = (
+                "asset"
+                if role == "mixed_expense_asset_funding"
+                else "liability"
+            )
+            if account is None or not (
+                account["owned_by_user"]
+                and account["real_account"]
+                and account["kind"] == expected_kind
+            ):
+                _fail(relation_path + ".member_refs", f"{role} must belong to an owned real {expected_kind} account")
+            if posting["currency"] != account["currency"]:
+                _fail(relation_path + ".member_refs", "funding posting currency must match its account")
+            amount = _amount(posting["amount"], posting["currency"], relation_path + ".member_refs", precisions)
+            if amount >= 0:
+                _fail(relation_path + ".member_refs", "funding postings must have negative amounts")
+            posting_by_role[role] = posting
+        if set(posting_by_role) != {"mixed_expense_asset_funding", "mixed_expense_credit_funding"}:
+            _fail(relation_path + ".member_refs", "must contain one asset and one credit funding posting")
+        currencies = {posting["currency"] for posting in posting_by_role.values()}
+        if len(currencies) != 1:
+            _fail(relation_path + ".member_refs", "funding postings must use the same currency")
+
+        payload = relation["payload"]
+        if payload["system_managed"] is not True:
+            _fail(relation_path + ".payload.system_managed", "must be true")
+        if payload["generic_order_lifecycle"] is not False:
+            _fail(relation_path + ".payload.generic_order_lifecycle", "must be false")
+        currency = next(iter(posting_by_role.values()))["currency"]
+        total = _amount(payload["payment_composition_total"], currency, relation_path + ".payload.payment_composition_total", precisions)
+        expected_total = sum((abs(_decimal(posting["amount"], relation_path + ".member_refs")) for posting in posting_by_role.values()), Decimal(0))
+        if total <= 0 or total != expected_total:
+            _fail(relation_path + ".payload.payment_composition_total", "must equal the absolute funding amounts")
+
+        components = payload["funding_components"]
+        if len(components) != 2:
+            _fail(relation_path + ".payload.funding_components", "must contain exactly two components")
+        expected_posting_ids = {posting["id"] for posting in posting_by_role.values()}
+        seen_components: set[str] = set()
+        for component_index, component in enumerate(components):
+            component_path = f"{relation_path}.payload.funding_components[{component_index}]"
+            posting_id = component["posting_id"]
+            if posting_id in seen_components or posting_id not in expected_posting_ids:
+                _fail(component_path + ".posting_id", "must reference each funding posting exactly once")
+            seen_components.add(posting_id)
+            posting = postings[posting_id]
+            if component["account_id"] != posting["account_id"]:
+                _fail(component_path + ".account_id", "must match the referenced posting")
+            if component["currency"] != posting["currency"]:
+                _fail(component_path + ".currency", "must match the referenced posting")
+            amount = _amount(component["funding_amount"], component["currency"], component_path + ".funding_amount", precisions)
+            if amount != abs(_decimal(posting["amount"], component_path + ".posting_id")):
+                _fail(component_path + ".funding_amount", "must match the absolute referenced posting amount")
+        if seen_components != expected_posting_ids:
+            _fail(relation_path + ".payload.funding_components", "must cover both funding postings")
+
+
 def _validate_balances(
     state: dict[str, Any],
     path: str,
@@ -4574,6 +4676,7 @@ def validate_golden_case_v2(
         replay, current = _validate_formal_ledger(
             state, state_path, indexes, precisions, timezone
         )
+        _validate_relations(state, state_path, indexes, current, precisions)
         _validate_balances(state, state_path, indexes, replay, precisions)
         _validate_references(
             state, state_path, indexes, operations, precisions, timezone
