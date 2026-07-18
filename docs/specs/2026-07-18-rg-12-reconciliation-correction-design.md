@@ -40,7 +40,7 @@ asset replacement 沿 `posting_replacement` 继承对账关系，关闭效果为
 
 ## 5. Golden 交付约束
 
-- canonical direct-v2 draft 路径：`golden/rules/rg-12.json`。
-- `approval_status` 固定为 `draft_for_review`。
+- canonical direct-v2 路径：`golden/rules/rg-12.json`。
+- `approval_status` 固定为 `approved`。
 - 不使用 v1、mapping 或 adapter 路径；不引入 rg12 contract tokens。
 - 本设计只冻结产品行为与审计语义，不授权自动入账、自动平衡或证据替换。

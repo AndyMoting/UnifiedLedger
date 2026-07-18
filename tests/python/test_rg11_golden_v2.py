@@ -75,7 +75,7 @@ class Rg11GoldenV2Tests(unittest.TestCase):
 
     def test_roots_have_complete_state_chains(self):
         self.assertEqual(self.case["case"]["level"], "core_reserved")
-        self.assertEqual(self.case["case"]["approval_status"], "draft_for_review")
+        self.assertEqual(self.case["case"]["approval_status"], "approved")
         self.assertEqual(set(self.roots), {"root-main", "root-revision", "root-z-rejections"})
         self.assertEqual(len(self.case["states"]), 25)
         for root in self.roots.values():

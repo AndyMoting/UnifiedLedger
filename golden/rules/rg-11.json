@@ -5,7 +5,7 @@
     "id": "RG-11",
     "level": "core_reserved",
     "rule_version": 1,
-    "approval_status": "draft_for_review",
+    "approval_status": "approved",
     "ledger_id": "ledger-periodic",
     "timezone": "Asia/Shanghai",
     "currencies": [

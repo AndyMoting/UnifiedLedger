@@ -163,7 +163,7 @@ class Rg12GoldenV2Tests(unittest.TestCase):
 
     def test_complete_state_chains_and_exhaustive_deltas(self):
         self.assertEqual(self.case["case"]["level"], "core_required")
-        self.assertEqual(self.case["case"]["approval_status"], "draft_for_review")
+        self.assertEqual(self.case["case"]["approval_status"], "approved")
         self.assertEqual(set(self.roots), {"root-partial", "root-correction", "root-rejections"})
         for root in self.roots.values():
             previous = root["initial_state_id"]

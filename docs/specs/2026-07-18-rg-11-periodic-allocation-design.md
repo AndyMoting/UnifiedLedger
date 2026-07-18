@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-Unified Golden Schema v2 将“先付款、后按期确认”的预付业务建模为不可变领域事实。规范只定义周期性分摊，不引入 v1、mapping 或 adapter；canonical direct-v2 draft 路径为 `golden/rules/rg-11.json`。
+Unified Golden Schema v2 将“先付款、后按期确认”的预付业务建模为不可变领域事实。规范只定义周期性分摊，不引入 v1、mapping 或 adapter；canonical direct-v2 答案路径为 `golden/rules/rg-11.json`。
 
 ## 领域 owner
 
