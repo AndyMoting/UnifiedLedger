@@ -2,6 +2,7 @@ package com.unifiedledger.domain
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class OrdinaryExpenseTest {
     private val fixture = Rg01Fixture()
@@ -20,6 +21,8 @@ class OrdinaryExpenseTest {
         assertEquals(formal.transaction.id, version.transactionId)
         assertEquals(1, version.versionNumber)
         assertEquals(fixture.expenseIds.postingSetId, version.postingSetId)
+        assertEquals("", version.note)
+        assertNull(fixture.openingBalance().versions.single().note)
 
         val postingSet = formal.postingSets.single()
         assertEquals(version.postingSetId, postingSet.id)

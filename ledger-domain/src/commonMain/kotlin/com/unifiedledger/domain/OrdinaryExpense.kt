@@ -87,6 +87,7 @@ fun createAssetPaidOrdinaryExpense(
         versionNumber = 1,
         postingSetId = ids.postingSetId,
         times = command.times,
+        note = "",
     )
     return FormalTransaction.create(
         transaction = transaction,
