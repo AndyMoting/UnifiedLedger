@@ -2,11 +2,13 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前已经包含两个可构建的 Kotlin Multiplatform 共享库模块，均带 JVM 测试目标。`ledger-domain` 已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建与当前分录余额重放，以及只修改备注的版本替代。普通支出还会把非正金额、一级分类和结构有效但已停用的二级分类返回为三项明确的类型化领域失败；其他目录、账户和跨账本错误仍保持通用失败。
+本文件定义目标模块边界和依赖约束。仓库当前已经包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。`ledger-domain` 已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建与当前分录余额重放，以及只修改备注的版本替代。普通支出还会把非正金额、一级分类和结构有效但已停用的二级分类返回为三项明确的类型化领域失败；其他目录、账户和跨账本错误仍保持通用失败。
 
-`ledger-application` 当前实现 `RG-01` 的最小明确确认用例与端口边界：请求身份和完整快照、只含身份的回执、幂等重放、独立重复记账、类型化冲突与类型化领域拒绝。稀疏保存输入 wrapper 只放宽金额、分类和付款账户，缺失项形成无序的语义类型集合且不进入确认或提交路径；完整输入和已提供的零金额仍委托既有确认用例。原子提交只是应用层定义的端口契约；仓库尚无 `ledger-data` 适配器、数据库、schema、ORM、并发或持久化实现。
+`ledger-application` 当前实现 `RG-01` 的最小明确确认用例与端口边界：请求身份和完整快照、只含身份的回执、幂等重放、独立重复记账、类型化冲突与类型化领域拒绝。稀疏保存输入 wrapper 只放宽金额、分类和付款账户，缺失项形成无序的语义类型集合且不进入确认或提交路径；完整输入和已提供的零金额仍委托既有确认用例。
 
-两个模块的完整目标职责仍以本文为准，当前切片不代表完整 `RG-01` 黄金契约或正式账务核心已经全部实现。JSON `field_path`/`reason_code` 映射、原始十进制字符串解析与序列化 adapter 仍不属于当前 application 实现。下表中除 `ledger-domain` 与 `ledger-application` 之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应的构建模块；Android 与 Desktop 应用和平台模块也尚未建立。`ledger-application` 在此指共享 application library，不是可运行的 app/client。
+`ledger-data` 使用 SQLDelight `2.3.2` 实现当前明确确认端口。请求身份与完整快照先在 SQL 事务中取得 claim；只有 winner 调用 transaction factory，等价 loser 返回原回执，变更快照 loser 返回冲突。领域拒绝显式删除并释放 claim；callback 异常或后续 SQL 失败回滚事务，所有路径均不留下部分正式状态。schema v2 使用账本所有权复合外键保存 transaction、current version 关系、posting set、posting 与回执；schema-only v1 到 v2 的迁移已经验证。Android target 只装配 system SQLite driver，并显式启用外键。
+
+三个模块的完整目标职责仍以本文为准，当前切片不代表完整 `RG-01` 黄金契约或正式账务核心已经全部实现。JSON `field_path`/`reason_code` 映射、原始十进制字符串解析与序列化 adapter 仍未实现。下表中除这三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应的构建模块；Android 与 Desktop app 也尚未建立。`ledger-application` 在此指共享 application library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 
@@ -115,7 +117,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | 平台边界 | 已确定 | 业务核心共享，系统能力和 UI 平台独立 |
 | Python | 已确定 | 仅用于迁移、规则原型和黄金结果基线 |
 | 运行方式 | 已确定 | 本地优先；同步与 AI 默认关闭且不影响核心验收 |
-| 数据库与迁移库 | 暂缓决定 | 领域模型、查询需求、事务边界和迁移测试明确后选择 |
+| 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；schema v2 与 schema-only v1 迁移均经过验证。该选择不预先决定报表、导入、对账或同步的更广泛查询与存储方案 |
 | UI 与导航库 | 暂缓决定 | Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | 序列化与网络库 | 暂缓决定 | 公开数据格式和第一个可选网络边界确认后选择 |

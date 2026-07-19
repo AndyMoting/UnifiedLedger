@@ -9,7 +9,7 @@
 - Gradle Wrapper 9.5.0
 - Kotlin Multiplatform 插件 2.4.10
 
-所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前仅有 `ledger-domain` 库模块，没有 Android 或 Desktop 应用模块，因此没有应用运行命令。
+所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个 library 模块；`ledger-data` 带 Android 编译目标，但没有 Android 或 Desktop 应用模块，因此没有应用运行命令。
 
 ## Kotlin 验证
 
@@ -23,6 +23,30 @@
 
 ```powershell
 .\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+运行 `ledger-application` JVM 测试：
+
+```powershell
+.\gradlew.bat :ledger-application:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+运行 `ledger-data` JVM 测试：
+
+```powershell
+.\gradlew.bat :ledger-data:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+验证 SQLDelight migration：
+
+```powershell
+.\gradlew.bat :ledger-data:verifyCommonMainLedgerDatabaseMigration --stacktrace --rerun-tasks --warning-mode all
+```
+
+编译 `ledger-data` Android system SQLite driver 装配：
+
+```powershell
+.\gradlew.bat :ledger-data:compileAndroidMain --stacktrace --rerun-tasks --warning-mode all
 ```
 
 运行当前全部 Gradle 检查：
