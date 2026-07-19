@@ -22,22 +22,33 @@ fun createAssetPaidOrdinaryExpense(
     ids: AssetPaidOrdinaryExpenseIds,
 ): DomainResult<FormalTransaction> {
     if (command.amount.minorUnits <= 0L) {
-        return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
+        return DomainResult.Failure(OrdinaryExpenseViolation.AmountMustBePositive)
     }
 
     val category = catalog.category(command.categoryId)
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
-    val parentCategory = category.parentId?.let(catalog::category)
+    if (category.ledgerId != command.ledgerId) {
+        return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
+    }
+    val parentCategoryId = category.parentId
+        ?: return DomainResult.Failure(OrdinaryExpenseViolation.SecondaryCategoryRequired)
+    val parentCategory = catalog.category(parentCategoryId)
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
+    if (
+        parentCategory.ledgerId != command.ledgerId ||
+        parentCategory.parentId != null
+    ) {
+        return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
+    }
+    if (!category.active) {
+        return DomainResult.Failure(OrdinaryExpenseViolation.CategoryInactive)
+    }
+
     val expenseAccount = category.postingAccountId?.let(catalog::account)
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
     val paymentAccount = catalog.account(command.paymentAccountId)
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
 
-    val validCategory = category.ledgerId == command.ledgerId &&
-        category.active &&
-        parentCategory.ledgerId == command.ledgerId &&
-        parentCategory.parentId == null
     val validExpenseAccount = expenseAccount.ledgerId == command.ledgerId &&
         expenseAccount.kind == AccountKind.EXPENSE &&
         expenseAccount.currency == command.amount.currency &&
@@ -48,7 +59,7 @@ fun createAssetPaidOrdinaryExpense(
         paymentAccount.ownedByUser &&
         paymentAccount.realAccount
 
-    if (!validCategory || !validExpenseAccount || !validPaymentAccount) {
+    if (!validExpenseAccount || !validPaymentAccount) {
         return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
     }
 

@@ -9,11 +9,11 @@ import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
-import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.OrdinaryExpenseViolation
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSet
@@ -203,7 +203,7 @@ class ConfirmedManualExpenseIdempotencyTest {
             harness.execute(invalid),
         )
 
-        assertEquals(DomainViolation.InvalidOrdinaryExpense, rejected.violation)
+        assertEquals(OrdinaryExpenseViolation.AmountMustBePositive, rejected.violation)
         assertEquals(1, harness.idSource.invocationCount)
         assertEquals(1, harness.transactionCreateCount)
         assertEquals(0, harness.commitPort.commitCount)
