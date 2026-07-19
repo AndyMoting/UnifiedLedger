@@ -21,3 +21,11 @@ sealed interface DomainViolation {
 
     data object InvalidBalanceReplay : DomainViolation
 }
+
+sealed interface OrdinaryExpenseViolation : DomainViolation {
+    data object AmountMustBePositive : OrdinaryExpenseViolation
+
+    data object SecondaryCategoryRequired : OrdinaryExpenseViolation
+
+    data object CategoryInactive : OrdinaryExpenseViolation
+}
