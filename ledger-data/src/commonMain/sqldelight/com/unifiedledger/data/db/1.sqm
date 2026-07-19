@@ -1,0 +1,26 @@
+CREATE TABLE manual_expense_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL,
+  payment_account_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE confirmed_expense_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_expense_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);

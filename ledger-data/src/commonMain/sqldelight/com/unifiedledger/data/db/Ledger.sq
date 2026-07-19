@@ -1,0 +1,266 @@
+CREATE TABLE ledger_transaction (
+  transaction_id TEXT NOT NULL PRIMARY KEY,
+  ledger_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE')),
+  UNIQUE (transaction_id, ledger_id)
+);
+
+CREATE TABLE posting_set (
+  posting_set_id TEXT NOT NULL PRIMARY KEY,
+  ledger_id TEXT NOT NULL,
+  UNIQUE (posting_set_id, ledger_id)
+);
+
+CREATE TABLE transaction_version (
+  version_id TEXT NOT NULL PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  posting_set_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  statistics_at TEXT NOT NULL,
+  effective_at TEXT NOT NULL,
+  note TEXT,
+  UNIQUE (transaction_id, version_number),
+  UNIQUE (transaction_id, version_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (posting_set_id, ledger_id)
+    REFERENCES posting_set(posting_set_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE posting (
+  posting_id TEXT NOT NULL PRIMARY KEY,
+  posting_set_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  posting_index INTEGER NOT NULL CHECK (posting_index >= 0),
+  account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (posting_set_id, posting_index),
+  FOREIGN KEY (posting_set_id, ledger_id)
+    REFERENCES posting_set(posting_set_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE ledger_transaction_current_version (
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  current_version_id TEXT NOT NULL,
+  PRIMARY KEY (transaction_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE manual_expense_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL,
+  payment_account_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE confirmed_expense_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_expense_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+selectCommittedRequest:
+SELECT
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.payment_account_id,
+  request.occurred_at,
+  request.note,
+  request.confirmation_marker,
+  receipt.confirmation_id,
+  receipt.transaction_id
+FROM manual_expense_request AS request
+JOIN confirmed_expense_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+insertTransaction:
+INSERT INTO ledger_transaction(
+  transaction_id,
+  ledger_id,
+  kind
+) VALUES (?, ?, ?);
+
+insertTransactionCurrentVersion:
+INSERT INTO ledger_transaction_current_version(
+  transaction_id,
+  ledger_id,
+  current_version_id
+) VALUES (?, ?, ?);
+
+insertPostingSet:
+INSERT INTO posting_set(posting_set_id, ledger_id) VALUES (?, ?);
+
+insertTransactionVersion:
+INSERT INTO transaction_version(
+  version_id,
+  transaction_id,
+  ledger_id,
+  version_number,
+  posting_set_id,
+  occurred_at,
+  statistics_at,
+  effective_at,
+  note
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertPosting:
+INSERT INTO posting(
+  posting_id,
+  posting_set_id,
+  ledger_id,
+  posting_index,
+  account_id,
+  amount_minor,
+  currency_code,
+  currency_precision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+claimManualExpenseRequest:
+INSERT INTO manual_expense_request(
+  ledger_id,
+  request_id,
+  amount_minor,
+  currency_code,
+  currency_precision,
+  category_id,
+  payment_account_id,
+  occurred_at,
+  note,
+  confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+lastStatementChangedRowCount:
+SELECT changes();
+
+deleteManualExpenseRequest:
+DELETE FROM manual_expense_request
+WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+insertConfirmedExpenseReceipt:
+INSERT INTO confirmed_expense_receipt(
+  ledger_id,
+  request_id,
+  confirmation_id,
+  transaction_id
+) VALUES (?, ?, ?, ?);
+
+updateCurrentVersion:
+UPDATE ledger_transaction_current_version
+SET current_version_id = :current_version_id
+WHERE transaction_id = :transaction_id;
+
+countRequests:
+SELECT count(*) FROM manual_expense_request;
+
+countReceipts:
+SELECT count(*) FROM confirmed_expense_receipt;
+
+countTransactions:
+SELECT count(*) FROM ledger_transaction;
+
+countVersions:
+SELECT count(*) FROM transaction_version;
+
+countPostingSets:
+SELECT count(*) FROM posting_set;
+
+countPostings:
+SELECT count(*) FROM posting;
+
+selectPersistedRequest:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.payment_account_id,
+  request.occurred_at,
+  request.note,
+  request.confirmation_marker,
+  receipt.confirmation_id,
+  receipt.transaction_id
+FROM manual_expense_request AS request
+JOIN confirmed_expense_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+ORDER BY request.ledger_id, request.request_id;
+
+selectPersistedTransaction:
+SELECT tx_record.transaction_id, tx_record.ledger_id, tx_record.kind,
+  current_version_record.current_version_id
+FROM ledger_transaction AS tx_record
+JOIN ledger_transaction_current_version AS current_version_record
+  ON current_version_record.transaction_id = tx_record.transaction_id
+ AND current_version_record.ledger_id = tx_record.ledger_id
+ORDER BY tx_record.transaction_id;
+
+selectPersistedVersions:
+SELECT
+  version_id,
+  transaction_id,
+  version_number,
+  posting_set_id,
+  occurred_at,
+  statistics_at,
+  effective_at,
+  note
+FROM transaction_version
+ORDER BY transaction_id, version_number;
+
+selectPersistedPostings:
+SELECT
+  posting_id,
+  posting_index,
+  account_id,
+  amount_minor,
+  currency_code,
+  currency_precision
+FROM posting
+ORDER BY posting_set_id, posting_index;
+
+selectCurrentVersionId:
+SELECT current_version_id
+FROM ledger_transaction_current_version;
+
+selectCurrentNote:
+SELECT version.note
+FROM ledger_transaction_current_version AS transaction_record
+JOIN transaction_version AS version
+  ON version.version_id = transaction_record.current_version_id;
+
+foreignKeysEnabled:
+PRAGMA foreign_keys;
