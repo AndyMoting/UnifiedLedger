@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "UnifiedLedger"
 
 include(":ledger-domain")
+include(":ledger-application")

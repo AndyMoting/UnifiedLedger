@@ -4,9 +4,11 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-Python 实现仍是迁移、规则验证和黄金结果基线；仓库现已建立首个可构建的 Kotlin Multiplatform 模块 `ledger-domain`。该模块目前是带 JVM 测试目标的纯共享领域库，已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建，以及当前分录余额重放这一有限切片。
+Python 实现仍是迁移、规则验证和黄金结果基线；仓库现已建立两个可构建的 Kotlin Multiplatform 共享库模块，均带 JVM 测试目标。`ledger-domain` 已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建与余额重放，以及只修改备注的版本替代，当前共 `21` 项领域测试。
 
-这不是完整的正式账务核心；持久化、报表、对账、导入、UI 和平台客户端运行时均尚未实现。Android 与 Desktop 工程仍未建立，具体数据库、UI、导航、依赖注入和同步实现将在相应接口与验收边界稳定后选择。
+`ledger-application` 目前只实现 `RG-01` 的最小共享应用边界：明确确认请求、请求身份与完整快照、只含身份的回执，以及原子提交端口契约。当前 `6` 项应用测试覆盖相同请求与完整输入重放时不变更、不同请求身份的独立创建、类型化身份冲突和类型化领域拒绝。回执不携带可回写的业务快照，因此重试不会将已替代的备注版本回退到初始版本。
+
+这不是完整的 `RG-01` 或正式账务核心实现。应用层的原子提交目前只是端口契约，尚无数据库、schema、ORM、并发或持久化实现；报表、对账、导入、UI 和平台客户端运行时也均尚未实现。Android 与 Desktop 工程仍未建立，具体数据库、UI、导航、依赖注入和同步实现将在相应接口与验收边界稳定后选择。
 
 ## 核心原则
 
@@ -19,10 +21,14 @@ Python 实现仍是迁移、规则验证和黄金结果基线；仓库现已建�
 
 ## 验证
 
-Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 运行 `ledger-domain` JVM 测试：
+Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 分别运行两个共享库模块的 JVM 测试：
 
 ```powershell
 .\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
+```powershell
+.\gradlew.bat :ledger-application:jvmTest --stacktrace --rerun-tasks --warning-mode all
 ```
 
 运行当前全部 Gradle 检查：
@@ -31,7 +37,7 @@ Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 运行 `ledger-do
 .\gradlew.bat check --rerun-tasks --warning-mode all
 ```
 
-依赖和 Gradle 分发包已在本机缓存时，可以为上述命令追加 `--offline`。`ledger-domain` 是库模块，当前没有应用模块，因此尚无应用运行命令。
+依赖和 Gradle 分发包已在本机缓存时，可以为上述命令追加 `--offline`。`ledger-domain` 与 `ledger-application` 都是共享库模块；后者不是可运行的 app/client，当前尚无应用运行命令。
 
 运行完整 Python 测试：
 
