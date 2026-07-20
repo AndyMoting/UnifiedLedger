@@ -41,6 +41,7 @@ enum class TransactionKind {
     OPENING_BALANCE,
     EXPENSE,
     INCOME,
+    ACCOUNT_TRANSFER,
 }
 
 data class Transaction(

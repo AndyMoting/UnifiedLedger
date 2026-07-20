@@ -1,0 +1,251 @@
+-- Rebuild the canonical transaction table so the v5 discriminator accepts
+-- account transfers while preserving all v4 rows and dependent owners.
+CREATE TABLE transaction_version_stage AS SELECT * FROM transaction_version;
+CREATE TABLE ledger_transaction_current_version_stage AS SELECT * FROM ledger_transaction_current_version;
+CREATE TABLE confirmed_expense_receipt_stage AS SELECT * FROM confirmed_expense_receipt;
+CREATE TABLE confirmed_income_receipt_stage AS SELECT * FROM confirmed_income_receipt;
+CREATE TABLE transaction_note_update_request_stage AS SELECT * FROM transaction_note_update_request;
+CREATE TABLE confirmed_transaction_note_update_receipt_stage AS SELECT * FROM confirmed_transaction_note_update_receipt;
+
+DROP TABLE confirmed_transaction_note_update_receipt;
+DROP TABLE transaction_note_update_request;
+DROP TABLE confirmed_income_receipt;
+DROP TABLE confirmed_expense_receipt;
+DROP TABLE ledger_transaction_current_version;
+DROP TABLE transaction_version;
+
+CREATE TABLE ledger_transaction_stage AS SELECT * FROM ledger_transaction;
+DROP TABLE ledger_transaction;
+CREATE TABLE ledger_transaction (
+  transaction_id TEXT NOT NULL PRIMARY KEY,
+  ledger_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE', 'INCOME', 'ACCOUNT_TRANSFER')),
+  UNIQUE (transaction_id, ledger_id)
+);
+INSERT INTO ledger_transaction SELECT * FROM ledger_transaction_stage;
+DROP TABLE ledger_transaction_stage;
+
+CREATE TABLE transaction_version (
+  version_id TEXT NOT NULL PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  posting_set_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  statistics_at TEXT NOT NULL,
+  effective_at TEXT NOT NULL,
+  note TEXT,
+  UNIQUE (transaction_id, version_number),
+  UNIQUE (transaction_id, version_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (posting_set_id, ledger_id)
+    REFERENCES posting_set(posting_set_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_version SELECT * FROM transaction_version_stage;
+DROP TABLE transaction_version_stage;
+
+CREATE TABLE ledger_transaction_current_version (
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  current_version_id TEXT NOT NULL,
+  PRIMARY KEY (transaction_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO ledger_transaction_current_version SELECT * FROM ledger_transaction_current_version_stage;
+DROP TABLE ledger_transaction_current_version_stage;
+
+CREATE TABLE confirmed_expense_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_expense_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_expense_receipt SELECT * FROM confirmed_expense_receipt_stage;
+DROP TABLE confirmed_expense_receipt_stage;
+
+CREATE TABLE confirmed_income_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_income_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_income_receipt SELECT * FROM confirmed_income_receipt_stage;
+DROP TABLE confirmed_income_receipt_stage;
+
+CREATE TABLE transaction_note_update_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_note_update_request SELECT * FROM transaction_note_update_request_stage;
+DROP TABLE transaction_note_update_request_stage;
+
+CREATE TABLE confirmed_transaction_note_update_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, request_id, transaction_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id, transaction_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_transaction_note_update_receipt SELECT * FROM confirmed_transaction_note_update_receipt_stage;
+DROP TABLE confirmed_transaction_note_update_receipt_stage;
+
+CREATE TABLE posting_stage AS SELECT * FROM posting;
+DROP TABLE posting;
+CREATE TABLE posting (
+  posting_id TEXT NOT NULL PRIMARY KEY,
+  posting_set_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  posting_index INTEGER NOT NULL CHECK (posting_index >= 0),
+  account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (posting_set_id, posting_index),
+  UNIQUE (posting_id, ledger_id),
+  FOREIGN KEY (posting_set_id, ledger_id)
+    REFERENCES posting_set(posting_set_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO posting SELECT * FROM posting_stage;
+DROP TABLE posting_stage;
+
+CREATE TABLE rg03_operation_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ( 'MANUAL_ACCOUNT_TRANSFER', 'IMPORT_SOURCE_RECORD', 'EXPLICIT_CANDIDATE_CONFIRMATION', 'IMPORT_MIRROR_RECORD' )),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE rg03_manual_transfer_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
+  source_account_id TEXT NOT NULL, destination_account_id TEXT NOT NULL,
+  source_debit_minor INTEGER NOT NULL, destination_credit_minor INTEGER NOT NULL, fee_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  fee_category_id TEXT NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_source_intake_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL, source_account_id TEXT NOT NULL, source_debit_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  completeness TEXT NOT NULL CHECK (completeness IN ('COMPLETE', 'MISSING_DESTINATION')),
+  fee_category_id TEXT NOT NULL, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_complete_source_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, destination_account_id TEXT NOT NULL,
+  destination_credit_minor INTEGER NOT NULL, fee_minor INTEGER NOT NULL, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_source_intake_request_snapshot(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_candidate_confirmation_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, confirmed INTEGER NOT NULL CHECK (confirmed = 1),
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_mirror_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL, account_id TEXT NOT NULL, credit_minor INTEGER NOT NULL, currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0), PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_source_record (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('COMPLETE_TRANSFER_SOURCE', 'INCOMPLETE_TRANSFER_SOURCE', 'ACCOUNT_CREDIT_OBSERVATION')),
+  observed_at TEXT NOT NULL,
+  observed_account_id TEXT NOT NULL, observed_amount_minor INTEGER NOT NULL, currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  PRIMARY KEY (ledger_id, source_id), UNIQUE (ledger_id, source_id, evidence_id)
+);
+CREATE TABLE rg03_complete_transfer_source_detail (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL, destination_account_id TEXT NOT NULL,
+  destination_credit_minor INTEGER NOT NULL, fee_minor INTEGER NOT NULL, fee_category_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, source_id), FOREIGN KEY (ledger_id, source_id) REFERENCES rg03_source_record(ledger_id, source_id) ON DELETE CASCADE
+);
+CREATE TABLE rg03_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL, source_id TEXT NOT NULL, observed_at TEXT NOT NULL,
+  evidence_role TEXT NOT NULL CHECK (evidence_role IN ('SOURCE_DEBIT', 'DESTINATION_MIRROR')), PRIMARY KEY (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id, evidence_id) REFERENCES rg03_source_record(ledger_id, source_id, evidence_id)
+);
+CREATE TABLE rg03_transfer_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, source_id TEXT NOT NULL,
+  candidate_kind TEXT NOT NULL CHECK (candidate_kind IN ('ACCOUNT_TRANSFER_WITH_FEE', 'ONE_SIDED_DEBIT')),
+  fee_category_id TEXT NOT NULL, confidence TEXT NOT NULL, rule_name TEXT NOT NULL, rule_version INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id), FOREIGN KEY (ledger_id, source_id) REFERENCES rg03_source_record(ledger_id, source_id)
+);
+CREATE TABLE rg03_candidate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL, status_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED')), request_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence), UNIQUE (ledger_id, status_id), FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg03_transfer_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id)
+);
+CREATE TABLE rg03_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT, transaction_id TEXT NOT NULL,
+  confirmation_kind TEXT NOT NULL, PRIMARY KEY (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id), FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg03_transfer_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg03_operation_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome = 'ACCEPTED'), confirmation_id TEXT,
+  candidate_id TEXT, transaction_id TEXT, source_id TEXT, evidence_id TEXT, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, confirmation_id) REFERENCES rg03_confirmation(ledger_id, confirmation_id), FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg03_transfer_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg03_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL, evidence_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind = 'POSTING'),
+  target_role TEXT NOT NULL CHECK (target_role IN ('REAL_ACCOUNT_POSTING', 'DESTINATION_ASSET_POSTING')),
+  status TEXT NOT NULL CHECK (status = 'MATCHED'),
+  PRIMARY KEY (ledger_id, link_id), UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, posting_id), FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg03_evidence(ledger_id, evidence_id), FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg03_transfer_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('TRANSFER_PRINCIPAL_OUT', 'TRANSFER_PRINCIPAL_IN', 'TRANSFER_FEE')),
+  category_id TEXT, reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)),
+  PRIMARY KEY (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((role = 'TRANSFER_FEE' AND category_id IS NOT NULL AND reconciliation_eligible = 0)
+      OR (role != 'TRANSFER_FEE' AND category_id IS NULL AND reconciliation_eligible = 1))
+);
+CREATE TABLE rg03_posting_reconciliation (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')),
+  PRIMARY KEY (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id), FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
