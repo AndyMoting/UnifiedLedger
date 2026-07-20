@@ -62,6 +62,7 @@ data class Rg01DecodedExpectedOutcome(
     val fieldPath: String? = null,
     val reasonCode: String? = null,
     val transactionId: String? = null,
+    val versionId: String? = null,
 )
 
 data class Rg01DecodedOperation(
@@ -76,10 +77,24 @@ data class Rg01DecodedInvalidOperation(
     val expected: Rg01DecodedExpectedOutcome,
 )
 
+data class Rg01DecodedTransactionNoteUpdateInput(
+    val requestId: String,
+    val transactionId: String,
+    val note: String,
+    val explicitConfirmation: Boolean,
+)
+
+data class Rg01DecodedNoteUpdateOperation(
+    val source: Rg01DecodedSource,
+    val input: Rg01DecodedTransactionNoteUpdateInput,
+    val expected: Rg01DecodedExpectedOutcome,
+)
+
 data class Rg01RawJsonCase(
     val caseId: String,
     val context: Rg01ManualExpenseContext,
     val create: Rg01DecodedOperation,
+    val noteUpdate: Rg01DecodedNoteUpdateOperation,
     val retry: Rg01DecodedOperation,
     val distinct: Rg01DecodedOperation,
     val invalidInputs: List<Rg01DecodedInvalidOperation>,
@@ -142,9 +157,9 @@ private fun decodeRoot(root: JsonObject): Rg01RawJsonDecodeResult.Success {
     val catalog = decodeCatalog(requireObject(root, "catalog", "$.catalog"), ledgerId, currency)
     val context = Rg01ManualExpenseContext(ledgerId, currency, catalog, timezone, "+08:00")
     requireObject(root, "opening", "$.opening")
-    requireObject(root, "note_update", "$.note_update")
     requireArray(root, "forbidden_side_effects", "$.forbidden_side_effects")
     val create = decodeCreation(requireObject(root, "create", "$.create"), "$.create")
+    val noteUpdate = decodeNoteUpdate(requireObject(root, "note_update", "$.note_update"))
     val idempotency = requireObject(root, "idempotency", "$.idempotency")
     idempotency.closed("$.idempotency", setOf("repeated_request_id", "expected"))
     val retryInput = create.input.copy(requestId = Rg01JsonField.Value(requireString(idempotency, "repeated_request_id", "$.idempotency.repeated_request_id")))
@@ -163,11 +178,51 @@ private fun decodeRoot(root: JsonObject): Rg01RawJsonDecodeResult.Success {
             caseId,
             context,
             create,
+            noteUpdate,
             retry,
             distinct,
             invalid,
-            setOf(Rg01UnsupportedSection.NOTE_UPDATE, Rg01UnsupportedSection.OPENING_STATE, Rg01UnsupportedSection.FULL_STATE, Rg01UnsupportedSection.REPORTS, Rg01UnsupportedSection.RECONCILIATION, Rg01UnsupportedSection.DELTAS),
+            setOf(Rg01UnsupportedSection.OPENING_STATE, Rg01UnsupportedSection.FULL_STATE, Rg01UnsupportedSection.REPORTS, Rg01UnsupportedSection.RECONCILIATION, Rg01UnsupportedSection.DELTAS),
         ),
+    )
+}
+
+private fun decodeNoteUpdate(root: JsonObject): Rg01DecodedNoteUpdateOperation {
+    root.closed("$.note_update", setOf("request", "expected"))
+    val request = requireObject(root, "request", "$.note_update.request")
+    request.closed("$.note_update.request", setOf("request_id", "transaction_id", "note"))
+    val expected = requireObject(root, "expected", "$.note_update.expected")
+    expected.closed("$.note_update.expected", setOf("transaction_id", "current_version_id", "versions", "effective_posting_set_id", "effective_transaction_count", "funding_effect_count", "balances", "statistics", "reconciliation", "evidence_refs"))
+    val requestId = requireString(request, "request_id", "$.note_update.request.request_id")
+    val transactionId = requireString(request, "transaction_id", "$.note_update.request.transaction_id")
+    val note = requireString(request, "note", "$.note_update.request.note")
+    requireValue(requireString(expected, "transaction_id", "$.note_update.expected.transaction_id") == transactionId, "$.note_update.expected.transaction_id")
+    val currentVersionId = requireString(expected, "current_version_id", "$.note_update.expected.current_version_id")
+    requireArray(expected, "versions", "$.note_update.expected.versions").forEachIndexed { index, element ->
+        val versionPath = "$.note_update.expected.versions[$index]"
+        val version = element.objectAt(versionPath)
+        version.closed(versionPath, setOf("id", "status", "note"))
+        requireString(version, "id", "$versionPath.id")
+        requireString(version, "status", "$versionPath.status")
+        requireString(version, "note", "$versionPath.note")
+    }
+    requireString(expected, "effective_posting_set_id", "$.note_update.expected.effective_posting_set_id")
+    requireInt(expected, "effective_transaction_count", "$.note_update.expected.effective_transaction_count")
+    requireInt(expected, "funding_effect_count", "$.note_update.expected.funding_effect_count")
+    requireStringMap(requireObject(expected, "balances", "$.note_update.expected.balances"), "$.note_update.expected.balances")
+    requireStringMap(requireObject(expected, "statistics", "$.note_update.expected.statistics"), "$.note_update.expected.statistics")
+    requireStringMap(requireObject(expected, "reconciliation", "$.note_update.expected.reconciliation"), "$.note_update.expected.reconciliation")
+    requireArray(expected, "evidence_refs", "$.note_update.expected.evidence_refs").forEachIndexed { index, element ->
+        val evidence = element as? JsonPrimitive
+            ?: fail("$.note_update.expected.evidence_refs[$index]", Rg01RawJsonContractErrorReason.WRONG_TYPE)
+        if (!evidence.isString) {
+            fail("$.note_update.expected.evidence_refs[$index]", Rg01RawJsonContractErrorReason.WRONG_TYPE)
+        }
+    }
+    return Rg01DecodedNoteUpdateOperation(
+        Rg01DecodedSource("$.note_update.request", requestId),
+        Rg01DecodedTransactionNoteUpdateInput(requestId, transactionId, note, true),
+        Rg01DecodedExpectedOutcome(Rg01OutcomeStatus.ACCEPTED, transactionId = transactionId, versionId = currentVersionId),
     )
 }
 
@@ -179,7 +234,11 @@ private fun decodeDistinct(root: JsonObject, path: String, explicitConfirmation:
     val transaction = requireObject(expected, "transaction", "$path.expected.transaction")
     if (!requireBoolean(expected, "accepted", "$path.expected.accepted")) fail("$path.expected.accepted", Rg01RawJsonContractErrorReason.INVALID_VALUE)
     transaction.closed("$path.expected.transaction", setOf("id", "current_version_id", "posting_set_id", "occurred_at", "effective", "postings"))
-    return Rg01DecodedOperation(Rg01DecodedSource(path, input.requestId.decodedValueOrNull()), input, Rg01DecodedExpectedOutcome(Rg01OutcomeStatus.ACCEPTED, transactionId = requireString(transaction, "id", "$path.expected.transaction.id")))
+    return Rg01DecodedOperation(Rg01DecodedSource(path, input.requestId.decodedValueOrNull()), input, Rg01DecodedExpectedOutcome(
+        Rg01OutcomeStatus.ACCEPTED,
+        transactionId = requireString(transaction, "id", "$path.expected.transaction.id"),
+        versionId = requireString(transaction, "current_version_id", "$path.expected.transaction.current_version_id"),
+    ))
 }
 
 private fun decodeCatalog(root: JsonObject, ledgerId: LedgerId, currency: CurrencyUnit): LedgerCatalog {
@@ -230,7 +289,11 @@ private fun decodeCreation(root: JsonObject, path: String): Rg01DecodedOperation
     val transaction = requireObject(expected, "transaction", "$path.expected.transaction")
     if (!requireBoolean(expected, "accepted", "$path.expected.accepted")) fail("$path.expected.accepted", Rg01RawJsonContractErrorReason.INVALID_VALUE)
     transaction.closed("$path.expected.transaction", setOf("id", "current_version_id", "posting_set_id", "occurred_at", "effective", "postings"))
-    return Rg01DecodedOperation(Rg01DecodedSource(path, input.requestId.decodedValueOrNull()), input, Rg01DecodedExpectedOutcome(Rg01OutcomeStatus.ACCEPTED, transactionId = requireString(transaction, "id", "$path.expected.transaction.id")))
+    return Rg01DecodedOperation(Rg01DecodedSource(path, input.requestId.decodedValueOrNull()), input, Rg01DecodedExpectedOutcome(
+        Rg01OutcomeStatus.ACCEPTED,
+        transactionId = requireString(transaction, "id", "$path.expected.transaction.id"),
+        versionId = requireString(transaction, "current_version_id", "$path.expected.transaction.current_version_id"),
+    ))
 }
 
 private fun decodeFullInput(root: JsonObject, path: String, explicitConfirmation: Rg01JsonField<Boolean>): Rg01DecodedManualExpenseInput {
@@ -292,6 +355,11 @@ private fun requireInt(root: JsonObject, key: String, path: String): Int {
 }
 private fun requireObject(root: JsonObject, key: String, path: String): JsonObject = root[key]?.let { it.objectAt(path) } ?: fail(path, Rg01RawJsonContractErrorReason.WRONG_TYPE)
 private fun requireArray(root: JsonObject, key: String, path: String): JsonArray = root[key]?.let { it.arrayAt(path) } ?: fail(path, Rg01RawJsonContractErrorReason.WRONG_TYPE)
+private fun requireStringMap(root: JsonObject, path: String) {
+    root.forEach { (key, value) ->
+        if (value !is JsonPrimitive || !value.isString) fail("$path.$key", Rg01RawJsonContractErrorReason.WRONG_TYPE)
+    }
+}
 private fun JsonElement.objectAt(path: String): JsonObject = this as? JsonObject ?: fail(path, Rg01RawJsonContractErrorReason.WRONG_TYPE)
 private fun JsonElement.arrayAt(path: String): JsonArray = this as? JsonArray ?: fail(path, Rg01RawJsonContractErrorReason.WRONG_TYPE)
 private fun JsonObject.closed(path: String, allowed: Set<String>) { keys.firstOrNull { it !in allowed }?.let { fail("$path.$it", Rg01RawJsonContractErrorReason.UNKNOWN_FIELD) } }

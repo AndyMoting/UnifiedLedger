@@ -86,6 +86,40 @@ CREATE TABLE confirmed_expense_receipt (
     DEFERRABLE INITIALLY DEFERRED
 );
 
+CREATE TABLE transaction_note_update_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE confirmed_transaction_note_update_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, request_id, transaction_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id, transaction_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
 selectCommittedRequest:
 SELECT
   request.amount_minor,
@@ -180,6 +214,58 @@ updateCurrentVersion:
 UPDATE ledger_transaction_current_version
 SET current_version_id = :current_version_id
 WHERE transaction_id = :transaction_id;
+
+claimTransactionNoteUpdateRequest:
+INSERT INTO transaction_note_update_request(
+  ledger_id, request_id, transaction_id, note, confirmation_marker
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteTransactionNoteUpdateRequest:
+DELETE FROM transaction_note_update_request
+WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+selectCommittedTransactionNoteUpdateRequest:
+SELECT request.transaction_id, request.note, request.confirmation_marker,
+  receipt.confirmation_id, receipt.version_id, receipt.expected_current_version_id
+FROM transaction_note_update_request AS request
+JOIN confirmed_transaction_note_update_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+copyCurrentVersionWithNewNote:
+INSERT INTO transaction_version(
+  version_id, transaction_id, ledger_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+)
+SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
+  version.posting_set_id, version.occurred_at, version.statistics_at, version.effective_at, :note
+FROM transaction_version AS version
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.transaction_id = version.transaction_id
+ AND current_version.ledger_id = version.ledger_id
+ AND current_version.current_version_id = version.version_id
+WHERE version.transaction_id = :transaction_id
+  AND version.ledger_id = :ledger_id
+  AND version.version_id = :expected_current_version_id;
+
+compareAndSetCurrentVersion:
+UPDATE ledger_transaction_current_version
+SET current_version_id = :replacement_version_id
+WHERE transaction_id = :transaction_id
+  AND ledger_id = :ledger_id
+  AND current_version_id = :expected_current_version_id;
+
+insertConfirmedTransactionNoteUpdateReceipt:
+INSERT INTO confirmed_transaction_note_update_receipt(
+  ledger_id, request_id, confirmation_id, transaction_id, version_id, expected_current_version_id
+) VALUES (?, ?, ?, ?, ?, ?);
+
+countTransactionNoteUpdateRequests:
+SELECT count(*) FROM transaction_note_update_request;
+
+countTransactionNoteUpdateReceipts:
+SELECT count(*) FROM confirmed_transaction_note_update_receipt;
 
 countRequests:
 SELECT count(*) FROM manual_expense_request;

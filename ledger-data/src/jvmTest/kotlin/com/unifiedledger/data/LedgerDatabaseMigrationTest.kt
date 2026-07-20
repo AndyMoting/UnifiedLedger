@@ -12,17 +12,19 @@ import kotlin.test.assertFailsWith
 
 class LedgerDatabaseMigrationTest {
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionTwo() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionThree() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(2, LedgerDatabase.Schema.version)
+            assertEquals(3, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
+            assertEquals(0, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
+            assertEquals(0, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
             assertEquals(0, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0, database.ledgerQueries.countVersions().executeAsOne())
             assertEquals(0, database.ledgerQueries.countPostingSets().executeAsOne())
@@ -45,7 +47,7 @@ class LedgerDatabaseMigrationTest {
 
             val driver = JdbcSqliteDriver(url, migrationSqliteProperties())
             try {
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 2)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 3)
             } finally {
                 driver.close()
             }
@@ -68,6 +70,30 @@ class LedgerDatabaseMigrationTest {
                             UPDATE ledger_transaction_current_version
                             SET current_version_id = 'version-missing'
                             WHERE transaction_id = 'tx-existing' AND ledger_id = 'ledger-a'
+                        """.trimIndent(),
+                        0,
+                    )
+                }
+                reopened.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_note_update_request(
+                          ledger_id, request_id, transaction_id, note, confirmation_marker
+                        ) VALUES ('ledger-a', 'note-request-invalid-baseline', 'tx-existing',
+                          'changed', 'explicit_manual_save')
+                    """.trimIndent(),
+                    0,
+                )
+                assertFailsWith<java.sql.SQLException> {
+                    reopened.execute(
+                        null,
+                        """
+                            INSERT INTO confirmed_transaction_note_update_receipt(
+                              ledger_id, request_id, confirmation_id, transaction_id, version_id,
+                              expected_current_version_id
+                            ) VALUES ('ledger-a', 'note-request-invalid-baseline',
+                              'confirmation-note-invalid-baseline', 'tx-existing',
+                              'version-existing-v1', 'version-missing')
                         """.trimIndent(),
                         0,
                     )
@@ -101,7 +127,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionTwoAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionThreeAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -116,13 +142,37 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 2)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 3)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
         } finally {
             Files.deleteIfExists(freshPath)
             Files.deleteIfExists(migratedPath)
+        }
+    }
+
+    @Test
+    fun migrationFromVersionTwoPreservesFormalRowsAndAddsDedicatedNoteUpdateOwner() {
+        val path = Files.createTempFile("ledger-data-v2-v3-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 2)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 2, newVersion = 3)
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(1, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(0, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
+                assertEquals(0, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
         }
     }
 }

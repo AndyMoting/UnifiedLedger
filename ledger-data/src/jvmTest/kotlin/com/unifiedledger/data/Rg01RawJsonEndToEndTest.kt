@@ -9,6 +9,17 @@ import com.unifiedledger.application.ConfirmedManualExpenseCommitIds
 import com.unifiedledger.application.ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteManualExpenseSave
+import com.unifiedledger.application.ExecuteConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateCommitPort
+import com.unifiedledger.application.TransactionNoteUpdateRequestSnapshot
+import com.unifiedledger.application.TransactionNoteUpdateRequestIdentity
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateResult
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.projectRg01TransactionNoteUpdateResult
 import com.unifiedledger.application.Rg01AttemptedExpenseResult
 import com.unifiedledger.application.Rg01DecodedManualExpenseInput
 import com.unifiedledger.application.Rg01JsonField
@@ -54,8 +65,8 @@ class Rg01RawJsonEndToEndTest {
     @Test
     fun trackedRawFixtureExecutesThroughApplicationAndSqlDelightAgainstApprovedOutcomes() {
         val source = Files.readString(repoFile("golden/rules/rg-01.json"))
-        val approved = ApprovedOutcomes.decode(Files.readString(repoFile("docs/migrations/golden-v2/rg-01-expected.json")))
         val decoded = assertIs<Rg01RawJsonDecodeResult.Success>(decodeRg01RawJson(source)).value
+        val v1DrivenOutcomes = mutableListOf<Pair<String, Rg01OutcomeProjection>>()
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, sqliteProperties())
         LedgerDatabase.Schema.create(driver)
         driver.use {
@@ -66,7 +77,7 @@ class Rg01RawJsonEndToEndTest {
             assertEquals("91540692-0a89-5644-985b-bf2ba4a3f98a", rg01ConfirmationId("$.distinct_reentry.request", "request-rg01-distinct-create"))
 
             val created = harness.routeStrict(decoded.create.input)
-            assertProjection(approved.byRequest(decoded.create.input.requestId.required(), Rg01OutcomeStatus.ACCEPTED), created)
+            v1DrivenOutcomes += decoded.create.input.requestId.required() to created
             assertEquals(decoded.create.expected.transactionId, created.returnedIds.single { it.kind == "transaction" }.value)
             assertEquals(E2eStorageCounts(1, 1, 1, 1, 1, 2), database.counts())
             assertEquals(
@@ -81,15 +92,56 @@ class Rg01RawJsonEndToEndTest {
                 database.persistedPostingValues(),
             )
 
+            val countsBeforeNote = database.counts()
+            val postingsBeforeNote = database.persistedPostingValues()
+            val balancesBeforeNote = database.persistedBalances()
+            val originalVersion = database.persistedVersionValues().single()
+            val noteUpdate = harness.routeNoteUpdate(decoded.noteUpdate)
+            v1DrivenOutcomes += decoded.noteUpdate.input.requestId to noteUpdate
+            assertEquals(decoded.noteUpdate.expected.versionId, noteUpdate.returnedIds.single { it.kind == "transaction_version" }.value)
+            assertEquals(countsBeforeNote.copy(versions = 2), database.counts())
+            assertEquals("version-expense-rg01-v2", database.ledgerQueries.selectCurrentVersionId().executeAsOne())
+            assertEquals("早餐", database.ledgerQueries.selectCurrentNote { note -> checkNotNull(note) }.executeAsOne())
+            assertEquals(postingsBeforeNote, database.persistedPostingValues())
+            assertEquals(balancesBeforeNote, database.persistedBalances())
+            assertEquals(mapOf("expense-account-breakfast" to 3580L, "asset-bank-a" to -3580L), balancesBeforeNote)
+            val replacementVersion = database.persistedVersionValues().single { it[0] == "version-expense-rg01-v2" }
+            assertEquals(originalVersion.subList(3, 7), replacementVersion.subList(3, 7))
+
+            val noteReplay = harness.routeNoteUpdate(decoded.noteUpdate)
+            assertEquals(Rg01OutcomeStatus.NO_CHANGE, noteReplay.status)
+            assertEquals(noteUpdate.returnedIds, noteReplay.returnedIds)
+            assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
+            assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
+
+            val conflict = harness.routeNoteUpdate(
+                decoded.noteUpdate.copy(input = decoded.noteUpdate.input.copy(note = "changed")),
+            )
+            assertEquals(Rg01OutcomeStatus.REJECTED, conflict.status)
+            assertEquals("request_identity_conflict", conflict.reasonCode)
+            assertEquals(countsBeforeNote.copy(versions = 2), database.counts())
+
+            val stale = harness.routeNoteUpdate(
+                decoded.noteUpdate.copy(
+                    input = decoded.noteUpdate.input.copy(requestId = "request-rg01-note-stale"),
+                    expected = decoded.noteUpdate.expected.copy(versionId = "version-expense-rg01-v3"),
+                ),
+            )
+            assertEquals(Rg01OutcomeStatus.REJECTED, stale.status)
+            assertEquals("stale_current_version", stale.reasonCode)
+            assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
+            assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
+            assertEquals(countsBeforeNote.copy(versions = 2), database.counts())
+
             val replay = harness.routeStrict(decoded.retry.input)
-            assertProjection(approved.byRequest(decoded.retry.input.requestId.required(), Rg01OutcomeStatus.NO_CHANGE), replay)
+            v1DrivenOutcomes += decoded.retry.input.requestId.required() to replay
             assertEquals(created.returnedIds, replay.returnedIds)
-            assertEquals(E2eStorageCounts(1, 1, 1, 1, 1, 2), database.counts())
+            assertEquals(E2eStorageCounts(1, 1, 1, 2, 1, 2), database.counts())
 
             val distinct = harness.routeStrict(decoded.distinct.input)
-            assertProjection(approved.byRequest(decoded.distinct.input.requestId.required(), Rg01OutcomeStatus.ACCEPTED), distinct)
+            v1DrivenOutcomes += decoded.distinct.input.requestId.required() to distinct
             assertEquals(decoded.distinct.expected.transactionId, distinct.returnedIds.single { it.kind == "transaction" }.value)
-            assertEquals(E2eStorageCounts(2, 2, 2, 2, 2, 4), database.counts())
+            assertEquals(E2eStorageCounts(2, 2, 2, 3, 2, 4), database.counts())
 
             val strictApplicationCallsBeforeInvalid = harness.strictApplicationCalls
             val commitCallsBeforeInvalid = harness.commitCalls
@@ -97,17 +149,21 @@ class Rg01RawJsonEndToEndTest {
                 val sourceId = checkNotNull(invalid.source.sourceId)
                 val requestId = rg01InvalidRequestId(sourceId)
                 assertEquals(EXPECTED_INVALID_REQUEST_IDS.getValue(sourceId), requestId)
-                val oracle = approved.byRequest(requestId, Rg01OutcomeStatus.REJECTED)
                 val projection = harness.routeSparse(invalid.input, requestId)
-                assertProjection(oracle, projection)
+                v1DrivenOutcomes += requestId to projection
                 assertEquals(invalid.expected.fieldPath, projection.fieldPath)
                 assertEquals(invalid.expected.reasonCode, projection.reasonCode)
                 assertTrue(projection.returnedIds.isEmpty())
-                assertEquals(E2eStorageCounts(2, 2, 2, 2, 2, 4), database.counts())
+                assertEquals(E2eStorageCounts(2, 2, 2, 3, 2, 4), database.counts())
             }
             assertEquals(7, decoded.invalidInputs.size)
             assertEquals(strictApplicationCallsBeforeInvalid, harness.strictApplicationCalls)
             assertEquals(commitCallsBeforeInvalid, harness.commitCalls)
+
+            val approved = ApprovedOutcomes.decode(Files.readString(repoFile("docs/migrations/golden-v2/rg-01-expected.json")))
+            v1DrivenOutcomes.forEach { (requestId, projection) ->
+                assertProjection(approved.byRequest(requestId, projection.status), projection)
+            }
         }
     }
 }
@@ -130,6 +186,9 @@ private class ExecutionHarness(
     private val commitPort = ConfirmedManualExpenseCommitPort { identity, snapshot, callback ->
         commitCalls += 1
         SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, callback)
+    }
+    private val noteCommitPort = ConfirmedTransactionNoteUpdateCommitPort { identity, snapshot, callback ->
+        SqlDelightConfirmedTransactionNoteUpdateCommitPort(database, driver).commitOnce(identity, snapshot, callback)
     }
     private val execute = ExecuteManualExpenseSave(
         ExecuteConfirmedManualExpense(
@@ -174,6 +233,27 @@ private class ExecutionHarness(
                 input.copy(requestId = Rg01JsonField.Value(requestId)),
             ),
         ).projection
+
+    fun routeNoteUpdate(operation: com.unifiedledger.application.Rg01DecodedNoteUpdateOperation): Rg01OutcomeProjection {
+        val execute = ExecuteConfirmedTransactionNoteUpdate(
+            noteCommitPort,
+            ConfirmedTransactionNoteUpdateIdSource {
+                ConfirmedTransactionNoteUpdateIds(
+                    ConfirmationId(rg01ConfirmationId(operation.source.locator, operation.input.requestId)),
+                    com.unifiedledger.domain.TransactionNoteUpdateIds(TransactionVersionId(checkNotNull(operation.expected.versionId))),
+                    TransactionVersionId(checkNotNull(decoded.create.expected.versionId)),
+                )
+            },
+        )
+        return projectRg01TransactionNoteUpdateResult(
+            execute.execute(
+                ExplicitlyConfirmedTransactionNoteUpdate(
+                    context.ledgerId, RequestId(operation.input.requestId), TransactionId(operation.input.transactionId),
+                    operation.input.note, ExplicitManualSave,
+                ),
+            ),
+        )
+    }
 }
 
 private data class ApprovedOutcome(
@@ -194,7 +274,7 @@ private class ApprovedOutcomes private constructor(private val values: List<Appr
             require(root.getValue("case").jsonObject.getValue("approval_status").jsonPrimitive.content == "approved")
             val values = root.getValue("operations").jsonArray.mapNotNull { element ->
                 val operation = element.jsonObject
-                if (operation.getValue("action_type").jsonPrimitive.content != "manual_expense") return@mapNotNull null
+                if (operation.getValue("action_type").jsonPrimitive.content !in setOf("manual_expense", "transaction_note_update")) return@mapNotNull null
                 val input = operation["input"]?.jsonObject
                 val attempted = operation["attempted_input"]?.jsonObject
                 val outcome = operation.getValue("outcome").jsonObject
@@ -283,6 +363,13 @@ private fun LedgerDatabase.persistedPostingValues(): Set<List<String>> = ledgerQ
         postingId, _, accountId, amountMinor, currencyCode, currencyPrecision ->
     listOf(postingId, accountId, amountMinor.toString(), currencyCode, currencyPrecision.toString())
 }.executeAsList().toSet()
+private fun LedgerDatabase.persistedVersionValues(): List<List<String>> = ledgerQueries.selectPersistedVersions {
+        versionId, transactionId, versionNumber, postingSetId, occurredAt, statisticsAt, effectiveAt, note ->
+    listOf(versionId, transactionId, versionNumber.toString(), postingSetId, occurredAt, statisticsAt, effectiveAt, note.orEmpty())
+}.executeAsList()
+private fun LedgerDatabase.persistedBalances(): Map<String, Long> = ledgerQueries.selectPersistedPostings {
+        _, _, accountId, amountMinor, _, _ -> accountId to amountMinor
+}.executeAsList().groupingBy { it.first }.fold(0L) { sum, (_, amount) -> sum + amount }
 private fun repoFile(relative: String): Path {
     var candidate = Path.of(System.getProperty("user.dir"))
     repeat(6) {
