@@ -33,6 +33,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test"))
             implementation("app.cash.sqldelight:sqlite-driver:2.3.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
         }
     }
 }
