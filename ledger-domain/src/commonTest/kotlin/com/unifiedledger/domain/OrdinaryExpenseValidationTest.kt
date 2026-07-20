@@ -106,4 +106,24 @@ class OrdinaryExpenseValidationTest {
 
         assertNotEquals(OrdinaryExpenseViolation.CategoryInactive, violation)
     }
+
+    @Test
+    fun rejectsIncomeCategoryEvenWhenItPointsAtAnExpenseAccount() {
+        val parent = CategoryId("income-parent")
+        val child = CategoryId("income-child")
+        val catalog = success(
+            LedgerCatalog.create(
+                accounts = fixture.accounts,
+                categories = fixture.categories + listOf(
+                    Category(parent, fixture.ledgerId, null, null, true, CategoryKind.INCOME),
+                    Category(child, fixture.ledgerId, parent, fixture.command.categoryId.let { fixture.categories.single { category -> category.id == it }.postingAccountId }, true, CategoryKind.INCOME),
+                ),
+            ),
+        )
+
+        assertEquals(
+            DomainViolation.InvalidOrdinaryExpense,
+            failure(createAssetPaidOrdinaryExpense(catalog, fixture.command.copy(categoryId = child), fixture.expenseIds)),
+        )
+    }
 }

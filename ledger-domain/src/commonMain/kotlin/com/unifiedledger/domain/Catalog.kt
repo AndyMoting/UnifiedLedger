@@ -8,6 +8,11 @@ enum class AccountKind {
     EXPENSE,
 }
 
+enum class CategoryKind {
+    EXPENSE,
+    INCOME,
+}
+
 data class Account(
     val id: AccountId,
     val ledgerId: LedgerId,
@@ -23,6 +28,7 @@ data class Category(
     val parentId: CategoryId?,
     val postingAccountId: AccountId?,
     val active: Boolean,
+    val kind: CategoryKind = CategoryKind.EXPENSE,
 )
 
 class LedgerCatalog private constructor(

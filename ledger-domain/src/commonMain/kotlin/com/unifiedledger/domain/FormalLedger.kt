@@ -40,6 +40,7 @@ class PostingSet private constructor(
 enum class TransactionKind {
     OPENING_BALANCE,
     EXPENSE,
+    INCOME,
 }
 
 data class Transaction(
