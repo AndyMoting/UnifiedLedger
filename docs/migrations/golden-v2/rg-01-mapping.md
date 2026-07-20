@@ -2,7 +2,7 @@
 
 状态：`approved`
 
-本文件是 `golden/rules/rg-01.json` 到 Golden Schema v2 `2.0.0` 的已批准逐路径设计。四项 contract amendments 已实施，已批准的 expected v2 output 现已存在。当前授权只覆盖 typed decoded-field adapter；raw JSON decoder、v1 fixture rewrite 与迁移发布 gate 仍关闭。
+本文件是 `golden/rules/rg-01.json` 到 Golden Schema v2 `2.0.0` 的已批准逐路径设计。四项 contract amendments 已实施，已批准的 expected v2 output 现已存在。typed decoded-field adapter 和严格 raw JSON decoder 已获授权并实现；v1 fixture rewrite 与迁移发布 gate 仍关闭。
 
 ## 1. 权威与范围
 
@@ -246,6 +246,6 @@ invalid-case ID 是 stable occurrence discriminator，并用于 deterministic id
 3. **GAP-03：** normalized source locator + stable occurrence discriminator、公共 helper 与非循环 root bootstrap。
 4. **GAP-04：** `approval_status` 增加 `approved`，且仅在 expected output 独立 review 与用户明确批准后使用。
 
-approved expected v2 output 已存在。typed decoded-field adapter 已单独获授权并实现；这不构成 raw JSON decoder、v1 fixture rewrite 或 migration publication 授权。
+approved expected v2 output 已存在。typed decoded-field adapter 与严格 raw JSON decoder 已单独获授权并实现；create、retry 与 distinct re-entry 经 application 与 SQLDelight 验证，7 个 invalid outcomes 在 typed adapter 前置拒绝并验证 commit port 零调用。该范围不包含 `note_update` 或完整 state/report/reconciliation/delta comparison。
 
-raw JSON decoder、v1 fixture rewrite 和 migration publication gate 仍关闭，不能由本 mapping approval 或 typed adapter 推定授权。
+v1 fixture rewrite 和 migration publication gate 仍关闭，不能由本 mapping approval 或 decoder 实现推定授权。

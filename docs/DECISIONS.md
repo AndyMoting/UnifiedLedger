@@ -831,3 +831,15 @@
 **影响：** 证据核验与经济确认必须作为独立操作保存和判断。新增或变更证据只能更新对应领域事实的核验结果，不能自行创建到期损失、改变正式账目，或使任何真实账户分录变为已对账。
 
 **关联决定：** `D-043`、`D-044`、`D-045`、`D-047`、`D-050`、`D-064`
+
+## D-069 RG-01 Golden JSON 解码边界
+
+**状态：** 已确认
+
+**决定：** `ledger-application/commonMain` 使用 Apache-2.0 的 `kotlinx-serialization-json 1.11.0` runtime-only 解析 RG-01 v1 raw JSON，不启用 serialization compiler plugin，不引入 Ktor。decoder 在 JSON tree 映射前拒绝 RFC 8259 重复对象名，包括转义后同名；受支持对象使用显式 closed-key 和类型校验，不暴露 library exception 文本。金额必须是 JSON string，并以原文交给现有精确金额 parser。raw UTF-8 输入最大 1 MiB、JSON 嵌套最大 64 层，超限返回类型化资源拒绝。
+
+**理由：** RG-01 fixture 是冻结的结构化输入，tree API 足以支持小范围手工映射，无需生成 serializer 或网络栈；前置重复键检查和封闭字段映射避免 parser 覆盖歧义与静默接受扩展字段。
+
+**影响：** 当前执行范围固定为 v1 create、retry 与 distinct re-entry 经现有 typed adapter、application use case 和 SQLDelight port；7 个 invalid outcomes 在 typed adapter 前置拒绝，必须保持 application strict 路径、commit port 与数据库零变化。两类结果均只与 approved v2 operations 事后比较，approved output 不配置执行 ID。`note_update`、完整 state/report/reconciliation/delta comparison、v1 fixture rewrite、migration publication、其他 RG adapter 和网络序列化选择均不由本决定授权。
+
+**关联决定：** `D-051`、`D-054`、`D-057`
