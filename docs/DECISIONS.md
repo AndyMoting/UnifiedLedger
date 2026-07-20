@@ -855,3 +855,19 @@
 **影响：** 本切片只验证 operation、版本、分录、经济时间和余额的零资金影响；不授权完整 state、report、reconciliation 或通用 delta 比较，也不授权 v1 fixture rewrite、其他字段修正或其他 RG adapter。实现继续遵循 `D-047` 的版本替代和 `D-048` 的非资金字段修正语义。
 
 **关联决定：** `D-047`、`D-048`、`D-069`
+
+## D-071 RG-02 手工普通收入执行边界
+
+**状态：** 已确认
+
+**决定：** RG-02 以严格 raw JSON 执行 `manual_income` 的最小闭环：主创建、同请求重试、红包钱包和项目款银行卡两个独立变体，以及冻结 v1 中的八条拒绝路径。目录增加专用 `CategoryKind`；收入请求只接受 active 的二级收入分类，并使用其关联的隐藏收入账户。领域增加 `INCOME` 正式交易：真实收款资产分录为正、隐藏收入账户分录为相同金额的负值，逐币种平衡；`occurred_at` 同时作为该 slice 的 occurred、statistics 和 effective 经济时间。
+
+持久化使用专用 schema v4 的 manual-income request、receipt 和 confirmation owner，不泛化为通用 operation 表。相同 request 且等价 snapshot 原子重放原 receipt，不创建第二笔交易、版本或分录；相同 request 但 snapshot 不同原子返回 conflict，且不得留下部分状态。确认、领域验证和持久化失败同样不得留下 request claim 或正式账务副作用。
+
+v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完成后比较 operation 结果、类型化拒绝和 returned IDs，不能反向配置执行 ID。`category_rename` 仍按 closed raw JSON 结构严格解码，但本 slice 返回 unsupported；不实现目录改名或名称版本生命周期。
+
+**理由：** 普通收入与支出共享明确确认、严格输入和请求语义，却要求收入专属的分类方向、隐藏账户和正式交易语义。专用 owner 既能保证回放与原子边界，又不预设后续规则的生命周期或表结构；把 v2 限为事后 oracle 防止输出成为执行配置。
+
+**影响：** 本 slice 验证 accepted income 的 transaction/version/posting、三种经济时间、逐币种平衡、重放/冲突与八条零副作用拒绝；不授权完整 state、report、reconciliation 或 delta 比较，不实现 transaction correction、CAS、分类改名/name-version、导入、来源证据、对账、预算或通用 operation owner。实现继续遵循 `D-028`、`D-029`、`D-041`、`D-046` 的收入分类与隐藏账户规则，并复用 `D-069` 已确认的严格 JSON 原语。
+
+**关联决定：** `D-028`、`D-029`、`D-041`、`D-046`、`D-069`、`D-070`

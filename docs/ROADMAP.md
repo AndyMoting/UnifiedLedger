@@ -21,6 +21,7 @@
 - 进入条件：首批黄金场景的输入和完整预期已经冻结。
 - 完成条件：黄金场景全部通过，核心不依赖客户端平台、网络、同步或 AI，并能确定性重放余额。
 - 共享核心实现顺序：RG-01 `note_update`，RG-02，RG-03 手工录入后再补来源、证据与对账，RG-04 进入专项闸门，RG-05 至 RG-08 收敛合同形状，RG-09 至 RG-12 分别实现其生命周期 owner。可复用范围限于严格解析、明确确认、request snapshot 与正式账务链；不得提前泛化专项 DTO、表或业务 owner。
+- RG-02 当前已批准的最小执行 slice 是 `manual_income` raw JSON：主创建、重试、两个独立变体与八条拒绝路径，使用 `CategoryKind`、`INCOME` 和专用 schema v4 request/receipt/confirmation owner。`category_rename` 仅严格解码并返回 unsupported；全量 state/report/reconciliation/delta 比较、transaction correction 与 CAS 均后置。v2 只在 v1 驱动执行后作为 operation oracle。
 
 ## 阶段 4：导入与对账闭环
 
