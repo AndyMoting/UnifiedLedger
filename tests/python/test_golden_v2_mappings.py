@@ -228,6 +228,248 @@ class GoldenV2MappingTests(unittest.TestCase):
                     path_map["disposition_counts"], dict(disposition_counts)
                 )
 
+    def test_rg04_mapping_closes_all_implemented_contract_gaps(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-04-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(path_map["status"], "approved")
+        self.assertEqual(path_map["expected_output_gate"], "closed")
+        self.assertEqual(path_map["contract_gap_count"], 0)
+        self.assertEqual(path_map["unresolved_contract_gaps"], [])
+        self.assertEqual(path_map["resolved_contract_gap_count"], 5)
+
+        resolved_gaps = path_map["resolved_contract_gaps"]
+        self.assertEqual(len(resolved_gaps), 5)
+        self.assertEqual(
+            {gap["id"] for gap in resolved_gaps},
+            {f"RG04-GAP-{number:02d}" for number in range(1, 6)},
+        )
+        self.assertTrue(
+            all(gap["status"] == "approved_implemented" for gap in resolved_gaps)
+        )
+
+        self.assertEqual(
+            path_map["disposition_counts"],
+            {"ready": 401, "test_only_exclusion": 5},
+        )
+        entries = path_map["entries"]
+        self.assertEqual(
+            Counter(entry["disposition"] for entry in entries),
+            Counter({"ready": 401, "test_only_exclusion": 5}),
+        )
+        self.assertNotIn(
+            "requires_contract_amendment",
+            {entry["disposition"] for entry in entries},
+        )
+        self.assertTrue(all(entry["contract_gap_ids"] == [] for entry in entries))
+
+    def test_rg04_category_ids_map_to_confirmation_and_posting_owners(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-04-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+
+        confirmation_category = entries[
+            "$.import_lifecycle.ordered_operations[*].input.category_id"
+        ]
+        self.assertEqual(
+            confirmation_category["target_paths"],
+            ["$.operations[*].input.category_id"],
+        )
+
+        for lifecycle in ("import_lifecycle", "manual_lifecycle"):
+            source_path = (
+                f"$.{lifecycle}.ordered_operations[*].expected.transaction."
+                "postings[*].category_id"
+            )
+            with self.subTest(source_path=source_path):
+                self.assertIn(
+                    "$.states[*].postings[*].category_id",
+                    entries[source_path]["target_paths"],
+                )
+
+    def test_rg04_mirror_input_maps_to_closed_source_and_evidence_owners(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-04-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        prefix = "$.import_lifecycle.ordered_operations[*].input."
+        expected_targets = {
+            "source_record_id": {
+                "$.operations[*].input.source_record_id",
+                "$.states[*].sources[*].id",
+                "$.states[*].evidence[*].source_ids[*]",
+            },
+            "account_id": {
+                "$.operations[*].input.account_id",
+                "$.states[*].sources[*].payload.account_id",
+            },
+            "amount": {
+                "$.operations[*].input.amount",
+                "$.states[*].sources[*].payload.amount",
+            },
+            "currency": {
+                "$.operations[*].input.currency",
+                "$.states[*].sources[*].payload.currency",
+            },
+            "evidence_id": {
+                "$.operations[*].input.evidence_id",
+                "$.states[*].sources[*].payload.evidence_id",
+                "$.states[*].evidence[*].id",
+                "$.states[*].evidence[*].type",
+            },
+            "observed_at": {
+                "$.operations[*].input.observed_at",
+                "$.states[*].sources[*].payload.observed_at",
+                "$.states[*].evidence[*].payload.observed_at",
+            },
+        }
+        for field, required_targets in expected_targets.items():
+            source_path = f"{prefix}{field}"
+            with self.subTest(source_path=source_path):
+                self.assertTrue(
+                    required_targets.issubset(entries[source_path]["target_paths"]),
+                    sorted(required_targets - set(entries[source_path]["target_paths"])),
+                )
+
+    def test_rg04_mirror_identities_have_exact_typed_returned_owners(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-04-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        returned_targets = {
+            "$.operations[*].returned_ids[*].kind",
+            "$.operations[*].returned_ids[*].id",
+        }
+
+        merged_transaction = entries[
+            "$.import_lifecycle.ordered_operations[*].expected."
+            "merged_into_transaction_id"
+        ]
+        self.assertEqual(
+            set(merged_transaction["target_paths"]),
+            {
+                "$.states[*].transactions[*].id",
+                "$.operations[*].input.transaction_id",
+            },
+        )
+        self.assertTrue(
+            returned_targets.isdisjoint(merged_transaction["target_paths"])
+        )
+
+        typed_identities = {
+            "$.import_lifecycle.ordered_operations[*].input.source_record_id": (
+                "source",
+                "$.states[*].sources[*].id",
+            ),
+            "$.import_lifecycle.ordered_operations[*].input.evidence_id": (
+                "evidence",
+                "$.states[*].evidence[*].id",
+            ),
+            "$.import_lifecycle.ordered_operations[*].expected."
+            "evidence_links[*].id": (
+                "evidence_link",
+                "$.states[*].evidence_links[*].id",
+            ),
+        }
+        for source_path, (kind, state_owner) in typed_identities.items():
+            entry = entries[source_path]
+            targets = set(entry["target_paths"])
+            semantic_text = f"{entry['transform']} {entry['rationale']}".lower()
+            with self.subTest(source_path=source_path):
+                self.assertIn(state_owner, targets)
+                self.assertTrue(returned_targets.issubset(targets))
+                self.assertIn(f"kind={kind}", semantic_text)
+
+    def test_rg04_resolved_gap_paths_are_frozen_and_bidirectionally_closed(self):
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-04-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = path_map["entries"]
+        entries_by_path = {entry["source_path"]: entry for entry in entries}
+        gaps = path_map["resolved_contract_gaps"]
+        gap_ids = [gap["id"] for gap in gaps]
+        expected_counts = {
+            "RG04-GAP-01": 84,
+            "RG04-GAP-02": 48,
+            "RG04-GAP-03": 13,
+            "RG04-GAP-04": 48,
+            "RG04-GAP-05": 13,
+        }
+
+        self.assertEqual(len(gap_ids), len(set(gap_ids)))
+        self.assertEqual(set(gap_ids), set(expected_counts))
+        self.assertEqual(path_map["source_path_count"], 406)
+        self.assertEqual(path_map["source_leaf_occurrence_count"], 863)
+        self.assertEqual(
+            path_map["classification_counts"],
+            {"preserve": 112, "map": 130, "derive": 159, "reject": 5},
+        )
+        self.assertEqual(
+            path_map["disposition_counts"],
+            {"ready": 401, "test_only_exclusion": 5},
+        )
+        self.assertFalse(
+            any(
+                target.startswith(PLANNED_CONTRACT_PREFIX)
+                for entry in entries
+                for target in entry["target_paths"]
+            )
+        )
+
+        known_gap_ids = set(gap_ids)
+        entry_paths_by_gap = defaultdict(set)
+        for entry in entries:
+            resolved_ids = entry.get("resolved_contract_gap_ids", [])
+            self.assertEqual(len(resolved_ids), len(set(resolved_ids)))
+            self.assertTrue(set(resolved_ids).issubset(known_gap_ids))
+            for gap_id in resolved_ids:
+                entry_paths_by_gap[gap_id].add(entry["source_path"])
+
+        affected_union = set()
+        for gap in gaps:
+            affected_paths = gap["affected_source_paths"]
+            with self.subTest(gap_id=gap["id"]):
+                self.assertEqual(len(affected_paths), expected_counts[gap["id"]])
+                self.assertEqual(len(affected_paths), len(set(affected_paths)))
+                self.assertTrue(set(affected_paths).issubset(entries_by_path))
+                self.assertEqual(set(affected_paths), entry_paths_by_gap[gap["id"]])
+                if gap["id"] in {"RG04-GAP-01", "RG04-GAP-02"}:
+                    self.assertEqual(affected_paths, sorted(affected_paths))
+            affected_union.update(affected_paths)
+        self.assertEqual(len(affected_union), 181)
+
     def test_ready_targets_exist_in_current_v2_schema(self):
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         schema_paths = normalized_schema_paths(schema)
@@ -1696,6 +1938,9 @@ class GoldenV2MappingTests(unittest.TestCase):
                 elif case_id == "RG-03":
                     self.assertEqual(path_map["status"], "approved")
                     self.assertEqual(path_map["expected_output_gate"], "completed")
+                elif case_id == "RG-04":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(path_map["expected_output_gate"], "closed")
                 else:
                     self.assertEqual(path_map["status"], "completed")
                     self.assertEqual(path_map["expected_output_gate"], "completed")

@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移，不授权 schema、adapter、expected output 或 fixture rewrite。
+本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移；当前 contract 已实现，但 expected 尚未生成，且本次收口不授权 adapter generation、v1 fixture rewrite 或 publication。
 
 ## Inventory
 
@@ -12,7 +12,7 @@
 - leaf occurrences: `863`
 - classified/unclassified: `406/0`
 - classifications: `preserve 112`, `map 130`, `derive 159`, `reject 5`
-- dispositions: `ready 220`, `requires_contract_amendment 181`, `test_only_exclusion 5`
+- dispositions: `ready 401`, `test_only_exclusion 5`
 
 ## Section Mapping
 
@@ -47,7 +47,7 @@ The expense posting has `reconciliation_eligible=false` and has no `posting_reco
 
 ## Operation Discriminators
 
-| v1 family | planned `action_type` | `operation_class` |
+| v1 family | `action_type` | `operation_class` |
 | --- | --- | --- |
 | manual mixed purchase | `manual_mixed_expense` | `creation` |
 | credit-principal repayment | `credit_principal_repayment` | `creation` |
@@ -58,20 +58,22 @@ The expense posting has `reconciliation_eligible=false` and has no `posting_reco
 
 `input.kind` is consumed to derive these top-level discriminators and is not retained as an open payload discriminator. Every action receives a closed input; rejected attempts receive a closed sparse `attempted_input`. A no-change retry retains the original action type and operation class, returns the original stable entities, and creates no formal, relation, evidence, report, or reconciliation effect.
 
-## Unresolved Gaps
+## Closed Gaps
 
-1. `RG04-GAP-01` (operation registry): register the explicit action-type/class pairs above with closed accepted/no-change inputs and sparse rejected attempted input. Complete and incomplete intake share the source-intake action and differ through closed completeness facts; retries retain their original family rather than using a generic retry action.
-2. `RG04-GAP-02` (source and candidate payloads): register complete and missing-leg mixed-payment source/candidate payloads with funding facts, provenance, confidence, completeness, and explicit confirmation requirements.
-3. `RG04-GAP-03` (posting roles): distinguish expense asset funding, expense credit-liability funding, repayment asset outflow, and repayment liability principal reduction without treating principal repayment as consumption.
-4. `RG04-GAP-04` (`mixed_payment` relation): register separate relation `id` and `type`, canonical `member_refs` for the purchase transaction and two existing funding postings, and a funding-component payload with no independent component identity. The relation must forbid a generic order lifecycle or second economic event.
-5. `RG04-GAP-05` (financial evidence): register source-linked asset-debit and credit-liability mirror evidence subtypes; the existing `real_account_posting` role, posting reconciliation, and transaction reconciliation summary remain sufficient.
+1. `RG04-GAP-01` is closed with approved implementation of the explicit action-type/class pairs, closed accepted/no-change inputs, and sparse rejected attempted input.
+2. `RG04-GAP-02` is closed with approved implementation of complete and missing-leg source/candidate payloads, provenance, confidence, completeness, and confirmation requirements.
+3. `RG04-GAP-03` is closed with approved implementation of distinct mixed-funding and credit-principal repayment posting roles.
+4. `RG04-GAP-04` is closed with approved implementation of separate relation identity/type, canonical members, and non-economic funding-component payloads.
+5. `RG04-GAP-05` is closed with approved implementation of source-linked financial evidence subtypes and posting-level reconciliation ownership.
+
+All five resolved gaps have status `approved_implemented`; no unresolved contract gap remains.
 
 The existing `expense` and `credit_repayment` transaction types, generic transaction/version/posting-set/posting chains, exact decimals, complete balances, report metrics, operation deltas, candidate statuses, confirmations, `real_account_posting` evidence-link role, posting reconciliation, transaction reconciliation summary, and deterministic migration IDs are not contract gaps.
 
 ## Gate
 
-- status: `needs_contract_amendment`
+- status: `approved`
 - expected output gate: `closed`
-- unresolved gap count: `5`
+- unresolved gap count: `0`
 
-Expected v2 output remains closed until all five gaps are approved and implemented. No schema change, adapter, expected output, or fixture rewrite is authorized by this mapping.
+Expected v2 output has not been generated. The mapping is approved and closed, but adapter generation, v1 fixture rewrite, expected-output generation, and publication are not authorized by this closure.
