@@ -1,0 +1,33 @@
+CREATE TABLE transaction_note_update_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE confirmed_transaction_note_update_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, request_id, transaction_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id, transaction_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);

@@ -20,7 +20,10 @@ class Rg01RawJsonDecoderTest {
         assertEquals(7, decoded.invalidInputs.size)
         assertEquals("missing-amount", decoded.invalidInputs.first().source.sourceId)
         assertIs<Rg01JsonField.Null>(decoded.invalidInputs.first().input.amount)
-        kotlin.test.assertTrue(Rg01UnsupportedSection.NOTE_UPDATE in decoded.unsupportedSections)
+        kotlin.test.assertEquals("request-rg01-note-update", decoded.noteUpdate.input.requestId)
+        kotlin.test.assertEquals("tx-expense-rg01", decoded.noteUpdate.input.transactionId)
+        kotlin.test.assertEquals("早餐", decoded.noteUpdate.input.note)
+        kotlin.test.assertTrue(Rg01UnsupportedSection.NOTE_UPDATE !in decoded.unsupportedSections)
     }
 
     @Test
@@ -33,6 +36,43 @@ class Rg01RawJsonDecoderTest {
 
         val nested = decodeRg01RawJson(fixtureJson().replace("\"timezone\":\"Asia/Shanghai\"", "\"timezone\":\"Asia/Shanghai\",\"time\\u007aone\":\"Asia/Shanghai\""))
         assertEquals(Rg01RawJsonContractErrorReason.DUPLICATE_KEY, assertIs<Rg01RawJsonDecodeResult.Invalid>(nested).error.reason)
+    }
+
+    @Test
+    fun rejectsUnknownAndWrongTypedNoteUpdateFields() {
+        val unknown = decodeRg01RawJson(
+            fixtureJson().replace("\"note\":\"早餐\"", "\"note\":\"早餐\",\"extra\":true"),
+        )
+        assertEquals(
+            Rg01RawJsonContractErrorReason.UNKNOWN_FIELD,
+            assertIs<Rg01RawJsonDecodeResult.Invalid>(unknown).error.reason,
+        )
+        val wrongType = decodeRg01RawJson(
+            fixtureJson().replace("\"transaction_id\":\"tx-expense-rg01\"", "\"transaction_id\":1"),
+        )
+        assertEquals(
+            Rg01RawJsonContractErrorReason.WRONG_TYPE,
+            assertIs<Rg01RawJsonDecodeResult.Invalid>(wrongType).error.reason,
+        )
+
+        val malformedExpected = listOf(
+            fixtureJson().replace("\"expected\":{\"transaction_id\":\"tx-expense-rg01\"", "\"expected\":{\"transaction_id\":false"),
+            fixtureJson().replace("\"current_version_id\":\"version-expense-rg01-v2\"", "\"current_version_id\":false"),
+            fixtureJson().replace("\"versions\":[{\"id\":\"version-expense-rg01-v1\"", "\"versions\":[{\"id\":1"),
+            fixtureJson().replace("\"effective_posting_set_id\":\"posting-set-expense-rg01\"", "\"effective_posting_set_id\":false"),
+            fixtureJson().replace("\"effective_transaction_count\":1", "\"effective_transaction_count\":\"1\""),
+            fixtureJson().replace("\"balances\":{\"asset-bank-a\":\"964.20\"}", "\"balances\":[]"),
+            fixtureJson().replace("\"statistics\":{\"day\":\"2026-01-15\"}", "\"statistics\":{\"day\":1}"),
+            fixtureJson().replace("\"reconciliation\":{\"transaction\":\"pending\"}", "\"reconciliation\":false"),
+            fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":{}"),
+            fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":[{}]"),
+        )
+        malformedExpected.forEach { raw ->
+            assertEquals(
+                Rg01RawJsonContractErrorReason.WRONG_TYPE,
+                assertIs<Rg01RawJsonDecodeResult.Invalid>(decodeRg01RawJson(raw)).error.reason,
+            )
+        }
     }
 
     @Test
@@ -122,10 +162,10 @@ class Rg01RawJsonDecoderTest {
           "case": {"id":"RG-01","level":"core_required","rule_version":1,"timezone":"Asia/Shanghai","currency":"CNY","precision":2,"ledger_id":"ledger-a"},
           "catalog": {"accounts":[{"id":"asset-bank-a","name":"bank","kind":"asset","real_account":true},{"id":"expense-account-breakfast","name":"breakfast","kind":"expense","real_account":false}],"categories":[{"id":"expense-category-food","name":"food","parent_id":null,"posting_account_id":null,"active":true},{"id":"expense-category-breakfast","name":"breakfast","parent_id":"expense-category-food","posting_account_id":"expense-account-breakfast","active":true}]},
           "opening": {"transactions":[],"expected_balances":{}},
-          "create": {"confirmation":{"mode":"explicit_manual_save","confirmed":true},"candidate":null,"request":{"request_id":"request-rg01-create","kind":"manual_expense","occurred_at":"2026-01-15T08:30:00+08:00","amount":"35.80","currency":"CNY","category_id":"expense-category-breakfast","payment_account_id":"asset-bank-a","note":""},"expected":{"accepted":true,"transaction":{"id":"tx-expense-rg01"}}},
-          "note_update": {"request":{"request_id":"request-rg01-note-update"}},
+          "create": {"confirmation":{"mode":"explicit_manual_save","confirmed":true},"candidate":null,"request":{"request_id":"request-rg01-create","kind":"manual_expense","occurred_at":"2026-01-15T08:30:00+08:00","amount":"35.80","currency":"CNY","category_id":"expense-category-breakfast","payment_account_id":"asset-bank-a","note":""},"expected":{"accepted":true,"transaction":{"id":"tx-expense-rg01","current_version_id":"version-expense-rg01-v1"}}},
+          "note_update": {"request":{"request_id":"request-rg01-note-update","transaction_id":"tx-expense-rg01","note":"早餐"},"expected":{"transaction_id":"tx-expense-rg01","current_version_id":"version-expense-rg01-v2","versions":[{"id":"version-expense-rg01-v1","status":"superseded","note":""},{"id":"version-expense-rg01-v2","status":"current","note":"早餐"}],"effective_posting_set_id":"posting-set-expense-rg01","effective_transaction_count":1,"funding_effect_count":1,"balances":{"asset-bank-a":"964.20"},"statistics":{"day":"2026-01-15"},"reconciliation":{"transaction":"pending"},"evidence_refs":[]}},
           "idempotency": {"repeated_request_id":"request-rg01-create","expected":{"returned_transaction_id":"tx-expense-rg01"}},
-          "distinct_reentry": {"request":{"request_id":"request-rg01-distinct-create","kind":"manual_expense","occurred_at":"2026-01-15T08:30:00+08:00","amount":"35.80","currency":"CNY","category_id":"expense-category-breakfast","payment_account_id":"asset-bank-a","note":""},"expected":{"accepted":true,"transaction":{"id":"tx-expense-rg01-distinct"}}},
+          "distinct_reentry": {"request":{"request_id":"request-rg01-distinct-create","kind":"manual_expense","occurred_at":"2026-01-15T08:30:00+08:00","amount":"35.80","currency":"CNY","category_id":"expense-category-breakfast","payment_account_id":"asset-bank-a","note":""},"expected":{"accepted":true,"transaction":{"id":"tx-expense-rg01-distinct","current_version_id":"version-expense-rg01-distinct-v1"}}},
           "invalid_inputs": [{"id":"missing-amount","input":{"amount":null,"payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount"}},{"id":"missing-payment-account","input":{"amount":"35.80","payment_account_id":null,"category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"payment_account_id"}},{"id":"missing-secondary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":null},"expected":{"accepted":false,"field":"category_id"}},{"id":"zero-amount","input":{"amount":"0.00","payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount","reason":"must_be_positive"}},{"id":"negative-amount","input":{"amount":"-0.01","payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount","reason":"must_be_positive"}},{"id":"primary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":"expense-category-food"},"expected":{"accepted":false,"field":"category_id","reason":"secondary_category_required"}},{"id":"inactive-secondary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":"expense-category-inactive"},"expected":{"accepted":false,"field":"category_id","reason":"category_inactive"}}],
           "forbidden_side_effects": ["invoke_network"]
         }
