@@ -1,7 +1,7 @@
 CREATE TABLE ledger_transaction (
   transaction_id TEXT NOT NULL PRIMARY KEY,
   ledger_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE')),
+  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE', 'INCOME')),
   UNIQUE (transaction_id, ledger_id)
 );
 
@@ -120,6 +120,20 @@ CREATE TABLE confirmed_transaction_note_update_receipt (
     DEFERRABLE INITIALLY DEFERRED
 );
 
+CREATE TABLE manual_income_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL, receiving_account_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE confirmed_income_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES manual_income_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
 selectCommittedRequest:
 SELECT
   request.amount_minor,
@@ -136,6 +150,14 @@ FROM manual_expense_request AS request
 JOIN confirmed_expense_receipt AS receipt
   ON receipt.ledger_id = request.ledger_id
  AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+selectCommittedManualIncomeRequest:
+SELECT request.amount_minor, request.currency_code, request.currency_precision, request.category_id,
+  request.receiving_account_id, request.occurred_at, request.note, request.confirmation_marker,
+  receipt.confirmation_id, receipt.transaction_id
+FROM manual_income_request AS request JOIN confirmed_income_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
 WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
 
 insertTransaction:
@@ -195,12 +217,23 @@ INSERT INTO manual_expense_request(
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (ledger_id, request_id) DO NOTHING;
 
+claimManualIncomeRequest:
+INSERT INTO manual_income_request(ledger_id, request_id, amount_minor, currency_code, currency_precision,
+ category_id, receiving_account_id, occurred_at, note, confirmation_marker)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
 lastStatementChangedRowCount:
 SELECT changes();
 
 deleteManualExpenseRequest:
 DELETE FROM manual_expense_request
 WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+deleteManualIncomeRequest:
+DELETE FROM manual_income_request WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+insertConfirmedIncomeReceipt:
+INSERT INTO confirmed_income_receipt(ledger_id, request_id, confirmation_id, transaction_id) VALUES (?, ?, ?, ?);
 
 insertConfirmedExpenseReceipt:
 INSERT INTO confirmed_expense_receipt(
@@ -272,6 +305,12 @@ SELECT count(*) FROM manual_expense_request;
 
 countReceipts:
 SELECT count(*) FROM confirmed_expense_receipt;
+
+countManualIncomeRequests:
+SELECT count(*) FROM manual_income_request;
+
+countIncomeReceipts:
+SELECT count(*) FROM confirmed_income_receipt;
 
 countTransactions:
 SELECT count(*) FROM ledger_transaction;

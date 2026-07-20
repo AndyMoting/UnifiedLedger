@@ -19,6 +19,8 @@ sealed interface DomainViolation {
 
     data object InvalidOrdinaryExpense : DomainViolation
 
+    data object InvalidOrdinaryIncome : DomainViolation
+
     data object InvalidBalanceReplay : DomainViolation
 }
 
@@ -28,4 +30,14 @@ sealed interface OrdinaryExpenseViolation : DomainViolation {
     data object SecondaryCategoryRequired : OrdinaryExpenseViolation
 
     data object CategoryInactive : OrdinaryExpenseViolation
+}
+
+sealed interface OrdinaryIncomeViolation : DomainViolation {
+    data object AmountMustBePositive : OrdinaryIncomeViolation
+
+    data object SecondaryCategoryRequired : OrdinaryIncomeViolation
+
+    data object CategoryInactive : OrdinaryIncomeViolation
+
+    data object IncomeCategoryRequired : OrdinaryIncomeViolation
 }

@@ -27,7 +27,7 @@ fun createAssetPaidOrdinaryExpense(
 
     val category = catalog.category(command.categoryId)
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
-    if (category.ledgerId != command.ledgerId) {
+    if (category.ledgerId != command.ledgerId || category.kind != CategoryKind.EXPENSE) {
         return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
     }
     val parentCategoryId = category.parentId
@@ -36,7 +36,8 @@ fun createAssetPaidOrdinaryExpense(
         ?: return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
     if (
         parentCategory.ledgerId != command.ledgerId ||
-        parentCategory.parentId != null
+        parentCategory.parentId != null ||
+        parentCategory.kind != CategoryKind.EXPENSE
     ) {
         return DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
     }

@@ -371,12 +371,12 @@ private fun requireValue(condition: Boolean, path: String) {
 private class MappingFailure(val path: String, val reason: Rg01RawJsonContractErrorReason) : RuntimeException()
 private fun <T> Rg01JsonField<T>.decodedValueOrNull(): T? = (this as? Rg01JsonField.Value<T>)?.value
 
-private sealed interface JsonScanIssue {
+internal sealed interface JsonScanIssue {
     data class DuplicateKey(val path: String) : JsonScanIssue
     data class ResourceLimit(val path: String) : JsonScanIssue
 }
 
-private class DuplicateKeyScanner(private val text: String) {
+internal class DuplicateKeyScanner(private val text: String) {
     private var index = 0
     fun scan(): JsonScanIssue? = try {
         skipWhitespace()

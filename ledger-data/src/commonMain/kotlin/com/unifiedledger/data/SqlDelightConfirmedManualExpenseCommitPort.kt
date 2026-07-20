@@ -181,7 +181,7 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
 private const val EXPLICIT_MANUAL_SAVE_MARKER = "explicit_manual_save"
 private const val SQLITE_BUSY_TIMEOUT_MILLISECONDS = 5_000
 
-private fun configureSqliteConnection(driver: SqlDriver) {
+internal fun configureSqliteConnection(driver: SqlDriver) {
     driver.execute(null, "PRAGMA foreign_keys = ON", 0)
     driver.execute(
         null,

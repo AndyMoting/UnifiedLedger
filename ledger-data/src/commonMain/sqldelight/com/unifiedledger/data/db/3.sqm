@@ -1,0 +1,128 @@
+-- SQLite cannot alter a CHECK constraint. Preserve v3 rows in unreferenced staging
+-- tables, then rebuild the complete dependency chain while foreign keys stay enabled.
+CREATE TABLE transaction_version_stage AS SELECT * FROM transaction_version;
+CREATE TABLE ledger_transaction_current_version_stage AS SELECT * FROM ledger_transaction_current_version;
+CREATE TABLE confirmed_expense_receipt_stage AS SELECT * FROM confirmed_expense_receipt;
+CREATE TABLE transaction_note_update_request_stage AS SELECT * FROM transaction_note_update_request;
+CREATE TABLE confirmed_transaction_note_update_receipt_stage AS SELECT * FROM confirmed_transaction_note_update_receipt;
+
+DROP TABLE confirmed_transaction_note_update_receipt;
+DROP TABLE transaction_note_update_request;
+DROP TABLE confirmed_expense_receipt;
+DROP TABLE ledger_transaction_current_version;
+DROP TABLE transaction_version;
+
+CREATE TABLE ledger_transaction_stage AS SELECT * FROM ledger_transaction;
+DROP TABLE ledger_transaction;
+CREATE TABLE ledger_transaction (
+  transaction_id TEXT NOT NULL PRIMARY KEY,
+  ledger_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE', 'INCOME')),
+  UNIQUE (transaction_id, ledger_id)
+);
+INSERT INTO ledger_transaction SELECT * FROM ledger_transaction_stage;
+DROP TABLE ledger_transaction_stage;
+
+CREATE TABLE transaction_version (
+  version_id TEXT NOT NULL PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  posting_set_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  statistics_at TEXT NOT NULL,
+  effective_at TEXT NOT NULL,
+  note TEXT,
+  UNIQUE (transaction_id, version_number),
+  UNIQUE (transaction_id, version_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (posting_set_id, ledger_id)
+    REFERENCES posting_set(posting_set_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_version SELECT * FROM transaction_version_stage;
+DROP TABLE transaction_version_stage;
+
+CREATE TABLE ledger_transaction_current_version (
+  transaction_id TEXT NOT NULL,
+  ledger_id TEXT NOT NULL,
+  current_version_id TEXT NOT NULL,
+  PRIMARY KEY (transaction_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO ledger_transaction_current_version SELECT * FROM ledger_transaction_current_version_stage;
+DROP TABLE ledger_transaction_current_version_stage;
+
+CREATE TABLE confirmed_expense_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_expense_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_expense_receipt SELECT * FROM confirmed_expense_receipt_stage;
+DROP TABLE confirmed_expense_receipt_stage;
+
+CREATE TABLE transaction_note_update_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_note_update_request SELECT * FROM transaction_note_update_request_stage;
+DROP TABLE transaction_note_update_request_stage;
+
+CREATE TABLE confirmed_transaction_note_update_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, request_id, transaction_id)
+    REFERENCES transaction_note_update_request(ledger_id, request_id, transaction_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_transaction_note_update_receipt SELECT * FROM confirmed_transaction_note_update_receipt_stage;
+DROP TABLE confirmed_transaction_note_update_receipt_stage;
+
+CREATE TABLE manual_income_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL, receiving_account_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE confirmed_income_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES manual_income_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
