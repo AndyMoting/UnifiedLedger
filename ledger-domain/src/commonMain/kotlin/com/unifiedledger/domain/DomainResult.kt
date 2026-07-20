@@ -41,3 +41,33 @@ sealed interface OrdinaryIncomeViolation : DomainViolation {
 
     data object IncomeCategoryRequired : OrdinaryIncomeViolation
 }
+
+enum class AccountTransferField {
+    SOURCE_ACCOUNT,
+    DESTINATION_ACCOUNT,
+    SOURCE_DEBIT,
+    DESTINATION_CREDIT,
+    FEE,
+}
+
+sealed interface AccountTransferViolation : DomainViolation {
+    data class KnownAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+
+    data object DistinctAccountsRequired : AccountTransferViolation
+
+    data class OwnAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+
+    data class RealFinancialAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+
+    data class AssetAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+
+    data class AmountMustBePositive(val field: AccountTransferField) : AccountTransferViolation
+
+    data object FeeMustNotBeNegative : AccountTransferViolation
+
+    data object AmountsMustBalance : AccountTransferViolation
+
+    data object SameCurrencyRequired : AccountTransferViolation
+
+    data object InvalidFeeCategory : AccountTransferViolation
+}

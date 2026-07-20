@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
 import java.sql.DriverManager
+import java.sql.SQLException
 import java.util.Properties
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
@@ -12,14 +13,66 @@ import kotlin.test.assertFailsWith
 
 class LedgerDatabaseMigrationTest {
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionFour() {
+    fun populatedVersionFourPreservesIncomeOwnersAndCurrentChainAtVersionFive() {
+        val path = Files.createTempFile("ledger-data-v4-v5-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection -> connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) } }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 4)
+                driver.execute(null, "INSERT INTO manual_income_request VALUES ('ledger-a','income-existing',500,'CNY',2,'income-category','asset-bank-a','2026-01-16T00:00:00Z','','explicit_manual_save')", 0)
+                driver.execute(null, "INSERT INTO confirmed_income_receipt VALUES ('ledger-a','income-existing','income-confirmation','tx-existing')", 0)
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 4, 5) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(1, database.ledgerQueries.countManualIncomeRequests().executeAsOne())
+                assertEquals(1, database.ledgerQueries.countIncomeReceipts().executeAsOne())
+                assertEquals("version-existing-v1", database.ledgerQueries.selectCurrentVersionId().executeAsOne())
+                assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionFourToFiveDdlFailureRollsBackEveryRg03Table() {
+        val path = Files.createTempFile("ledger-data-v4-v5-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection -> connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) } }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 4)
+                driver.execute(null, "CREATE TABLE rg03_transfer_candidate(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 4, 5) }
+                }
+            }
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT name FROM sqlite_master WHERE name LIKE 'rg03_%' ORDER BY name").use { rows ->
+                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                        assertEquals(listOf("rg03_transfer_candidate"), names)
+                    }
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionFive() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(4, LedgerDatabase.Schema.version)
+            assertEquals(5, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -49,7 +102,7 @@ class LedgerDatabaseMigrationTest {
 
             val driver = JdbcSqliteDriver(url, migrationSqliteProperties())
             try {
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 4)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 5)
             } finally {
                 driver.close()
             }
@@ -129,7 +182,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionFourAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionFiveAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -144,7 +197,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 4)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 5)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -206,7 +259,7 @@ class LedgerDatabaseMigrationTest {
                 """.trimIndent(), 0)
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 3, newVersion = 4)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 3, newVersion = 5)
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
