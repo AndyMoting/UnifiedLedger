@@ -843,3 +843,15 @@
 **影响：** 当前执行范围固定为 v1 create、retry 与 distinct re-entry 经现有 typed adapter、application use case 和 SQLDelight port；7 个 invalid outcomes 在 typed adapter 前置拒绝，必须保持 application strict 路径、commit port 与数据库零变化。两类结果均只与 approved v2 operations 事后比较，approved output 不配置执行 ID。`note_update`、完整 state/report/reconciliation/delta comparison、v1 fixture rewrite、migration publication、其他 RG adapter 和网络序列化选择均不由本决定授权。
 
 **关联决定：** `D-051`、`D-054`、`D-057`
+
+## D-070 RG-01 备注修正执行边界
+
+**状态：** 已确认
+
+**决定：** RG-01 `note_update` 接受严格的 raw request，并从已批准的 mapping 派生明确 confirmation。持久化使用专用 schema v3 的 request、receipt 和 confirmation owner，不抽象为通用 operation 表。同一 request 且等价 snapshot 返回 `NoChange`；同一 request 但 snapshot 不同返回 conflict；当前版本已变化时，CAS 必须返回类型化拒绝且零写入。成功修正以只追加的版本替代实现，复用原交易的分录与经济时间，不产生新的资金影响。v1 执行输入与冻结的替代版本身份来自 v1，confirmation 独立派生；approved v2 仅作为 operation 结果的事后 oracle。
+
+**理由：** 备注修正是非资金字段的录入修正，应保留版本历史与请求语义，同时不能让输出 oracle 反向配置执行身份，或以宽泛的 operation 表预设其他场景尚未确认的生命周期。
+
+**影响：** 本切片只验证 operation、版本、分录、经济时间和余额的零资金影响；不授权完整 state、report、reconciliation 或通用 delta 比较，也不授权 v1 fixture rewrite、其他字段修正或其他 RG adapter。实现继续遵循 `D-047` 的版本替代和 `D-048` 的非资金字段修正语义。
+
+**关联决定：** `D-047`、`D-048`、`D-069`
