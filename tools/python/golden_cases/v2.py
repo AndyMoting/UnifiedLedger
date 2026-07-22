@@ -185,10 +185,10 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
     },
     "import_mirror_record": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
     "import_incomplete_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
-    "manual_mixed_expense": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "confirmations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
+    "manual_mixed_expense": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "confirmations": (1, 0, 0), "relations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
     "credit_principal_repayment": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (2, 0, 0), "confirmations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
     "ingest_mixed_payment_source": {"sources": (1, 0, 0), "candidates": (1, 0, 0), "evidence": (1, 0, 0)},
-    "confirm_mixed_payment_candidate": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "candidates": (0, 1, 0), "confirmations": (1, 0, 0), "relations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
+    "confirm_mixed_payment_candidate": {"transactions": (1, 0, 0), "transaction_versions": (1, 0, 0), "posting_sets": (1, 0, 0), "postings": (3, 0, 0), "candidates": (0, 1, 0), "confirmations": (1, 0, 0), "evidence_links": (1, 0, 0), "relations": (1, 0, 0), "posting_reconciliations": (2, 0, 0)},
     "merge_mixed_payment_mirror_evidence": {"sources": (1, 0, 0), "evidence": (1, 0, 0), "evidence_links": (1, 0, 0), "posting_reconciliations": (0, 1, 0)},
     "create_periodic_allocation": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
@@ -4397,6 +4397,25 @@ def _validate_action_input(
             liability_posting["id"],
         }:
             _fail(input_path + ".transaction_id", "must reference the transaction's funding postings")
+        reconciliation_by_posting = {
+            item["posting_id"]: item["status"]
+            for item in baseline["posting_reconciliations"]
+        }
+        asset_status = reconciliation_by_posting.get(
+            postings_by_role["mixed_expense_asset_funding"]["id"]
+        )
+        liability_status = reconciliation_by_posting.get(liability_posting["id"])
+        if operation["outcome"]["status"] == "no_change":
+            if asset_status != "matched" or liability_status != "matched":
+                _fail(
+                    input_path + ".transaction_id",
+                    "mirror replay requires both funding postings matched",
+                )
+        elif asset_status != "matched" or liability_status != "pending":
+            _fail(
+                input_path + ".transaction_id",
+                "mirror evidence requires the asset funding posting matched and the liability funding posting pending before merge",
+            )
         _timestamp(input_value.get("observed_at"), input_path + ".observed_at", timezone)
     elif action == "create_periodic_allocation":
         payment = accounts.get(input_value["payment_account_id"])
@@ -5378,6 +5397,34 @@ def _validate_registered_action_effects(
         confirmation = validate_confirmation(
             "explicit_manual_save", "operation", operation["id"]
         )
+        if action == "manual_mixed_expense":
+            relation = added_item(
+                "relations", {item["id"]: item for item in result["relations"]}
+            )
+            expected_members = {
+                ("transaction", transaction["id"]),
+                *[
+                    ("posting", posting["id"])
+                    for posting in added_postings
+                    if posting.get("role")
+                    in {
+                        "mixed_expense_asset_funding",
+                        "mixed_expense_credit_funding",
+                    }
+                ],
+            }
+            actual_members = {
+                (item["kind"], item["id"]) for item in relation["member_refs"]
+            }
+            if (
+                relation["type"] != "mixed_payment"
+                or len(relation["member_refs"]) != len(expected_members)
+                or actual_members != expected_members
+            ):
+                _fail(
+                    effect_path("relations"),
+                    "manual mixed expense must add exactly one mixed_payment relation for its transaction and funding postings",
+                )
     elif action == "confirm_mixed_payment_candidate":
         candidate_id = operation["input"]["candidate_id"]
         if expected_entities["candidates"]["changed_ids"] != [candidate_id]:
@@ -5432,6 +5479,76 @@ def _validate_registered_action_effects(
             _fail(
                 effect_path("relations"),
                 "candidate confirmation must add a mixed_payment relation for the transaction funding postings",
+            )
+        source_ids = candidate["source_ids"]
+        if len(source_ids) != 1:
+            _fail(
+                effect_path("candidates"),
+                "mixed payment confirmation requires exactly one candidate source",
+            )
+        asset_evidence = [
+            item
+            for item in result["evidence"]
+            if item["type"] == "asset_funding_debit"
+            and item["source_ids"] == source_ids
+        ]
+        if len(asset_evidence) != 1:
+            _fail(
+                effect_path("evidence_links"),
+                "mixed payment confirmation requires exactly one asset funding debit evidence for the candidate source",
+            )
+        asset_postings = [
+            result_postings[posting_id]
+            for posting_id in posting_ids
+            if result_postings[posting_id].get("role")
+            == "mixed_expense_asset_funding"
+        ]
+        if len(asset_postings) != 1:
+            _fail(
+                effect_path("postings"),
+                "mixed payment confirmation requires exactly one asset funding posting",
+            )
+        evidence_link = added_item(
+            "evidence_links",
+            {item["id"]: item for item in result["evidence_links"]},
+        )
+        if evidence_link != {
+            "id": evidence_link["id"],
+            "evidence_id": asset_evidence[0]["id"],
+            "target_kind": "posting",
+            "target_id": asset_postings[0]["id"],
+            "role": "real_account_posting",
+        }:
+            _fail(
+                effect_path("evidence_links"),
+                "mixed payment confirmation must link the source asset evidence to the exact asset funding posting",
+            )
+        reconciliations = [
+            result_reconciliations[item_id]
+            for item_id in expected_entities["posting_reconciliations"]["added_ids"]
+        ]
+        roles_by_posting = {
+            item["id"]: item.get("role") for item in added_postings
+        }
+        expected_status_by_role = {
+            "mixed_expense_asset_funding": "matched",
+            "mixed_expense_credit_funding": "pending",
+        }
+        expected_reconciliation_postings = {
+            posting_id
+            for posting_id, role in roles_by_posting.items()
+            if role in expected_status_by_role
+        }
+        if {
+            item["posting_id"] for item in reconciliations
+        } != expected_reconciliation_postings or any(
+            item["status"]
+            != expected_status_by_role[roles_by_posting[item["posting_id"]]]
+            for item in reconciliations
+        ):
+            _fail(
+                effect_path("posting_reconciliations"),
+                "mixed payment confirmation must match the asset funding posting and leave the credit funding posting pending",
             )
         expected_returned = [
             {"kind": "confirmation", "id": confirmation["id"]},
