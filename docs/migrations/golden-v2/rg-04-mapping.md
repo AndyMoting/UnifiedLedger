@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移；当前 contract 已实现，但 expected 尚未生成，且本次收口不授权 adapter generation、v1 fixture rewrite 或 publication。
+本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移；expected 已生成、通过独立复审并获得用户明确批准，`approval_status=approved`，但 adapter generation、v1 fixture rewrite 和 publication 仍保持关闭。
 
 ## Inventory
 
@@ -73,7 +73,7 @@ The existing `expense` and `credit_repayment` transaction types, generic transac
 ## Gate
 
 - status: `approved`
-- expected output gate: `closed`
+- expected output gate: `completed`
 - unresolved gap count: `0`
 
-Expected v2 output has not been generated. The mapping is approved and closed, but adapter generation, v1 fixture rewrite, expected-output generation, and publication are not authorized by this closure.
+The expected v2 output has been generated, passed independent review, and received explicit user approval; its `approval_status` is `approved` and the expected-output gate is `completed`. Adapter implementation, v1 fixture rewrite, and publication remain closed.

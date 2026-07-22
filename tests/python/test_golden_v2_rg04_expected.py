@@ -539,7 +539,7 @@ def _build_rg04_expected() -> dict:
     return {
         "contract": "unifiedledger.golden-case",
         "contract_version": "2.0.0",
-        "case": {"id": "RG-04", "level": "core_required", "rule_version": 1, "approval_status": "draft_for_review", "ledger_id": "ledger-a", "timezone": "Asia/Shanghai", "currencies": [{"code": "CNY", "precision": 2}]},
+        "case": {"id": "RG-04", "level": "core_required", "rule_version": 1, "approval_status": "approved", "ledger_id": "ledger-a", "timezone": "Asia/Shanghai", "currencies": [{"code": "CNY", "precision": 2}]},
         "roots": roots,
         "states": states,
         "operations": operations,
@@ -597,10 +597,10 @@ class RG04GoldenV2ExpectedTests(unittest.TestCase):
             {key: value for key, value in result.items() if key not in {"id", "as_of_operation_id"}},
         )
 
-    def test_expected_output_gate_is_open_but_draft_is_required(self):
+    def test_expected_output_gate_is_completed_and_approved(self):
         validate_golden_case_v2(self.case)
         self.assertEqual(self.case["case"]["id"], "RG-04")
-        self.assertEqual(self.case["case"]["approval_status"], "draft_for_review")
+        self.assertEqual(self.case["case"]["approval_status"], "approved")
 
     def test_complete_v1_behavior_families_are_present(self):
         purposes = {item["purpose"] for item in self.case["roots"]}
