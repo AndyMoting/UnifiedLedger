@@ -1,0 +1,316 @@
+CREATE TABLE transaction_version_stage AS SELECT * FROM transaction_version;
+CREATE TABLE ledger_transaction_current_version_stage AS SELECT * FROM ledger_transaction_current_version;
+CREATE TABLE confirmed_expense_receipt_stage AS SELECT * FROM confirmed_expense_receipt;
+CREATE TABLE confirmed_income_receipt_stage AS SELECT * FROM confirmed_income_receipt;
+CREATE TABLE transaction_note_update_request_stage AS SELECT * FROM transaction_note_update_request;
+CREATE TABLE confirmed_transaction_note_update_receipt_stage AS SELECT * FROM confirmed_transaction_note_update_receipt;
+CREATE TABLE rg03_confirmation_stage AS SELECT * FROM rg03_confirmation;
+CREATE TABLE rg03_operation_receipt_stage AS SELECT * FROM rg03_operation_receipt;
+
+DROP TABLE rg03_operation_receipt;
+DROP TABLE rg03_confirmation;
+DROP TABLE confirmed_transaction_note_update_receipt;
+DROP TABLE transaction_note_update_request;
+DROP TABLE confirmed_income_receipt;
+DROP TABLE confirmed_expense_receipt;
+DROP TABLE ledger_transaction_current_version;
+DROP TABLE transaction_version;
+CREATE TABLE ledger_transaction_stage AS SELECT * FROM ledger_transaction;
+DROP TABLE ledger_transaction;
+CREATE TABLE ledger_transaction (
+  transaction_id TEXT NOT NULL PRIMARY KEY, ledger_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE', 'INCOME', 'ACCOUNT_TRANSFER', 'CREDIT_REPAYMENT')),
+  UNIQUE (transaction_id, ledger_id)
+);
+INSERT INTO ledger_transaction SELECT * FROM ledger_transaction_stage;
+DROP TABLE ledger_transaction_stage;
+
+CREATE TABLE transaction_version (
+  version_id TEXT NOT NULL PRIMARY KEY, transaction_id TEXT NOT NULL, ledger_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0), posting_set_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL, statistics_at TEXT NOT NULL, effective_at TEXT NOT NULL, note TEXT,
+  UNIQUE (transaction_id, version_number), UNIQUE (transaction_id, version_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (posting_set_id, ledger_id) REFERENCES posting_set(posting_set_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_version SELECT * FROM transaction_version_stage;
+DROP TABLE transaction_version_stage;
+CREATE TABLE ledger_transaction_current_version (
+  transaction_id TEXT NOT NULL, ledger_id TEXT NOT NULL, current_version_id TEXT NOT NULL,
+  PRIMARY KEY (transaction_id, ledger_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, current_version_id, ledger_id) REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO ledger_transaction_current_version SELECT * FROM ledger_transaction_current_version_stage;
+DROP TABLE ledger_transaction_current_version_stage;
+
+CREATE TABLE confirmed_expense_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL UNIQUE, transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES manual_expense_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_expense_receipt SELECT * FROM confirmed_expense_receipt_stage;
+DROP TABLE confirmed_expense_receipt_stage;
+CREATE TABLE confirmed_income_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL UNIQUE, transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES manual_income_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_income_receipt SELECT * FROM confirmed_income_receipt_stage;
+DROP TABLE confirmed_income_receipt_stage;
+CREATE TABLE transaction_note_update_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, transaction_id TEXT NOT NULL, note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'), PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, transaction_id), FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_note_update_request SELECT * FROM transaction_note_update_request_stage;
+DROP TABLE transaction_note_update_request_stage;
+CREATE TABLE confirmed_transaction_note_update_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL UNIQUE, transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE, expected_current_version_id TEXT NOT NULL, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES transaction_note_update_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, request_id, transaction_id) REFERENCES transaction_note_update_request(ledger_id, request_id, transaction_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, version_id, ledger_id) REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id) REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO confirmed_transaction_note_update_receipt SELECT * FROM confirmed_transaction_note_update_receipt_stage;
+DROP TABLE confirmed_transaction_note_update_receipt_stage;
+CREATE TABLE rg03_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT, transaction_id TEXT NOT NULL,
+  confirmation_kind TEXT NOT NULL, PRIMARY KEY (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg03_transfer_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO rg03_confirmation SELECT * FROM rg03_confirmation_stage;
+DROP TABLE rg03_confirmation_stage;
+CREATE TABLE rg03_operation_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome = 'ACCEPTED'), confirmation_id TEXT,
+  candidate_id TEXT, transaction_id TEXT, source_id TEXT, evidence_id TEXT, PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg03_operation_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, confirmation_id) REFERENCES rg03_confirmation(ledger_id, confirmation_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg03_transfer_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO rg03_operation_receipt SELECT * FROM rg03_operation_receipt_stage;
+DROP TABLE rg03_operation_receipt_stage;
+
+CREATE TABLE rg04_operation_request (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, action_type TEXT NOT NULL CHECK (action_type IN ('MANUAL_MIXED_EXPENSE', 'CREDIT_PRINCIPAL_REPAYMENT')), PRIMARY KEY (ledger_id, request_id));
+CREATE TABLE rg04_mixed_expense_snapshot (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, occurred_at TEXT NOT NULL, total_minor INTEGER NOT NULL, currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, category_id TEXT NOT NULL, original_minor INTEGER NOT NULL, discount_minor INTEGER NOT NULL, settled_minor INTEGER NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'), PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id) ON DELETE CASCADE);
+CREATE TABLE rg04_mixed_expense_component_snapshot (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, component_index INTEGER NOT NULL CHECK (component_index IN (0, 1)), account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, PRIMARY KEY (ledger_id, request_id, component_index), UNIQUE (ledger_id, request_id, account_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_mixed_expense_snapshot(ledger_id, request_id) ON DELETE CASCADE);
+CREATE TABLE rg04_repayment_snapshot (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, occurred_at TEXT NOT NULL, asset_account_id TEXT NOT NULL, liability_account_id TEXT NOT NULL, principal_minor INTEGER NOT NULL CHECK (principal_minor > 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'), PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id) ON DELETE CASCADE);
+CREATE TABLE rg04_confirmation (ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, request_id TEXT NOT NULL, transaction_id TEXT NOT NULL, confirmation_kind TEXT NOT NULL CHECK (confirmation_kind = 'EXPLICIT_MANUAL_SAVE'), PRIMARY KEY (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id), FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE rg04_operation_receipt (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, transaction_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome = 'ACCEPTED'), PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id) ON DELETE CASCADE, FOREIGN KEY (ledger_id, confirmation_id) REFERENCES rg04_confirmation(ledger_id, confirmation_id), FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE rg04_posting_semantic (ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('expense', 'mixed_expense_asset_funding', 'mixed_expense_credit_funding', 'credit_repayment_asset_outflow', 'credit_repayment_liability_principal')), category_id TEXT, reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)), PRIMARY KEY (ledger_id, posting_id), FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED, CHECK ((role = 'expense' AND category_id IS NOT NULL AND reconciliation_eligible = 0) OR (role != 'expense' AND category_id IS NULL AND reconciliation_eligible = 1)));
+CREATE TABLE rg04_settlement_explanation (ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL, original_minor INTEGER NOT NULL, discount_minor INTEGER NOT NULL, settled_minor INTEGER NOT NULL, accounting_effect_count INTEGER NOT NULL CHECK (accounting_effect_count = 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, PRIMARY KEY (ledger_id, transaction_id), CHECK (original_minor - discount_minor = settled_minor), FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE formal_relation (ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, relation_type TEXT NOT NULL CHECK (relation_type = 'mixed_payment'), PRIMARY KEY (ledger_id, relation_id));
+CREATE TABLE formal_relation_member (ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, member_index INTEGER NOT NULL CHECK (member_index BETWEEN 0 AND 2), member_kind TEXT NOT NULL CHECK (member_kind IN ('TRANSACTION', 'POSTING')), transaction_id TEXT, posting_id TEXT, PRIMARY KEY (ledger_id, relation_id, member_index), FOREIGN KEY (ledger_id, relation_id) REFERENCES formal_relation(ledger_id, relation_id) ON DELETE CASCADE, FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED, FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED, CHECK ((member_kind = 'TRANSACTION' AND transaction_id IS NOT NULL AND posting_id IS NULL) OR (member_kind = 'POSTING' AND posting_id IS NOT NULL AND transaction_id IS NULL)));
+CREATE TABLE rg04_mixed_composition (ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, transaction_id TEXT NOT NULL, display_name TEXT NOT NULL, total_minor INTEGER NOT NULL CHECK (total_minor > 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, system_managed INTEGER NOT NULL CHECK (system_managed = 1), generic_order_lifecycle INTEGER NOT NULL CHECK (generic_order_lifecycle = 0), PRIMARY KEY (ledger_id, relation_id), FOREIGN KEY (ledger_id, relation_id) REFERENCES formal_relation(ledger_id, relation_id) ON DELETE CASCADE, FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE rg04_mixed_composition_component (ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, component_index INTEGER NOT NULL CHECK (component_index IN (0, 1)), posting_id TEXT NOT NULL, account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, PRIMARY KEY (ledger_id, relation_id, component_index), UNIQUE (ledger_id, relation_id, posting_id), FOREIGN KEY (ledger_id, relation_id) REFERENCES rg04_mixed_composition(ledger_id, relation_id) ON DELETE CASCADE, FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE rg04_accepted_composition_snapshot (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, relation_id TEXT NOT NULL, transaction_id TEXT NOT NULL, display_name TEXT NOT NULL, total_minor INTEGER NOT NULL, currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, system_managed INTEGER NOT NULL, generic_order_lifecycle INTEGER NOT NULL, PRIMARY KEY (ledger_id, request_id), UNIQUE (ledger_id, relation_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_receipt(ledger_id, request_id));
+CREATE TABLE rg04_posting_reconciliation (ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL, status TEXT NOT NULL CHECK (status = 'PENDING'), PRIMARY KEY (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id), FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED);
+CREATE TABLE rg04_initial_reconciliation_identity (ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, reconciliation_index INTEGER NOT NULL CHECK (reconciliation_index IN (0, 1)), reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL, PRIMARY KEY (ledger_id, request_id, reconciliation_index), UNIQUE (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id), FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES rg04_posting_reconciliation(ledger_id, reconciliation_id));
+CREATE VIEW rg04_accepted_aggregate_violation AS
+SELECT receipt.ledger_id, receipt.request_id
+FROM rg04_operation_receipt AS receipt
+LEFT JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id
+LEFT JOIN ledger_transaction AS transaction_row ON transaction_row.ledger_id = receipt.ledger_id AND transaction_row.transaction_id = receipt.transaction_id
+WHERE request.request_id IS NULL OR transaction_row.transaction_id IS NULL
+OR NOT EXISTS (SELECT 1 FROM rg04_confirmation AS confirmation WHERE confirmation.ledger_id = receipt.ledger_id AND confirmation.confirmation_id = receipt.confirmation_id AND confirmation.request_id = receipt.request_id AND confirmation.transaction_id = receipt.transaction_id AND confirmation.confirmation_kind = 'EXPLICIT_MANUAL_SAVE')
+OR NOT EXISTS (
+  SELECT 1
+  FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting_set ON posting_set.ledger_id = version.ledger_id AND posting_set.posting_set_id = version.posting_set_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id AND version.version_number = 1
+)
+OR EXISTS (
+  SELECT 1
+  FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS accepted_version ON accepted_version.ledger_id = current_version.ledger_id AND accepted_version.transaction_id = current_version.transaction_id AND accepted_version.version_id = current_version.current_version_id
+  JOIN transaction_version AS other_version ON other_version.ledger_id = accepted_version.ledger_id AND other_version.posting_set_id = accepted_version.posting_set_id AND other_version.transaction_id != receipt.transaction_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+)
+OR (request.action_type = 'MANUAL_MIXED_EXPENSE' AND (
+  transaction_row.kind != 'EXPENSE'
+  OR EXISTS (SELECT 1 FROM rg04_repayment_snapshot AS repayment WHERE repayment.ledger_id = receipt.ledger_id AND repayment.request_id = receipt.request_id)
+  OR NOT EXISTS (
+    SELECT 1 FROM rg04_mixed_expense_snapshot AS snapshot
+    JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+    JOIN rg04_mixed_composition AS composition ON composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id
+    JOIN rg04_settlement_explanation AS settlement ON settlement.ledger_id = receipt.ledger_id AND settlement.transaction_id = receipt.transaction_id
+    JOIN posting AS expense_posting ON expense_posting.ledger_id = version.ledger_id AND expense_posting.posting_set_id = version.posting_set_id AND expense_posting.posting_index = 0
+    JOIN rg04_posting_semantic AS expense_semantic ON expense_semantic.ledger_id = expense_posting.ledger_id AND expense_semantic.posting_id = expense_posting.posting_id AND expense_semantic.role = 'expense' AND expense_semantic.reconciliation_eligible = 0
+    WHERE snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id
+      AND snapshot.occurred_at = version.occurred_at AND snapshot.occurred_at = version.statistics_at AND snapshot.occurred_at = version.effective_at
+      AND snapshot.total_minor = composition.total_minor AND snapshot.total_minor = settlement.settled_minor AND snapshot.total_minor = expense_posting.amount_minor
+      AND snapshot.currency_code = composition.currency_code AND snapshot.currency_code = settlement.currency_code AND snapshot.currency_code = expense_posting.currency_code
+      AND snapshot.currency_precision = composition.currency_precision AND snapshot.currency_precision = settlement.currency_precision AND snapshot.currency_precision = expense_posting.currency_precision
+      AND snapshot.category_id = expense_semantic.category_id AND snapshot.original_minor = settlement.original_minor AND snapshot.discount_minor = settlement.discount_minor AND snapshot.settled_minor = settlement.settled_minor
+      AND snapshot.confirmation_marker = 'explicit_manual_save' AND composition.system_managed = 1 AND composition.generic_order_lifecycle = 0 AND settlement.accounting_effect_count = 0
+  )
+  OR NOT EXISTS (SELECT 1 FROM rg04_accepted_composition_snapshot AS accepted_composition JOIN rg04_mixed_composition AS composition ON composition.ledger_id = accepted_composition.ledger_id AND composition.relation_id = accepted_composition.relation_id AND composition.transaction_id = accepted_composition.transaction_id AND composition.display_name = accepted_composition.display_name AND composition.total_minor = accepted_composition.total_minor AND composition.currency_code = accepted_composition.currency_code AND composition.currency_precision = accepted_composition.currency_precision AND composition.system_managed = accepted_composition.system_managed AND composition.generic_order_lifecycle = accepted_composition.generic_order_lifecycle WHERE accepted_composition.ledger_id = receipt.ledger_id AND accepted_composition.request_id = receipt.request_id)
+  OR 1 != (SELECT count(*) FROM rg04_mixed_composition AS composition WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id)
+  OR 2 != (SELECT count(*) FROM rg04_mixed_expense_component_snapshot AS component WHERE component.ledger_id = receipt.ledger_id AND component.request_id = receipt.request_id)
+  OR 2 != (SELECT count(*) FROM rg04_mixed_composition_component AS component JOIN rg04_mixed_composition AS composition ON composition.ledger_id = component.ledger_id AND composition.relation_id = component.relation_id WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id)
+  OR 1 != (SELECT count(*) FROM formal_relation_member AS member JOIN rg04_mixed_composition AS composition ON composition.ledger_id = member.ledger_id AND composition.relation_id = member.relation_id WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id AND member.member_kind = 'TRANSACTION' AND member.transaction_id = receipt.transaction_id)
+  OR 2 != (SELECT count(DISTINCT member.posting_id) FROM formal_relation_member AS member JOIN rg04_mixed_composition AS composition ON composition.ledger_id = member.ledger_id AND composition.relation_id = member.relation_id WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id AND member.member_kind = 'POSTING')
+  OR EXISTS (
+    SELECT 1 FROM rg04_mixed_expense_component_snapshot AS snapshot_component
+    WHERE snapshot_component.ledger_id = receipt.ledger_id AND snapshot_component.request_id = receipt.request_id
+      AND NOT EXISTS (
+        SELECT 1 FROM rg04_mixed_composition AS composition
+        JOIN rg04_mixed_composition_component AS component ON component.ledger_id = composition.ledger_id AND component.relation_id = composition.relation_id AND component.component_index = snapshot_component.component_index
+        JOIN formal_relation_member AS member ON member.ledger_id = component.ledger_id AND member.relation_id = component.relation_id AND member.member_kind = 'POSTING' AND member.posting_id = component.posting_id
+        JOIN posting ON posting.ledger_id = component.ledger_id AND posting.posting_id = component.posting_id
+        JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+        JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id AND version.posting_set_id = posting.posting_set_id
+        JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+        WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id
+          AND component.account_id = snapshot_component.account_id AND component.amount_minor = snapshot_component.amount_minor AND component.currency_code = snapshot_component.currency_code AND component.currency_precision = snapshot_component.currency_precision
+          AND posting.account_id = snapshot_component.account_id AND posting.posting_index = snapshot_component.component_index + 1 AND posting.amount_minor = -snapshot_component.amount_minor AND posting.currency_code = snapshot_component.currency_code AND posting.currency_precision = snapshot_component.currency_precision
+          AND semantic.reconciliation_eligible = 1 AND semantic.category_id IS NULL
+          AND semantic.role = CASE snapshot_component.component_index WHEN 0 THEN 'mixed_expense_asset_funding' ELSE 'mixed_expense_credit_funding' END
+      )
+  )
+))
+OR (request.action_type = 'CREDIT_PRINCIPAL_REPAYMENT' AND (
+  transaction_row.kind != 'CREDIT_REPAYMENT'
+  OR EXISTS (SELECT 1 FROM rg04_mixed_expense_snapshot AS snapshot WHERE snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id)
+  OR EXISTS (SELECT 1 FROM rg04_accepted_composition_snapshot AS snapshot WHERE snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id)
+  OR EXISTS (SELECT 1 FROM rg04_mixed_composition AS composition WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id)
+  OR EXISTS (SELECT 1 FROM rg04_settlement_explanation AS settlement WHERE settlement.ledger_id = receipt.ledger_id AND settlement.transaction_id = receipt.transaction_id)
+  OR EXISTS (SELECT 1 FROM formal_relation_member AS member WHERE member.ledger_id = receipt.ledger_id AND member.member_kind = 'TRANSACTION' AND member.transaction_id = receipt.transaction_id)
+  OR EXISTS (
+    SELECT 1 FROM formal_relation_member AS member
+    JOIN posting ON posting.ledger_id = member.ledger_id AND posting.posting_id = member.posting_id
+    JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id AND version.posting_set_id = posting.posting_set_id
+    WHERE member.ledger_id = receipt.ledger_id AND member.member_kind = 'POSTING'
+  )
+  OR EXISTS (
+    SELECT 1 FROM rg04_mixed_composition_component AS component
+    JOIN posting ON posting.ledger_id = component.ledger_id AND posting.posting_id = component.posting_id
+    JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id AND version.posting_set_id = posting.posting_set_id
+    WHERE component.ledger_id = receipt.ledger_id
+  )
+  OR NOT EXISTS (
+    SELECT 1 FROM rg04_repayment_snapshot AS snapshot
+    JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+    WHERE snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id
+      AND snapshot.occurred_at = version.occurred_at AND snapshot.occurred_at = version.statistics_at AND snapshot.occurred_at = version.effective_at AND snapshot.confirmation_marker = 'explicit_manual_save'
+      AND EXISTS (SELECT 1 FROM posting JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id WHERE posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id AND posting.posting_index = 0 AND posting.account_id = snapshot.asset_account_id AND posting.amount_minor = -snapshot.principal_minor AND posting.currency_code = snapshot.currency_code AND posting.currency_precision = snapshot.currency_precision AND semantic.role = 'credit_repayment_asset_outflow' AND semantic.category_id IS NULL AND semantic.reconciliation_eligible = 1)
+      AND EXISTS (SELECT 1 FROM posting JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id WHERE posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id AND posting.posting_index = 1 AND posting.account_id = snapshot.liability_account_id AND posting.amount_minor = snapshot.principal_minor AND posting.currency_code = snapshot.currency_code AND posting.currency_precision = snapshot.currency_precision AND semantic.role = 'credit_repayment_liability_principal' AND semantic.category_id IS NULL AND semantic.reconciliation_eligible = 1)
+  )
+))
+OR 2 != (SELECT count(*) FROM rg04_initial_reconciliation_identity AS identity WHERE identity.ledger_id = receipt.ledger_id AND identity.request_id = receipt.request_id)
+OR 2 != (
+  SELECT count(*) FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+  JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id AND semantic.reconciliation_eligible = 1
+  JOIN rg04_posting_reconciliation AS reconciliation ON reconciliation.ledger_id = posting.ledger_id AND reconciliation.posting_id = posting.posting_id
+  JOIN rg04_initial_reconciliation_identity AS identity ON identity.ledger_id = receipt.ledger_id AND identity.request_id = receipt.request_id AND identity.reconciliation_id = reconciliation.reconciliation_id AND identity.posting_id = reconciliation.posting_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+)
+OR CASE request.action_type WHEN 'MANUAL_MIXED_EXPENSE' THEN 3 ELSE 2 END != (
+  SELECT count(*) FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+)
+OR CASE request.action_type WHEN 'MANUAL_MIXED_EXPENSE' THEN 3 ELSE 2 END != (
+  SELECT count(*) FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+  JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+)
+OR EXISTS (
+  SELECT 1 FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+  GROUP BY posting.currency_code, posting.currency_precision
+  HAVING sum(posting.amount_minor) != 0
+)
+OR EXISTS (
+  SELECT 1 FROM ledger_transaction_current_version AS current_version
+  JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id
+  JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+  JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id AND semantic.reconciliation_eligible = 0
+  JOIN rg04_posting_reconciliation AS reconciliation ON reconciliation.ledger_id = posting.ledger_id AND reconciliation.posting_id = posting.posting_id
+  WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+);
+CREATE TRIGGER rg04_validate_mixed_receipt AFTER INSERT ON rg04_operation_receipt BEGIN
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_operation_receipt AS receipt JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id LEFT JOIN rg04_mixed_expense_component_snapshot AS component ON component.ledger_id = receipt.ledger_id AND component.request_id = receipt.request_id WHERE request.action_type = 'MANUAL_MIXED_EXPENSE' GROUP BY receipt.ledger_id, receipt.request_id HAVING count(component.component_index) != 2) THEN RAISE(ABORT, 'invalid mixed request components') END;
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_operation_receipt AS receipt JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id LEFT JOIN rg04_mixed_composition AS composition ON composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id LEFT JOIN formal_relation_member AS member ON member.ledger_id = composition.ledger_id AND member.relation_id = composition.relation_id AND member.member_kind = 'TRANSACTION' AND member.transaction_id = receipt.transaction_id WHERE request.action_type = 'MANUAL_MIXED_EXPENSE' GROUP BY receipt.ledger_id, receipt.request_id HAVING count(member.member_index) != 1) THEN RAISE(ABORT, 'invalid mixed transaction member') END;
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_operation_receipt AS receipt JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id LEFT JOIN rg04_mixed_composition AS composition ON composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id LEFT JOIN formal_relation_member AS member ON member.ledger_id = composition.ledger_id AND member.relation_id = composition.relation_id AND member.member_kind = 'POSTING' LEFT JOIN posting AS posting ON posting.ledger_id = member.ledger_id AND posting.posting_id = member.posting_id LEFT JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id LEFT JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id AND version.posting_set_id = posting.posting_set_id WHERE request.action_type = 'MANUAL_MIXED_EXPENSE' GROUP BY receipt.ledger_id, receipt.request_id HAVING count(version.version_id) != 2 OR count(DISTINCT member.posting_id) != 2) THEN RAISE(ABORT, 'invalid mixed posting members') END;
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_operation_receipt AS receipt JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id LEFT JOIN rg04_mixed_composition AS composition ON composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id LEFT JOIN rg04_mixed_composition_component AS component ON component.ledger_id = composition.ledger_id AND component.relation_id = composition.relation_id LEFT JOIN formal_relation_member AS member ON member.ledger_id = component.ledger_id AND member.relation_id = component.relation_id AND member.member_kind = 'POSTING' AND member.posting_id = component.posting_id WHERE request.action_type = 'MANUAL_MIXED_EXPENSE' GROUP BY receipt.ledger_id, receipt.request_id HAVING count(DISTINCT component.posting_id) != 2 OR count(DISTINCT member.posting_id) != 2) THEN RAISE(ABORT, 'invalid mixed composition components') END;
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_operation_receipt AS receipt JOIN ledger_transaction_current_version AS current_version ON current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id JOIN transaction_version AS version ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id AND version.version_id = current_version.current_version_id LEFT JOIN posting AS posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id LEFT JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id AND semantic.reconciliation_eligible = 1 LEFT JOIN rg04_posting_reconciliation AS reconciliation ON reconciliation.ledger_id = semantic.ledger_id AND reconciliation.posting_id = semantic.posting_id LEFT JOIN rg04_initial_reconciliation_identity AS identity ON identity.ledger_id = receipt.ledger_id AND identity.request_id = receipt.request_id AND identity.reconciliation_id = reconciliation.reconciliation_id AND identity.posting_id = reconciliation.posting_id GROUP BY receipt.ledger_id, receipt.request_id HAVING count(DISTINCT semantic.posting_id) != 2 OR count(DISTINCT reconciliation.reconciliation_id) != 2 OR count(DISTINCT identity.reconciliation_index) != 2) THEN RAISE(ABORT, 'invalid RG04 reconciliations') END;
+INSERT INTO rg04_accepted_composition_snapshot SELECT receipt.ledger_id, receipt.request_id, composition.relation_id, composition.transaction_id, composition.display_name, composition.total_minor, composition.currency_code, composition.currency_precision, composition.system_managed, composition.generic_order_lifecycle FROM rg04_operation_receipt AS receipt JOIN rg04_operation_request AS request ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id JOIN rg04_mixed_composition AS composition ON composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id WHERE request.action_type = 'MANUAL_MIXED_EXPENSE' AND NOT EXISTS (SELECT 1 FROM rg04_accepted_composition_snapshot AS accepted_composition WHERE accepted_composition.ledger_id = receipt.ledger_id AND accepted_composition.request_id = receipt.request_id);
+SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG04 aggregate') END;
+END;
+
+CREATE TRIGGER rg04_protect_accepted_request_update AFTER UPDATE ON rg04_operation_request BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 request') END; END;
+CREATE TRIGGER rg04_protect_accepted_request_delete AFTER DELETE ON rg04_operation_request BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 request') END; END;
+CREATE TRIGGER rg04_protect_accepted_mixed_snapshot_update AFTER UPDATE ON rg04_mixed_expense_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 mixed snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_mixed_snapshot_delete AFTER DELETE ON rg04_mixed_expense_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 mixed snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_component_snapshot_update AFTER UPDATE ON rg04_mixed_expense_component_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 component snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_component_snapshot_delete AFTER DELETE ON rg04_mixed_expense_component_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 component snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_repayment_snapshot_update AFTER UPDATE ON rg04_repayment_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 repayment snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_repayment_snapshot_delete AFTER DELETE ON rg04_repayment_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 repayment snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_confirmation_update AFTER UPDATE ON rg04_confirmation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 confirmation') END; END;
+CREATE TRIGGER rg04_protect_accepted_confirmation_delete AFTER DELETE ON rg04_confirmation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 confirmation') END; END;
+CREATE TRIGGER rg04_protect_accepted_posting_semantic_update AFTER UPDATE ON rg04_posting_semantic BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 posting semantic') END; END;
+CREATE TRIGGER rg04_protect_accepted_posting_semantic_delete AFTER DELETE ON rg04_posting_semantic BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 posting semantic') END; END;
+CREATE TRIGGER rg04_protect_accepted_settlement_update AFTER UPDATE ON rg04_settlement_explanation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 settlement') END; END;
+CREATE TRIGGER rg04_protect_accepted_settlement_delete AFTER DELETE ON rg04_settlement_explanation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 settlement') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_delete AFTER DELETE ON rg04_mixed_composition BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 composition') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_update AFTER UPDATE ON rg04_mixed_composition BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 composition') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_snapshot_update AFTER UPDATE ON rg04_accepted_composition_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 composition snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_snapshot_delete AFTER DELETE ON rg04_accepted_composition_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 composition snapshot') END; END;
+CREATE TRIGGER rg04_protect_accepted_receipt_delete AFTER DELETE ON rg04_operation_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete accepted RG04 receipt'); END;
+CREATE TRIGGER rg04_protect_accepted_receipt_update AFTER UPDATE ON rg04_operation_receipt BEGIN SELECT RAISE(ABORT, 'cannot update accepted RG04 receipt'); END;
+CREATE TRIGGER rg04_protect_accepted_relation_member_delete AFTER DELETE ON formal_relation_member BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 relation member') END; END;
+CREATE TRIGGER rg04_protect_accepted_relation_member_update AFTER UPDATE ON formal_relation_member BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 relation member') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_component_delete AFTER DELETE ON rg04_mixed_composition_component BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 composition component') END; END;
+CREATE TRIGGER rg04_protect_accepted_composition_component_update AFTER UPDATE ON rg04_mixed_composition_component BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 composition component') END; END;
+CREATE TRIGGER rg04_protect_accepted_reconciliation_delete AFTER DELETE ON rg04_posting_reconciliation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 reconciliation') END; END;
+CREATE TRIGGER rg04_protect_accepted_reconciliation_update AFTER UPDATE ON rg04_posting_reconciliation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 reconciliation') END; END;
+CREATE TRIGGER rg04_protect_accepted_reconciliation_identity_delete AFTER DELETE ON rg04_initial_reconciliation_identity BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot delete accepted RG04 reconciliation identity') END; END;
+CREATE TRIGGER rg04_protect_accepted_reconciliation_identity_update AFTER UPDATE ON rg04_initial_reconciliation_identity BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot update accepted RG04 reconciliation identity') END; END;
+CREATE TRIGGER rg04_guard_request_insert AFTER INSERT ON rg04_operation_request BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_mixed_snapshot_insert AFTER INSERT ON rg04_mixed_expense_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_component_snapshot_insert AFTER INSERT ON rg04_mixed_expense_component_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_repayment_snapshot_insert AFTER INSERT ON rg04_repayment_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_confirmation_insert AFTER INSERT ON rg04_confirmation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_posting_semantic_insert AFTER INSERT ON rg04_posting_semantic BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_settlement_insert AFTER INSERT ON rg04_settlement_explanation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_composition_insert AFTER INSERT ON rg04_mixed_composition BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_composition_snapshot_insert AFTER INSERT ON rg04_accepted_composition_snapshot BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_composition_component_insert AFTER INSERT ON rg04_mixed_composition_component BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_reconciliation_insert AFTER INSERT ON rg04_posting_reconciliation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_reconciliation_identity_insert AFTER INSERT ON rg04_initial_reconciliation_identity BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_relation_insert AFTER INSERT ON formal_relation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 relation') END; END;
+CREATE TRIGGER rg04_guard_relation_update AFTER UPDATE ON formal_relation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 relation') END; END;
+CREATE TRIGGER rg04_guard_relation_delete AFTER DELETE ON formal_relation BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 relation') END; END;
+CREATE TRIGGER rg04_guard_relation_member_insert AFTER INSERT ON formal_relation_member BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot insert into accepted RG04 aggregate') END; END;
+CREATE TRIGGER rg04_guard_ledger_transaction_insert AFTER INSERT ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_ledger_transaction_update AFTER UPDATE ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_ledger_transaction_delete AFTER DELETE ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_current_version_insert AFTER INSERT ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_current_version_update AFTER UPDATE ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_current_version_delete AFTER DELETE ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_transaction_version_insert AFTER INSERT ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_transaction_version_update AFTER UPDATE ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_transaction_version_delete AFTER DELETE ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_insert AFTER INSERT ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_update AFTER UPDATE ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_delete AFTER DELETE ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_set_insert AFTER INSERT ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_set_update AFTER UPDATE ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
+CREATE TRIGGER rg04_guard_posting_set_delete AFTER DELETE ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_accepted_aggregate_violation) THEN RAISE(ABORT, 'cannot mutate accepted RG04 core') END; END;
