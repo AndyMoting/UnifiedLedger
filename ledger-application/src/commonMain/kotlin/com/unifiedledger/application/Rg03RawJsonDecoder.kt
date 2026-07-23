@@ -104,19 +104,13 @@ private const val RG03_MAX_BYTES = 1_048_576
 private val rg03Json = Json { ignoreUnknownKeys = false }
 
 fun decodeRg03RawJson(raw: String): Rg03RawJsonDecodeResult {
-    if (raw.length > RG03_MAX_BYTES || raw.encodeToByteArray().size > RG03_MAX_BYTES) {
-        return rg03Bad("$", Rg03RawJsonContractErrorReason.RESOURCE_LIMIT)
-    }
-    when (val issue = Rg03DuplicateKeyScanner(raw).scan()) {
-        is Rg03JsonScanIssue.DuplicateKey -> return rg03Bad(
-            issue.path,
-            Rg03RawJsonContractErrorReason.DUPLICATE_KEY,
-        )
-        is Rg03JsonScanIssue.ResourceLimit -> return rg03Bad(
-            issue.path,
-            Rg03RawJsonContractErrorReason.RESOURCE_LIMIT,
-        )
-        null -> Unit
+    strictJsonPreflight(raw, duplicateKeyPath = true)?.let { issue ->
+        return rg03Bad(issue.path, when (issue.reason) {
+            StrictJsonPreflightReason.RESOURCE_LIMIT -> Rg03RawJsonContractErrorReason.RESOURCE_LIMIT
+            StrictJsonPreflightReason.DUPLICATE_KEY -> Rg03RawJsonContractErrorReason.DUPLICATE_KEY
+            StrictJsonPreflightReason.MALFORMED_JSON -> Rg03RawJsonContractErrorReason.MALFORMED_JSON
+            StrictJsonPreflightReason.OBJECT_ROOT_REQUIRED -> Rg03RawJsonContractErrorReason.WRONG_TYPE
+        })
     }
     val root = try {
         rg03Json.parseToJsonElement(raw) as? JsonObject

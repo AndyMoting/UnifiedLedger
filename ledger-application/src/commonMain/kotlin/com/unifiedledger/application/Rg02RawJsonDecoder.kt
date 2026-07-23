@@ -31,11 +31,13 @@ private const val RG02_MAX_BYTES = 1_048_576
 private val rg02Json = Json { ignoreUnknownKeys = false }
 
 fun decodeRg02RawJson(raw: String): Rg02RawJsonDecodeResult {
-    if (raw.length > RG02_MAX_BYTES || raw.encodeToByteArray().size > RG02_MAX_BYTES) return rg02Bad("$", Rg02RawJsonContractErrorReason.RESOURCE_LIMIT)
-    when (val issue = Rg02DuplicateKeyScanner(raw).scan()) {
-        is Rg02JsonScanIssue.DuplicateKey -> return rg02Bad(issue.path, Rg02RawJsonContractErrorReason.DUPLICATE_KEY)
-        is Rg02JsonScanIssue.ResourceLimit -> return rg02Bad(issue.path, Rg02RawJsonContractErrorReason.RESOURCE_LIMIT)
-        null -> Unit
+    strictJsonPreflight(raw, duplicateKeyPath = false)?.let { issue ->
+        return rg02Bad(issue.path, when (issue.reason) {
+            StrictJsonPreflightReason.RESOURCE_LIMIT -> Rg02RawJsonContractErrorReason.RESOURCE_LIMIT
+            StrictJsonPreflightReason.DUPLICATE_KEY -> Rg02RawJsonContractErrorReason.DUPLICATE_KEY
+            StrictJsonPreflightReason.MALFORMED_JSON -> Rg02RawJsonContractErrorReason.MALFORMED_JSON
+            StrictJsonPreflightReason.OBJECT_ROOT_REQUIRED -> Rg02RawJsonContractErrorReason.WRONG_TYPE
+        })
     }
     val root = try { rg02Json.parseToJsonElement(raw) as? JsonObject ?: return rg02Bad("$", Rg02RawJsonContractErrorReason.WRONG_TYPE) }
     catch (_: Exception) { return rg02Bad("$", Rg02RawJsonContractErrorReason.MALFORMED_JSON) }

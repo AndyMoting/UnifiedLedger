@@ -871,3 +871,19 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** 本 slice 验证 accepted income 的 transaction/version/posting、三种经济时间、逐币种平衡、重放/冲突与八条零副作用拒绝；不授权完整 state、report、reconciliation 或 delta 比较，不实现 transaction correction、CAS、分类改名/name-version、导入、来源证据、对账、预算或通用 operation owner。实现继续遵循 `D-028`、`D-029`、`D-041`、`D-046` 的收入分类与隐藏账户规则，并复用 `D-069` 已确认的严格 JSON 原语。
 
 **关联决定：** `D-028`、`D-029`、`D-041`、`D-046`、`D-069`、`D-070`
+
+## D-072 RG-04 手工混合支付执行边界
+
+**状态：** 已确认
+
+**决定：** RG-04 以严格 raw JSON 执行 18 个手工 operation：`manual_mixed_expense` 和 `credit_principal_repayment` 各自的 accepted creation 与同请求 `no_change`，以及冻结的 14 条 `manual_mixed_expense` 拒绝路径。v1 是唯一执行输入与稳定正式身份来源；approved v2 只在执行完成后比较这 18 项的 operation projection，不得反向配置执行 ID 或输入。八个 `ingest_mixed_payment_source`、`confirm_mixed_payment_candidate` 和 `merge_mixed_payment_mirror_evidence` operation 只识别为 unsupported，不实现其运行时合同。
+
+严格 JSON 共享抽取只限中性的前置检查：1 MiB UTF-8 上限、64 层容器上限、转义等价名称的重复键检测，以及语法和根对象检查；RG-01、RG-02、RG-03 既有错误类型与精确路径保持不变，不建立通用 tree mapper 或场景 adapter。领域新增 `CREDIT_REPAYMENT`，不得以 `ACCOUNT_TRANSFER` 代替。混合消费创建一笔费用 `+120.00`、资产资金 `-70.00`、信用负债资金 `-50.00` 的平衡交易；本金还款创建资产 `-50.00`、信用负债 `+50.00` 的平衡交易，不重复确认消费。
+
+持久化使用 schema v6，并提供 v5 到 v6 迁移。RG-04 专属 owner 保存 request snapshot、confirmation、receipt、posting semantics、结算说明事实、混合支付组成和初始分录对账；不得泛化 `rg03_*` 表。`mixed_payment` 关系只持有一个购买交易成员和两条既有资金分录成员，系统管理、显示名、总额及恰好两个正向资金组成由 RG-04 专属 payload 持有。每条真实资金或还款分录初始为 `PENDING`，费用分录不创建对账记录。相同 request 的重放采用类型化、规范化、逐字段等价比较；action 或任一语义字段变化返回 conflict。accepted 持久化必须原子完成，领域拒绝及正式账务、关系、对账或 receipt 写入阶段的任一失败都不得留下残留状态。
+
+**理由：** 手工混合支付和信用本金还款已经具有冻结的账务、身份、关系与初始对账答案，可以复用现有精确金额、目录、平衡分录、版本、余额重放和原子请求模式；导入候选、镜像证据与对账状态迁移仍需要独立闭环。保持场景专属 owner 和受限共享抽取可避免提前固化错误的跨场景抽象。
+
+**影响：** 本切片不授权 evidence matching、对账状态迁移、完整 state/report/reconciliation/delta comparison、v1 fixture rewrite、publication，也不实现八个延期 operation。详细行为和字段所有权继续以 RG-04 正式设计、approved v2 mapping 与 expected oracle 为准。
+
+**关联决定：** `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-069`、`D-071`

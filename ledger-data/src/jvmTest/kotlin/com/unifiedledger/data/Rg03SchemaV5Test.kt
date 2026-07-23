@@ -9,14 +9,15 @@ import java.sql.SQLException
 
 class Rg03SchemaV5Test {
     @Test
-    fun `fresh schema is v5 and accepts transfer kind while retaining canonical rows`() {
+    fun `fresh schema retains v5 transfer kind while accepting v6 credit repayment`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(5, LedgerDatabase.Schema.version)
+            assertEquals(6, LedgerDatabase.Schema.version)
             database.ledgerQueries.insertTransaction("tx-transfer-schema", "ledger-a", "ACCOUNT_TRANSFER")
-            assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+            database.ledgerQueries.insertTransaction("tx-repayment-schema", "ledger-a", "CREDIT_REPAYMENT")
+            assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
         } finally {
             driver.close()
         }

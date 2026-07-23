@@ -22,6 +22,23 @@ sealed interface DomainViolation {
     data object InvalidOrdinaryIncome : DomainViolation
 
     data object InvalidBalanceReplay : DomainViolation
+
+    data object InvalidMixedPayment : DomainViolation
+}
+
+sealed interface MixedPaymentViolation : DomainViolation {
+    data object AmountMustBePositive : MixedPaymentViolation
+    data object FundingLegMustBePositive : MixedPaymentViolation
+    data object DuplicateFundingAccount : MixedPaymentViolation
+    data object FundingTotalMustEqualExpense : MixedPaymentViolation
+    data object UnknownRealAccount : MixedPaymentViolation
+    data object RealFinancialAccountRequired : MixedPaymentViolation
+    data object OwnedAccountRequired : MixedPaymentViolation
+    data object SecondaryCategoryRequired : MixedPaymentViolation
+    data object CategoryInactive : MixedPaymentViolation
+    data object ExpenseCategoryRequired : MixedPaymentViolation
+    data object SingleCurrencyRequired : MixedPaymentViolation
+    data object AssetAndCreditLiabilityRequired : MixedPaymentViolation
 }
 
 sealed interface OrdinaryExpenseViolation : DomainViolation {

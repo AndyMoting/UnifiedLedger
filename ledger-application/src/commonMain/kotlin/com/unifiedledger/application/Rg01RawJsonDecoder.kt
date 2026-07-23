@@ -104,18 +104,13 @@ data class Rg01RawJsonCase(
 private val json = Json { ignoreUnknownKeys = false }
 
 fun decodeRg01RawJson(raw: String): Rg01RawJsonDecodeResult {
-    if (
-        raw.length > RG01_RAW_JSON_MAX_UTF8_BYTES ||
-        raw.encodeToByteArray().size > RG01_RAW_JSON_MAX_UTF8_BYTES
-    ) {
-        return invalid("$", Rg01RawJsonContractErrorReason.RESOURCE_LIMIT)
-    }
-    when (val issue = DuplicateKeyScanner(raw).scan()) {
-        is JsonScanIssue.DuplicateKey ->
-            return invalid(issue.path, Rg01RawJsonContractErrorReason.DUPLICATE_KEY)
-        is JsonScanIssue.ResourceLimit ->
-            return invalid(issue.path, Rg01RawJsonContractErrorReason.RESOURCE_LIMIT)
-        null -> Unit
+    strictJsonPreflight(raw, duplicateKeyPath = false)?.let { issue ->
+        return invalid(issue.path, when (issue.reason) {
+            StrictJsonPreflightReason.RESOURCE_LIMIT -> Rg01RawJsonContractErrorReason.RESOURCE_LIMIT
+            StrictJsonPreflightReason.DUPLICATE_KEY -> Rg01RawJsonContractErrorReason.DUPLICATE_KEY
+            StrictJsonPreflightReason.MALFORMED_JSON -> Rg01RawJsonContractErrorReason.MALFORMED_JSON
+            StrictJsonPreflightReason.OBJECT_ROOT_REQUIRED -> Rg01RawJsonContractErrorReason.WRONG_TYPE
+        })
     }
     val element = try {
         json.parseToJsonElement(raw)

@@ -13,6 +13,32 @@ import kotlin.test.assertFailsWith
 
 class LedgerDatabaseMigrationTest {
     @Test
+    fun populatedVersionFivePreservesRg03AndFormalOwnersAtVersionSix() {
+        val path = Files.createTempFile("ledger-data-v5-v6-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection -> connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) } }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 5)
+                driver.execute(null, "INSERT INTO rg03_operation_request VALUES ('ledger-a','rg03-request','MANUAL_ACCOUNT_TRANSFER')", 0)
+                driver.execute(null, "INSERT INTO rg03_confirmation VALUES ('ledger-a','rg03-confirmation','rg03-request',NULL,'tx-existing','MANUAL_TRANSFER')", 0)
+                driver.execute(null, "INSERT INTO rg03_operation_receipt VALUES ('ledger-a','rg03-request','ACCEPTED','rg03-confirmation',NULL,'tx-existing',NULL,NULL)", 0)
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 5, 6) }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countRg03OperationRequests().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countRg03Confirmations().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countRg03OperationReceipts().executeAsOne())
+                assertEquals(0L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
+            }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
     fun populatedVersionFourPreservesIncomeOwnersAndCurrentChainAtVersionFive() {
         val path = Files.createTempFile("ledger-data-v4-v5-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
@@ -65,14 +91,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionFive() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionSix() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(5, LedgerDatabase.Schema.version)
+            assertEquals(6, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -182,7 +208,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionFiveAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionSixAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -197,7 +223,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 5)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 6)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -361,7 +387,7 @@ private fun schemaMetadata(url: String): SchemaMetadata =
     }
 
 private fun normalizeSql(sql: String): String =
-    sql.replace(Regex("\\s+"), " ").trim()
+    sql.replace(Regex("\\s+"), " ").trim().replace("( ", "(").replace(" )", ")")
 
 private fun migrationSqliteProperties(): Properties = Properties().apply {
     setProperty("foreign_keys", "true")
