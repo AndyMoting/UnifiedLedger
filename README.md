@@ -4,13 +4,20 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-Python 实现仍是迁移、规则验证和黄金结果基线；仓库现已建立 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。`ledger-domain` 已实现精确最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、资产账户付款的 `RG-01` 普通支出创建与余额重放，以及只修改备注的版本替代。普通支出当前还会把非正金额、一级分类和结构有效但已停用的二级分类分别返回为 `AmountMustBePositive`、`SecondaryCategoryRequired` 与 `CategoryInactive`；其他目录、账户和跨账本错误仍使用通用领域失败。当前共 `26` 项领域测试。
+Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v7。最近完整验证通过领域 `33` 项、应用 `84` 项、数据 `94` 项和 Python `398` 项测试，同时通过根项目 Gradle 检查、项目文档检查与数据库迁移验证。仓库仍没有可运行的 Android 或 Desktop app。
 
-`ledger-application` 目前实现 `RG-01` 的最小共享应用边界：明确确认请求、请求身份与完整快照、只含身份的回执、原子提交端口契约，以及稀疏保存输入 wrapper。wrapper 只允许金额、分类和付款账户为空；缺失项返回无序的语义类型集合且不调用确认用例，完整输入和已提供的零金额继续委托既有确认与领域验证。应用层还实现了 typed decoded-field Golden adapter 和严格 raw JSON decoder：decoder 在 JSON tree 映射前拒绝重复对象名，显式拒绝未知字段、错误类型、超过 1 MiB 的 UTF-8 输入和超过 64 层的嵌套，保留 omitted/null/value，并把金额字符串原文交给现有精确转换。当前共 `38` 项应用测试。回执不携带可回写的业务快照，因此重试不会将已替代的备注版本回退到初始版本。
+阶段 3 的规则场景实现范围如下：
 
-`ledger-data` 使用 SQLDelight `2.3.2` 实现该端口的最小正式持久化边界：事务内原子 claim、等价重放与身份冲突；领域拒绝显式释放 claim，callback 异常或后续 SQL 失败回滚事务，所有路径均不留下部分正式状态。正式交易版本和整数最小货币单位分录受关系完整性约束。当前 schema 版本为 `2`，从 schema-only v1 的迁移同时经过 SQLDelight 官方验证和 JVM 测试；Android 装配只使用系统 SQLite driver，不包含 bundled SQLite。tracked RG-01 v1 fixture 的 create、retry 和 distinct re-entry 现已实际经过 application 与 SQLDelight，7 个 invalid outcomes 则在 typed adapter 前置拒绝并验证 commit port 零调用；approved v2 operations 只作为结构化结果 oracle。当前共 `16` 项 data 测试。
+| 场景 | Kotlin runtime 与比较状态 | v2 发布状态 |
+| --- | --- | --- |
+| `RG-01` | create、retry、distinct、7 个拒绝及 `note_update` 已实现；备注替代覆盖 replay、request identity conflict 与 stale CAS 零写入；尚无完整 state/report/reconciliation/delta 比较 | 未发布 |
+| `RG-02` | 已实现 `D-071` 批准的 manual-income 最小 slice：create、retry、2 个变体和 8 个拒绝；`category_rename` unsupported，尚无完整 state runtime 比较 | 未发布 |
+| `RG-03` | 当前冻结范围的 13 roots、20 operations 已逐项比较 outcome、returned IDs、完整 state、deltas 与 status changes | 未发布 |
+| `RG-04` | raw v1 的 26 operations 均有 runtime；其中 18 个 manual operations 有精确 projection 比较，26 项整体比较状态计数和部分 returned IDs；尚无全 26 项完整 state/report/reconciliation/delta 比较 | 已发布 |
+| `RG-05` 至 `RG-10` | 有冻结 v1、Python 测试和逐路径 mapping；contract/expected gates 尚未关闭，无 Kotlin runtime | 未发布 |
+| `RG-11`、`RG-12` | 有 approved direct-v2 fixtures 与 Python 语义测试，无 Kotlin runtime | direct-v2 fixture 已批准 |
 
-这仍不是完整的 `RG-01` 或正式账务核心实现。raw JSON 端到端边界只覆盖 v1 create、retry、distinct re-entry 与 7 个 invalid outcomes；`note_update` 和完整 state/report/reconciliation/delta comparison 仍明确未覆盖。报表、导入、对账、UI 和平台客户端运行时也均尚未实现。仓库已有 `ledger-data` 的 Android 编译目标，但 Android app 与 Desktop app 仍未建立；当前数据库选择只适用于上述正式持久化边界，UI、导航、依赖注入、同步及更广泛查询方案仍需在各自验收边界明确后决定。
+这些结果不等于全部黄金场景或正式账务核心已经完成。报表、通用导入与对账模块、UI 和平台客户端仍未建立；当前持久化选择也不预先决定同步或更广泛查询方案。
 
 ## 核心原则
 
@@ -37,7 +44,7 @@ Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 分别运行三�
 .\gradlew.bat :ledger-data:jvmTest --stacktrace --rerun-tasks --warning-mode all
 ```
 
-验证 SQLDelight v1 到 v2 迁移：
+验证全部 SQLDelight migrations：
 
 ```powershell
 .\gradlew.bat :ledger-data:verifyCommonMainLedgerDatabaseMigration --stacktrace --rerun-tasks --warning-mode all

@@ -20,9 +20,13 @@
 
 - 进入条件：首批黄金场景的输入和完整预期已经冻结。
 - 完成条件：黄金场景全部通过，核心不依赖客户端平台、网络、同步或 AI，并能确定性重放余额。
-- 共享核心实现顺序：RG-01 `note_update`，RG-02，RG-03 手工录入后再补来源、证据与对账，RG-04 进入专项闸门，RG-05 至 RG-08 收敛合同形状，RG-09 至 RG-12 分别实现其生命周期 owner。可复用范围限于严格解析、明确确认、request snapshot 与正式账务链；不得提前泛化专项 DTO、表或业务 owner。
-- RG-02 当前已批准的最小执行 slice 是 `manual_income` raw JSON：主创建、重试、两个独立变体与八条拒绝路径，使用 `CategoryKind`、`INCOME` 和专用 schema v4 request/receipt/confirmation owner。`category_rename` 仅严格解码并返回 unsupported；全量 state/report/reconciliation/delta 比较、transaction correction 与 CAS 均后置。v2 只在 v1 驱动执行后作为 operation oracle。
-- RG-04 当前执行边界覆盖 raw v1 的 26 个 operation：`D-072` 的 18 个手工创建、重放与拒绝，加上 `D-073` 的 8 个来源 intake、候选确认、镜像证据合并和重放。schema v7 使用独立 import owner，并以持久化 ownership 和 append-only match fact 完成分录级待核验到已核验迁移；完整 state/report/reconciliation/delta 比较、v2 oracle 接受、fixture publication 与 RG-04 最终关闭仍后置。
+- `RG-01`：create、retry、distinct、7 个拒绝和 `note_update` runtime 已完成；完整 state/report/reconciliation/delta 比较与 v2 publication 仍待完成。
+- `RG-02`：`D-071` 批准的 `manual_income` 最小 slice 已完成，包括主创建、重试、2 个变体和 8 个拒绝。`category_rename` unsupported；完整 state runtime 比较、transaction correction/CAS 和 v2 publication 仍待完成。
+- `RG-03`：当前冻结范围的 13 roots、20 operations 已完成 outcome、returned IDs、完整 state、deltas 和 status changes 比较；v1 rewrite 与 v2 publication 仍受 gate 约束。
+- `RG-04`：raw v1 的 26 operations 均有 runtime，18 个 manual operations 有精确 projection 比较，26 项整体有状态计数与部分 returned-ID 比较；schema v7 import lifecycle、ownership 和 reconciliation 已实现，v2 已发布。全 26 项 RG-03 等级的完整 state/report/reconciliation/delta 比较仍待完成，因此不能视为形式闭环。
+- `RG-05` 至 `RG-10`：下一默认 contract frontier 为 `RG-05`；各场景已有冻结 v1、Python 测试和 mapping，但 contract/expected gates 尚未关闭且无 Kotlin runtime。当前逐场景 gap 数为 `5/5/3/4/3/6`。
+- `RG-11`、`RG-12`：approved direct-v2 fixtures 与 Python 语义测试已完成，Kotlin runtime 尚未实现。
+- 如需先将 `RG-02` 从批准的最小 slice 提升为完整关闭，应在进入 `RG-05` 前明确调整优先级。可复用范围限于严格解析、明确确认、request snapshot 与正式账务链；不得提前泛化专项 DTO、表或业务 owner。
 
 ## 阶段 4：导入与对账闭环
 

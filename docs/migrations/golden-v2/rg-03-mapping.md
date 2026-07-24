@@ -53,4 +53,4 @@ The existing `account_transfer` transaction type, three transfer posting roles, 
 - expected output gate: `completed`
 - unresolved gap count: `0`
 
-The expected v2 output has passed independent review and received explicit user approval, with `approval_status=approved`. Adapter implementation, v1 fixture rewrite, and publication remain closed.
+The expected v2 output has passed independent review and received explicit user approval, with `approval_status=approved`. Runtime adapter implementation is complete for the current frozen scope: all 13 roots and 20 operations compare exact outcomes, returned IDs, complete states, deltas, and status changes. V1 fixture rewrite and publication remain closed.

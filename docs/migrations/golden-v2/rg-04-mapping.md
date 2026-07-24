@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移。预算语义修订后的 expected 已通过独立 specification/quality re-review、独立验证并获得用户明确重新批准，`approval_status=approved`；adapter generation、v1 fixture rewrite 和 publication 仍保持关闭。
+本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移。预算语义修订后的 expected 已通过独立 specification/quality re-review、独立验证并获得用户明确重新批准，`approval_status=approved`；v1 fixture rewrite 仍保持关闭，v2 已发布。
 
 ## Inventory
 
@@ -79,4 +79,4 @@ The existing `expense` and `credit_repayment` transaction types, generic transac
 - expected output gate: `completed`
 - unresolved gap count: `0`
 
-The corrected expected v2 output has been generated, passed independent specification and quality re-review and distinct verification, and received explicit user re-approval; its `approval_status` is `approved` and the expected-output gate is `completed`. Adapter implementation, v1 fixture rewrite, and publication remain closed.
+The corrected expected v2 output has been generated, passed independent specification and quality re-review and distinct verification, received explicit user re-approval, and has been published to `golden/rules-v2/rg-04.json`. All 26 raw v1 operations have runtime coverage; 18 manual operations have exact projection comparison, while the 26-operation integration comparison checks status counts and selected returned IDs. A full all-26 state/report/reconciliation/delta comparison is still open, so publication is not evidence of formal runtime closure. V1 fixture rewrite remains closed.

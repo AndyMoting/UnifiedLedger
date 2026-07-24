@@ -11,9 +11,12 @@
   "contract_version": "2.0.0",
   "discovery": {
     "approval": "explicit user approval",
-    "comparison": "26-operation full comparison",
+    "comparison": "partial_runtime_comparison",
     "explicit_user_approval": true,
-    "full_comparison_operation_count": 26,
+    "runtime_operation_count": 26,
+    "exact_projection_operation_count": 18,
+    "status_count_comparison": true,
+    "full_state_comparison": false,
     "status": "approved expected output independently reviewed and explicitly approved"
   },
   "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",

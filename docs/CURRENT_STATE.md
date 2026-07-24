@@ -2,20 +2,19 @@
 
 ## 已完成
 
-- `RG-01` 至 `RG-12` 的正式设计、版本化机器答案和一致性验证已进入当前基线。
-- Python 继续作为迁移、规则验证和黄金结果基线；完整 Python 测试共 `379` 项通过，正式文档验证通过。
-- 建立三个可构建的 Kotlin Multiplatform 共享库模块 `ledger-domain`、`ledger-application` 与 `ledger-data`。
-- `ledger-domain` 完成有限的 `RG-01` 资产付款创建与余额重放切片：精确 `Long` 最小货币单位、稳定 ID 与目录、逐币种平衡分录集、正式交易当前版本链、两条支出分录和当前分录余额重放；只修改备注的版本替代保留原分录集与经济时间；非正金额、一级分类和结构有效但已停用的二级分类分别返回 `AmountMustBePositive`、`SecondaryCategoryRequired` 与 `CategoryInactive`，其他目录、账户和跨账本错误仍保持通用领域失败。
-- `ledger-application` 完成明确确认的最小请求边界：相同请求与完整输入重放不变更，不同请求身份独立创建，身份冲突和领域拒绝返回类型化结果；只含身份的回执不会在重试时回退备注替代版本。稀疏保存输入 wrapper 只允许金额、分类和付款账户为空，缺失项返回无序的语义类型集合并保证确认用例、ID source、transaction factory 与 commit port 零调用；完整输入和已提供的零金额继续委托既有确认用例。
-- `ledger-application` 已实现 `RG-01` typed decoded-field Golden adapter：保留 omitted/null/value，精确解析十进制字符串和 case timezone，直接验证 sparse attempted rejection，并把既有应用结果投影为冻结的 `field_path`/`reason_code`。
-- `ledger-application` 已使用 `kotlinx-serialization-json 1.11.0` runtime-only 实现严格 RG-01 v1 raw JSON decoder；tree 映射前拒绝重复对象名，受支持对象执行 closed-key 与类型校验，非字符串金额不进入精确金额 parser，并以 1 MiB UTF-8 与 64 层嵌套上限返回类型化资源拒绝。
-- `ledger-data` 使用 SQLDelight `2.3.2` 实现 `RG-01` commit port：数据库事务中的请求 claim 保证并发等价请求只创建一次，重放返回原回执，变更快照返回冲突，领域拒绝、callback 异常和持久化异常均不留下部分状态；正式交易、当前版本关系、posting set 和整数金额分录以同账本复合约束保存。
-- tracked v1 `golden/rules/rg-01.json` 的 create、retry 与 distinct re-entry 已经 decoder、typed adapter、application use case 和 SQLDelight port 端到端验证；7 个 invalid outcomes 在 typed adapter 前置拒绝，严格 application 与 commit port 调用计数不增加，数据库保持不变。approved v2 operations 只以结构化 JSON 解析作为结果 oracle。
-- `ledger-data` schema 当前为 v2；schema-only v1 快照、v1 到 v2 迁移、fresh/migrated 元数据一致性和非法关系拒绝均已验证。Android target 使用 system SQLite driver，并由可关闭 handle 持有数据库与 driver；生产依赖不包含 bundled SQLite。
+- 建立 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块；账务核心继续保持无 Android、网络、同步或 AI 依赖。
+- SQLDelight schema 已推进到 v7，覆盖正式交易版本、请求幂等、收入、账户互转、混合支付、import owner、候选/证据和分录级对账所有权；迁移 verifier 与 JVM migration tests 通过。
+- `RG-01` create、retry、distinct、7 个拒绝及 `note_update` runtime 已实现。备注替代保留 posting set 与经济事实，并覆盖 replay、request identity conflict、stale CAS 零写入和 operation oracle。
+- `RG-02` 完成 `D-071` 批准的 manual-income 最小 slice：create、retry、2 个独立变体与 8 个拒绝；`category_rename` 仍明确 unsupported。
+- `RG-03` 当前冻结范围已实现：13 roots、20 operations 的 outcome、returned IDs、完整 state、deltas 与 status changes 均与 approved expected 精确比较。
+- `RG-04` 的 26 个 raw v1 operations 均有 runtime。18 个 manual operations 有精确 operation projection 比较；26 项整体比较 accepted/no-change/rejected 状态计数和选定 returned IDs。import lifecycle、ownership 与 reconciliation 另有深入持久化测试，approved v2 已发布。
+- `RG-05` 至 `RG-10` 已有冻结 v1、Python 测试与逐路径 mapping；`RG-11`、`RG-12` 已有 approved direct-v2 fixtures 与 Python 语义测试。
 
 ## 当前检查点
 
-`ledger-domain` 当前 `26` 项 Kotlin 测试通过，`ledger-application` 当前 `38` 项 Kotlin 测试通过，`ledger-data` 当前 `16` 项 Kotlin 测试通过；完整 Python 测试 `379` 项及正式文档验证通过。当前实现只覆盖上述有限切片，不代表完整 `RG-01` 黄金契约或正式账务核心已经完成。`note_update` 和完整 state/report/reconciliation/delta comparison 仍未覆盖，报表、对账、导入、UI 和平台客户端运行时也均尚未实现。
+最近完整验证通过 `ledger-domain` 33 项、`ledger-application` 84 项、`ledger-data` 94 项及 Python 398 项测试；根项目 Gradle `check`、正式文档检查、SQLDelight migration verifier 和 release verification 均通过。
+
+覆盖仍有明确边界：`RG-01` 和 `RG-02` 没有完整 state/report/reconciliation/delta 比较，也未发布 v2；`RG-03` 已完成当前冻结范围的完整比较但尚未发布；`RG-04` 已发布，但尚未达到全 26 operations 的完整 state/report/reconciliation/delta 比较。`RG-05` 至 `RG-10` 的 contract/expected gates 尚未关闭且无 Kotlin runtime，`RG-11`、`RG-12` 也无 Kotlin runtime。
 
 ## 当前环境
 
@@ -23,7 +22,7 @@
 - 三个 KMP library 的 JVM 测试和根项目 Gradle 检查可在 Windows 上运行；`ledger-data` 的 SQLDelight 迁移验证与 Android target 编译也可独立运行。
 - Python 核心测试和文档验证可在 Windows 上运行。
 - `ledger-data` 已有 Android 编译目标，但 Android app 与 Desktop app 尚未建立，因此没有应用运行命令。
-- SQLDelight `2.3.2` 与 Android system SQLite 已确定用于当前正式持久化边界；UI、导航、依赖注入、同步和更广泛查询方案尚未选择。
+- SQLDelight `2.3.2` 与 Android system SQLite 已确定用于当前正式持久化边界；当前 schema 为 v7。UI、导航、依赖注入、同步和更广泛查询方案尚未选择。
 
 ## 阻塞
 
@@ -31,4 +30,4 @@
 
 ## 后续门槛
 
-完整 state/report/reconciliation/delta comparison 与 `note_update` 仍需要单独验收边界。当前 RG-01 decoder 授权不开放 v1 fixture rewrite、migration publication、其他 RG adapter 或网络序列化方案。
+阶段 3 的默认下一 contract frontier 是 `RG-05`；如果要先把 `RG-02` 从批准的最小 slice 提升为完整关闭，需要明确调整优先级。各 RG 的 v1 rewrite、v2 publication 和未完成完整比较仍分别受其现有 gate 约束。

@@ -1,11 +1,13 @@
-# Golden Schema v2 阶段 0 盘点
+# Golden Schema v2 阶段 0 盘点（历史快照）
 
-## 状态、范围与权威
+> 本文记录阶段 0 完成时的结构与语义盘点，保留当时的设计门和未决问题，不能作为当前 runtime、publication 或 release 状态的报告。当前仓库事实以 [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)、[`docs/ROADMAP.md`](ROADMAP.md) 和各 RG mapping 为准；例如 RG-04 v2 已发布但仍只有部分 runtime comparison，RG-11/12 已有 approved direct-v2 fixtures 但没有 Kotlin runtime。
+
+## 历史状态、范围与权威
 
 - 状态：阶段 0 结构与语义盘点完成；本文不是已批准的 Schema 或迁移契约。
 - 完整性边界：本文是语义盘点，不是机器穷尽的 leaf-path map。
 - 范围：已签入的 `RG-01` 至 `RG-10` v1 黄金答案、对应规格、测试及当前加载/验证能力。
-- 暂停项：`RG-11` 保持暂停，不进入本轮统一契约。
+- 阶段 0 快照中的暂停项：`RG-11` 当时保持暂停，不进入该轮统一契约；这不是当前 runtime 或 publication 状态。
 - 目的：列出各 RG 方言、候选注册项、已有映射证据和必须决策的问题。
 - 本文不批准字段名、枚举名、ID 生成法、时间生成法、默认值、兼容别名或迁移顺序。
 - 迁移权威首先是已签入且冻结的规格、测试和 fixture，三者共同约束行为。
@@ -335,4 +337,4 @@
 - 每个 RG 还必须完成 normalized JSON-path inventory，并达到 preserve/map/derive/reject 零未分类路径。
 - 上述逐 RG 产物通过独立审查并获明确批准后，才打开对应 adapter/fixture migration 实现门。
 - 迁移安全候选要求也必须进入批准契约并有验证方案，才能发布迁移输出。
-- `RG-11` 在该设计门打开前继续暂停。
+- 在该历史设计门打开前，`RG-11` 继续暂停；当前 `RG-11`/`RG-12` 状态请以 `docs/CURRENT_STATE.md` 和 `docs/ROADMAP.md` 为准。

@@ -246,6 +246,6 @@ invalid-case ID 是 stable occurrence discriminator，并用于 deterministic id
 3. **GAP-03：** normalized source locator + stable occurrence discriminator、公共 helper 与非循环 root bootstrap。
 4. **GAP-04：** `approval_status` 增加 `approved`，且仅在 expected output 独立 review 与用户明确批准后使用。
 
-approved expected v2 output 已存在。typed decoded-field adapter 与严格 raw JSON decoder 已单独获授权并实现；create、retry 与 distinct re-entry 经 application 与 SQLDelight 验证，7 个 invalid outcomes 在 typed adapter 前置拒绝并验证 commit port 零调用。该范围不包含 `note_update` 或完整 state/report/reconciliation/delta comparison。
+approved expected v2 output 已存在。typed decoded-field adapter 与严格 raw JSON decoder 已单独获授权并实现；create、retry、distinct re-entry 和 `note_update` 均已进入 runtime。`note_update` 覆盖 replacement、replay、request identity conflict、stale CAS 零写入和 operation oracle；7 个 invalid outcomes 在 typed adapter 前置拒绝并验证 commit port 零调用。完整 state/report/reconciliation/delta comparison 仍未实现。
 
 v1 fixture rewrite 和 migration publication gate 仍关闭，不能由本 mapping approval 或 decoder 实现推定授权。
