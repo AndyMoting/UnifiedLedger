@@ -375,7 +375,7 @@ CREATE TABLE rg04_accepted_composition_snapshot (
 );
 CREATE TABLE rg04_posting_reconciliation (
   ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status = 'PENDING'),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')),
   PRIMARY KEY (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id),
   FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
 );
@@ -387,6 +387,189 @@ CREATE TABLE rg04_initial_reconciliation_identity (
   FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_operation_request(ledger_id, request_id),
   FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES rg04_posting_reconciliation(ledger_id, reconciliation_id)
 );
+CREATE TABLE rg04_reconciliation_transition (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id, reconciliation_id),
+  UNIQUE (ledger_id, request_id, posting_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES rg04_posting_reconciliation(ledger_id, reconciliation_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id)
+);
+CREATE TABLE rg04_import_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('IMPORT_SOURCE', 'CONFIRM_CANDIDATE', 'MERGE_MIRROR')),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TRIGGER rg04_reconciliation_transition_insert BEFORE INSERT ON rg04_reconciliation_transition
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM rg04_import_request AS request
+    JOIN rg04_posting_reconciliation AS reconciliation
+      ON reconciliation.ledger_id = new.ledger_id
+     AND reconciliation.reconciliation_id = new.reconciliation_id
+     AND reconciliation.posting_id = new.posting_id
+    WHERE request.ledger_id = new.ledger_id
+      AND request.request_id = new.request_id
+      AND reconciliation.status = 'PENDING'
+      AND (
+        (request.action_type = 'CONFIRM_CANDIDATE' AND EXISTS (
+          SELECT 1
+          FROM rg04_import_confirmation_snapshot AS confirmation
+          WHERE confirmation.ledger_id = new.ledger_id
+            AND confirmation.request_id = new.request_id
+            AND confirmation.confirmed = 1
+            AND confirmation.asset_reconciliation_id = new.reconciliation_id
+            AND confirmation.asset_posting_id = new.posting_id
+        ))
+        OR (request.action_type = 'MERGE_MIRROR' AND EXISTS (
+          SELECT 1
+          FROM rg04_import_mirror_snapshot AS mirror
+          JOIN rg04_import_evidence_match AS match
+            ON match.ledger_id = mirror.ledger_id
+           AND match.match_id = mirror.evidence_link_id
+           AND match.evidence_id = mirror.evidence_id
+           AND match.posting_id = new.posting_id
+           AND match.match_kind = 'LIABILITY_MIRROR'
+          JOIN rg04_import_confirmation_snapshot AS confirmation
+            ON confirmation.ledger_id = mirror.ledger_id
+           AND confirmation.liability_reconciliation_id = new.reconciliation_id
+           AND confirmation.liability_posting_id = new.posting_id
+          WHERE mirror.ledger_id = new.ledger_id
+            AND mirror.request_id = new.request_id
+        ))
+      )
+  ) THEN RAISE(ABORT, 'invalid RG04 reconciliation transition') END;
+END;
+CREATE TRIGGER rg04_reconciliation_transition_update BEFORE UPDATE ON rg04_reconciliation_transition
+BEGIN SELECT RAISE(ABORT, 'cannot update RG04 reconciliation transition'); END;
+CREATE TRIGGER rg04_reconciliation_transition_delete BEFORE DELETE ON rg04_reconciliation_transition
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg04_posting_reconciliation AS reconciliation
+    WHERE reconciliation.ledger_id = old.ledger_id
+      AND reconciliation.reconciliation_id = old.reconciliation_id
+      AND reconciliation.posting_id = old.posting_id
+      AND reconciliation.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'invalid RG04 reconciliation transition deletion') END;
+END;
+
+CREATE TABLE rg04_import_source_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL, total_minor INTEGER NOT NULL CHECK (total_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, suggested_category_id TEXT,
+  completeness TEXT NOT NULL CHECK (completeness IN ('COMPLETE', 'MISSING_FUNDING_LEG')),
+  confidence TEXT NOT NULL CHECK (confidence IN ('1.00', '0.58')), candidate_kind TEXT NOT NULL,
+  candidate_id TEXT NOT NULL, candidate_status_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg04_import_source_component_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, component_index INTEGER NOT NULL CHECK (component_index IN (0, 1)),
+  account_id TEXT, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0), currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL, evidence_available INTEGER NOT NULL CHECK (evidence_available IN (0, 1)),
+  PRIMARY KEY (ledger_id, request_id, component_index),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_source_snapshot(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg04_import_source (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL, owner_request_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL, source_kind TEXT NOT NULL, PRIMARY KEY (ledger_id, source_id),
+  UNIQUE (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, owner_request_id) REFERENCES rg04_import_request(ledger_id, request_id)
+);
+CREATE TABLE rg04_import_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL, source_id TEXT NOT NULL,
+  evidence_role TEXT NOT NULL CHECK (evidence_role IN ('ASSET_FUNDING_DEBIT', 'KNOWN_ASSET_FUNDING_DEBIT', 'LIABILITY_MIRROR')),
+  observed_at TEXT NOT NULL, PRIMARY KEY (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg04_import_source(ledger_id, source_id)
+);
+CREATE TABLE rg04_import_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, source_id TEXT NOT NULL,
+  candidate_kind TEXT NOT NULL, confidence TEXT NOT NULL, provenance_rule TEXT NOT NULL,
+  provenance_rule_version INTEGER NOT NULL CHECK (provenance_rule_version = 1),
+  PRIMARY KEY (ledger_id, candidate_id), UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg04_import_source(ledger_id, source_id)
+);
+CREATE TABLE rg04_import_candidate_status_fact (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence IN (1, 2)),
+  status_id TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED')),
+  request_id TEXT NOT NULL, PRIMARY KEY (ledger_id, candidate_id, status_sequence), UNIQUE (ledger_id, status_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg04_import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id)
+);
+CREATE TABLE rg04_import_confirmation_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, category_id TEXT NOT NULL,
+  confirmed INTEGER NOT NULL CHECK (confirmed = 1), relation_id TEXT NOT NULL,
+  version_id TEXT NOT NULL, posting_set_id TEXT NOT NULL, expense_posting_id TEXT NOT NULL,
+  asset_posting_id TEXT NOT NULL, liability_posting_id TEXT NOT NULL, confirmed_status_id TEXT NOT NULL,
+  relation_display_name TEXT NOT NULL, asset_evidence_link_id TEXT NOT NULL,
+  asset_reconciliation_id TEXT NOT NULL, liability_reconciliation_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg04_import_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE rg04_import_confirmation_component_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, component_index INTEGER NOT NULL CHECK (component_index IN (0, 1)),
+  account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, request_id, component_index), UNIQUE (ledger_id, request_id, account_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_confirmation_snapshot(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg04_import_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL, transaction_id TEXT NOT NULL, PRIMARY KEY (ledger_id, confirmation_id),
+  UNIQUE (ledger_id, request_id), UNIQUE (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg04_import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg04_import_mirror_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL, account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, evidence_link_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg04_import_evidence_match (
+  ledger_id TEXT NOT NULL, match_id TEXT NOT NULL, evidence_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  match_kind TEXT NOT NULL CHECK (match_kind IN ('ASSET_SOURCE', 'LIABILITY_MIRROR')),
+  PRIMARY KEY (ledger_id, match_id), UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg04_import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg04_import_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome = 'ACCEPTED'),
+  source_id TEXT, evidence_id TEXT, candidate_id TEXT, confirmation_id TEXT, transaction_id TEXT, evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg04_import_request(ledger_id, request_id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER rg04_import_request_update BEFORE UPDATE ON rg04_import_request BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import request'); END;
+CREATE TRIGGER rg04_import_request_delete BEFORE DELETE ON rg04_import_request BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import request'); END;
+CREATE TRIGGER rg04_import_receipt_update BEFORE UPDATE ON rg04_import_receipt BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import receipt'); END;
+CREATE TRIGGER rg04_import_receipt_delete BEFORE DELETE ON rg04_import_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import receipt'); END;
+CREATE TRIGGER rg04_import_source_update BEFORE UPDATE ON rg04_import_source BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import source'); END;
+CREATE TRIGGER rg04_import_source_delete BEFORE DELETE ON rg04_import_source BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import source'); END;
+CREATE TRIGGER rg04_import_evidence_update BEFORE UPDATE ON rg04_import_evidence BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import evidence'); END;
+CREATE TRIGGER rg04_import_evidence_delete BEFORE DELETE ON rg04_import_evidence BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import evidence'); END;
+CREATE TRIGGER rg04_import_candidate_update BEFORE UPDATE ON rg04_import_candidate BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import candidate'); END;
+CREATE TRIGGER rg04_import_candidate_delete BEFORE DELETE ON rg04_import_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import candidate'); END;
+CREATE TRIGGER rg04_import_status_update BEFORE UPDATE ON rg04_import_candidate_status_fact BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import status'); END;
+CREATE TRIGGER rg04_import_status_delete BEFORE DELETE ON rg04_import_candidate_status_fact BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import status'); END;
+CREATE TRIGGER rg04_import_confirmation_update BEFORE UPDATE ON rg04_import_confirmation BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import confirmation'); END;
+CREATE TRIGGER rg04_import_confirmation_delete BEFORE DELETE ON rg04_import_confirmation BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import confirmation'); END;
+CREATE TRIGGER rg04_import_match_update BEFORE UPDATE ON rg04_import_evidence_match BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import match'); END;
+CREATE TRIGGER rg04_import_match_delete BEFORE DELETE ON rg04_import_evidence_match BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import match'); END;
+CREATE TRIGGER rg04_import_source_snapshot_update BEFORE UPDATE ON rg04_import_source_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import source snapshot'); END;
+CREATE TRIGGER rg04_import_source_snapshot_delete BEFORE DELETE ON rg04_import_source_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import source snapshot'); END;
+CREATE TRIGGER rg04_import_source_component_snapshot_update BEFORE UPDATE ON rg04_import_source_component_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import source component snapshot'); END;
+CREATE TRIGGER rg04_import_source_component_snapshot_delete BEFORE DELETE ON rg04_import_source_component_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import source component snapshot'); END;
+CREATE TRIGGER rg04_import_confirmation_snapshot_update BEFORE UPDATE ON rg04_import_confirmation_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import confirmation snapshot'); END;
+CREATE TRIGGER rg04_import_confirmation_snapshot_delete BEFORE DELETE ON rg04_import_confirmation_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import confirmation snapshot'); END;
+CREATE TRIGGER rg04_import_confirmation_component_snapshot_update BEFORE UPDATE ON rg04_import_confirmation_component_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import confirmation component snapshot'); END;
+CREATE TRIGGER rg04_import_confirmation_component_snapshot_delete BEFORE DELETE ON rg04_import_confirmation_component_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import confirmation component snapshot'); END;
+CREATE TRIGGER rg04_import_mirror_snapshot_update BEFORE UPDATE ON rg04_import_mirror_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update RG04 import mirror snapshot'); END;
+CREATE TRIGGER rg04_import_mirror_snapshot_delete BEFORE DELETE ON rg04_import_mirror_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete RG04 import mirror snapshot'); END;
 
 CREATE VIEW rg04_accepted_aggregate_violation AS
 SELECT receipt.ledger_id, receipt.request_id
@@ -659,7 +842,7 @@ WHERE request.request_id IS NULL
         WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
       )
    OR EXISTS (
-        SELECT 1 FROM ledger_transaction_current_version AS current_version
+         SELECT 1 FROM ledger_transaction_current_version AS current_version
         JOIN transaction_version AS version
           ON version.ledger_id = current_version.ledger_id
          AND version.transaction_id = current_version.transaction_id
@@ -682,9 +865,297 @@ WHERE request.request_id IS NULL
          AND semantic.reconciliation_eligible = 0
         JOIN rg04_posting_reconciliation AS reconciliation
           ON reconciliation.ledger_id = posting.ledger_id AND reconciliation.posting_id = posting.posting_id
-        WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
-      );
+         WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+       );
 
+CREATE VIEW rg04_import_accepted_aggregate_violation AS
+SELECT receipt.ledger_id, receipt.request_id
+FROM rg04_import_receipt AS receipt
+JOIN rg04_import_request AS request
+  ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id
+LEFT JOIN rg04_import_confirmation AS confirmation
+  ON confirmation.ledger_id = receipt.ledger_id AND confirmation.confirmation_id = receipt.confirmation_id
+LEFT JOIN rg04_import_confirmation_snapshot AS snapshot
+  ON snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id
+LEFT JOIN ledger_transaction AS transaction_row
+  ON transaction_row.ledger_id = receipt.ledger_id AND transaction_row.transaction_id = receipt.transaction_id
+WHERE (request.action_type = 'CONFIRM_CANDIDATE'
+  AND (
+    receipt.confirmation_id IS NULL
+    OR confirmation.request_id IS NULL
+    OR confirmation.request_id != receipt.request_id
+    OR confirmation.transaction_id != receipt.transaction_id
+    OR snapshot.request_id IS NULL
+    OR transaction_row.kind != 'EXPENSE'
+    OR NOT EXISTS (
+      SELECT 1 FROM formal_relation AS relation
+      WHERE relation.ledger_id = receipt.ledger_id AND relation.relation_id = snapshot.relation_id
+    )
+    OR NOT EXISTS (
+      SELECT 1
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting_set
+        ON posting_set.ledger_id = version.ledger_id AND posting_set.posting_set_id = version.posting_set_id
+      WHERE current_version.ledger_id = receipt.ledger_id
+        AND current_version.transaction_id = receipt.transaction_id
+        AND version.version_number = 1
+    )
+    OR 3 != (
+      SELECT count(*)
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+      WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+      WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+      GROUP BY posting.currency_code, posting.currency_precision
+      HAVING sum(posting.amount_minor) != 0
+    )
+    OR 3 != (
+      SELECT count(*)
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+      JOIN rg04_posting_semantic AS semantic
+        ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+      WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+      JOIN rg04_posting_semantic AS semantic
+        ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+      WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+        AND (
+          semantic.role != CASE posting.posting_index
+            WHEN 0 THEN 'expense'
+            WHEN 1 THEN 'mixed_expense_asset_funding'
+            ELSE 'mixed_expense_credit_funding'
+          END
+          OR (posting.posting_index = 0 AND semantic.category_id != snapshot.category_id)
+        )
+    )
+    OR 3 != (
+      SELECT count(*)
+      FROM formal_relation_member AS member
+      JOIN rg04_mixed_composition AS composition
+        ON composition.ledger_id = member.ledger_id AND composition.relation_id = member.relation_id
+      WHERE composition.ledger_id = receipt.ledger_id
+        AND composition.transaction_id = receipt.transaction_id
+    )
+    OR 2 != (
+      SELECT count(*)
+      FROM rg04_mixed_composition_component AS component
+      JOIN rg04_mixed_composition AS composition
+        ON composition.ledger_id = component.ledger_id AND composition.relation_id = component.relation_id
+      WHERE composition.ledger_id = receipt.ledger_id AND composition.transaction_id = receipt.transaction_id
+    )
+    OR EXISTS (
+      SELECT 1 FROM rg04_import_confirmation_component_snapshot AS expected
+      WHERE expected.ledger_id = receipt.ledger_id AND expected.request_id = receipt.request_id
+        AND NOT EXISTS (
+          SELECT 1
+          FROM rg04_mixed_composition AS composition
+          JOIN rg04_mixed_composition_component AS component
+            ON component.ledger_id = composition.ledger_id
+           AND component.relation_id = composition.relation_id
+           AND component.component_index = expected.component_index
+          WHERE composition.ledger_id = receipt.ledger_id
+            AND composition.transaction_id = receipt.transaction_id
+            AND component.account_id = expected.account_id
+            AND component.amount_minor = expected.amount_minor
+            AND component.currency_code = expected.currency_code
+            AND component.currency_precision = expected.currency_precision
+        )
+    )
+    OR 2 != (
+      SELECT count(*)
+      FROM ledger_transaction_current_version AS current_version
+      JOIN transaction_version AS version
+        ON version.ledger_id = current_version.ledger_id
+       AND version.transaction_id = current_version.transaction_id
+       AND version.version_id = current_version.current_version_id
+      JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+      JOIN rg04_posting_semantic AS semantic
+        ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+       AND semantic.reconciliation_eligible = 1
+      JOIN rg04_posting_reconciliation AS reconciliation
+        ON reconciliation.ledger_id = posting.ledger_id AND reconciliation.posting_id = posting.posting_id
+      WHERE current_version.ledger_id = receipt.ledger_id AND current_version.transaction_id = receipt.transaction_id
+    )
+    OR NOT EXISTS (
+      SELECT 1
+      FROM rg04_mixed_composition AS composition
+      WHERE composition.ledger_id = receipt.ledger_id
+        AND composition.relation_id = snapshot.relation_id
+        AND composition.transaction_id = receipt.transaction_id
+    )
+  ))
+  OR (request.action_type = 'IMPORT_SOURCE' AND (
+    receipt.source_id IS NULL OR receipt.evidence_id IS NULL OR receipt.candidate_id IS NULL
+    OR receipt.confirmation_id IS NOT NULL OR receipt.transaction_id IS NOT NULL OR receipt.evidence_link_id IS NOT NULL
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_source_snapshot AS source_snapshot
+      WHERE source_snapshot.ledger_id = receipt.ledger_id AND source_snapshot.request_id = receipt.request_id
+        AND source_snapshot.source_id = receipt.source_id AND source_snapshot.evidence_id = receipt.evidence_id
+        AND source_snapshot.candidate_id = receipt.candidate_id
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_source AS source
+      JOIN rg04_import_evidence AS evidence
+        ON evidence.ledger_id = source.ledger_id AND evidence.source_id = source.source_id
+      JOIN rg04_import_candidate AS candidate
+        ON candidate.ledger_id = source.ledger_id AND candidate.source_id = source.source_id
+      WHERE source.ledger_id = receipt.ledger_id AND source.source_id = receipt.source_id
+        AND source.owner_request_id = receipt.request_id AND source.evidence_id = receipt.evidence_id
+        AND evidence.evidence_id = receipt.evidence_id AND candidate.candidate_id = receipt.candidate_id
+    )
+    OR 2 != (SELECT count(*) FROM rg04_import_source_component_snapshot AS component WHERE component.ledger_id = receipt.ledger_id AND component.request_id = receipt.request_id)
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_candidate_status_fact AS status
+      WHERE status.ledger_id = receipt.ledger_id AND status.candidate_id = receipt.candidate_id
+        AND status.status_sequence = 1 AND status.status = 'PENDING_CONFIRMATION'
+    )
+  ))
+  OR (request.action_type = 'MERGE_MIRROR' AND (
+    receipt.source_id IS NULL OR receipt.evidence_id IS NULL OR receipt.evidence_link_id IS NULL
+    OR receipt.confirmation_id IS NOT NULL
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_mirror_snapshot AS mirror
+      WHERE mirror.ledger_id = receipt.ledger_id AND mirror.request_id = receipt.request_id
+        AND mirror.source_id = receipt.source_id AND mirror.evidence_id = receipt.evidence_id
+        AND mirror.evidence_link_id = receipt.evidence_link_id
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_source AS source
+      JOIN rg04_import_evidence AS evidence
+        ON evidence.ledger_id = source.ledger_id AND evidence.source_id = source.source_id
+      JOIN rg04_import_evidence_match AS match
+        ON match.ledger_id = evidence.ledger_id AND match.evidence_id = evidence.evidence_id
+      WHERE source.ledger_id = receipt.ledger_id AND source.source_id = receipt.source_id
+        AND source.owner_request_id = receipt.request_id AND source.evidence_id = receipt.evidence_id
+        AND evidence.evidence_id = receipt.evidence_id AND match.match_id = receipt.evidence_link_id
+        AND match.match_kind = 'LIABILITY_MIRROR'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM rg04_import_evidence_match AS match
+      JOIN rg04_posting_reconciliation AS reconciliation
+        ON reconciliation.ledger_id = match.ledger_id AND reconciliation.posting_id = match.posting_id
+      WHERE match.ledger_id = receipt.ledger_id AND match.match_id = receipt.evidence_link_id
+        AND reconciliation.status = 'MATCHED'
+    )
+  ));
+
+CREATE VIEW rg04_import_accepted_aggregate_owner AS
+SELECT receipt.ledger_id, receipt.request_id, receipt.transaction_id, snapshot.relation_id
+FROM rg04_import_receipt AS receipt
+JOIN rg04_import_request AS request
+  ON request.ledger_id = receipt.ledger_id AND request.request_id = receipt.request_id
+JOIN rg04_import_confirmation AS confirmation
+  ON confirmation.ledger_id = receipt.ledger_id
+ AND confirmation.confirmation_id = receipt.confirmation_id
+JOIN rg04_import_confirmation_snapshot AS snapshot
+  ON snapshot.ledger_id = receipt.ledger_id AND snapshot.request_id = receipt.request_id
+WHERE request.action_type = 'CONFIRM_CANDIDATE';
+
+CREATE TRIGGER rg04_validate_import_confirmation_receipt AFTER INSERT ON rg04_import_receipt
+BEGIN
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation)
+    THEN RAISE(ABORT, 'invalid accepted RG04 import aggregate') END;
+END;
+
+CREATE TRIGGER rg04_import_guard_transaction_update AFTER UPDATE ON ledger_transaction
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 transaction') END; END;
+CREATE TRIGGER rg04_import_guard_transaction_delete AFTER DELETE ON ledger_transaction
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 transaction') END; END;
+CREATE TRIGGER rg04_import_guard_current_version_update AFTER UPDATE ON ledger_transaction_current_version
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 current version') END; END;
+CREATE TRIGGER rg04_import_guard_current_version_delete AFTER DELETE ON ledger_transaction_current_version
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 current version') END; END;
+CREATE TRIGGER rg04_import_guard_version_update AFTER UPDATE ON transaction_version
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 version') END; END;
+CREATE TRIGGER rg04_import_guard_version_delete AFTER DELETE ON transaction_version
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 version') END; END;
+CREATE TRIGGER rg04_import_guard_posting_set_update AFTER UPDATE ON posting_set
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting set') END; END;
+CREATE TRIGGER rg04_import_guard_posting_set_delete AFTER DELETE ON posting_set
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting set') END; END;
+CREATE TRIGGER rg04_import_guard_posting_update AFTER UPDATE ON posting
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting') END; END;
+CREATE TRIGGER rg04_import_guard_posting_delete AFTER DELETE ON posting
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting') END; END;
+CREATE TRIGGER rg04_import_guard_relation_update AFTER UPDATE ON formal_relation
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 relation') END; END;
+CREATE TRIGGER rg04_import_guard_relation_delete AFTER DELETE ON formal_relation
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 relation') END; END;
+CREATE TRIGGER rg04_import_guard_relation_member_update AFTER UPDATE ON formal_relation_member
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 relation member') END; END;
+CREATE TRIGGER rg04_import_guard_relation_member_delete AFTER DELETE ON formal_relation_member
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 relation member') END; END;
+CREATE TRIGGER rg04_import_guard_composition_update AFTER UPDATE ON rg04_mixed_composition
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 composition') END; END;
+CREATE TRIGGER rg04_import_guard_composition_delete AFTER DELETE ON rg04_mixed_composition
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 composition') END; END;
+CREATE TRIGGER rg04_import_guard_component_update AFTER UPDATE ON rg04_mixed_composition_component
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 composition component') END; END;
+CREATE TRIGGER rg04_import_guard_component_delete AFTER DELETE ON rg04_mixed_composition_component
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 composition component') END; END;
+CREATE TRIGGER rg04_import_guard_semantic_update AFTER UPDATE ON rg04_posting_semantic
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting semantic') END; END;
+CREATE TRIGGER rg04_import_guard_semantic_delete AFTER DELETE ON rg04_posting_semantic
+BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg04_import_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid imported RG04 posting semantic') END; END;
+CREATE TRIGGER rg04_import_guard_reconciliation_update BEFORE UPDATE ON rg04_posting_reconciliation
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM rg04_reconciliation_transition AS transition
+    JOIN rg04_import_request AS request
+      ON request.ledger_id = transition.ledger_id
+     AND request.request_id = transition.request_id
+      WHERE transition.ledger_id = old.ledger_id
+      AND request.action_type IN ('CONFIRM_CANDIDATE', 'MERGE_MIRROR')
+      AND transition.reconciliation_id = old.reconciliation_id
+      AND transition.posting_id = old.posting_id
+      AND new.ledger_id = old.ledger_id
+      AND new.reconciliation_id = old.reconciliation_id
+      AND new.posting_id = old.posting_id
+  ) THEN RAISE(ABORT, 'cannot update accepted RG04 reconciliation directly') END;
+END;
+CREATE TRIGGER rg04_import_guard_reconciliation_status AFTER UPDATE OF status ON rg04_posting_reconciliation
+BEGIN
+  SELECT CASE WHEN new.status = 'MATCHED' AND NOT EXISTS (
+    SELECT 1
+    FROM rg04_reconciliation_transition AS transition
+    WHERE transition.ledger_id = new.ledger_id
+      AND transition.reconciliation_id = new.reconciliation_id
+      AND transition.posting_id = new.posting_id
+  ) THEN RAISE(ABORT, 'invalid RG04 reconciliation transition') END;
+END;
+CREATE TRIGGER rg04_import_guard_reconciliation_delete BEFORE DELETE ON rg04_posting_reconciliation
+BEGIN SELECT RAISE(ABORT, 'cannot delete accepted RG04 reconciliation'); END;
 CREATE TRIGGER rg04_validate_mixed_receipt
 AFTER INSERT ON rg04_operation_receipt
 BEGIN
@@ -979,6 +1450,13 @@ INSERT INTO rg04_mixed_composition_component VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 insertRg04PostingReconciliation:
 INSERT INTO rg04_posting_reconciliation VALUES (?, ?, ?, 'PENDING');
 
+insertRg04ReconciliationTransition:
+INSERT INTO rg04_reconciliation_transition VALUES (?, ?, ?, ?);
+
+deleteRg04ReconciliationTransition:
+DELETE FROM rg04_reconciliation_transition
+WHERE ledger_id = ? AND request_id = ? AND reconciliation_id = ?;
+
 insertRg04InitialReconciliationIdentity:
 INSERT INTO rg04_initial_reconciliation_identity VALUES (?, ?, ?, ?, ?);
 
@@ -1027,6 +1505,206 @@ SELECT confirmation_id FROM rg04_confirmation ORDER BY confirmation_id;
 
 selectRg04Relations:
 SELECT relation_id FROM formal_relation ORDER BY relation_id;
+
+claimRg04ImportRequest:
+INSERT INTO rg04_import_request VALUES (?, ?, ?) ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteRg04ImportRequest:
+DELETE FROM rg04_import_request WHERE ledger_id = ? AND request_id = ?;
+
+selectRg04ImportAction:
+SELECT action_type FROM rg04_import_request WHERE ledger_id = ? AND request_id = ?;
+
+insertRg04ImportSourceSnapshot:
+INSERT INTO rg04_import_source_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportSourceComponentSnapshot:
+INSERT INTO rg04_import_source_component_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportSource:
+INSERT INTO rg04_import_source VALUES (?, ?, ?, ?, ?, ?);
+
+insertRg04ImportEvidence:
+INSERT INTO rg04_import_evidence VALUES (?, ?, ?, ?, ?);
+
+insertRg04ImportCandidate:
+INSERT INTO rg04_import_candidate VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportCandidateStatus:
+INSERT INTO rg04_import_candidate_status_fact VALUES (?, ?, ?, ?, ?, ?);
+
+insertRg04ImportConfirmationSnapshot:
+INSERT INTO rg04_import_confirmation_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportConfirmationComponentSnapshot:
+INSERT INTO rg04_import_confirmation_component_snapshot VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportConfirmation:
+INSERT INTO rg04_import_confirmation VALUES (?, ?, ?, ?, ?);
+
+insertRg04ImportMirrorSnapshot:
+INSERT INTO rg04_import_mirror_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg04ImportEvidenceMatch:
+INSERT INTO rg04_import_evidence_match VALUES (?, ?, ?, ?, ?);
+
+insertRg04ImportReceipt:
+INSERT INTO rg04_import_receipt VALUES (?, ?, 'ACCEPTED', ?, ?, ?, ?, ?, ?);
+
+markRg04PostingReconciliationMatched:
+UPDATE rg04_posting_reconciliation SET status = 'MATCHED'
+WHERE ledger_id = ? AND reconciliation_id = ? AND status = 'PENDING';
+
+selectRg04PostingReconciliationStatus:
+SELECT status FROM rg04_posting_reconciliation WHERE ledger_id = ? AND posting_id = ?;
+
+selectRg04ImportAssetPosting:
+SELECT posting.posting_id
+FROM rg04_import_confirmation AS confirmation
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = confirmation.ledger_id AND current_version.transaction_id = confirmation.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+JOIN rg04_posting_semantic AS semantic
+  ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+WHERE confirmation.ledger_id = ? AND confirmation.candidate_id = ?
+  AND semantic.role = 'mixed_expense_asset_funding';
+
+selectRg04ImportSourceCommit:
+SELECT request.action_type, snapshot.source_id, snapshot.evidence_id, snapshot.observed_at,
+ snapshot.total_minor, snapshot.currency_code, snapshot.currency_precision, snapshot.suggested_category_id,
+ snapshot.completeness, snapshot.confidence, snapshot.candidate_kind, snapshot.candidate_id,
+ snapshot.candidate_status_id, receipt.source_id, receipt.evidence_id, receipt.candidate_id
+FROM rg04_import_request AS request
+JOIN rg04_import_source_snapshot AS snapshot ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
+JOIN rg04_import_receipt AS receipt ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = ? AND request.request_id = ?;
+
+selectRg04ImportSourceComponents:
+SELECT component_index, account_id, amount_minor, currency_code, currency_precision, evidence_available
+FROM rg04_import_source_component_snapshot WHERE ledger_id = ? AND request_id = ? ORDER BY component_index;
+
+selectRg04ImportConfirmationCommit:
+SELECT request.action_type, snapshot.candidate_id, snapshot.category_id, snapshot.confirmed, snapshot.relation_id,
+ snapshot.version_id, snapshot.posting_set_id, snapshot.expense_posting_id, snapshot.asset_posting_id,
+ snapshot.liability_posting_id, snapshot.confirmed_status_id, snapshot.relation_display_name,
+ snapshot.asset_evidence_link_id, snapshot.asset_reconciliation_id, snapshot.liability_reconciliation_id,
+ receipt.confirmation_id, receipt.transaction_id
+FROM rg04_import_request AS request
+JOIN rg04_import_confirmation_snapshot AS snapshot ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
+JOIN rg04_import_receipt AS receipt ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = ? AND request.request_id = ?;
+
+selectRg04ImportConfirmationByCandidate:
+SELECT snapshot.liability_reconciliation_id
+FROM rg04_import_confirmation_snapshot AS snapshot
+WHERE snapshot.ledger_id = ? AND snapshot.candidate_id = ?;
+
+selectRg04ImportConfirmationComponents:
+SELECT component_index, account_id, amount_minor, currency_code, currency_precision
+FROM rg04_import_confirmation_component_snapshot WHERE ledger_id = ? AND request_id = ? ORDER BY component_index;
+
+selectRg04ImportMirrorCommit:
+SELECT request.action_type, snapshot.source_id, snapshot.evidence_id, snapshot.observed_at, snapshot.account_id,
+ snapshot.amount_minor, snapshot.currency_code, snapshot.currency_precision, snapshot.evidence_link_id,
+ receipt.source_id, receipt.evidence_id, receipt.evidence_link_id
+FROM rg04_import_request AS request
+JOIN rg04_import_mirror_snapshot AS snapshot ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
+JOIN rg04_import_receipt AS receipt ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = ? AND request.request_id = ?;
+
+selectRg04ImportSourceOwner:
+SELECT owner_request_id FROM rg04_import_source WHERE ledger_id = ? AND source_id = ?;
+
+selectRg04ImportEvidenceOwner:
+SELECT source_id FROM rg04_import_evidence WHERE ledger_id = ? AND evidence_id = ?;
+
+selectRg04ImportCandidateOwner:
+SELECT source_id FROM rg04_import_candidate WHERE ledger_id = ? AND candidate_id = ?;
+
+selectRg04ImportMatchOwner:
+SELECT evidence_id, posting_id FROM rg04_import_evidence_match WHERE ledger_id = ? AND match_id = ?;
+
+selectRg04ImportStatusOwner:
+SELECT candidate_id, request_id FROM rg04_import_candidate_status_fact WHERE ledger_id = ? AND status_id = ?;
+
+selectRg04ImportConfirmationOwner:
+SELECT request_id, candidate_id, transaction_id FROM rg04_import_confirmation WHERE ledger_id = ? AND confirmation_id = ?;
+
+selectRg04ImportRelationOwner:
+SELECT transaction_id FROM rg04_mixed_composition WHERE ledger_id = ? AND relation_id = ?;
+
+selectRg04ImportTransactionOwner:
+SELECT transaction_id FROM ledger_transaction WHERE ledger_id = ? AND transaction_id = ?;
+
+selectRg04ImportPostingOwner:
+SELECT posting_id FROM posting WHERE ledger_id = ? AND posting_id = ?;
+
+selectRg04ImportVersionOwner:
+SELECT version_id FROM transaction_version WHERE ledger_id = ? AND version_id = ?;
+
+selectRg04ImportPostingSetOwner:
+SELECT posting_set_id FROM posting_set WHERE ledger_id = ? AND posting_set_id = ?;
+
+selectRg04ImportReconciliationOwner:
+SELECT posting_id FROM rg04_posting_reconciliation WHERE ledger_id = ? AND reconciliation_id = ?;
+
+selectRg04ImportCandidateState:
+SELECT candidate.candidate_id, candidate.source_id, candidate.candidate_kind, candidate.confidence,
+ status.status, source.owner_request_id
+FROM rg04_import_candidate AS candidate
+JOIN rg04_import_source AS source ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+JOIN rg04_import_candidate_status_fact AS status ON status.ledger_id = candidate.ledger_id AND status.candidate_id = candidate.candidate_id
+WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?
+ORDER BY status.status_sequence DESC LIMIT 1;
+
+selectRg04ImportCandidateSourceSnapshot:
+SELECT snapshot.observed_at, snapshot.total_minor, snapshot.currency_code, snapshot.currency_precision,
+ snapshot.suggested_category_id, snapshot.completeness, snapshot.evidence_id, snapshot.request_id
+FROM rg04_import_candidate AS candidate
+JOIN rg04_import_source AS source ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+JOIN rg04_import_source_snapshot AS snapshot ON snapshot.ledger_id = source.ledger_id AND snapshot.request_id = source.owner_request_id
+WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?;
+
+selectRg04ImportMirrorTargets:
+SELECT confirmation.candidate_id, confirmation.transaction_id, posting.posting_id, posting.account_id,
+ posting.amount_minor, posting.currency_code, posting.currency_precision, version.occurred_at
+FROM rg04_import_confirmation AS confirmation
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = confirmation.ledger_id AND current_version.transaction_id = confirmation.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = current_version.ledger_id AND version.transaction_id = current_version.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting ON posting.ledger_id = version.ledger_id AND posting.posting_set_id = version.posting_set_id
+JOIN rg04_posting_semantic AS semantic ON semantic.ledger_id = posting.ledger_id AND semantic.posting_id = posting.posting_id
+WHERE confirmation.ledger_id = ? AND semantic.role = 'mixed_expense_credit_funding';
+
+countRg04ImportMatchesForPosting:
+SELECT count(*) FROM rg04_import_evidence_match WHERE ledger_id = ? AND posting_id = ?;
+
+countRg04ReconciliationForPosting:
+SELECT count(*) FROM rg04_posting_reconciliation WHERE ledger_id = ? AND posting_id = ?;
+
+countRg04ImportRequests:
+SELECT count(*) FROM rg04_import_request;
+countRg04ImportSources:
+SELECT count(*) FROM rg04_import_source;
+countRg04ImportEvidence:
+SELECT count(*) FROM rg04_import_evidence;
+countRg04ImportCandidates:
+SELECT count(*) FROM rg04_import_candidate;
+countRg04ImportConfirmations:
+SELECT count(*) FROM rg04_import_confirmation;
+countRg04ImportMatches:
+SELECT count(*) FROM rg04_import_evidence_match;
+selectRg04ImportEvidenceMatches:
+SELECT match_id, evidence_id, posting_id, match_kind
+FROM rg04_import_evidence_match
+ORDER BY match_id;
+countRg04ImportReceipts:
+SELECT count(*) FROM rg04_import_receipt;
 
 insertTransaction:
 INSERT INTO ledger_transaction(

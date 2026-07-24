@@ -62,6 +62,7 @@ data class Rg04RawJsonCase(
     val operations: List<Rg04DecodedOperation>, val deferredOperations: List<Rg04DeferredOperation>,
     val manualIds: MixedPaymentExpenseIds, val repaymentIds: CreditPrincipalRepaymentIds,
     val relationId: String, val relationDisplayName: String,
+    val importOperations: List<Rg04DecodedImportOperation> = emptyList(),
 )
 
 data class Rg04FundingSnapshot(val accountId: AccountId, val amount: Money)

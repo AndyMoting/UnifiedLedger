@@ -887,3 +887,17 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** 本切片不授权 evidence matching、对账状态迁移、完整 state/report/reconciliation/delta comparison、v1 fixture rewrite、publication，也不实现八个延期 operation。详细行为和字段所有权继续以 RG-04 正式设计、approved v2 mapping 与 expected oracle 为准。
 
 **关联决定：** `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-069`、`D-071`
+
+## D-073 RG-04 导入确认与分录级对账执行边界
+
+**状态：** 已确认
+
+**决定：** RG-04 在 `D-072` 的 18 个手工 operation 之外，以严格 raw v1 执行其余 8 个 operation：完整来源 intake、明确候选确认、负债镜像证据合并和缺失资金腿 intake 各自的首次接受与等价重放。完整来源和缺失资金腿都只创建来源、证据与待确认候选；缺失资金腿保留已知 `70.00 CNY` 和缺失 `50.00 CNY`，不得猜测缺失账户或创建平衡分录。只有明确候选确认可以复用混合消费领域用例创建费用 `+120.00`、资产 `-70.00`、信用负债 `-50.00` 的正式交易与 `mixed_payment` 关系。资产证据匹配后该分录为已核验、负债分录保持待核验；后续负债镜像只追加来源、证据与匹配事实，使其成为已核验，不得改变正式交易、版本、分录、关系、余额、报表或候选绑定。
+
+持久化升级为 schema v7，并保留 schema v6 的手工 owner。导入使用独立的 request/snapshot/receipt、source、evidence、candidate/status、confirmation 和 append-only evidence-match owner，不扩展要求 transaction/confirmation 身份的手工 receipt，也不依赖 `rg03_*` 表或进程内生命周期状态。镜像目标必须沿持久化的 candidate、confirmation、transaction current version 和 posting ownership 解析。相同请求与等价快照返回原稳定身份；action、快照或 owner 身份冲突返回原子 conflict；已确认候选的新确认请求返回 `candidate_not_pending`；目标缺失、歧义、字段不匹配或对账前置条件失败均返回类型化原子拒绝。
+
+**理由：** 来源事实、候选推断、用户确认和分录核验具有不同生命周期与写入权限。分离 owner 并以只追加匹配事实派生核验结果，可以完成混合支付导入闭环，同时防止证据合并重复入账、自动补平或依赖进程状态。
+
+**影响：** RG-04 raw v1 的 26 个 operation 均具有运行时边界；v1 继续是执行输入与身份来源。完整 state/report/reconciliation/delta 比较、v2 oracle 接受、fixture publication 和其他规则场景不在本决定范围内，不能据此宣称 RG-04 已全部关闭。
+
+**关联决定：** `D-008`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-069`、`D-072`
