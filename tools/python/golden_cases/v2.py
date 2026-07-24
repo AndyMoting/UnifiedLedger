@@ -3103,7 +3103,7 @@ def _validate_reports(
             metric_path = f"{report_path}.metrics[{metric_index}]"
             expected_applicability = (
                 "not_applicable"
-                if case_id in {"RG-01", "RG-02"} and metric["metric"] == "budget"
+                if case_id in {"RG-01", "RG-02", "RG-04"} and metric["metric"] == "budget"
                 else "applicable"
             )
             if metric["applicability"] != expected_applicability:

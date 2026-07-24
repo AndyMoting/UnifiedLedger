@@ -375,9 +375,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -644,9 +642,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -913,9 +909,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -1182,9 +1176,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -1451,9 +1443,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -1720,9 +1710,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -1989,9 +1977,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -2258,9 +2244,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -2527,9 +2511,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -2796,9 +2778,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -3065,9 +3045,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -3334,9 +3312,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -3603,9 +3579,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -3872,9 +3846,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -4141,9 +4113,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -4410,9 +4380,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -4679,9 +4647,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -4948,9 +4914,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -5217,9 +5181,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -5486,9 +5448,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -5755,9 +5715,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -6024,9 +5982,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -6293,9 +6249,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -6621,9 +6575,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -6957,9 +6909,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7234,9 +7184,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7300,9 +7248,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7366,9 +7312,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7432,9 +7376,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7498,9 +7440,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -7939,9 +7879,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8005,9 +7943,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8071,9 +8007,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8137,9 +8071,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8203,9 +8135,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8599,9 +8529,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8665,9 +8593,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8731,9 +8657,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8797,9 +8721,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -8863,9 +8785,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9312,9 +9232,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9378,9 +9296,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9444,9 +9360,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9510,9 +9424,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9576,9 +9488,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -9972,9 +9882,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10038,9 +9946,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10104,9 +10010,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10170,9 +10074,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10236,9 +10138,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10513,9 +10413,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -10782,9 +10680,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -11051,9 +10947,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -11320,9 +11214,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -11589,9 +11481,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -11858,9 +11748,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12127,9 +12015,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12193,9 +12079,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12259,9 +12143,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12613,9 +12495,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12679,9 +12559,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -12745,9 +12623,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -13261,9 +13137,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -13327,9 +13201,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -13393,9 +13265,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -13916,9 +13786,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -13982,9 +13850,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -14048,9 +13914,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -14417,9 +14281,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -14483,9 +14345,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -14549,9 +14409,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15037,9 +14895,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15103,9 +14959,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15169,9 +15023,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15664,9 +15516,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15730,9 +15580,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",
@@ -15796,9 +15644,7 @@
             },
             {
               "metric": "budget",
-              "applicability": "applicable",
-              "currency": "CNY",
-              "amount": "0.00"
+              "applicability": "not_applicable"
             },
             {
               "metric": "cash_inflow",

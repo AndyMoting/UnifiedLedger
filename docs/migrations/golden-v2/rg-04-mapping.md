@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移；expected 已生成、通过独立复审并获得用户明确批准，`approval_status=approved`，但 adapter generation、v1 fixture rewrite 和 publication 仍保持关闭。
+本映射受 `golden/rules/rg-04.json`、`docs/specs/2026-07-15-rg-04-mixed-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-011`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-04 语义。本映射只定义 RG-04 v1 到 v2 的逐路径迁移。预算语义修订后的 expected 已通过独立 specification/quality re-review、独立验证并获得用户明确重新批准，`approval_status=approved`；adapter generation、v1 fixture rewrite 和 publication 仍保持关闭。
 
 ## Inventory
 
@@ -41,6 +41,8 @@ The mixed purchase is one `expense` transaction with expense `+120.00`, asset fu
 
 The later `credit_repayment` transaction has asset `-50.00` and liability `+50.00`. It records repayment-day cash outflow `50.00` while consumption, income, and net-worth change remain zero; lifecycle consumption therefore stays `120.00` rather than being counted again.
 
+RG-04 的所有预算 report metric 均为 `not_applicable`，且不得携带 `currency` 或 `amount`。适用预算的零值与预算不适用语义不同，不能相互替代；该修订不改变任何余额、非预算报表值或 operation report delta。
+
 The system-managed `mixed_payment` relation uses canonical `member_refs` for exactly one existing purchase transaction and its two existing real-account funding postings. `funding_components` do not create identities: each component reuses one posting member ID and carries only its account, positive display amount, and currency. Relation payload separately carries display, system-management, composition-total, and no-generic-order constraints. Mirror evidence keeps the same transaction version, posting set, postings, relation ID, members, and funding composition; it adds only the later source/evidence/link and moves the liability posting from pending to matched, making the transaction summary fully matched.
 
 The expense posting has `reconciliation_eligible=false` and has no `posting_reconciliation` record. Asset and liability funding postings are independently eligible and own their pending or matched reconciliation records. Complete and incomplete imports remain `pending_confirmation` with zero formal effects until explicit confirmation; reconciliation never changes balances or reports.
@@ -73,7 +75,8 @@ The existing `expense` and `credit_repayment` transaction types, generic transac
 ## Gate
 
 - status: `approved`
+- corrected expected approval status: `approved`
 - expected output gate: `completed`
 - unresolved gap count: `0`
 
-The expected v2 output has been generated, passed independent review, and received explicit user approval; its `approval_status` is `approved` and the expected-output gate is `completed`. Adapter implementation, v1 fixture rewrite, and publication remain closed.
+The corrected expected v2 output has been generated, passed independent specification and quality re-review and distinct verification, and received explicit user re-approval; its `approval_status` is `approved` and the expected-output gate is `completed`. Adapter implementation, v1 fixture rewrite, and publication remain closed.

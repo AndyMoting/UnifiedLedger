@@ -78,12 +78,13 @@ def _report(period_type: str, period: str) -> dict:
         "period_type": period_type,
         "period": period,
         "metrics": [
-            {
-                "metric": metric,
-                "applicability": "applicable",
-                "currency": "CNY",
-                "amount": "0.00",
-            }
+            ({"metric": metric, "applicability": "not_applicable"}
+             if metric == "budget" else {
+                 "metric": metric,
+                 "applicability": "applicable",
+                 "currency": "CNY",
+                 "amount": "0.00",
+             })
             for metric in REPORT_METRICS
         ],
     }
@@ -196,7 +197,8 @@ def _refresh_projections(state: dict) -> None:
                     by_role["credit_repayment_asset_outflow"]["amount"]
                 )
         for metric in report["metrics"]:
-            metric["amount"] = f"{values[metric['metric']]:.2f}"
+            if metric["applicability"] == "applicable":
+                metric["amount"] = f"{values[metric['metric']]:.2f}"
 
 
 def _value_changes(before: dict, after: dict) -> dict:
@@ -597,10 +599,39 @@ class RG04GoldenV2ExpectedTests(unittest.TestCase):
             {key: value for key, value in result.items() if key not in {"id", "as_of_operation_id"}},
         )
 
-    def test_expected_output_gate_is_completed_and_approved(self):
+    def test_corrected_expected_output_is_approved(self):
         validate_golden_case_v2(self.case)
         self.assertEqual(self.case["case"]["id"], "RG-04")
         self.assertEqual(self.case["case"]["approval_status"], "approved")
+
+    def test_checked_in_expected_matches_generator(self):
+        self.assertEqual(self.case, _build_rg04_expected())
+
+    def test_budget_is_not_applicable_in_every_report(self):
+        metrics = [
+            metric
+            for state in self.case["states"]
+            for report in state["reports"]
+            for metric in report["metrics"]
+        ]
+        budgets = [metric for metric in metrics if metric["metric"] == "budget"]
+        self.assertEqual(len(metrics), 770)
+        self.assertEqual(len(budgets), 77)
+        self.assertTrue(
+            all(
+                metric == {"metric": "budget", "applicability": "not_applicable"}
+                for metric in budgets
+            )
+        )
+        report_deltas = [
+            change
+            for operation in self.case["operations"]
+            for change in operation["deltas"]["value_changes"]["reports"]
+        ]
+        self.assertEqual(len(report_deltas), 27)
+        self.assertFalse(
+            any(change["key"]["metric"] == "budget" for change in report_deltas)
+        )
 
     def test_complete_v1_behavior_families_are_present(self):
         purposes = {item["purpose"] for item in self.case["roots"]}
@@ -697,7 +728,11 @@ class RG04GoldenV2ExpectedTests(unittest.TestCase):
             item for item in repayment_state["reports"]
             if item["period_type"] == "cumulative"
         )
-        metrics = {item["metric"]: item["amount"] for item in cumulative["metrics"]}
+        metrics = {
+            item["metric"]: item["amount"]
+            for item in cumulative["metrics"]
+            if item["applicability"] == "applicable"
+        }
         self.assertEqual(metrics["consumption"], "120.00")
         self.assertEqual(metrics["cash_outflow"], "120.00")
         self.assertEqual(metrics["net_worth_change"], "-120.00")

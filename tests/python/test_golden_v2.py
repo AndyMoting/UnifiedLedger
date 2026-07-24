@@ -32,6 +32,7 @@ RG01_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-
 RG09_V2_PATH = REPOSITORY_ROOT / "docs" / "examples" / "golden-schema-v2" / "rg-09.json"
 RG01_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-01.json"
 RG04_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-04.json"
+RG04_V2_PATH = REPOSITORY_ROOT / "docs" / "migrations" / "golden-v2" / "rg-04-expected.json"
 RG10_V1_PATH = REPOSITORY_ROOT / "golden" / "rules" / "rg-10.json"
 RG01_PATH_MAP = REPOSITORY_ROOT / "docs" / "migrations" / "golden-v2" / "rg-01-path-map.json"
 
@@ -330,9 +331,14 @@ def _rg04_import_baseline() -> tuple[dict, dict]:
         by_name = {item["metric"]: item for item in report["metrics"]}
         for metric in required_metrics:
             if metric not in by_name:
-                report["metrics"].append({"metric": metric, "applicability": "applicable", "currency": "CNY", "amount": "0.00"})
+                report["metrics"].append(
+                    {"metric": metric, "applicability": "not_applicable"}
+                    if metric == "budget"
+                    else {"metric": metric, "applicability": "applicable", "currency": "CNY", "amount": "0.00"}
+                )
         budget = next(item for item in report["metrics"] if item["metric"] == "budget")
-        budget.update(applicability="applicable", currency="CNY", amount="0.00")
+        budget.clear()
+        budget.update(metric="budget", applicability="not_applicable")
     return case, baseline
 
 
@@ -6172,6 +6178,24 @@ class GoldenV2OperationTests(unittest.TestCase):
 
 
 class GoldenV2ProjectionTests(unittest.TestCase):
+    def test_rg04_budget_requires_not_applicable_without_currency_or_amount(self):
+        case = load_golden_case_v2(RG04_V2_PATH)
+        validate_golden_case_v2(case)
+
+        budget = next(
+            metric
+            for metric in case["states"][0]["reports"][0]["metrics"]
+            if metric["metric"] == "budget"
+        )
+        budget.clear()
+        budget.update(
+            metric="budget",
+            applicability="applicable",
+            currency="CNY",
+            amount="0.00",
+        )
+        assert_invalid(self, case, r"\$\.states\[0\]\.reports")
+
     def test_rejects_rg01_report_and_reconciliation_summary_mutation(self):
         report = load_rg01()
         report["states"][1]["reports"][0]["metrics"][0]["amount"] = "35.81"
