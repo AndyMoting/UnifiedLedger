@@ -1,0 +1,45 @@
+{
+  "approval_status": "approved",
+  "case": "RG-04",
+  "canonicalization": {
+    "encoding": "UTF-8",
+    "key_order": "sorted",
+    "separators": [",", ":"],
+    "scope": "parsed expected/output JSON"
+  },
+  "contract": "unifiedledger.golden-case",
+  "contract_version": "2.0.0",
+  "discovery": {
+    "approval": "explicit user approval",
+    "comparison": "26-operation full comparison",
+    "explicit_user_approval": true,
+    "full_comparison_operation_count": 26,
+    "status": "approved expected output independently reviewed and explicitly approved"
+  },
+  "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",
+  "expected_byte_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+  "expected_path": "docs/migrations/golden-v2/rg-04-expected.json",
+  "hashes": {
+    "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",
+    "expected_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+    "output_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+    "source_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d"
+  },
+  "object_counts": {
+    "operations": 26,
+    "roots": 17,
+    "states": 43
+  },
+  "operation_status_counts": {
+    "accepted": 6,
+    "no_change": 6,
+    "rejected": 14
+  },
+  "output_byte_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+  "output_path": "golden/rules-v2/rg-04.json",
+  "output_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+  "publication_status": "published",
+  "source_byte_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d",
+  "source_path": "golden/rules/rg-04.json",
+  "source_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d"
+}
