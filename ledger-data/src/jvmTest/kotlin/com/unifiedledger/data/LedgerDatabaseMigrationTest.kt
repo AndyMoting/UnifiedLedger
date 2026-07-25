@@ -22,7 +22,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 1, 6)
                 driver.execute(null, "INSERT INTO rg04_operation_request VALUES ('ledger-a','rg04-existing','CREDIT_PRINCIPAL_REPAYMENT')", 0)
             }
-            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 7) }
+                JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 8) }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
                 assertEquals(1L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
@@ -139,14 +139,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionSeven() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionEight() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(7, LedgerDatabase.Schema.version)
+            assertEquals(8, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -256,7 +256,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionSevenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionEightAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -271,7 +271,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 7)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 8)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -442,7 +442,7 @@ private fun migrationSqliteProperties(): Properties = Properties().apply {
     setProperty("busy_timeout", "5000")
 }
 
-private val VERSION_ONE_STATEMENTS = listOf(
+internal val VERSION_ONE_STATEMENTS = listOf(
     """
         CREATE TABLE ledger_transaction (
           transaction_id TEXT NOT NULL PRIMARY KEY,

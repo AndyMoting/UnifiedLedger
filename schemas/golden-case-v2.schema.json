@@ -332,6 +332,8 @@
         {"$ref": "#/$defs/completeMixedPaymentSource"},
         {"$ref": "#/$defs/missingFundingLegMixedPaymentSource"},
         {"$ref": "#/$defs/mixedPaymentMirrorSource"},
+        {"$ref": "#/$defs/mergedPaymentBankFactSource"},
+        {"$ref": "#/$defs/mergedPaymentItemFactSource"},
         {"$ref": "#/$defs/reconciliationEvidenceSource"}
       ]
     },
@@ -415,6 +417,40 @@
     "mixedPaymentMirrorSource": {
       "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
       "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "mixed_payment"}, "payload": {"$ref": "#/$defs/mixedPaymentMirrorSourcePayload"}}
+    },
+    "mergedPaymentBankFactSource": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "merged_payment_bank_fact"},
+        "payload": {"$ref": "#/$defs/mergedPaymentBankFactSourcePayload"}
+      }
+    },
+    "mergedPaymentBankFactSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence_id", "observed_at", "details", "amount", "currency", "completeness"],
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"},
+        "details": {"type": "string"}, "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1}, "completeness": {"const": "complete"}
+      }
+    },
+    "mergedPaymentItemFactSource": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "merged_payment_item_fact"},
+        "payload": {"$ref": "#/$defs/mergedPaymentItemFactSourcePayload"}
+      }
+    },
+    "mergedPaymentItemFactSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "evidence_id", "evidence_kind", "observed_at", "details", "amount", "currency", "suggested_category_id", "completeness"],
+      "properties": {
+        "item_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"},
+        "evidence_kind": {"enum": ["item_receipt", "item_summary"]},
+        "observed_at": {"$ref": "#/$defs/timestamp"}, "details": {"type": "string"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "suggested_category_id": {"$ref": "#/$defs/id"}, "completeness": {"enum": ["complete", "summary_only"]}
+      }
     },
     "completeMixedPaymentInputSourceRecord": {
       "type": "object", "additionalProperties": false,
@@ -525,8 +561,42 @@
         {"$ref": "#/$defs/balanceAdjustmentCandidate"},
         {"$ref": "#/$defs/completeAccountTransferCandidate"},
         {"$ref": "#/$defs/incompleteAccountTransferCandidate"},
-        {"$ref": "#/$defs/mixedPaymentCandidate"}
+        {"$ref": "#/$defs/mixedPaymentCandidate"},
+        {"$ref": "#/$defs/mergedPaymentCandidate"}
       ]
+    },
+    "mergedPaymentCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "merged_payment"},
+        "source_ids": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"const": "1.00"}, "payload": {"$ref": "#/$defs/mergedPaymentCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "mergedPaymentCandidatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_total", "currency", "bank_source_id", "item_source_ids", "item_proposals", "evidence_refs", "provenance", "requires_confirmation"],
+      "properties": {
+        "payment_total": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "bank_source_id": {"$ref": "#/$defs/id"},
+        "item_source_ids": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "item_proposals": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/mergedPaymentItemProposal"}},
+        "evidence_refs": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "provenance": {"type": "object", "additionalProperties": false, "required": ["rule", "rule_version"], "properties": {"rule": {"const": "merged_payment_facts"}, "rule_version": {"const": 1}}},
+        "requires_confirmation": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["funding_account_id", "secondary_categories", "allocation_closure", "formal_transaction_creation"]}},
+        "transaction_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "mergedPaymentItemProposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "amount", "currency", "suggested_category_id", "source_id", "evidence_id"],
+      "properties": {
+        "item_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1}, "suggested_category_id": {"$ref": "#/$defs/id"},
+        "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}
+      }
     },
     "mixedPaymentCandidate": {
       "type": "object", "additionalProperties": false,
@@ -779,7 +849,9 @@
         {"$ref": "#/$defs/confirmedActualExpiryEvidence"},
         {"$ref": "#/$defs/transferRecordEvidence"},
         {"$ref": "#/$defs/assetFundingDebitEvidence"},
-        {"$ref": "#/$defs/creditLiabilityMirrorEvidence"}
+        {"$ref": "#/$defs/creditLiabilityMirrorEvidence"},
+        {"$ref": "#/$defs/bankPaymentEvidence"},
+        {"$ref": "#/$defs/itemSummaryEvidence"}
       ]
     },
     "userBalanceObservationEvidence": {
@@ -847,6 +919,24 @@
           "required": ["observed_at"],
           "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
         }
+      }
+    },
+    "bankPaymentEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "bank_payment"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {"type": "object", "additionalProperties": false, "required": ["observed_at"], "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}}
+      }
+    },
+    "itemSummaryEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "item_summary"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {"type": "object", "additionalProperties": false, "required": ["observed_at"], "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}}
       }
     },
     "observedAtEvidence": {
@@ -931,6 +1021,12 @@
       ]
     },
     "relation": {
+      "oneOf": [
+        {"$ref": "#/$defs/mixedPaymentRelation"},
+        {"$ref": "#/$defs/mergedPaymentRelation"}
+      ]
+    },
+    "mixedPaymentRelation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "member_refs", "payload"],
@@ -996,6 +1092,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "mergedPaymentRelation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "member_refs", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "merged_payment"},
+        "member_refs": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["kind", "id"],
+            "properties": {"kind": {"enum": ["transaction", "posting", "domain_entity"]}, "id": {"$ref": "#/$defs/id"}}
+          }
+        },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["system_managed", "display_name", "generic_order_lifecycle", "payment_total", "currency"],
+          "properties": {
+            "system_managed": {"const": true}, "display_name": {"const": "合并付款"},
+            "generic_order_lifecycle": {"const": false}, "payment_total": {"$ref": "#/$defs/positiveDecimal"},
+            "currency": {"type": "string", "minLength": 1}
           }
         }
       }
@@ -1154,7 +1273,10 @@
             "category_id": {"$ref": "#/$defs/id"},
             "amount": {"$ref": "#/$defs/decimal"},
             "currency": {"type": "string", "minLength": 1},
-            "statistics_at": {"$ref": "#/$defs/timestamp"}
+            "statistics_at": {"$ref": "#/$defs/timestamp"},
+            "details": {"type": "string"}, "source_observed_at": {"$ref": "#/$defs/timestamp"},
+            "source_item_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"},
+            "evidence_id": {"$ref": "#/$defs/id"}
           }
         }
       }
@@ -1175,7 +1297,9 @@
             "expense_posting_id": {"$ref": "#/$defs/id"},
             "category_id": {"$ref": "#/$defs/id"},
             "amount": {"$ref": "#/$defs/decimal"},
-            "currency": {"type": "string", "minLength": 1}
+            "currency": {"type": "string", "minLength": 1},
+            "source_item_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"},
+            "evidence_id": {"$ref": "#/$defs/id"}
           }
         }
       }
@@ -1501,6 +1625,13 @@
         },
         {
           "properties": {
+            "target_kind": {"const": "relation"},
+            "status_name": {"const": "item_evidence_completeness"},
+            "value": {"enum": ["none", "partial", "complete"]}
+          }
+        },
+        {
+          "properties": {
             "target_kind": {"const": "domain_entity"},
             "status_name": {"const": "allocation_status"},
             "value": {"enum": ["active", "pending", "recognized", "superseded"]}
@@ -1805,6 +1936,129 @@
     "mergeMixedPaymentMirrorEvidenceInput": {
       "type": "object", "additionalProperties": false, "required": ["request_id", "source_record_id", "evidence_id", "transaction_id", "candidate_id", "account_id", "amount", "currency", "observed_at"],
       "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_record_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "mergedPaymentManualItemInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "amount", "currency", "category_id", "details", "source_observed_at"],
+      "properties": {
+        "item_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1}, "category_id": {"$ref": "#/$defs/id"},
+        "details": {"type": "string"}, "source_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "mergedPaymentSettlementExplanation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["original_amount", "discount_amount", "settled_amount"],
+      "properties": {
+        "original_amount": {"$ref": "#/$defs/positiveDecimal"}, "discount_amount": {"$ref": "#/$defs/decimal"},
+        "settled_amount": {"$ref": "#/$defs/positiveDecimal"}
+      }
+    },
+    "manualMergedPaymentInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "payment_at", "total_amount", "currency", "funding_account_id", "items", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "payment_at": {"$ref": "#/$defs/timestamp"},
+        "total_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "funding_account_id": {"$ref": "#/$defs/id"},
+        "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/mergedPaymentManualItemInput"}},
+        "settlement_explanation": {"$ref": "#/$defs/mergedPaymentSettlementExplanation"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "manualMergedPaymentAttemptedInput": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "payment_at": {"$ref": "#/$defs/timestamp"},
+        "total_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "currency": {"type": "string", "minLength": 1},
+        "funding_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "items": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"$ref": "#/$defs/mergedPaymentManualAttemptedItem"}},
+        "settlement_explanation": {"$ref": "#/$defs/mergedPaymentSettlementExplanation"},
+        "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "mergedPaymentManualAttemptedItem": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "item_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "currency": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "details": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "source_observed_at": {"anyOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]}
+      }
+    },
+    "mergedPaymentBankFactInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "observed_at", "details", "amount", "currency"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}, "details": {"type": "string"},
+        "amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}
+      }
+    },
+    "mergedPaymentItemFactInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "source_id", "evidence_id", "evidence_kind", "observed_at", "details", "amount", "currency", "suggested_category_id"],
+      "properties": {
+        "item_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"}, "evidence_kind": {"enum": ["item_receipt", "item_summary"]},
+        "observed_at": {"$ref": "#/$defs/timestamp"}, "details": {"type": "string"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "suggested_category_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "ingestMergedPaymentFactsInput": {
+      "type": "object", "additionalProperties": false, "required": ["request_id", "bank_fact", "item_facts"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "bank_fact": {"$ref": "#/$defs/mergedPaymentBankFactInput"},
+        "item_facts": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/mergedPaymentItemFactInput"}}
+      }
+    },
+    "mergedPaymentConfirmationItemInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "category_id", "allocation_amount", "currency"],
+      "properties": {
+        "item_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"},
+        "allocation_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}
+      }
+    },
+    "confirmMergedPaymentCandidateInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "candidate_id", "funding_account_id", "payment_at", "common_statistics_at", "items", "explicit_confirmation"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"},
+        "funding_account_id": {"$ref": "#/$defs/id"}, "payment_at": {"$ref": "#/$defs/timestamp"},
+        "common_statistics_at": {"$ref": "#/$defs/timestamp"},
+        "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/mergedPaymentConfirmationItemInput"}},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "confirmMergedPaymentCandidateAttemptedInput": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["request_id", "candidate_id", "payment_total", "allocation_total", "currency", "explicit_confirmation"],
+          "properties": {
+            "request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"},
+            "payment_total": {"$ref": "#/$defs/attemptedDecimal"}, "allocation_total": {"$ref": "#/$defs/attemptedDecimal"},
+            "currency": {"type": "string", "minLength": 1}, "explicit_confirmation": {"const": true}
+          }
+        },
+        {"$ref": "#/$defs/confirmMergedPaymentCandidateInput"}
+      ]
+    },
+    "mergeItemReceiptEvidenceInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "source_id", "evidence_id", "item_allocation_id", "observed_at", "details", "amount", "currency"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"}, "item_allocation_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}, "details": {"type": "string"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}
+      }
     },
     "createPeriodicAllocationInput": {
       "type": "object", "additionalProperties": false,
@@ -2493,6 +2747,8 @@
             "confirm_account_transfer_candidate", "import_mirror_record", "import_incomplete_source",
             "manual_mixed_expense", "credit_principal_repayment", "ingest_mixed_payment_source",
             "confirm_mixed_payment_candidate", "merge_mixed_payment_mirror_evidence",
+            "manual_merged_payment", "ingest_merged_payment_facts",
+            "confirm_merged_payment_candidate", "merge_item_receipt_evidence",
             "create_periodic_allocation", "recognize_periodic_allocation_installment",
             "revise_periodic_allocation", "correct_transaction_version"
           ]
@@ -2544,6 +2800,14 @@
             {"properties": {"action_type": {"const": "ingest_mixed_payment_source"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
             {"properties": {"action_type": {"const": "confirm_mixed_payment_candidate"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
             {"properties": {"action_type": {"const": "merge_mixed_payment_mirror_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}}},
+            {"properties": {"action_type": {"const": "manual_merged_payment"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/manualMergedPaymentInput"}}},
+            {"properties": {"action_type": {"const": "manual_merged_payment"}, "operation_class": {"const": "rejection"}, "outcome": {"properties": {"status": {"const": "rejected"}}}, "attempted_input": {"$ref": "#/$defs/manualMergedPaymentAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "ingest_merged_payment_facts"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/ingestMergedPaymentFactsInput"}}},
+            {"properties": {"action_type": {"const": "ingest_merged_payment_facts"}, "operation_class": {"const": "rejection"}, "outcome": {"properties": {"status": {"const": "rejected"}}}, "attempted_input": {"$ref": "#/$defs/ingestMergedPaymentFactsInput"}}},
+            {"properties": {"action_type": {"const": "confirm_merged_payment_candidate"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/confirmMergedPaymentCandidateInput"}}},
+            {"properties": {"action_type": {"const": "confirm_merged_payment_candidate"}, "operation_class": {"const": "rejection"}, "outcome": {"properties": {"status": {"const": "rejected"}}}, "attempted_input": {"$ref": "#/$defs/confirmMergedPaymentCandidateAttemptedInput"}}},
+            {"properties": {"action_type": {"const": "merge_item_receipt_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/mergeItemReceiptEvidenceInput"}}},
+            {"properties": {"action_type": {"const": "merge_item_receipt_evidence"}, "operation_class": {"const": "rejection"}, "outcome": {"properties": {"status": {"const": "rejected"}}}, "attempted_input": {"$ref": "#/$defs/mergeItemReceiptEvidenceInput"}}},
             {"properties": {"action_type": {"const": "create_periodic_allocation"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/createPeriodicAllocationInput"}}},
             {"properties": {"action_type": {"const": "create_periodic_allocation"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/periodicAllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/createPeriodicAllocationAttemptedInput"}}},
             {"properties": {"action_type": {"const": "recognize_periodic_allocation_installment"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/recognizePeriodicAllocationInstallmentInput"}}},

@@ -2274,3 +2274,355 @@ JOIN transaction_version AS version
 
 foreignKeysEnabled:
 PRAGMA foreign_keys;
+
+CREATE TABLE rg05_operation_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('MANUAL_MERGED_PAYMENT', 'INGEST_MERGED_PAYMENT_FACTS', 'CONFIRM_MERGED_PAYMENT_CANDIDATE', 'MERGE_ITEM_RECEIPT_EVIDENCE')),
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE rg05_source_record (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL, source_type TEXT NOT NULL CHECK (source_type IN ('BANK_FACT', 'ITEM_FACT')),
+  evidence_id TEXT NOT NULL, item_id TEXT, evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('BANK_PAYMENT', 'ITEM_RECEIPT', 'ITEM_SUMMARY')),
+  observed_at TEXT NOT NULL, details TEXT NOT NULL, amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  suggested_category_id TEXT, completeness TEXT NOT NULL CHECK (completeness IN ('COMPLETE', 'SUMMARY_ONLY')),
+  PRIMARY KEY (ledger_id, source_id), UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, source_id, evidence_id),
+  CHECK ((source_type = 'BANK_FACT' AND item_id IS NULL AND evidence_kind = 'BANK_PAYMENT' AND amount_minor < 0 AND suggested_category_id IS NULL AND completeness = 'COMPLETE')
+      OR (source_type = 'ITEM_FACT' AND item_id IS NOT NULL AND evidence_kind != 'BANK_PAYMENT' AND amount_minor > 0 AND suggested_category_id IS NOT NULL))
+);
+CREATE TABLE rg05_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL, source_id TEXT NOT NULL,
+  evidence_type TEXT NOT NULL CHECK (evidence_type IN ('BANK_PAYMENT', 'ITEM_RECEIPT', 'ITEM_SUMMARY')), observed_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id, evidence_id) REFERENCES rg05_source_record(ledger_id, source_id, evidence_id)
+);
+CREATE TABLE rg05_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, bank_source_id TEXT NOT NULL,
+  payment_total_minor INTEGER NOT NULL CHECK (payment_total_minor > 0), currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0), rule_name TEXT NOT NULL CHECK (rule_name = 'merged_payment_facts'),
+  rule_version INTEGER NOT NULL CHECK (rule_version = 1), confidence TEXT NOT NULL CHECK (confidence = '1.00'),
+  PRIMARY KEY (ledger_id, candidate_id), FOREIGN KEY (ledger_id, bank_source_id) REFERENCES rg05_source_record(ledger_id, source_id)
+);
+CREATE TABLE rg05_candidate_item (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, item_index INTEGER NOT NULL CHECK (item_index IN (0, 1)),
+  item_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, suggested_category_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id, item_index), UNIQUE (ledger_id, candidate_id, item_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg05_candidate(ledger_id, candidate_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, source_id, evidence_id) REFERENCES rg05_source_record(ledger_id, source_id, evidence_id)
+);
+CREATE TABLE rg05_candidate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence IN (1, 2)),
+  status_id TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED')), request_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence), UNIQUE (ledger_id, status_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg05_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id)
+);
+CREATE TABLE rg05_confirmation_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, funding_account_id TEXT NOT NULL,
+  payment_at TEXT NOT NULL, statistics_at TEXT NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_candidate_confirmation'),
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg05_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE rg05_confirmation_allocation (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, allocation_index INTEGER NOT NULL CHECK (allocation_index IN (0, 1)),
+  item_id TEXT NOT NULL, category_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, request_id, allocation_index), UNIQUE (ledger_id, request_id, item_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_confirmation_snapshot(ledger_id, request_id) ON DELETE CASCADE
+);
+CREATE TABLE rg05_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT, transaction_id TEXT NOT NULL,
+  confirmation_kind TEXT NOT NULL CHECK (confirmation_kind IN ('EXPLICIT_MANUAL_SAVE', 'CANDIDATE_CONFIRMATION')),
+  PRIMARY KEY (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_merged_payment_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  statistics_at TEXT NOT NULL,
+  total_minor INTEGER NOT NULL CHECK (total_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  funding_account_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL UNIQUE,
+  relation_id TEXT NOT NULL UNIQUE,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_item_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  item_index INTEGER NOT NULL CHECK (item_index IN (0, 1)),
+  item_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL,
+  details TEXT NOT NULL,
+  source_observed_at TEXT NOT NULL,
+  consumption_id TEXT NOT NULL UNIQUE,
+  allocation_id TEXT NOT NULL UNIQUE,
+  source_id TEXT,
+  evidence_id TEXT,
+  expense_posting_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id, item_index),
+  UNIQUE (ledger_id, request_id, item_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (expense_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_posting_semantic (
+  ledger_id TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('expense', 'payment_asset')),
+  item_id TEXT,
+  category_id TEXT,
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)),
+  PRIMARY KEY (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((role = 'expense' AND item_id IS NOT NULL AND category_id IS NOT NULL AND reconciliation_eligible = 0)
+      OR (role = 'payment_asset' AND item_id IS NULL AND category_id IS NULL AND reconciliation_eligible = 1))
+);
+
+CREATE TABLE rg05_relation (
+  ledger_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  payment_posting_id TEXT NOT NULL,
+  display_name TEXT NOT NULL CHECK (display_name = '合并付款'),
+  payment_total_minor INTEGER NOT NULL CHECK (payment_total_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  PRIMARY KEY (ledger_id, relation_id),
+  UNIQUE (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (payment_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_relation_item (
+  ledger_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL,
+  item_index INTEGER NOT NULL CHECK (item_index IN (0, 1)),
+  item_id TEXT NOT NULL,
+  expense_posting_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  category_id TEXT NOT NULL,
+  business_evidence_completeness TEXT NOT NULL CHECK (business_evidence_completeness IN ('NONE', 'PARTIAL', 'COMPLETE')),
+  PRIMARY KEY (ledger_id, relation_id, item_index),
+  UNIQUE (ledger_id, relation_id, item_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg05_relation(ledger_id, relation_id) ON DELETE CASCADE,
+  FOREIGN KEY (expense_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_receipt_evidence (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  allocation_id TEXT NOT NULL,
+  evidence_link_id TEXT NOT NULL UNIQUE,
+  item_index INTEGER NOT NULL CHECK (item_index IN (0, 1)),
+  observed_at TEXT NOT NULL,
+  details TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg05_relation(ledger_id, relation_id)
+);
+
+CREATE TABLE rg05_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('POSTING', 'ITEM_ALLOCATION')), target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('PAYMENT_ASSET_POSTING', 'ITEM_ALLOCATION_FACT')),
+  PRIMARY KEY (ledger_id, link_id), UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, target_kind, target_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg05_evidence(ledger_id, evidence_id),
+  CHECK ((target_kind = 'POSTING' AND role = 'PAYMENT_ASSET_POSTING') OR (target_kind = 'ITEM_ALLOCATION' AND role = 'ITEM_ALLOCATION_FACT'))
+);
+CREATE TABLE rg05_posting_reconciliation (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED', 'HAS_DIFFERENCE')),
+  PRIMARY KEY (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg05_operation_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  confirmation_id TEXT,
+  transaction_id TEXT,
+  relation_id TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES rg05_operation_request(ledger_id, request_id) ON DELETE CASCADE
+);
+
+claimRg05Request:
+INSERT INTO rg05_operation_request(ledger_id, request_id, action_type) VALUES (?, ?, ?);
+
+deleteRg05Request:
+DELETE FROM rg05_operation_request WHERE ledger_id = ? AND request_id = ?;
+
+selectRg05Action:
+SELECT action_type FROM rg05_operation_request WHERE ledger_id = ? AND request_id = ?;
+
+insertRg05MergedPaymentSnapshot:
+INSERT INTO rg05_merged_payment_snapshot(ledger_id, request_id, occurred_at, statistics_at, total_minor, currency_code, currency_precision, funding_account_id, transaction_id, relation_id, confirmation_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05ItemSnapshot:
+INSERT INTO rg05_item_snapshot(ledger_id, request_id, item_index, item_id, amount_minor, currency_code, currency_precision, category_id, details, source_observed_at, consumption_id, allocation_id, source_id, evidence_id, expense_posting_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05PostingSemantic:
+INSERT INTO rg05_posting_semantic(ledger_id, posting_id, role, item_id, category_id, reconciliation_eligible) VALUES (?, ?, ?, ?, ?, ?);
+
+insertRg05Relation:
+INSERT INTO rg05_relation(ledger_id, relation_id, transaction_id, payment_posting_id, display_name, payment_total_minor, currency_code, currency_precision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05RelationItem:
+INSERT INTO rg05_relation_item(ledger_id, relation_id, item_index, item_id, expense_posting_id, amount_minor, category_id, business_evidence_completeness)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05OperationReceipt:
+INSERT INTO rg05_operation_receipt(ledger_id, request_id, outcome, confirmation_id, transaction_id, relation_id) VALUES (?, ?, ?, ?, ?, ?);
+
+selectRg05Commit:
+SELECT snapshot.confirmation_id, snapshot.transaction_id, snapshot.relation_id,
+  snapshot.occurred_at, snapshot.statistics_at, snapshot.total_minor,
+  snapshot.currency_code, snapshot.currency_precision, snapshot.funding_account_id
+FROM rg05_merged_payment_snapshot AS snapshot
+WHERE snapshot.ledger_id = ? AND snapshot.request_id = ?;
+
+selectRg05Items:
+SELECT item_index, item_id, amount_minor, currency_code, currency_precision, category_id, details, source_observed_at, consumption_id, allocation_id, source_id, evidence_id, expense_posting_id
+FROM rg05_item_snapshot WHERE ledger_id = ? AND request_id = ? ORDER BY item_index;
+
+insertRg05Source:
+INSERT INTO rg05_source_record(ledger_id, source_id, source_type, evidence_id, item_id, evidence_kind, observed_at, details, amount_minor, currency_code, currency_precision, suggested_category_id, completeness)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05Evidence:
+INSERT INTO rg05_evidence(ledger_id, evidence_id, source_id, evidence_type, observed_at) VALUES (?, ?, ?, ?, ?);
+
+insertRg05Candidate:
+INSERT INTO rg05_candidate(ledger_id, candidate_id, bank_source_id, payment_total_minor, currency_code, currency_precision, rule_name, rule_version, confidence)
+VALUES (?, ?, ?, ?, ?, ?, 'merged_payment_facts', 1, '1.00');
+
+insertRg05CandidateItem:
+INSERT INTO rg05_candidate_item(ledger_id, candidate_id, item_index, item_id, source_id, evidence_id, amount_minor, currency_code, currency_precision, suggested_category_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertRg05CandidateStatus:
+INSERT INTO rg05_candidate_status_history(ledger_id, candidate_id, status_sequence, status_id, status, request_id) VALUES (?, ?, ?, ?, ?, ?);
+
+selectRg05Candidate:
+SELECT candidate_id, bank_source_id, payment_total_minor, currency_code, currency_precision,
+  (SELECT status FROM rg05_candidate_status_history AS history WHERE history.ledger_id = candidate.ledger_id AND history.candidate_id = candidate.candidate_id ORDER BY status_sequence DESC LIMIT 1) AS status
+FROM rg05_candidate AS candidate WHERE ledger_id = ? AND candidate_id = ?;
+
+selectRg05CandidateItems:
+SELECT item_index, item_id, source_id, evidence_id, amount_minor, currency_code, currency_precision, suggested_category_id
+FROM rg05_candidate_item WHERE ledger_id = ? AND candidate_id = ? ORDER BY item_index;
+
+selectRg05Source:
+SELECT source_id, source_type, evidence_id, item_id, evidence_kind, observed_at, details, amount_minor, currency_code, currency_precision, suggested_category_id, completeness
+FROM rg05_source_record WHERE ledger_id = ? AND source_id = ?;
+
+insertRg05ConfirmationSnapshot:
+INSERT INTO rg05_confirmation_snapshot(ledger_id, request_id, candidate_id, funding_account_id, payment_at, statistics_at, confirmation_marker)
+VALUES (?, ?, ?, ?, ?, ?, 'explicit_candidate_confirmation');
+
+insertRg05ConfirmationAllocation:
+INSERT INTO rg05_confirmation_allocation(ledger_id, request_id, allocation_index, item_id, category_id, amount_minor, currency_code, currency_precision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectRg05ConfirmationSnapshot:
+SELECT candidate_id, funding_account_id, payment_at, statistics_at FROM rg05_confirmation_snapshot WHERE ledger_id = ? AND request_id = ?;
+
+selectRg05ConfirmationAllocations:
+SELECT allocation_index, item_id, category_id, amount_minor, currency_code, currency_precision
+FROM rg05_confirmation_allocation WHERE ledger_id = ? AND request_id = ? ORDER BY allocation_index;
+
+insertRg05Confirmation:
+INSERT INTO rg05_confirmation(ledger_id, confirmation_id, request_id, candidate_id, transaction_id, confirmation_kind) VALUES (?, ?, ?, ?, ?, ?);
+
+insertRg05EvidenceLink:
+INSERT INTO rg05_evidence_link(ledger_id, link_id, evidence_id, target_kind, target_id, role) VALUES (?, ?, ?, ?, ?, ?);
+
+insertRg05PostingReconciliation:
+INSERT INTO rg05_posting_reconciliation(ledger_id, reconciliation_id, posting_id, status) VALUES (?, ?, ?, ?);
+
+insertRg05ReceiptEvidence:
+INSERT INTO rg05_receipt_evidence(ledger_id, request_id, relation_id, source_id, evidence_id, item_id, allocation_id, evidence_link_id, item_index, observed_at, details, amount_minor, currency_code, currency_precision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectRg05ReceiptCommit:
+SELECT receipt.relation_id, receipt.source_id, receipt.evidence_id, receipt.item_id, receipt.allocation_id, receipt.evidence_link_id,
+  receipt.item_index, receipt.observed_at, receipt.details, receipt.amount_minor, receipt.currency_code, receipt.currency_precision
+FROM rg05_receipt_evidence AS receipt WHERE receipt.ledger_id = ? AND receipt.request_id = ?;
+
+selectRg05AllocationTarget:
+SELECT item.relation_id, item.item_index, item.item_id, item.amount_minor, item.category_id, item.business_evidence_completeness,
+  snapshot.allocation_id, snapshot.currency_code, snapshot.currency_precision
+FROM rg05_relation_item AS item
+JOIN rg05_relation AS relation ON relation.ledger_id = item.ledger_id AND relation.relation_id = item.relation_id
+JOIN rg05_merged_payment_snapshot AS payment ON payment.ledger_id = relation.ledger_id AND payment.transaction_id = relation.transaction_id
+JOIN rg05_item_snapshot AS snapshot ON snapshot.ledger_id = payment.ledger_id AND snapshot.request_id = payment.request_id AND snapshot.item_id = item.item_id
+WHERE item.ledger_id = ? AND snapshot.allocation_id = ?;
+
+updateRg05RelationCompleteness:
+UPDATE rg05_relation_item SET business_evidence_completeness = ?
+WHERE ledger_id = ? AND relation_id = ? AND item_id = ?;
+
+selectRg05RelationCompleteness:
+SELECT business_evidence_completeness FROM rg05_relation_item WHERE ledger_id = ? AND relation_id = ? ORDER BY item_index;
+
+countRg05Sources:
+SELECT count(*) FROM rg05_source_record;
+
+countRg05Evidence:
+SELECT count(*) FROM rg05_evidence;
+
+countRg05Candidates:
+SELECT count(*) FROM rg05_candidate;
+
+countRg05CandidateStatuses:
+SELECT count(*) FROM rg05_candidate_status_history;
+
+countRg05EvidenceLinks:
+SELECT count(*) FROM rg05_evidence_link;
+
+countRg05PostingReconciliations:
+SELECT count(*) FROM rg05_posting_reconciliation;
+
+countRg05OperationRequests:
+SELECT count(*) FROM rg05_operation_request;
+
+countRg05MergedPayments:
+SELECT count(*) FROM rg05_merged_payment_snapshot;
+
+countRg05Items:
+SELECT count(*) FROM rg05_item_snapshot;
+
+countRg05Relations:
+SELECT count(*) FROM rg05_relation;
+
+countRg05RelationItems:
+SELECT count(*) FROM rg05_relation_item;
+
+countRg05Receipts:
+SELECT count(*) FROM rg05_receipt_evidence;
