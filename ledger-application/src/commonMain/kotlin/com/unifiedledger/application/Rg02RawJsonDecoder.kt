@@ -216,20 +216,3 @@ private fun rg02Invalid(value: JsonObject, path: String): Rg02DecodedInvalidOper
     val input = Rg02DecodedManualIncomeInput(Rg02JsonField.Omitted, Rg02JsonField.Omitted, inputObject.field("amount", "$path.input"), Rg02JsonField.Omitted, inputObject.field("category_id", "$path.input"), inputObject.field("receiving_account_id", "$path.input"), Rg02JsonField.Omitted, Rg02JsonField.Omitted)
     return Rg02DecodedInvalidOperation(sourceId, input, outcome(requireObj(value, "expected", "$path.expected"), "$path.expected"))
 }
-
-private sealed interface Rg02JsonScanIssue { data class DuplicateKey(val path: String) : Rg02JsonScanIssue; data class ResourceLimit(val path: String) : Rg02JsonScanIssue }
-private class Rg02DuplicateKeyScanner(private val text: String) {
-    private var index = 0
-    fun scan(): Rg02JsonScanIssue? = try { skipWhitespace(); value("$", 0); skipWhitespace(); if (index != text.length) throw IllegalArgumentException(); null } catch (duplicate: DuplicateKey) { Rg02JsonScanIssue.DuplicateKey(duplicate.path) } catch (limit: ResourceLimit) { Rg02JsonScanIssue.ResourceLimit(limit.path) } catch (_: Exception) { null }
-    private fun value(path: String, parentDepth: Int) { skipWhitespace(); when (text.getOrNull(index)) { '{' -> obj(path, parentDepth + 1); '[' -> arr(path, parentDepth + 1); '"' -> string(); 't' -> literal("true"); 'f' -> literal("false"); 'n' -> literal("null"); '-', in '0'..'9' -> number(); else -> throw IllegalArgumentException() } }
-    private fun obj(path: String, depth: Int) { checkDepth(path, depth); index++; val keys = mutableSetOf<String>(); skipWhitespace(); if (take('}')) return; while (true) { skipWhitespace(); val key = string(); if (!keys.add(key)) throw DuplicateKey(path); skipWhitespace(); expect(':'); value("$path.$key", depth); skipWhitespace(); if (take('}')) return; expect(',') } }
-    private fun arr(path: String, depth: Int) { checkDepth(path, depth); index++; skipWhitespace(); if (take(']')) return; var i = 0; while (true) { value("$path[$i]", depth); i++; skipWhitespace(); if (take(']')) return; expect(',') } }
-    private fun checkDepth(path: String, depth: Int) { if (depth > 64) throw ResourceLimit(path) }
-    private fun string(): String { expect('"'); val start = index; var escaped = false; while (index < text.length) { val c = text[index++]; if (c == '"' && !escaped) { val token = "\"${text.substring(start, index - 1)}\""; return try { Json.parseToJsonElement(token).jsonPrimitive.content } catch (_: Exception) { throw IllegalArgumentException() } }; escaped = c == '\\' && !escaped }; throw IllegalArgumentException() }
-    private fun literal(value: String) { if (!text.startsWith(value, index)) throw IllegalArgumentException(); index += value.length }
-    private fun number() { if (text[index] == '-') index++; while (text.getOrNull(index)?.isDigit() == true) index++; if (take('.')) while (text.getOrNull(index)?.isDigit() == true) index++; if (text.getOrNull(index) in listOf('e', 'E')) { index++; if (text.getOrNull(index) in listOf('+', '-')) index++; while (text.getOrNull(index)?.isDigit() == true) index++ } }
-    private fun skipWhitespace() { while (text.getOrNull(index)?.isWhitespace() == true) index++ }
-    private fun expect(c: Char) { if (!take(c)) throw IllegalArgumentException() }
-    private fun take(c: Char): Boolean = if (text.getOrNull(index) == c) { index++; true } else false
-    private class DuplicateKey(val path: String) : RuntimeException(); private class ResourceLimit(val path: String) : RuntimeException()
-}

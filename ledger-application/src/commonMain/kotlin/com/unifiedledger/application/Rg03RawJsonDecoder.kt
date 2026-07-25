@@ -18,7 +18,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 enum class Rg03RawJsonContractErrorReason {
     MALFORMED_JSON,
@@ -922,87 +921,3 @@ private val ORACLE_INTEGER_FIELDS = setOf(
     "rule_version", "suspense_posting_count",
 )
 
-private sealed interface Rg03JsonScanIssue {
-    data class DuplicateKey(val path: String) : Rg03JsonScanIssue
-    data class ResourceLimit(val path: String) : Rg03JsonScanIssue
-}
-
-private class Rg03DuplicateKeyScanner(private val text: String) {
-    private var index = 0
-    fun scan(): Rg03JsonScanIssue? = try {
-        skipWhitespace(); value("$", 0); skipWhitespace()
-        if (index != text.length) throw IllegalArgumentException()
-        null
-    } catch (failure: DuplicateKey) {
-        Rg03JsonScanIssue.DuplicateKey(failure.path)
-    } catch (failure: ResourceLimit) {
-        Rg03JsonScanIssue.ResourceLimit(failure.path)
-    } catch (_: Exception) {
-        null
-    }
-    private fun value(path: String, parentDepth: Int) {
-        skipWhitespace()
-        when (text.getOrNull(index)) {
-            '{' -> obj(path, parentDepth + 1)
-            '[' -> arr(path, parentDepth + 1)
-            '"' -> string()
-            't' -> literal("true")
-            'f' -> literal("false")
-            'n' -> literal("null")
-            '-', in '0'..'9' -> number()
-            else -> throw IllegalArgumentException()
-        }
-    }
-    private fun obj(path: String, depth: Int) {
-        checkDepth(path, depth); index++
-        val keys = mutableSetOf<String>(); skipWhitespace()
-        if (take('}')) return
-        while (true) {
-            skipWhitespace(); val key = string()
-            if (!keys.add(key)) throw DuplicateKey("$path.$key")
-            skipWhitespace(); expect(':'); value("$path.$key", depth); skipWhitespace()
-            if (take('}')) return
-            expect(',')
-        }
-    }
-    private fun arr(path: String, depth: Int) {
-        checkDepth(path, depth); index++; skipWhitespace()
-        if (take(']')) return
-        var item = 0
-        while (true) {
-            value("$path[$item]", depth); item++; skipWhitespace()
-            if (take(']')) return
-            expect(',')
-        }
-    }
-    private fun checkDepth(path: String, depth: Int) { if (depth > 64) throw ResourceLimit(path) }
-    private fun string(): String {
-        expect('"'); val start = index; var escaped = false
-        while (index < text.length) {
-            val character = text[index++]
-            if (character == '"' && !escaped) {
-                return try {
-                    Json.parseToJsonElement("\"${text.substring(start, index - 1)}\"").jsonPrimitive.content
-                } catch (_: Exception) { throw IllegalArgumentException() }
-            }
-            escaped = character == '\\' && !escaped
-        }
-        throw IllegalArgumentException()
-    }
-    private fun literal(value: String) { if (!text.startsWith(value, index)) throw IllegalArgumentException(); index += value.length }
-    private fun number() {
-        if (text[index] == '-') index++
-        while (text.getOrNull(index)?.isDigit() == true) index++
-        if (take('.')) while (text.getOrNull(index)?.isDigit() == true) index++
-        if (text.getOrNull(index) in listOf('e', 'E')) {
-            index++
-            if (text.getOrNull(index) in listOf('+', '-')) index++
-            while (text.getOrNull(index)?.isDigit() == true) index++
-        }
-    }
-    private fun skipWhitespace() { while (text.getOrNull(index)?.isWhitespace() == true) index++ }
-    private fun expect(character: Char) { if (!take(character)) throw IllegalArgumentException() }
-    private fun take(character: Char): Boolean = if (text.getOrNull(index) == character) { index++; true } else false
-    private class DuplicateKey(val path: String) : RuntimeException()
-    private class ResourceLimit(val path: String) : RuntimeException()
-}

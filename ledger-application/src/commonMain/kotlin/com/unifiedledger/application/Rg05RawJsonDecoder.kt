@@ -18,7 +18,8 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
         return Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError(issue.path, when (issue.reason) {
             StrictJsonPreflightReason.RESOURCE_LIMIT -> Rg05RawJsonContractErrorReason.RESOURCE_LIMIT
             StrictJsonPreflightReason.DUPLICATE_KEY -> Rg05RawJsonContractErrorReason.DUPLICATE_KEY
-            StrictJsonPreflightReason.MALFORMED_JSON, StrictJsonPreflightReason.OBJECT_ROOT_REQUIRED -> Rg05RawJsonContractErrorReason.MALFORMED_JSON
+            StrictJsonPreflightReason.MALFORMED_JSON -> Rg05RawJsonContractErrorReason.MALFORMED_JSON
+            StrictJsonPreflightReason.OBJECT_ROOT_REQUIRED -> Rg05RawJsonContractErrorReason.WRONG_TYPE
         }))
     }
     val root = try { rg05Json.parseToJsonElement(raw).jsonObject } catch (_: Exception) {

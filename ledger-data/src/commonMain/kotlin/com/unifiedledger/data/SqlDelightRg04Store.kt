@@ -158,5 +158,18 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected = when (thi
     MixedPaymentViolation.ExpenseCategoryRequired -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.EXPENSE_CATEGORY_REQUIRED, "category_id")
     MixedPaymentViolation.SingleCurrencyRequired -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.SINGLE_CURRENCY_REQUIRED, "funding_components")
     MixedPaymentViolation.AssetAndCreditLiabilityRequired -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.ASSET_AND_CREDIT_LIABILITY_REQUIRED, "funding_components")
-    else -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.ASSET_AND_CREDIT_LIABILITY_REQUIRED, "funding_components")
+    DomainViolation.ArithmeticOverflow,
+    DomainViolation.InvalidPostingSet,
+    DomainViolation.UnbalancedPostingSet,
+    DomainViolation.InvalidFormalTransaction,
+    DomainViolation.InvalidMixedPayment -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
+    DomainViolation.InvalidCatalog,
+    DomainViolation.InvalidOrdinaryExpense,
+    DomainViolation.InvalidOrdinaryIncome,
+    DomainViolation.InvalidBalanceReplay,
+    DomainViolation.InvalidMergedPayment,
+    is OrdinaryExpenseViolation,
+    is OrdinaryIncomeViolation,
+    is AccountTransferViolation,
+    is MergedPaymentViolation -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
 }
