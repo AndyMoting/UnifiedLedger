@@ -96,6 +96,7 @@ enum class Rg04ExecutionError {
     REAL_FINANCIAL_ACCOUNT_REQUIRED, OWNED_ACCOUNT_REQUIRED, SECONDARY_CATEGORY_REQUIRED,
     CATEGORY_INACTIVE, EXPENSE_CATEGORY_REQUIRED, SINGLE_CURRENCY_REQUIRED,
     ASSET_AND_CREDIT_LIABILITY_REQUIRED,
+    INTERNAL_DOMAIN_VIOLATION,
 }
 sealed interface Rg04ExecutionResult {
     data class Accepted(val confirmationId: String, val transactionId: TransactionId) : Rg04ExecutionResult

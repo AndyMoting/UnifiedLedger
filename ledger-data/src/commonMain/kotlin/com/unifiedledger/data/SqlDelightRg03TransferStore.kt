@@ -768,7 +768,20 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected = whe
         Rg03ExecutionError.ASSET_ACCOUNT_REQUIRED,
         field.inputField(),
     )
-    else -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
+    DomainViolation.ArithmeticOverflow,
+    DomainViolation.InvalidPostingSet,
+    DomainViolation.UnbalancedPostingSet,
+    DomainViolation.InvalidFormalTransaction,
+    DomainViolation.InvalidCatalog,
+    DomainViolation.InvalidOrdinaryExpense,
+    DomainViolation.InvalidOrdinaryIncome,
+    DomainViolation.InvalidBalanceReplay,
+    DomainViolation.InvalidMixedPayment,
+    DomainViolation.InvalidMergedPayment,
+    is OrdinaryExpenseViolation,
+    is OrdinaryIncomeViolation,
+    is MixedPaymentViolation,
+    is MergedPaymentViolation -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
 }
 
 private fun AccountTransferField.inputField(): String = when (this) {
