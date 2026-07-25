@@ -1941,6 +1941,11 @@ class GoldenV2MappingTests(unittest.TestCase):
                 elif case_id == "RG-04":
                     self.assertEqual(path_map["status"], "approved")
                     self.assertEqual(path_map["expected_output_gate"], "closed")
+                elif case_id == "RG-05":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(
+                        path_map["expected_output_gate"], "draft_for_review"
+                    )
                 else:
                     self.assertEqual(path_map["status"], "completed")
                     self.assertEqual(path_map["expected_output_gate"], "completed")
@@ -1974,6 +1979,60 @@ class GoldenV2MappingTests(unittest.TestCase):
                         sorted(referenced_paths[gap_id]),
                     )
                     self.assertTrue(gap["affected_source_paths"], gap_id)
+
+    def test_rg05_time_and_rejection_ownership_never_targets_formal_postings(self):
+        path_map = json.loads(
+            (ROOT / "docs" / "migrations" / "golden-v2" / "rg-05-path-map.json").read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+        self.assertEqual(
+            entries["$.opening.transactions[*].occurred_at"]["target_paths"],
+            [
+                "$.states[*].transaction_versions[*].occurred_at",
+                "$.states[*].transaction_versions[*].statistics_at",
+                "$.states[*].transaction_versions[*].effective_at",
+            ],
+        )
+        self.assertIn("opening-only", entries["$.opening.transactions[*].occurred_at"]["transform"].lower())
+        self.assertNotIn("created_at", entries["$.opening.transactions[*].occurred_at"]["target_paths"])
+        self.assertNotIn("confirmed_at", entries["$.opening.transactions[*].occurred_at"]["target_paths"])
+        for source_path, reason in (
+            ("$.allocation_failures[*].expected.allocation_gap_amount", "allocation_incomplete"),
+            ("$.allocation_failures[*].expected.over_allocation_amount", "allocation_conflict"),
+        ):
+            entry = entries[source_path]
+            self.assertEqual(
+                entry["target_paths"],
+                [
+                    "$.operations[*].attempted_input.payment_total",
+                    "$.operations[*].attempted_input.allocation_total",
+                    "$.operations[*].outcome.reason_code",
+                ],
+            )
+            self.assertFalse(any("posting" in target for target in entry["target_paths"]))
+            self.assertIn(reason, entry["transform"])
+
+    def test_rg05_category_consumption_paths_are_category_bound_state_ownership(self):
+        path_map = json.loads(
+            (ROOT / "docs" / "migrations" / "golden-v2" / "rg-05-path-map.json").read_text(encoding="utf-8")
+        )
+        entries = [
+            entry for entry in path_map["entries"]
+            if ".category_consumption." in entry["source_path"]
+        ]
+        self.assertEqual(len(entries), 8)
+        expected_targets = {
+            "$.states[*].postings[*].category_id",
+            "$.states[*].postings[*].amount",
+            "$.states[*].domain_entities[*].payload.category_id",
+            "$.states[*].domain_entities[*].payload.amount",
+        }
+        for entry in entries:
+            self.assertEqual(set(entry["target_paths"]), expected_targets)
+            self.assertNotIn("reports[*].metrics", " ".join(entry["target_paths"]))
+            text = f"{entry['transform']} {entry['rationale']}".lower()
+            self.assertIn("category-bound", text)
+            self.assertIn("reports are derived", text)
 
 
 if __name__ == "__main__":

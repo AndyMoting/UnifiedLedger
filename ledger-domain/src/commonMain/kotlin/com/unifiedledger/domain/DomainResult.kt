@@ -24,6 +24,8 @@ sealed interface DomainViolation {
     data object InvalidBalanceReplay : DomainViolation
 
     data object InvalidMixedPayment : DomainViolation
+
+    data object InvalidMergedPayment : DomainViolation
 }
 
 sealed interface MixedPaymentViolation : DomainViolation {
@@ -39,6 +41,21 @@ sealed interface MixedPaymentViolation : DomainViolation {
     data object ExpenseCategoryRequired : MixedPaymentViolation
     data object SingleCurrencyRequired : MixedPaymentViolation
     data object AssetAndCreditLiabilityRequired : MixedPaymentViolation
+}
+
+sealed interface MergedPaymentViolation : DomainViolation {
+    data object AmountMustBePositive : MergedPaymentViolation
+    data object ItemAmountMustBePositive : MergedPaymentViolation
+    data object AllocationTotalMustEqualPayment : MergedPaymentViolation
+    data object DuplicateItemId : MergedPaymentViolation
+    data object UnknownRealAccount : MergedPaymentViolation
+    data object RealFinancialAccountRequired : MergedPaymentViolation
+    data object AssetAccountRequired : MergedPaymentViolation
+    data object OwnedAccountRequired : MergedPaymentViolation
+    data object SecondaryCategoryRequired : MergedPaymentViolation
+    data object CategoryInactive : MergedPaymentViolation
+    data object ExpenseCategoryRequired : MergedPaymentViolation
+    data object SingleCurrencyRequired : MergedPaymentViolation
 }
 
 sealed interface OrdinaryExpenseViolation : DomainViolation {
