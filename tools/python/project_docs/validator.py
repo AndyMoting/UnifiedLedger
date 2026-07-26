@@ -40,6 +40,7 @@ ASSISTANT_TRACES = (
 
 
 TEST_EVIDENCE_DOCUMENT = "docs/CURRENT_STATE.md"
+TEST_EVIDENCE_MODULES = ("ledger-domain", "ledger-application", "ledger-data")
 TEST_EVIDENCE_CLAIM = re.compile(r"`(ledger-[a-z-]+)`\s*(\d+)\s*项")
 TEST_EVIDENCE_CLEAN_CLAIM = "零 failure、零 error"
 
@@ -56,37 +57,85 @@ class ModuleTestTotals:
     tests: int
     failures: int
     errors: int
+    skipped: int
 
 
-def _read_jvm_test_totals(root: Path, module: str) -> ModuleTestTotals | None:
-    """Sum the saved JVM test reports for one module, or None when none are saved."""
+def _evidence_paragraph(text: str) -> str | None:
+    """The paragraph recording the counts, so a clean claim elsewhere cannot stand in for it."""
+    for paragraph in text.split("\n\n"):
+        if TEST_EVIDENCE_CLAIM.search(paragraph):
+            return paragraph
+    return None
+
+
+def _read_jvm_test_totals(
+    root: Path, module: str
+) -> tuple[ModuleTestTotals | None, str | None]:
+    """Sum one module's saved JVM reports. Returns (totals, error); both None means absent."""
     reports = sorted((root / module / "build" / "test-results" / "jvmTest").glob("*.xml"))
     if not reports:
-        return None
-    tests = failures = errors = 0
+        return None, None
+    tests = failures = errors = skipped = 0
     for report in reports:
         try:
             suite = ElementTree.parse(report).getroot()
         except ElementTree.ParseError:
-            return None
+            return None, f"{module} has an unreadable test report: {report.name}"
         tests += int(suite.get("tests", 0))
         failures += int(suite.get("failures", 0))
         errors += int(suite.get("errors", 0))
-    return ModuleTestTotals(tests, failures, errors)
+        skipped += int(suite.get("skipped", 0))
+    return ModuleTestTotals(tests, failures, errors, skipped), None
 
 
-def _validate_test_evidence(root: Path, text: str) -> list[ValidationIssue]:
-    """Check the recorded per-module test counts against the saved reports.
+def validate_test_evidence(root: Path) -> list[ValidationIssue]:
+    """Check the counts recorded as verification evidence against the saved JVM reports.
 
-    The counts are hand-written verification evidence, so they drift silently as tests
-    are added. A checkout that has never run Gradle has no reports to compare against,
-    and is skipped rather than failed.
+    Opt-in, because Gradle rewrites the report directory on every run: a focused run leaves only
+    the classes it selected, which would make a correct document look stale. Callers run this
+    straight after a full suite, where the reports are complete and the claim is testable.
+
+    When it does run it must not pass silently, so unparsable evidence, absent reports and
+    unreadable reports are all reported rather than skipped.
     """
+    root = root.resolve()
+    document = root / TEST_EVIDENCE_DOCUMENT
+    if not document.is_file():
+        return [
+            ValidationIssue(
+                "missing-document", TEST_EVIDENCE_DOCUMENT, "required document is missing"
+            )
+        ]
+    text = document.read_text(encoding="utf-8")
+    paragraph = _evidence_paragraph(text)
+    claims = dict(TEST_EVIDENCE_CLAIM.findall(text))
+    missing = [module for module in TEST_EVIDENCE_MODULES if module not in claims]
+    if paragraph is None or missing:
+        return [
+            ValidationIssue(
+                "test-evidence-unparsable",
+                TEST_EVIDENCE_DOCUMENT,
+                "recorded test evidence is missing or unreadable for: "
+                + ", ".join(missing or TEST_EVIDENCE_MODULES),
+            )
+        ]
+
     issues: list[ValidationIssue] = []
-    claims_clean = TEST_EVIDENCE_CLEAN_CLAIM in text
-    for module, claimed_text in TEST_EVIDENCE_CLAIM.findall(text):
-        actual = _read_jvm_test_totals(root, module)
+    claims_clean = TEST_EVIDENCE_CLEAN_CLAIM in paragraph
+    for module, claimed_text in claims.items():
+        actual, error = _read_jvm_test_totals(root, module)
+        if error is not None:
+            issues.append(ValidationIssue("stale-test-evidence", TEST_EVIDENCE_DOCUMENT, error))
+            continue
         if actual is None:
+            issues.append(
+                ValidationIssue(
+                    "stale-test-evidence",
+                    TEST_EVIDENCE_DOCUMENT,
+                    f"{module} records {claimed_text} tests but no reports are saved; "
+                    "run the full suite before checking recorded evidence",
+                )
+            )
             continue
         claimed = int(claimed_text)
         if claimed != actual.tests:
@@ -97,13 +146,13 @@ def _validate_test_evidence(root: Path, text: str) -> list[ValidationIssue]:
                     f"{module} records {claimed} tests but the saved reports have {actual.tests}",
                 )
             )
-        if claims_clean and (actual.failures or actual.errors):
+        if claims_clean and (actual.failures or actual.errors or actual.skipped):
             issues.append(
                 ValidationIssue(
                     "stale-test-evidence",
                     TEST_EVIDENCE_DOCUMENT,
                     f"{module} is recorded as clean but the saved reports have "
-                    f"{actual.failures} failures and {actual.errors} errors",
+                    f"{actual.failures} failures, {actual.errors} errors, {actual.skipped} skipped",
                 )
             )
     return issues
@@ -162,10 +211,6 @@ def validate_formal_docs(root: Path) -> list[ValidationIssue]:
     )
     unfinished = re.compile(r"(?i)\b(?:TODO|TBD)\b|待补充|待定")
     markdown_link = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
-
-    for relative_path, _, text in documents:
-        if relative_path == TEST_EVIDENCE_DOCUMENT:
-            issues.extend(_validate_test_evidence(root, text))
 
     for relative_path, path, text in documents:
         folded_text = text.casefold()

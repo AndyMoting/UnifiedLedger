@@ -32,7 +32,7 @@
 
 Existing stable account, category, transaction, posting, source, candidate, evidence, evidence-link, consumption-record, item-allocation, relation, request, and operation IDs are preserved where v2 owns the same identity. Missing root, state, opening version/posting-set, confirmation, status-history, and posting-reconciliation IDs use the contract's deterministic migration helpers with a normalized source locator plus a stable source ID, request ID, operation ID, item ID, evidence ID, invalid-case ID, or case ID discriminator. Array index, display name, traversal order, runtime time, and local path are forbidden discriminators.
 
-The runtime reproduces the same identities, so the exact generator inputs behind every entity RG-05 derives are recorded here. Only the inputs are recorded: the resulting values are owned by the expected output and are pinned by the runtime identity test, and must not be copied into a third place.
+The runtime reproduces the same identities, so the exact generator inputs behind every entity RG-05 derives are recorded here. Only the inputs are recorded here: the resulting values are owned by the expected output. The runtime identity tests deliberately copy a subset of them as regression anchors, which is what makes a change to the shared generator provably output-preserving; apart from those anchors the values must not be restated in runtime code or documentation.
 
 | entity | `entity_kind` | `source_locator` | `occurrence_discriminator` |
 | --- | --- | --- | --- |
