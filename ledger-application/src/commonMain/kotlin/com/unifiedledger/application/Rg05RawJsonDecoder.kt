@@ -46,8 +46,9 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
         if (input.string("kind", "$.manual_path.input.kind") != "merged_payment") fail("$.manual_path.input.kind")
         val items = input.array("items", "$.manual_path.input.items")
         if (items.size != 2) fail("$.manual_path.input.items")
+        val manualRequestId = input.string("request_id", "$.manual_path.input.request_id")
         val manualInput = Rg05ManualInput(
-            Rg05Field.Value(input.string("request_id", "$.manual_path.input.request_id")),
+            Rg05Field.Value(manualRequestId),
             Rg05Field.Value(input.string("payment_at", "$.manual_path.input.payment_at")),
             Rg05Field.Value(input.string("total_amount", "$.manual_path.input.total_amount")),
             Rg05Field.Value(input.string("currency", "$.manual_path.input.currency")),
@@ -70,10 +71,85 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
             Rg05Field.Value(confirmation.boolean("confirmed", "$.manual_path.confirmation.confirmed")),
         )
         val importOperations = decodeRg05ImportOperations(root["import_path"], ledgerId, currency)
-        Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations))
+        val manualIds = decodeRg05ManualIds(
+            manual.obj("expected", "$.manual_path.expected"),
+            manualRequestId,
+            manualInput.items.mapNotNull { (it.itemId as? Rg05Field.Value)?.value },
+            input.string("funding_account_id", "$.manual_path.input.funding_account_id"),
+        )
+        Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations, manualIds))
     } catch (failure: Rg05DecodeFailure) {
         Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError(failure.path, failure.reason))
+    } catch (_: IllegalArgumentException) {
+        // Legal JSON can still be an unusable contract: an unknown account/category kind, an
+        // identity discriminator that is empty or carries control characters, a link naming no
+        // allocation, or a singleton array that is not one element. Decoding stays total.
+        Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
+    } catch (_: IndexOutOfBoundsException) {
+        Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
+    } catch (_: NoSuchElementException) {
+        Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
     }
+}
+
+/**
+ * The manual path owns its formal entity IDs in the fixture, but its confirmation and posting
+ * reconciliation are operational identities the fixture never states, so they are derived from the
+ * manual root exactly like the imported path derives its own.
+ */
+private fun decodeRg05ManualIds(expected: JsonObject, requestId: String, itemIds: List<String>, fundingAccountId: String): Rg05PreparedIds {
+    val transaction = expected.obj("transaction", "$.manual_path.expected.transaction")
+    val postings = transaction.array("postings", "$.manual_path.expected.transaction.postings")
+    if (postings.size != 3) fail("$.manual_path.expected.transaction.postings")
+    val postingIds = postings.mapIndexed { index, element ->
+        val path = "$.manual_path.expected.transaction.postings[$index]"
+        element.objAt(path).string("id", "$path.id")
+    }
+    // The payment-asset posting is taken positionally as the last one, and the reconciliation
+    // identity is derived from it. Reconciliation may only ever belong to the owned real funding
+    // posting, so verify the position rather than trusting it: a reordered fixture must fail the
+    // decode instead of silently attaching reconciliation to an expense posting.
+    val postingAccounts = postings.mapIndexed { index, element ->
+        val path = "$.manual_path.expected.transaction.postings[$index]"
+        element.objAt(path).string("account_id", "$path.account_id")
+    }
+    if (postingAccounts.last() != fundingAccountId || postingAccounts.take(2).any { it == fundingAccountId }) {
+        fail("$.manual_path.expected.transaction.postings")
+    }
+    val group = expected.obj("association_group", "$.manual_path.expected.association_group")
+    // Consumption records and allocations are stated in input-item order. That order is confirmed
+    // against each record's own `expense_posting_id` below, so the positional binding cannot go
+    // unnoticed if the fixture is ever reordered.
+    val consumptions = expected.array("consumption_records", "$.manual_path.expected.consumption_records")
+    val allocations = group.array("item_allocations", "$.manual_path.expected.association_group.item_allocations")
+    if (consumptions.size != itemIds.size || allocations.size != itemIds.size) fail("$.manual_path.expected.consumption_records")
+    val consumptionIds = itemIds.indices.associate { index ->
+        val path = "$.manual_path.expected.consumption_records[$index]"
+        val record = consumptions[index].objAt(path)
+        if (record.string("expense_posting_id", "$path.expense_posting_id") != postingIds[index]) fail("$path.expense_posting_id")
+        itemIds[index] to record.string("id", "$path.id")
+    }
+    val allocationIds = itemIds.indices.associate { index ->
+        val path = "$.manual_path.expected.association_group.item_allocations[$index]"
+        val allocation = allocations[index].objAt(path)
+        if (allocation.string("expense_posting_id", "$path.expense_posting_id") != postingIds[index]) fail("$path.expense_posting_id")
+        itemIds[index] to allocation.string("id", "$path.id")
+    }
+    val rootId = rg05RootId("$.manual_path", requestId)
+    return Rg05PreparedIds(
+        MergedPaymentExpenseIds(
+            TransactionId(transaction.string("id", "$.manual_path.expected.transaction.id")),
+            TransactionVersionId(transaction.string("current_version_id", "$.manual_path.expected.transaction.current_version_id")),
+            PostingSetId(transaction.string("posting_set_id", "$.manual_path.expected.transaction.posting_set_id")),
+            postingIds.take(2).map(::PostingId),
+            PostingId(postingIds.last()),
+        ),
+        group.string("id", "$.manual_path.expected.association_group.id"),
+        rg05MigrationId(rootId, "confirmation", "$.manual_path.confirmation", requestId),
+        rg05MigrationId(rootId, "posting_reconciliation", "$.manual_path.expected.reconciliation", postingIds.last()),
+        consumptionIds,
+        allocationIds,
+    )
 }
 
 private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, currency: CurrencyUnit): List<Rg05PreparedOperation> {
@@ -113,7 +189,8 @@ private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, 
         Rg05ItemFact(item.string("item_id", "$path.item_id"), item.string("source_id", "$path.source_id"), item.string("evidence_id", "$path.evidence_id"), kind, item.instant("observed_at", "$path.observed_at"), item.string("observed_at", "$path.observed_at"), item.string("details", "$path.details"), item.money("amount", itemCurrency, "$path.amount"), CategoryId(item.string("suggested_category_id", "$path.suggested_category_id")))
     }
     val candidateId = ingest.obj("expected", "$.import_path.ordered_operations[0].expected").obj("candidate", "$.import_path.ordered_operations[0].expected.candidate").string("id", "$.import_path.ordered_operations[0].expected.candidate.id")
-    val ingestOperation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(ledgerId, RequestId(bankFact.sourceId), bankFact, itemFacts, candidateId, "pending-$candidateId"))
+    val importRootId = rg05RootId("$.import_path", bankFact.sourceId)
+    val ingestOperation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(ledgerId, RequestId(bankFact.sourceId), bankFact, itemFacts, candidateId, rg05MigrationId(importRootId, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate.status", candidateId)))
 
     val confirm = operations[1].objAt("$.import_path.ordered_operations[1]")
     confirm.closed("$.import_path.ordered_operations[1]", setOf("id", "input", "expected"))
@@ -150,9 +227,9 @@ private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, 
     val paymentText = confirmInput.string("payment_at", "$.import_path.ordered_operations[1].input.payment_at")
     val statisticsText = confirmInput.string("common_statistics_at", "$.import_path.ordered_operations[1].input.common_statistics_at")
     val confirmOperation = Rg05PreparedOperation.Confirm(
-        Rg05ConfirmSnapshot(ledgerId, RequestId(requestId), confirmInput.string("candidate_id", "$.import_path.ordered_operations[1].input.candidate_id"), AccountId(confirmInput.string("funding_account_id", "$.import_path.ordered_operations[1].input.funding_account_id")), parseRg05Instant(paymentText, "$.import_path.ordered_operations[1].input.payment_at"), paymentText, parseRg05Instant(statisticsText, "$.import_path.ordered_operations[1].input.common_statistics_at"), statisticsText, allocations, true, "confirmed-$candidateId"),
+        Rg05ConfirmSnapshot(ledgerId, RequestId(requestId), confirmInput.string("candidate_id", "$.import_path.ordered_operations[1].input.candidate_id"), AccountId(confirmInput.string("funding_account_id", "$.import_path.ordered_operations[1].input.funding_account_id")), parseRg05Instant(paymentText, "$.import_path.ordered_operations[1].input.payment_at"), paymentText, parseRg05Instant(statisticsText, "$.import_path.ordered_operations[1].input.common_statistics_at"), statisticsText, allocations, true, rg05MigrationId(importRootId, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate_status", requestId)),
         MergedPaymentExpenseIds(TransactionId(transaction.string("id", "transaction.id")), TransactionVersionId(transaction.string("current_version_id", "transaction.current_version_id")), PostingSetId(transaction.string("posting_set_id", "transaction.posting_set_id")), postingIds.take(2).map(::PostingId), PostingId(postingIds.last())),
-        group.string("id", "association_group.id"), "confirmation-$requestId", "reconciliation-${postingIds.last()}", bankLink.string("id", "bank_link.id"), itemLinkIds, consumptionIds, allocationIds,
+        group.string("id", "association_group.id"), rg05MigrationId(importRootId, "confirmation", "$.import_path.ordered_operations[*].expected.candidate_status", requestId), rg05MigrationId(importRootId, "posting_reconciliation", "$.import_path.ordered_operations[*].expected.reconciliation", postingIds.last()), bankLink.string("id", "bank_link.id"), itemLinkIds, consumptionIds, allocationIds,
     )
 
     val receipt = operations[2].objAt("$.import_path.ordered_operations[2]")
@@ -200,3 +277,31 @@ private fun JsonObject.boolean(name: String, path: String) = (this[name] as? Jso
 private fun JsonObject.int(name: String, path: String) = (this[name] as? JsonPrimitive)?.intOrNull ?: fail(path, Rg05RawJsonContractErrorReason.WRONG_TYPE)
 private data class Rg05DecodeFailure(val path: String, val reason: Rg05RawJsonContractErrorReason) : RuntimeException()
 private fun fail(path: String, reason: Rg05RawJsonContractErrorReason = Rg05RawJsonContractErrorReason.INVALID_VALUE): Nothing = throw Rg05DecodeFailure(path, reason)
+
+/**
+ * Request identities for the rejection roots. RG-05 rejections are contract-owned operations, so
+ * their request identities are derived rather than invented; a caller replaying the fixture has to
+ * reproduce them to match the frozen expected output. Mirrors `rg04RejectedRequestId`.
+ */
+fun rg05InvalidManualRequestId(invalidCaseId: String): String =
+    rg05MigrationId(
+        rg05RootId("$.invalid_manual_inputs[*]", invalidCaseId),
+        "request",
+        "$.invalid_manual_inputs[*].id",
+        invalidCaseId,
+    )
+
+/** Allocation failures are operations on the import root, not roots of their own. */
+fun rg05AllocationFailureRequestId(bankSourceId: String, failureCaseId: String): String =
+    rg05MigrationId(
+        rg05RootId("$.import_path", bankSourceId),
+        "request",
+        "$.allocation_failures[*]",
+        failureCaseId,
+    )
+
+internal fun rg05RootId(locator: String, occurrence: String): String =
+    goldenV2RootId("RG-05", locator, occurrence)
+
+internal fun rg05MigrationId(rootId: String, kind: String, locator: String, occurrence: String): String =
+    goldenV2MigrationId("RG-05", rootId, kind, locator, occurrence)

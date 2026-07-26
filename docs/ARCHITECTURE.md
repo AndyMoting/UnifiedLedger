@@ -2,11 +2,11 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-04 当前获批 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。
+本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-05 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库。
 
-`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v7；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。
+`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v8；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。RG-05 已有领域、应用与持久化 runtime，25 operations 已逐项比较 outcome、rejection reason/field、新增实体 ID 与 returned IDs，确定性 identity 与契约冻结值一致；尚无 RG-03 等级的完整 state/deltas/status-changes 比较；expected 仍为 `draft_for_review`，独立 expected/runtime 审查、明确用户批准和后续单独 publication 授权尚未完成。
 
-上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-05 至 RG-12 尚无 Kotlin runtime。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
+上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-05 的 expected 与验证闸门仍未关闭；RG-06 至 RG-12 尚无 Kotlin runtime。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 
@@ -115,7 +115,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | 平台边界 | 已确定 | 业务核心共享，系统能力和 UI 平台独立 |
 | Python | 已确定 | 仅用于迁移、规则原型和黄金结果基线 |
 | 运行方式 | 已确定 | 本地优先；同步与 AI 默认关闭且不影响核心验收 |
-| 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；当前 schema v7 及其迁移链均经过验证。该选择不预先决定报表、同步或更广泛查询的存储方案 |
+| 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；当前 schema v8 及其迁移链均经过验证。该选择不预先决定报表、同步或更广泛查询的存储方案 |
 | UI 与导航库 | 暂缓决定 | Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |

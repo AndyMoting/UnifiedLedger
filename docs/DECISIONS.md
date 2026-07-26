@@ -901,3 +901,45 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** RG-04 raw v1 的 26 个 operation 均具有运行时边界；v1 继续是执行输入与身份来源。完整 state/report/reconciliation/delta 比较、v2 oracle 接受、fixture publication 和其他规则场景不在本决定范围内，不能据此宣称 RG-04 已全部关闭。
 
 **关联决定：** `D-008`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-069`、`D-072`
+
+## D-074 RG-05 合并付款执行边界
+
+**状态：** 已确认
+
+**决定：** RG-05 以严格 raw v1 执行四个 action。`manual_merged_payment` 在明确确认下创建一笔费用交易：两条正向费用分录与一条自有真实资产 `payment_asset` 负向分录，两条独立 consumption_record 与 item_allocation，一个 `merged_payment` 关联组绑定该交易、唯一付款分录与两条 allocation。`ingest_merged_payment_facts` 只创建来源、证据与一个待确认候选，零正式、余额、报表与对账效果。只有 `confirm_merged_payment_candidate` 可以创建正式结果并追加 confirmed 候选历史；分摊低于付款总额拒绝为 `allocation_incomplete`，高于则拒绝为 `allocation_conflict`，两者都保持候选待确认且零效果。`merge_item_receipt_evidence` 只追加来源、证据与一条 allocation 证据链接，不创建任何正式实体。
+
+持久化升级为 schema v8 并保留既有 owner。财务对账只属于唯一自有真实 `payment_asset` 分录，两条费用分录不具备对账资格；关联组的 `item_evidence_completeness` 由精确 receipt-to-allocation 链接独立派生，其变化不改变正式交易、版本、分录、余额、报表或财务对账。相同请求与等价快照返回原稳定身份，快照不一致返回原子 identity conflict。
+
+确定性身份必须由契约 v2 生成器产出：命名空间、name 拼接、entity kind、source locator 与 occurrence discriminator 均与 `tools/python/golden_cases/v2.py` 一致，运行时产出与已冻结 expected 输出逐字相等。各场景不得各自实现该生成器。拒绝结果的 `field` 使用契约输入节点粒度。
+
+**理由：** 来源事实、候选推断、用户确认与分录核验具有不同生命周期与写入权限。分离 owner 可以在不重复入账、不自动补平、不依赖进程状态的前提下完成合并付款闭环。身份由单一契约生成器产出，可以防止各场景各写一份实现而在命名空间或 locator 上悄然分叉。
+
+**影响：** RG-05 raw v1 的 25 个 operation 均具有运行时边界，并有 outcome、新增实体身份与 returned ID 比较。本决定不蕴含 expected 审批、v2 oracle 接受或 publication；RG-03 等级的完整 state、delta 与 status-change 比较仍未完成，因此不能据此宣称 RG-05 已全部关闭。
+
+**关联决定：** `D-008`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-059`、`D-069`、`D-072`、`D-073`
+
+## D-075 RG-05 expected 批准
+
+**状态：** 已确认
+
+**决定：** `docs/migrations/golden-v2/rg-05-expected.json` 的 `approval_status` 由 `draft_for_review` 改为 `approved`。该工件为 17 roots、42 states、25 operations、146 个确定性身份，自创建以来一字未改。批准依据是：JSON Schema 与完整语义 validator（delta 复算、余额 replay、报表重算、derived status、no-change replay、拒绝与 identity-conflict 专项、时间合成禁令）、检入文件与生成器的深度相等、15 条拒绝理由与字段直接对照 v1，以及 Kotlin 运行时对全部 25 个 operation 的 outcome、新增实体身份与 returned ID 比对和 8 个冻结身份锚点。
+
+本决定仅覆盖 expected 工件本身。adapter 实现、fixture 迁移与 publication 各自仍需单独授权，不随本决定发生。
+
+**理由：** 该工件的验证覆盖已明显超过既有场景获批时的实际标准：RG-04 的 expected 在仓库尚无任何该场景运行时代码时即获批准，其 oracle 仅为生成器自洽测试；RG-02、RG-03 的 expected 在创建时即为 `approved`。继续以更高门槛扣留 RG-05，既无先例依据，也会连锁推迟其后全部场景。
+
+**影响：** RG-05 的 expected 闸门关闭。仍未关闭的是：完整 state、delta 与 status-change 比较（RG-03 已有、RG-04 与 RG-05 尚无），该比较应在 RG-06 开工前以共享方式建立，避免再出现第四套 oracle 标准。批准不改变 `GOLDEN_SCHEMA.md` 的 sequential gates 对其余场景的约束。
+
+**关联决定：** `D-008`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-059`、`D-074`
+
+## D-076 验证证据不以文档内手工计数表达
+
+**状态：** 已确认
+
+**决定：** 正式文档不记录逐模块测试计数一类随测试增删而变的数字，也不为其建立自动校验。`docs/CURRENT_STATE.md` 改为陈述最近一次完整验证的结论并指向验证命令，实际数字以 `build/test-results` 下的报告为准。此前为守护该计数而加入 `project_docs` 的证据校验一并移除。
+
+**理由：** 该计数是易变的手工副本，在短期内多次漂移；而为它建立的校验把 Gradle 的易失输出目录当作持久证据，使得规范要求的 focused 测试步骤会让仓库无故变红，并且在措辞漂移、报告缺失或损坏时静默通过。三轮独立审查中该校验自身产出的缺陷约占总数四成，其防护价值远低于维护与误报代价。正确的做法是不在文档中复制易变事实，而不是为复制品加装校验。
+
+**影响：** `python -m project_docs .` 回到纯文档卫生校验，不读取任何构建输出，可在任意工作状态下运行。文档不再声称具体测试数量；需要数字时直接读报告。本决定不放宽任何验证要求：完整套件仍须按 README 运行并全绿。
+
+**关联决定：** `D-075`

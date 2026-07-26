@@ -9,8 +9,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.ByteBuffer
-import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -143,26 +141,10 @@ private fun manualIdentity(case: Rg04RawJsonCase): Rg04IdentitySource {
 }
 
 private fun deterministicRoot(locator: String, occurrence: String): String =
-    deterministicUuid("RG-04\n@root\nroot\n$locator\noccurrence=$occurrence")
+    goldenV2RootId("RG-04", locator, occurrence)
 
 private fun deterministicId(rootId: String, kind: String, locator: String, occurrence: String): String =
-    deterministicUuid("RG-04\n$rootId\n$kind\n$locator\noccurrence=$occurrence")
-
-private fun deterministicUuid(name: String): String {
-    val namespace = UUID.fromString("cfad3f84-edb1-5838-ae53-aae49684cf1a")
-    val bytes = java.security.MessageDigest.getInstance("SHA-1").digest(namespace.toRfcBytes() + name.encodeToByteArray())
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val buffer = ByteBuffer.wrap(bytes.copyOf(16))
-    return UUID(buffer.long, buffer.long).toString()
-}
-
-private fun UUID.toRfcBytes(): ByteArray = ByteArray(16).also { bytes ->
-    val most = mostSignificantBits
-    val least = leastSignificantBits
-    for (i in 0 until 8) bytes[i] = (most ushr (56 - i * 8)).toByte()
-    for (i in 0 until 8) bytes[8 + i] = (least ushr (56 - i * 8)).toByte()
-}
+    goldenV2MigrationId("RG-04", rootId, kind, locator, occurrence)
 
 private fun repositoryFile(relative: String): Path {
     var current = Path.of("").toAbsolutePath()

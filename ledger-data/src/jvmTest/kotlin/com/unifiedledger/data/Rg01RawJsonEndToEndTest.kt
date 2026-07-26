@@ -4,22 +4,19 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
-import com.unifiedledger.application.ConfirmedManualExpenseCommitPort
 import com.unifiedledger.application.ConfirmedManualExpenseCommitIds
+import com.unifiedledger.application.ConfirmedManualExpenseCommitPort
 import com.unifiedledger.application.ConfirmedManualExpenseIdSource
-import com.unifiedledger.application.ExecuteConfirmedManualExpense
-import com.unifiedledger.application.ExecuteManualExpenseSave
-import com.unifiedledger.application.ExecuteConfirmedTransactionNoteUpdate
-import com.unifiedledger.application.ExplicitlyConfirmedTransactionNoteUpdate
-import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
-import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateCommitPort
-import com.unifiedledger.application.TransactionNoteUpdateRequestSnapshot
-import com.unifiedledger.application.TransactionNoteUpdateRequestIdentity
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateResult
-import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.ExecuteConfirmedManualExpense
+import com.unifiedledger.application.ExecuteConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExplicitManualSave
-import com.unifiedledger.application.projectRg01TransactionNoteUpdateResult
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.Rg01AttemptedExpenseResult
 import com.unifiedledger.application.Rg01DecodedManualExpenseInput
 import com.unifiedledger.application.Rg01JsonField
@@ -27,13 +24,18 @@ import com.unifiedledger.application.Rg01ManualExpenseParseResult
 import com.unifiedledger.application.Rg01OutcomeProjection
 import com.unifiedledger.application.Rg01OutcomeStatus
 import com.unifiedledger.application.Rg01ProjectionResult
-import com.unifiedledger.application.Rg01RawJsonDecodeResult
 import com.unifiedledger.application.Rg01RawJsonCase
+import com.unifiedledger.application.Rg01RawJsonDecodeResult
 import com.unifiedledger.application.Rg01ReturnedId
+import com.unifiedledger.application.TransactionNoteUpdateRequestIdentity
+import com.unifiedledger.application.TransactionNoteUpdateRequestSnapshot
 import com.unifiedledger.application.decodeRg01RawJson
 import com.unifiedledger.application.evaluateRg01AttemptedManualExpense
+import com.unifiedledger.application.goldenV2MigrationId
+import com.unifiedledger.application.goldenV2RootId
 import com.unifiedledger.application.parseRg01ManualExpenseInput
 import com.unifiedledger.application.projectRg01ManualExpenseResult
+import com.unifiedledger.application.projectRg01TransactionNoteUpdateResult
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
@@ -52,10 +54,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.ByteBuffer
-import java.security.MessageDigest
 import java.util.Properties
-import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -299,7 +298,6 @@ private class ApprovedOutcomes private constructor(private val values: List<Appr
     }
 }
 
-private val RG01_MIGRATION_NAMESPACE: UUID = UUID.fromString("cfad3f84-edb1-5838-ae53-aae49684cf1a")
 private val EXPECTED_INVALID_REQUEST_IDS = mapOf(
     "missing-amount" to "27c403a9-cf8b-5f0a-9bee-ab62ac2bccab",
     "missing-payment-account" to "85fad5da-31b0-5dbf-b408-008451dfaa99",
@@ -309,37 +307,19 @@ private val EXPECTED_INVALID_REQUEST_IDS = mapOf(
     "primary-category" to "6ecbbf3a-ec7f-5916-8716-47a8b8c6e8a5",
     "inactive-secondary-category" to "2e224810-3357-594e-8040-de138a63790a",
 )
-private val RG01_MAIN_ROOT_ID: UUID = uuidV5(
-    RG01_MIGRATION_NAMESPACE,
-    "RG-01\n@root\nroot\n$.case.id\noccurrence=RG-01",
-)
-private fun rg01ConfirmationId(locator: String, requestId: String): String = uuidV5(
-    RG01_MIGRATION_NAMESPACE,
-    "RG-01\n$RG01_MAIN_ROOT_ID\nconfirmation\n$locator\noccurrence=$requestId",
-).toString()
-private fun rg01InvalidRequestId(sourceId: String): String {
-    val rootId = uuidV5(
-        RG01_MIGRATION_NAMESPACE,
-        "RG-01\n@root\nroot\n$.invalid_inputs[*]\noccurrence=$sourceId",
+private val RG01_MAIN_ROOT_ID: String = goldenV2RootId("RG-01", "$.case.id", "RG-01")
+
+private fun rg01ConfirmationId(locator: String, requestId: String): String =
+    goldenV2MigrationId("RG-01", RG01_MAIN_ROOT_ID, "confirmation", locator, requestId)
+
+private fun rg01InvalidRequestId(sourceId: String): String =
+    goldenV2MigrationId(
+        "RG-01",
+        goldenV2RootId("RG-01", "$.invalid_inputs[*]", sourceId),
+        "request",
+        "$.invalid_inputs[*].id",
+        sourceId,
     )
-    return uuidV5(
-        RG01_MIGRATION_NAMESPACE,
-        "RG-01\n$rootId\nrequest\n$.invalid_inputs[*].id\noccurrence=$sourceId",
-    ).toString()
-}
-private fun uuidV5(namespace: UUID, name: String): UUID {
-    val namespaceBytes = ByteBuffer.allocate(16)
-        .putLong(namespace.mostSignificantBits)
-        .putLong(namespace.leastSignificantBits)
-        .array()
-    val digest = MessageDigest.getInstance("SHA-1")
-    digest.update(namespaceBytes)
-    val bytes = digest.digest(name.toByteArray(Charsets.UTF_8)).copyOf(16)
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val buffer = ByteBuffer.wrap(bytes)
-    return UUID(buffer.long, buffer.long)
-}
 private fun <T> Rg01JsonField<T>.required(): T = assertIs<Rg01JsonField.Value<T>>(this).value
 private fun assertProjection(expected: ApprovedOutcome, actual: Rg01OutcomeProjection) {
     assertEquals(expected.status, actual.status)

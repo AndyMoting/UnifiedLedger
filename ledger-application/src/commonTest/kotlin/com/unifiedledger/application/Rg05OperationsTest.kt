@@ -54,7 +54,7 @@ class Rg05OperationsTest {
         )
         val case = Rg05RawJsonCase(ledger, currency, "Asia/Shanghai", catalog, input)
         val adapted = assertIs<Rg05AdaptResult.Success>(adaptRg05Manual(case, input, Rg05PreparedIds(
-            MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("version"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "confirmation")))
+            MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("version"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "confirmation", "reconciliation")))
         val result = ExecuteRg05Operation { error("commit must not be called") }.execute(adapted.operation)
         assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "explicit_confirmation"), result)
     }

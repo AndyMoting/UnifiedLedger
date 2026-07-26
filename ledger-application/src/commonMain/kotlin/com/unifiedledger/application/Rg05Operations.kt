@@ -47,7 +47,9 @@ sealed interface Rg05PreparedOperation {
         val formalIds: MergedPaymentExpenseIds,
         val relationId: String,
         val confirmationId: String,
-        val reconciliationId: String = "reconciliation-${formalIds.paymentAssetPostingId.value}",
+        val reconciliationId: String,
+        val consumptionIds: Map<String, String> = emptyMap(),
+        val allocationIds: Map<String, String> = emptyMap(),
     ) : Rg05PreparedOperation
 
     data class Ingest(val snapshot: Rg05IngestSnapshot) : Rg05PreparedOperation
@@ -193,17 +195,24 @@ fun adaptRg05Manual(case: Rg05RawJsonCase, input: Rg05ManualInput, ids: Rg05Prep
         val itemId = text(item.itemId, "items[$index].item_id") ?: return Rg05AdaptResult.Invalid("required", "items[$index].item_id")
         val amountText = text(item.amount, "items[$index].amount") ?: return Rg05AdaptResult.Invalid("required", "items[$index].amount")
         val itemCurrency = text(item.currency, "items[$index].currency") ?: return Rg05AdaptResult.Invalid("required", "items[$index].currency")
-        val category = (item.categoryId as? Rg05Field.Value)?.value ?: return Rg05AdaptResult.Invalid("secondary_category_required", "items[$index].category_id")
+        val category = (item.categoryId as? Rg05Field.Value)?.value ?: return Rg05AdaptResult.Invalid("secondary_category_required", "items")
         val details = text(item.details, "items[$index].details") ?: return Rg05AdaptResult.Invalid("required", "items[$index].details")
         val observedText = text(item.sourceObservedAt, "items[$index].source_observed_at") ?: return Rg05AdaptResult.Invalid("required", "items[$index].source_observed_at")
         val amount = exactMoney(amountText, CurrencyUnit(itemCurrency, case.currency.precision)) ?: return Rg05AdaptResult.Invalid("exact_decimal_string_required", "items[$index].amount")
         val observed = try { Instant.parse(observedText) } catch (_: IllegalArgumentException) { return Rg05AdaptResult.Invalid("invalid_timestamp", "items[$index].source_observed_at") }
         MergedPaymentItem(itemId, amount, CategoryId(category), details, observed)
     }
-    return Rg05AdaptResult.Success(Rg05PreparedOperation.Manual(Rg05ManualSnapshot(case.ledgerId, RequestId(request), payment, paymentText, total, AccountId(funding), items, (input.explicitConfirmation as? Rg05Field.Value)?.value == true), ids.formalIds, ids.relationId, ids.confirmationId))
+    return Rg05AdaptResult.Success(Rg05PreparedOperation.Manual(Rg05ManualSnapshot(case.ledgerId, RequestId(request), payment, paymentText, total, AccountId(funding), items, (input.explicitConfirmation as? Rg05Field.Value)?.value == true), ids.formalIds, ids.relationId, ids.confirmationId, ids.reconciliationId, ids.consumptionIds, ids.allocationIds))
 }
 
-data class Rg05PreparedIds(val formalIds: MergedPaymentExpenseIds, val relationId: String, val confirmationId: String)
+data class Rg05PreparedIds(
+    val formalIds: MergedPaymentExpenseIds,
+    val relationId: String,
+    val confirmationId: String,
+    val reconciliationId: String,
+    val consumptionIds: Map<String, String> = emptyMap(),
+    val allocationIds: Map<String, String> = emptyMap(),
+)
 data class Rg05RawJsonCase(
     val ledgerId: LedgerId,
     val currency: CurrencyUnit,
@@ -211,6 +220,8 @@ data class Rg05RawJsonCase(
     val catalog: LedgerCatalog,
     val manual: Rg05ManualInput,
     val importOperations: List<Rg05PreparedOperation> = emptyList(),
+    /** Fixture-owned formal IDs plus derived operational IDs; null for hand-built cases. */
+    val manualIds: Rg05PreparedIds? = null,
 )
 
 internal fun exactMoney(text: String, currency: CurrencyUnit): Money? {

@@ -381,21 +381,14 @@ private class ApprovedRg02Outcomes private constructor(private val values: List<
     }
 }
 
-private val RG02_MIGRATION_NAMESPACE = java.util.UUID.fromString("cfad3f84-edb1-5838-ae53-aae49684cf1a")
-private fun rg02InvalidRequestId(sourceId: String): String {
-    val rootId = uuidV5(RG02_MIGRATION_NAMESPACE, "RG-02\n@root\nroot\n$.invalid_inputs[*]\noccurrence=$sourceId")
-    return uuidV5(RG02_MIGRATION_NAMESPACE, "RG-02\n$rootId\nrequest\n$.invalid_inputs[*]\noccurrence=$sourceId").toString()
-}
-private fun uuidV5(namespace: java.util.UUID, name: String): java.util.UUID {
-    val namespaceBytes = java.nio.ByteBuffer.allocate(16).putLong(namespace.mostSignificantBits).putLong(namespace.leastSignificantBits).array()
-    val digest = java.security.MessageDigest.getInstance("SHA-1")
-    digest.update(namespaceBytes)
-    val bytes = digest.digest(name.toByteArray(Charsets.UTF_8)).copyOf(16)
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val buffer = java.nio.ByteBuffer.wrap(bytes)
-    return java.util.UUID(buffer.long, buffer.long)
-}
+private fun rg02InvalidRequestId(sourceId: String): String =
+    goldenV2MigrationId(
+        "RG-02",
+        goldenV2RootId("RG-02", "$.invalid_inputs[*]", sourceId),
+        "request",
+        "$.invalid_inputs[*]",
+        sourceId,
+    )
 
 private fun runCatalogRejected(decoded: Rg02RawJsonCase, expectedViolation: DomainViolation) {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, sqliteProperties())
