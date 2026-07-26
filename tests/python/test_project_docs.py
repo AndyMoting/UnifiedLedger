@@ -16,6 +16,26 @@ def build_minimal_document_tree(root: Path) -> Path:
     return root
 
 
+def write_jvm_test_report(
+    root: Path, module: str, *, tests: int, failures: int = 0, errors: int = 0
+) -> None:
+    reports = root / module / "build" / "test-results" / "jvmTest"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / f"TEST-{module}.xml").write_text(
+        f'<testsuite name="{module}" tests="{tests}" failures="{failures}" '
+        f'errors="{errors}" skipped="0"></testsuite>',
+        encoding="utf-8",
+    )
+
+
+def write_test_evidence(root: Path, counts: dict[str, int]) -> None:
+    recorded = "、".join(f"`{module}` {count} 项" for module, count in counts.items())
+    (root / "docs" / "CURRENT_STATE.md").write_text(
+        f"# Current state\n\n最新保存的报告：{recorded}，均为零 failure、零 error。\n",
+        encoding="utf-8",
+    )
+
+
 class ProjectDocsValidatorTests(unittest.TestCase):
     def test_reports_missing_required_documents(self):
         with TemporaryDirectory() as directory:
@@ -142,6 +162,37 @@ class ProjectDocsValidatorTests(unittest.TestCase):
     def test_accepts_a_complete_minimal_tree(self):
         with TemporaryDirectory() as directory:
             root = build_minimal_document_tree(Path(directory))
+            issues = validate_formal_docs(root)
+        self.assertEqual([], issues)
+
+    def test_accepts_recorded_test_counts_that_match_the_saved_reports(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            write_jvm_test_report(root, "ledger-domain", tests=36)
+            write_test_evidence(root, {"ledger-domain": 36})
+            issues = validate_formal_docs(root)
+        self.assertEqual([], issues)
+
+    def test_reports_recorded_test_counts_that_drifted_from_the_saved_reports(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            write_jvm_test_report(root, "ledger-data", tests=104)
+            write_test_evidence(root, {"ledger-data": 103})
+            issues = validate_formal_docs(root)
+        self.assertEqual(["stale-test-evidence"], [i.code for i in issues])
+
+    def test_reports_a_clean_claim_contradicted_by_the_saved_reports(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            write_jvm_test_report(root, "ledger-domain", tests=36, failures=1)
+            write_test_evidence(root, {"ledger-domain": 36})
+            issues = validate_formal_docs(root)
+        self.assertEqual(["stale-test-evidence"], [i.code for i in issues])
+
+    def test_skips_test_evidence_when_no_reports_are_saved(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            write_test_evidence(root, {"ledger-domain": 1, "ledger-data": 2})
             issues = validate_formal_docs(root)
         self.assertEqual([], issues)
 

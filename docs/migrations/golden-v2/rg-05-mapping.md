@@ -32,6 +32,21 @@
 
 Existing stable account, category, transaction, posting, source, candidate, evidence, evidence-link, consumption-record, item-allocation, relation, request, and operation IDs are preserved where v2 owns the same identity. Missing root, state, opening version/posting-set, confirmation, status-history, and posting-reconciliation IDs use the contract's deterministic migration helpers with a normalized source locator plus a stable source ID, request ID, operation ID, item ID, evidence ID, invalid-case ID, or case ID discriminator. Array index, display name, traversal order, runtime time, and local path are forbidden discriminators.
 
+The runtime reproduces the same identities, so the exact generator inputs behind every entity RG-05 derives are recorded here. Only the inputs are recorded: the resulting values are owned by the expected output and are pinned by the runtime identity test, and must not be copied into a third place.
+
+| entity | `entity_kind` | `source_locator` | `occurrence_discriminator` |
+| --- | --- | --- | --- |
+| manual root | root | `$.manual_path` | `request-rg05-manual` |
+| manual confirmation | `confirmation` | `$.manual_path.confirmation` | `request-rg05-manual` |
+| manual posting reconciliation | `posting_reconciliation` | `$.manual_path.expected.reconciliation` | `posting-asset-rg05-manual` |
+| import root | root | `$.import_path` | `source-bank-debit-rg05` |
+| candidate pending status | `candidate_status` | `$.import_path.ordered_operations[*].expected.candidate.status` | `candidate-rg05-imported` |
+| candidate confirmed status | `candidate_status` | `$.import_path.ordered_operations[*].expected.candidate_status` | `request-rg05-confirm-candidate` |
+| import confirmation | `confirmation` | `$.import_path.ordered_operations[*].expected.candidate_status` | `request-rg05-confirm-candidate` |
+| import posting reconciliation | `posting_reconciliation` | `$.import_path.ordered_operations[*].expected.reconciliation` | `posting-asset-rg05-imported` |
+
+Two asymmetries in that table are deliberate and must not be "corrected". The manual confirmation is located at `$.manual_path.confirmation` because v1 states an explicit confirmation object there, while the imported path has no such object and locates its confirmation at the candidate-status fact that evidences it, sharing that locator with the `candidate_status` entity and separating the two by `entity_kind` alone. Every locator and discriminator above is an opaque, frozen generator input whose only contract obligations are stability and uniqueness; changing one silently renames the entity it produces, so none of them may be edited for readability or symmetry after the expected output exists.
+
 RG-05 has one narrow collapsed-time approval: each exact `opening.transactions[*].occurred_at` text expands only to that opening version's `occurred_at`, `statistics_at`, and `effective_at`. It never generates `created_at` or `confirmed_at` and cannot be generalized to payment, candidate, source, or evidence time. Formal payment versions use explicit `payment_at` for `occurred_at` and `effective_at`, while the explicit common payment statistics time owns `statistics_at`. Each item `source_observed_at` remains immutable source/business evidence and never overrides either formal or consumption statistics time.
 
 ## Closed Actions

@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 FORMAL_DOCUMENTS = (
@@ -38,11 +39,74 @@ ASSISTANT_TRACES = (
 )
 
 
+TEST_EVIDENCE_DOCUMENT = "docs/CURRENT_STATE.md"
+TEST_EVIDENCE_CLAIM = re.compile(r"`(ledger-[a-z-]+)`\s*(\d+)\s*项")
+TEST_EVIDENCE_CLEAN_CLAIM = "零 failure、零 error"
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     code: str
     path: str
     message: str
+
+
+@dataclass(frozen=True)
+class ModuleTestTotals:
+    tests: int
+    failures: int
+    errors: int
+
+
+def _read_jvm_test_totals(root: Path, module: str) -> ModuleTestTotals | None:
+    """Sum the saved JVM test reports for one module, or None when none are saved."""
+    reports = sorted((root / module / "build" / "test-results" / "jvmTest").glob("*.xml"))
+    if not reports:
+        return None
+    tests = failures = errors = 0
+    for report in reports:
+        try:
+            suite = ElementTree.parse(report).getroot()
+        except ElementTree.ParseError:
+            return None
+        tests += int(suite.get("tests", 0))
+        failures += int(suite.get("failures", 0))
+        errors += int(suite.get("errors", 0))
+    return ModuleTestTotals(tests, failures, errors)
+
+
+def _validate_test_evidence(root: Path, text: str) -> list[ValidationIssue]:
+    """Check the recorded per-module test counts against the saved reports.
+
+    The counts are hand-written verification evidence, so they drift silently as tests
+    are added. A checkout that has never run Gradle has no reports to compare against,
+    and is skipped rather than failed.
+    """
+    issues: list[ValidationIssue] = []
+    claims_clean = TEST_EVIDENCE_CLEAN_CLAIM in text
+    for module, claimed_text in TEST_EVIDENCE_CLAIM.findall(text):
+        actual = _read_jvm_test_totals(root, module)
+        if actual is None:
+            continue
+        claimed = int(claimed_text)
+        if claimed != actual.tests:
+            issues.append(
+                ValidationIssue(
+                    "stale-test-evidence",
+                    TEST_EVIDENCE_DOCUMENT,
+                    f"{module} records {claimed} tests but the saved reports have {actual.tests}",
+                )
+            )
+        if claims_clean and (actual.failures or actual.errors):
+            issues.append(
+                ValidationIssue(
+                    "stale-test-evidence",
+                    TEST_EVIDENCE_DOCUMENT,
+                    f"{module} is recorded as clean but the saved reports have "
+                    f"{actual.failures} failures and {actual.errors} errors",
+                )
+            )
+    return issues
 
 
 def validate_formal_docs(root: Path) -> list[ValidationIssue]:
@@ -98,6 +162,10 @@ def validate_formal_docs(root: Path) -> list[ValidationIssue]:
     )
     unfinished = re.compile(r"(?i)\b(?:TODO|TBD)\b|待补充|待定")
     markdown_link = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+    for relative_path, _, text in documents:
+        if relative_path == TEST_EVIDENCE_DOCUMENT:
+            issues.extend(_validate_test_evidence(root, text))
 
     for relative_path, path, text in documents:
         folded_text = text.casefold()
