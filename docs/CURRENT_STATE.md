@@ -13,7 +13,7 @@
 
 ## 验证证据
 
-最新保存的 Gradle JVM 测试 XML 报告日期为 2026-07-26：`ledger-domain` 36 项、`ledger-application` 99 项、`ledger-data` 106 项，均为零 failure、零 error。
+三个 Kotlin 模块的 JVM 测试与 Python 套件在最近一次完整验证中全部通过，零 failure、零 error。逐模块计数随测试增删而变，不在此复制；验证命令见 [README](../README.md)，实际结果以 `build/test-results` 下的报告为准。
 
 ## 当前环境
 

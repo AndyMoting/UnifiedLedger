@@ -79,15 +79,6 @@ $env:PYTHONPATH="tools\python"
 python -m project_docs .
 ```
 
-跑完完整套件后，另外核对当前状态文档记录的测试计数与实际报告一致：
-
-```powershell
-$env:PYTHONPATH="tools\python"
-python -m project_docs . --check-test-evidence
-```
-
-该检查依赖 `build/test-results/jvmTest` 中的完整报告，只应在完整套件之后运行；focused 测试只会留下所选类的报告。
-
 完整环境、分支、提交、合并和隐私要求见[开发规范](docs/CONTRIBUTING.md)。
 
 ## 正式文档
