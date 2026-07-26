@@ -46,8 +46,9 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
         if (input.string("kind", "$.manual_path.input.kind") != "merged_payment") fail("$.manual_path.input.kind")
         val items = input.array("items", "$.manual_path.input.items")
         if (items.size != 2) fail("$.manual_path.input.items")
+        val manualRequestId = input.string("request_id", "$.manual_path.input.request_id")
         val manualInput = Rg05ManualInput(
-            Rg05Field.Value(input.string("request_id", "$.manual_path.input.request_id")),
+            Rg05Field.Value(manualRequestId),
             Rg05Field.Value(input.string("payment_at", "$.manual_path.input.payment_at")),
             Rg05Field.Value(input.string("total_amount", "$.manual_path.input.total_amount")),
             Rg05Field.Value(input.string("currency", "$.manual_path.input.currency")),
@@ -70,10 +71,54 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
             Rg05Field.Value(confirmation.boolean("confirmed", "$.manual_path.confirmation.confirmed")),
         )
         val importOperations = decodeRg05ImportOperations(root["import_path"], ledgerId, currency)
-        Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations))
+        val manualIds = decodeRg05ManualIds(manual.obj("expected", "$.manual_path.expected"), manualRequestId, manualInput.items.mapNotNull { (it.itemId as? Rg05Field.Value)?.value })
+        Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations, manualIds))
     } catch (failure: Rg05DecodeFailure) {
         Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError(failure.path, failure.reason))
     }
+}
+
+/**
+ * The manual path owns its formal entity IDs in the fixture, but its confirmation and posting
+ * reconciliation are operational identities the fixture never states, so they are derived from the
+ * manual root exactly like the imported path derives its own.
+ */
+private fun decodeRg05ManualIds(expected: JsonObject, requestId: String, itemIds: List<String>): Rg05PreparedIds {
+    val transaction = expected.obj("transaction", "$.manual_path.expected.transaction")
+    val postings = transaction.array("postings", "$.manual_path.expected.transaction.postings")
+    if (postings.size != 3) fail("$.manual_path.expected.transaction.postings")
+    val postingIds = postings.mapIndexed { index, element ->
+        val path = "$.manual_path.expected.transaction.postings[$index]"
+        element.objAt(path).string("id", "$path.id")
+    }
+    val group = expected.obj("association_group", "$.manual_path.expected.association_group")
+    // The manual fixture states consumption records and allocations in input-item order; it carries
+    // no item discriminator of its own, so the binding is positional exactly as on the import path.
+    val consumptions = expected.array("consumption_records", "$.manual_path.expected.consumption_records")
+    val allocations = group.array("item_allocations", "$.manual_path.expected.association_group.item_allocations")
+    if (consumptions.size != itemIds.size || allocations.size != itemIds.size) fail("$.manual_path.expected.consumption_records")
+    val consumptionIds = itemIds.indices.associate { index ->
+        itemIds[index] to consumptions[index].objAt("$.manual_path.expected.consumption_records[$index]").string("id", "$.manual_path.expected.consumption_records[$index].id")
+    }
+    val allocationIds = itemIds.indices.associate { index ->
+        val path = "$.manual_path.expected.association_group.item_allocations[$index]"
+        itemIds[index] to allocations[index].objAt(path).string("id", "$path.id")
+    }
+    val rootId = rg05RootId("$.manual_path", requestId)
+    return Rg05PreparedIds(
+        MergedPaymentExpenseIds(
+            TransactionId(transaction.string("id", "$.manual_path.expected.transaction.id")),
+            TransactionVersionId(transaction.string("current_version_id", "$.manual_path.expected.transaction.current_version_id")),
+            PostingSetId(transaction.string("posting_set_id", "$.manual_path.expected.transaction.posting_set_id")),
+            postingIds.take(2).map(::PostingId),
+            PostingId(postingIds.last()),
+        ),
+        group.string("id", "$.manual_path.expected.association_group.id"),
+        rg05MigrationId(rootId, "confirmation", "$.manual_path.confirmation", requestId),
+        rg05MigrationId(rootId, "posting_reconciliation", "$.manual_path.expected.reconciliation", postingIds.last()),
+        consumptionIds,
+        allocationIds,
+    )
 }
 
 private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, currency: CurrencyUnit): List<Rg05PreparedOperation> {
@@ -113,7 +158,8 @@ private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, 
         Rg05ItemFact(item.string("item_id", "$path.item_id"), item.string("source_id", "$path.source_id"), item.string("evidence_id", "$path.evidence_id"), kind, item.instant("observed_at", "$path.observed_at"), item.string("observed_at", "$path.observed_at"), item.string("details", "$path.details"), item.money("amount", itemCurrency, "$path.amount"), CategoryId(item.string("suggested_category_id", "$path.suggested_category_id")))
     }
     val candidateId = ingest.obj("expected", "$.import_path.ordered_operations[0].expected").obj("candidate", "$.import_path.ordered_operations[0].expected.candidate").string("id", "$.import_path.ordered_operations[0].expected.candidate.id")
-    val ingestOperation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(ledgerId, RequestId(bankFact.sourceId), bankFact, itemFacts, candidateId, "pending-$candidateId"))
+    val importRootId = rg05RootId("$.import_path", bankFact.sourceId)
+    val ingestOperation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(ledgerId, RequestId(bankFact.sourceId), bankFact, itemFacts, candidateId, rg05MigrationId(importRootId, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate.status", candidateId)))
 
     val confirm = operations[1].objAt("$.import_path.ordered_operations[1]")
     confirm.closed("$.import_path.ordered_operations[1]", setOf("id", "input", "expected"))
@@ -150,9 +196,9 @@ private fun decodeRg05ImportOperations(value: JsonElement?, ledgerId: LedgerId, 
     val paymentText = confirmInput.string("payment_at", "$.import_path.ordered_operations[1].input.payment_at")
     val statisticsText = confirmInput.string("common_statistics_at", "$.import_path.ordered_operations[1].input.common_statistics_at")
     val confirmOperation = Rg05PreparedOperation.Confirm(
-        Rg05ConfirmSnapshot(ledgerId, RequestId(requestId), confirmInput.string("candidate_id", "$.import_path.ordered_operations[1].input.candidate_id"), AccountId(confirmInput.string("funding_account_id", "$.import_path.ordered_operations[1].input.funding_account_id")), parseRg05Instant(paymentText, "$.import_path.ordered_operations[1].input.payment_at"), paymentText, parseRg05Instant(statisticsText, "$.import_path.ordered_operations[1].input.common_statistics_at"), statisticsText, allocations, true, "confirmed-$candidateId"),
+        Rg05ConfirmSnapshot(ledgerId, RequestId(requestId), confirmInput.string("candidate_id", "$.import_path.ordered_operations[1].input.candidate_id"), AccountId(confirmInput.string("funding_account_id", "$.import_path.ordered_operations[1].input.funding_account_id")), parseRg05Instant(paymentText, "$.import_path.ordered_operations[1].input.payment_at"), paymentText, parseRg05Instant(statisticsText, "$.import_path.ordered_operations[1].input.common_statistics_at"), statisticsText, allocations, true, rg05MigrationId(importRootId, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate_status", requestId)),
         MergedPaymentExpenseIds(TransactionId(transaction.string("id", "transaction.id")), TransactionVersionId(transaction.string("current_version_id", "transaction.current_version_id")), PostingSetId(transaction.string("posting_set_id", "transaction.posting_set_id")), postingIds.take(2).map(::PostingId), PostingId(postingIds.last())),
-        group.string("id", "association_group.id"), "confirmation-$requestId", "reconciliation-${postingIds.last()}", bankLink.string("id", "bank_link.id"), itemLinkIds, consumptionIds, allocationIds,
+        group.string("id", "association_group.id"), rg05MigrationId(importRootId, "confirmation", "$.import_path.ordered_operations[*].expected.candidate_status", requestId), rg05MigrationId(importRootId, "posting_reconciliation", "$.import_path.ordered_operations[*].expected.reconciliation", postingIds.last()), bankLink.string("id", "bank_link.id"), itemLinkIds, consumptionIds, allocationIds,
     )
 
     val receipt = operations[2].objAt("$.import_path.ordered_operations[2]")
@@ -200,3 +246,83 @@ private fun JsonObject.boolean(name: String, path: String) = (this[name] as? Jso
 private fun JsonObject.int(name: String, path: String) = (this[name] as? JsonPrimitive)?.intOrNull ?: fail(path, Rg05RawJsonContractErrorReason.WRONG_TYPE)
 private data class Rg05DecodeFailure(val path: String, val reason: Rg05RawJsonContractErrorReason) : RuntimeException()
 private fun fail(path: String, reason: Rg05RawJsonContractErrorReason = Rg05RawJsonContractErrorReason.INVALID_VALUE): Nothing = throw Rg05DecodeFailure(path, reason)
+
+internal fun rg05RootId(locator: String, occurrence: String): String =
+    rg05UuidV5("RG-05\n@root\nroot\n$locator\noccurrence=$occurrence")
+
+internal fun rg05MigrationId(rootId: String, kind: String, locator: String, occurrence: String): String =
+    rg05UuidV5("RG-05\n$rootId\n$kind\n$locator\noccurrence=$occurrence")
+
+/**
+ * Golden contract v2 identity namespace. It must stay byte-identical to `_UUID_NAMESPACE` in
+ * `tools/python/golden_cases/v2.py`; the two generators have to agree or migrated expected output
+ * and runtime output name different entities for the same fact.
+ */
+private val rg05UuidNamespace = "cfad3f84edb15838ae53aae49684cf1a".chunked(2)
+    .map { it.toInt(16).toByte() }
+    .toByteArray()
+
+internal fun rg05UuidV5(name: String): String {
+    val bytes = rg05Sha1(rg05UuidNamespace + name.encodeToByteArray()).copyOf(16)
+    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
+    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
+    val hex = bytes.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}"
+}
+
+private fun rg05Sha1(input: ByteArray): ByteArray {
+    val bitLength = input.size.toLong() * 8
+    val paddedSize = ((input.size + 9 + 63) / 64) * 64
+    val padded = ByteArray(paddedSize)
+    input.copyInto(padded)
+    padded[input.size] = 0x80.toByte()
+    repeat(8) { index -> padded[padded.lastIndex - index] = (bitLength ushr (index * 8)).toByte() }
+
+    var h0 = 0x67452301
+    var h1 = 0xEFCDAB89.toInt()
+    var h2 = 0x98BADCFE.toInt()
+    var h3 = 0x10325476
+    var h4 = 0xC3D2E1F0.toInt()
+    val words = IntArray(80)
+    for (offset in padded.indices step 64) {
+        for (index in 0 until 16) {
+            val start = offset + index * 4
+            words[index] = ((padded[start].toInt() and 0xff) shl 24) or
+                ((padded[start + 1].toInt() and 0xff) shl 16) or
+                ((padded[start + 2].toInt() and 0xff) shl 8) or
+                (padded[start + 3].toInt() and 0xff)
+        }
+        for (index in 16 until 80) words[index] = rg05RotateLeft(words[index - 3] xor words[index - 8] xor words[index - 14] xor words[index - 16], 1)
+        var a = h0
+        var b = h1
+        var c = h2
+        var d = h3
+        var e = h4
+        for (index in 0 until 80) {
+            val f: Int
+            val k: Int
+            when (index) {
+                in 0..19 -> { f = (b and c) or (b.inv() and d); k = 0x5A827999 }
+                in 20..39 -> { f = b xor c xor d; k = 0x6ED9EBA1 }
+                in 40..59 -> { f = (b and c) or (b and d) or (c and d); k = 0x8F1BBCDC.toInt() }
+                else -> { f = b xor c xor d; k = 0xCA62C1D6.toInt() }
+            }
+            val next = rg05RotateLeft(a, 5) + f + e + k + words[index]
+            e = d
+            d = c
+            c = rg05RotateLeft(b, 30)
+            b = a
+            a = next
+        }
+        h0 += a
+        h1 += b
+        h2 += c
+        h3 += d
+        h4 += e
+    }
+    return listOf(h0, h1, h2, h3, h4).flatMap { word ->
+        listOf((word ushr 24).toByte(), (word ushr 16).toByte(), (word ushr 8).toByte(), word.toByte())
+    }.toByteArray()
+}
+
+private fun rg05RotateLeft(value: Int, bits: Int): Int = (value shl bits) or (value ushr (32 - bits))

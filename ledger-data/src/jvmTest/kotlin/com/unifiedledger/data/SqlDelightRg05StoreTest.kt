@@ -14,7 +14,7 @@ class SqlDelightRg05StoreTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused") }, Rg05FailureInjector { if (it == Rg05FailurePoint.INGEST_AFTER_SOURCES) error("injected") })
+            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused") }, Rg05FailureInjector { if (it == Rg05FailurePoint.INGEST_AFTER_SOURCES) error("injected") })
             val cny = CurrencyUnit("CNY", 2)
             val operation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(
                 LedgerId("ledger-a"), RequestId("request"),
@@ -38,7 +38,7 @@ class SqlDelightRg05StoreTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val ledger = LedgerId("ledger-a")
-            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused") })
+            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused") })
             val cny = CurrencyUnit("CNY", 2)
             val bank = Rg05BankFact("source-bank", "evidence-bank", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z", "bank", Money.ofMinor(-10_000, cny))
             val items = listOf(
@@ -64,7 +64,7 @@ class SqlDelightRg05StoreTest {
             val invalidCategory = confirm(listOf(4_000, 6_000)).let { operation ->
                 operation.copy(snapshot = operation.snapshot.copy(requestId = RequestId("confirm-invalid-category"), allocations = operation.snapshot.allocations.mapIndexed { index, allocation -> if (index == 0) allocation.copy(categoryId = CategoryId("missing")) else allocation }))
             }
-            assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.SECONDARY_CATEGORY_REQUIRED, "items.category_id"), store.commit(invalidCategory))
+            assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.SECONDARY_CATEGORY_REQUIRED, "items"), store.commit(invalidCategory))
             assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
             val confirmation = confirm(listOf(4_000, 6_000))
             assertIs<Rg05ExecutionResult.Accepted>(store.commit(confirmation))
@@ -98,7 +98,7 @@ class SqlDelightRg05StoreTest {
             assertEquals(8, LedgerDatabase.Schema.version)
             val catalog = catalog()
             val store = SqlDelightRg05Store(database, driver, catalog, object : Rg05IdentitySource {
-                override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation")
+                override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation", "reconciliation")
             })
             val snapshot = Rg05ManualSnapshot(
                 LedgerId("ledger-a"), RequestId("request"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z",
@@ -108,7 +108,7 @@ class SqlDelightRg05StoreTest {
                     MergedPaymentItem("b", Money.ofMinor(6_000, currency), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
                 ), true,
             )
-            val operation = Rg05PreparedOperation.Manual(snapshot, MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("v"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "confirmation")
+            val operation = Rg05PreparedOperation.Manual(snapshot, MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("v"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "", "")
             assertEquals(
                 Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "explicit_confirmation"),
                 store.commit(operation.copy(snapshot = snapshot.copy(confirmed = false))),

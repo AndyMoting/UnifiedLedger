@@ -8,6 +8,7 @@ import kotlin.time.Instant
 
 data class Rg05ManualCommitIds(
     val confirmationId: String,
+    val reconciliationId: String,
 )
 
 interface Rg05IdentitySource {
@@ -57,6 +58,7 @@ class SqlDelightRg05Store private constructor(
             return resolveManual(snapshot)
         }
         val confirmationId = operation.confirmationId.ifBlank { identity.manual(snapshot.requestId).confirmationId }
+        val reconciliationId = operation.reconciliationId.ifBlank { identity.manual(snapshot.requestId).reconciliationId }
         return database.transactionWithResult {
             database.ledgerQueries.claimRg05Request(snapshot.ledgerId.value, snapshot.requestId.value, Rg05Action.MANUAL_MERGED_PAYMENT.name)
             if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) return@transactionWithResult resolveManual(snapshot)
@@ -116,8 +118,8 @@ class SqlDelightRg05Store private constructor(
                     item.categoryId.value,
                     item.details,
                     item.sourceObservedAt.toString(),
-                    "consumption-${item.itemId}",
-                    "allocation-${item.itemId}",
+                    operation.consumptionIds[item.itemId] ?: "consumption-${item.itemId}",
+                    operation.allocationIds[item.itemId] ?: "allocation-${item.itemId}",
                     null,
                     null,
                     postingId,
@@ -163,7 +165,7 @@ class SqlDelightRg05Store private constructor(
             )
             database.ledgerQueries.insertRg05PostingReconciliation(
                 snapshot.ledgerId.value,
-                operation.reconciliationId,
+                reconciliationId,
                 operation.formalIds.paymentAssetPostingId.value,
                 "PENDING",
             )
@@ -293,7 +295,7 @@ class SqlDelightRg05Store private constructor(
         val candidateItems = database.ledgerQueries.selectRg05CandidateItems(snapshot.ledgerId.value, snapshot.candidateId).executeAsList()
         if (snapshot.allocations.size != 2 || snapshot.allocations.map { it.itemId }.toSet().size != 2) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.DUPLICATE_ITEM_ID, "items")
         if (snapshot.allocations.any { it.amount.minorUnits <= 0 }) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.ITEM_AMOUNT_MUST_BE_POSITIVE, "items")
-        if (snapshot.allocations.any { it.amount.currency.code != candidate.currency_code || it.amount.currency.precision.toLong() != candidate.currency_precision }) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.SINGLE_CURRENCY_REQUIRED, "items.currency")
+        if (snapshot.allocations.any { it.amount.currency.code != candidate.currency_code || it.amount.currency.precision.toLong() != candidate.currency_precision }) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.SINGLE_CURRENCY_REQUIRED, "items")
         val total = snapshot.allocations.sumOf { it.amount.minorUnits }
         if (total < candidate.payment_total_minor) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_INCOMPLETE, "allocation_total")
         if (total > candidate.payment_total_minor) return Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_CONFLICT, "allocation_total")
@@ -406,7 +408,7 @@ class SqlDelightRg05Store private constructor(
 }
 
 private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = when (this) {
-    DomainViolation.InvalidMergedPayment -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPENSE_CATEGORY_REQUIRED, "items.category_id")
+    DomainViolation.InvalidMergedPayment -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPENSE_CATEGORY_REQUIRED, "items")
     MergedPaymentViolation.AmountMustBePositive -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.MUST_BE_POSITIVE, "total_amount")
     MergedPaymentViolation.ItemAmountMustBePositive -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.ITEM_AMOUNT_MUST_BE_POSITIVE, "items")
     MergedPaymentViolation.AllocationTotalMustEqualPayment -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_TOTAL_MUST_EQUAL_PAYMENT, "items")
@@ -415,10 +417,10 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = whe
     MergedPaymentViolation.RealFinancialAccountRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.REAL_FINANCIAL_ACCOUNT_REQUIRED, "funding_account_id")
     MergedPaymentViolation.AssetAccountRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.ASSET_ACCOUNT_REQUIRED, "funding_account_id")
     MergedPaymentViolation.OwnedAccountRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.OWNED_ACCOUNT_REQUIRED, "funding_account_id")
-    MergedPaymentViolation.SecondaryCategoryRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.SECONDARY_CATEGORY_REQUIRED, "items.category_id")
-    MergedPaymentViolation.CategoryInactive -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.CATEGORY_INACTIVE, "items.category_id")
-    MergedPaymentViolation.ExpenseCategoryRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPENSE_CATEGORY_REQUIRED, "items.category_id")
-    MergedPaymentViolation.SingleCurrencyRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.SINGLE_CURRENCY_REQUIRED, "currency")
+    MergedPaymentViolation.SecondaryCategoryRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.SECONDARY_CATEGORY_REQUIRED, "items")
+    MergedPaymentViolation.CategoryInactive -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.CATEGORY_INACTIVE, "items")
+    MergedPaymentViolation.ExpenseCategoryRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPENSE_CATEGORY_REQUIRED, "items")
+    MergedPaymentViolation.SingleCurrencyRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.SINGLE_CURRENCY_REQUIRED, "items")
     DomainViolation.ArithmeticOverflow,
     DomainViolation.InvalidPostingSet,
     DomainViolation.UnbalancedPostingSet,

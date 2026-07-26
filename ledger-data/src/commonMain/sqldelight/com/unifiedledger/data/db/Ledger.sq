@@ -2591,6 +2591,33 @@ WHERE ledger_id = ? AND relation_id = ? AND item_id = ?;
 selectRg05RelationCompleteness:
 SELECT business_evidence_completeness FROM rg05_relation_item WHERE ledger_id = ? AND relation_id = ? ORDER BY item_index;
 
+selectRg05ConfirmationIds:
+SELECT confirmation_id FROM rg05_confirmation ORDER BY confirmation_id;
+
+selectRg05PostingReconciliationIds:
+SELECT reconciliation_id FROM rg05_posting_reconciliation ORDER BY reconciliation_id;
+
+selectRg05RelationIds:
+SELECT relation_id FROM rg05_relation ORDER BY relation_id;
+
+selectRg05SourceIds:
+SELECT source_id FROM rg05_source_record ORDER BY source_id;
+
+selectRg05EvidenceIds:
+SELECT evidence_id FROM rg05_evidence ORDER BY evidence_id;
+
+selectRg05EvidenceLinkIds:
+SELECT link_id FROM rg05_evidence_link ORDER BY link_id;
+
+selectRg05CandidateIds:
+SELECT candidate_id FROM rg05_candidate ORDER BY candidate_id;
+
+selectRg05CandidateStatusIds:
+SELECT status_id FROM rg05_candidate_status_history ORDER BY candidate_id, status_sequence;
+
+selectRg05DomainEntityIds:
+SELECT consumption_id, allocation_id FROM rg05_item_snapshot ORDER BY request_id, item_index;
+
 countRg05Sources:
 SELECT count(*) FROM rg05_source_record;
 
