@@ -75,6 +75,27 @@ class Rg05RawJsonEndToEndTest {
         assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(crossedConsumption))
     }
 
+    /**
+     * Every rejection carries a contract-owned request identity. Deriving them instead of
+     * inventing test values is what lets the rejected operations be compared against the frozen
+     * expected output at all.
+     */
+    @Test
+    fun derivedRejectionRequestIdsMatchTheExpectedContract() {
+        val case = rg05DecodedCase()
+        val bankSourceId = assertIs<Rg05PreparedOperation.Ingest>(case.importOperations[0]).snapshot.bankFact.sourceId
+        val fixture = rg05FixtureRoot()
+        val derived = fixture["invalid_manual_inputs"]!!.jsonArray.map { rg05InvalidManualRequestId(it.jsonObject.text("id")) } +
+            fixture["allocation_failures"]!!.jsonArray.map { rg05AllocationFailureRequestId(bankSourceId, it.jsonObject.text("id")) }
+        assertEquals(17, derived.size)
+
+        val root = Json.parseToJsonElement(Files.readString(rg05RepositoryFile("docs/migrations/golden-v2/rg-05-expected.json"))).jsonObject
+        val frozen = root["operations"]!!.jsonArray.mapNotNull {
+            it.jsonObject["attempted_input"]?.jsonObject?.get("request_id")?.jsonPrimitive?.content
+        }
+        assertEquals(frozen.toSet(), derived.toSet())
+    }
+
     @Test
     fun twentyFiveGoldenOperationsMatchTheExpectedContract() {
         val runtime = invalidManualObservations() + manualRootObservations() + importRootObservations()
@@ -149,11 +170,11 @@ class Rg05RawJsonEndToEndTest {
             // leave the candidate pending with no formal effect at all.
             assertEquals(
                 Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_INCOMPLETE, "allocation_total"),
-                run("confirm_merged_payment_candidate", reallocated(confirm, "request-rg05-allocation-incomplete", 4_000, 5_000, case.currency)),
+                run("confirm_merged_payment_candidate", reallocated(confirm, rg05AllocationFailureRequestId(ingest.snapshot.bankFact.sourceId, "incomplete-allocation"), 4_000, 5_000, case.currency)),
             )
             assertEquals(
                 Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_CONFLICT, "allocation_total"),
-                run("confirm_merged_payment_candidate", reallocated(confirm, "request-rg05-allocation-conflict", 4_000, 7_000, case.currency)),
+                run("confirm_merged_payment_candidate", reallocated(confirm, rg05AllocationFailureRequestId(ingest.snapshot.bankFact.sourceId, "over-allocation"), 4_000, 7_000, case.currency)),
             )
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(1L, database.ledgerQueries.countRg05CandidateStatuses().executeAsOne())
@@ -209,7 +230,7 @@ class Rg05RawJsonEndToEndTest {
                 val id = entry.text("id")
                 val expected = entry["expected"]!!.jsonObject
                 val ids = invalidManualPreparedIds(index)
-                when (val adapted = adaptRg05Manual(case, invalidManualInput(entry, index), ids)) {
+                when (val adapted = adaptRg05Manual(case, invalidManualInput(entry), ids)) {
                     is Rg05AdaptResult.Invalid ->
                         observed += Rg05Observation("rejection", "manual_merged_payment", "rejected", adapted.reason, "$.attempted_input.${adapted.field}", CONTRACT_CATEGORIES.associateWith { emptyList() }, emptyList())
                     is Rg05AdaptResult.Success -> {
@@ -345,10 +366,10 @@ class Rg05RawJsonEndToEndTest {
         }
     }
 
-    private fun invalidManualInput(entry: JsonObject, index: Int): Rg05ManualInput {
+    private fun invalidManualInput(entry: JsonObject): Rg05ManualInput {
         val input = entry["input"]!!.jsonObject
         return Rg05ManualInput(
-            Rg05Field.Value("request-rg05-invalid-$index"),
+            Rg05Field.Value(rg05InvalidManualRequestId(entry.text("id"))),
             Rg05Field.Value(INVALID_PAYMENT_AT),
             Rg05Field.Value(input.text("total_amount")),
             Rg05Field.Value(input.text("currency")),

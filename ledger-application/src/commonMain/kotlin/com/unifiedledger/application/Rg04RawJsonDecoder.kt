@@ -477,77 +477,8 @@ private fun rg04RejectedRequestId(rawId: String): String {
     return rg04MigrationId(rootId, "request", "$.invalid_manual_inputs[*].id", rawId)
 }
 
-private fun rg04RootId(locator: String, occurrence: String): String =
-    rg04UuidV5("RG-04\n@root\nroot\n$locator\noccurrence=$occurrence")
+internal fun rg04RootId(locator: String, occurrence: String): String =
+    goldenV2RootId("RG-04", locator, occurrence)
 
-private fun rg04MigrationId(rootId: String, kind: String, locator: String, occurrence: String): String =
-    rg04UuidV5("RG-04\n$rootId\n$kind\n$locator\noccurrence=$occurrence")
-
-private val rg04UuidNamespace = "cfad3f84edb15838ae53aae49684cf1a".chunked(2)
-    .map { it.toInt(16).toByte() }
-    .toByteArray()
-
-private fun rg04UuidV5(name: String): String {
-    val bytes = rg04Sha1(rg04UuidNamespace + name.encodeToByteArray()).copyOf(16)
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val hex = bytes.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}"
-}
-
-private fun rg04Sha1(input: ByteArray): ByteArray {
-    val bitLength = input.size.toLong() * 8
-    val paddedSize = ((input.size + 9 + 63) / 64) * 64
-    val padded = ByteArray(paddedSize)
-    input.copyInto(padded)
-    padded[input.size] = 0x80.toByte()
-    repeat(8) { index -> padded[padded.lastIndex - index] = (bitLength ushr (index * 8)).toByte() }
-
-    var h0 = 0x67452301
-    var h1 = 0xEFCDAB89.toInt()
-    var h2 = 0x98BADCFE.toInt()
-    var h3 = 0x10325476
-    var h4 = 0xC3D2E1F0.toInt()
-    val words = IntArray(80)
-    for (offset in padded.indices step 64) {
-        for (index in 0 until 16) {
-            val start = offset + index * 4
-            words[index] = ((padded[start].toInt() and 0xff) shl 24) or
-                ((padded[start + 1].toInt() and 0xff) shl 16) or
-                ((padded[start + 2].toInt() and 0xff) shl 8) or
-                (padded[start + 3].toInt() and 0xff)
-        }
-        for (index in 16 until 80) words[index] = rg04RotateLeft(words[index - 3] xor words[index - 8] xor words[index - 14] xor words[index - 16], 1)
-        var a = h0
-        var b = h1
-        var c = h2
-        var d = h3
-        var e = h4
-        for (index in 0 until 80) {
-            val f: Int
-            val k: Int
-            when (index) {
-                in 0..19 -> { f = (b and c) or (b.inv() and d); k = 0x5A827999 }
-                in 20..39 -> { f = b xor c xor d; k = 0x6ED9EBA1 }
-                in 40..59 -> { f = (b and c) or (b and d) or (c and d); k = 0x8F1BBCDC.toInt() }
-                else -> { f = b xor c xor d; k = 0xCA62C1D6.toInt() }
-            }
-            val next = rg04RotateLeft(a, 5) + f + e + k + words[index]
-            e = d
-            d = c
-            c = rg04RotateLeft(b, 30)
-            b = a
-            a = next
-        }
-        h0 += a
-        h1 += b
-        h2 += c
-        h3 += d
-        h4 += e
-    }
-    return listOf(h0, h1, h2, h3, h4).flatMap { word ->
-        listOf((word ushr 24).toByte(), (word ushr 16).toByte(), (word ushr 8).toByte(), word.toByte())
-    }.toByteArray()
-}
-
-private fun rg04RotateLeft(value: Int, bits: Int): Int = (value shl bits) or (value ushr (32 - bits))
+internal fun rg04MigrationId(rootId: String, kind: String, locator: String, occurrence: String): String =
+    goldenV2MigrationId("RG-04", rootId, kind, locator, occurrence)

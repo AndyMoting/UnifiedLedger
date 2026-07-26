@@ -20,7 +20,7 @@ class Rg05IdentityTest {
     @Test
     fun sameInputAlwaysProducesTheSameId() {
         repeat(3) {
-            assertEquals(rg05UuidV5("RG-05"), rg05UuidV5("RG-05"))
+            assertEquals(goldenV2UuidV5("RG-05"), goldenV2UuidV5("RG-05"))
             assertEquals(importRoot, rg05RootId(IMPORT_LOCATOR, IMPORT_SOURCE))
             assertEquals(
                 rg05MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
@@ -40,7 +40,7 @@ class Rg05IdentityTest {
 
     @Test
     fun distinctInputsProduceDistinctIds() {
-        assertNotEquals(rg05UuidV5("RG-05"), rg05UuidV5("RG-06"))
+        assertNotEquals(goldenV2UuidV5("RG-05"), goldenV2UuidV5("RG-06"))
         assertNotEquals(importRoot, rg05RootId(IMPORT_LOCATOR, "source-bank-debit-other"))
         assertNotEquals(importRoot, manualRoot)
         val confirmation = rg05MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST)
@@ -57,7 +57,7 @@ class Rg05IdentityTest {
      * These are the identities frozen in `docs/migrations/golden-v2/rg-05-expected.json`, produced
      * by `tools/python/golden_cases/v2.py`. Matching them proves this generator agrees with the
      * contract on namespace, name layout, entity kind and the locator/discriminator values declared
-     * below, so any drift in `rg05Sha1`/`rg05UuidV5` breaks this test.
+     * below, so any drift in the shared `GoldenV2Identity` generator breaks this test.
      *
      * It does NOT prove that the decoder passes these locators: the values below are declared here,
      * not read from `decodeRg05RawJson`. A locator edited in `Rg05RawJsonDecoder` is caught only by
@@ -80,7 +80,7 @@ class Rg05IdentityTest {
             contractIdentities(),
         )
         // Independent RFC 4122 anchor on the raw generator, outside any RG-05 locator.
-        assertEquals("6aa8c5ff-b64d-5ced-b70a-f26ab5dfa636", rg05UuidV5("RG-05"))
+        assertEquals("6aa8c5ff-b64d-5ced-b70a-f26ab5dfa636", goldenV2UuidV5("RG-05"))
     }
 
     private fun contractIdentities() = mapOf(
