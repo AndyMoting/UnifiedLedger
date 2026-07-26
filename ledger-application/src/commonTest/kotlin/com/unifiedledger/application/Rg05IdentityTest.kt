@@ -54,10 +54,15 @@ class Rg05IdentityTest {
     }
 
     /**
-     * These are the identities frozen in `docs/migrations/golden-v2/rg-05-expected.json`. They were
-     * produced by `tools/python/golden_cases/v2.py`, so matching them proves this generator agrees
-     * with the contract on namespace, name layout, entity kind, source locator and discriminator.
-     * Any silent drift in `rg05Sha1`/`rg05UuidV5` or in a locator breaks this test.
+     * These are the identities frozen in `docs/migrations/golden-v2/rg-05-expected.json`, produced
+     * by `tools/python/golden_cases/v2.py`. Matching them proves this generator agrees with the
+     * contract on namespace, name layout, entity kind and the locator/discriminator values declared
+     * below, so any drift in `rg05Sha1`/`rg05UuidV5` breaks this test.
+     *
+     * It does NOT prove that the decoder passes these locators: the values below are declared here,
+     * not read from `decodeRg05RawJson`. A locator edited in `Rg05RawJsonDecoder` is caught only by
+     * `Rg05RawJsonEndToEndTest.decodedIdentitiesAreDeterministicAndMatchTheFrozenContract`, which
+     * lives in `ledger-data` because the generator is `internal` to this module.
      */
     @Test
     fun generatedIdentitiesMatchTheFrozenGoldenContractValues() {

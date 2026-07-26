@@ -108,7 +108,7 @@ class SqlDelightRg05StoreTest {
                     MergedPaymentItem("b", Money.ofMinor(6_000, currency), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
                 ), true,
             )
-            val operation = Rg05PreparedOperation.Manual(snapshot, MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("v"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "", "")
+            val operation = Rg05PreparedOperation.Manual(snapshot, MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("v"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "", "", mapOf("a" to "consumption-a", "b" to "consumption-b"), mapOf("a" to "allocation-a", "b" to "allocation-b"))
             assertEquals(
                 Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "explicit_confirmation"),
                 store.commit(operation.copy(snapshot = snapshot.copy(confirmed = false))),

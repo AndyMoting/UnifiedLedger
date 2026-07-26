@@ -14,11 +14,11 @@ Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `le
 | `RG-02` | 已实现 `D-071` 批准的 manual-income 最小 slice：create、retry、2 个变体和 8 个拒绝；`category_rename` unsupported，尚无完整 state runtime 比较 | 未发布 |
 | `RG-03` | 当前冻结范围的 13 roots、20 operations 已逐项比较 outcome、returned IDs、完整 state、deltas 与 status changes | 未发布 |
 | `RG-04` | raw v1 的 26 operations 均有 runtime；其中 18 个 manual operations 有精确 projection 比较，26 项整体比较状态计数和部分 returned IDs；尚无全 26 项完整 state/report/reconciliation/delta 比较 | 已发布 |
-| `RG-05` | 领域、应用与持久化 runtime 已进入共享库；expected 仍为 `draft_for_review`。完整 25-operation E2E、确定性 identity 验证、独立 expected/runtime 审查与明确用户批准均未完成 | 未发布 |
+| `RG-05` | 领域、应用与持久化 runtime 已进入共享库；expected 仍为 `draft_for_review`。25 operations 已逐项比较 outcome、rejection reason/field、新增实体 ID 与 returned IDs，确定性 identity 与契约冻结值一致；尚无 RG-03 等级的完整 state/deltas/status-changes 比较。独立 expected/runtime 审查与明确用户批准均未完成 | 未发布 |
 | `RG-06` 至 `RG-10` | 有冻结 v1、Python 测试和逐路径 mapping，无 Kotlin runtime | 未发布 |
 | `RG-11`、`RG-12` | 有 approved direct-v2 fixtures 与 Python 语义测试，无 Kotlin runtime | direct-v2 fixture 已批准 |
 
-这些结果不等于全部黄金场景或正式账务核心已经完成。RG-05 仍需补齐完整 25-operation E2E、确定性 identity 验证、独立 expected/runtime 审查和明确用户批准；publication 仍需后续单独授权。RG-05 expected 在这些闸门完成前保持 `draft_for_review`，v2 不发布。报表、通用导入与对账模块、UI 和平台客户端仍未建立；当前持久化选择也不预先决定同步或更广泛查询方案。
+这些结果不等于全部黄金场景或正式账务核心已经完成。RG-05 仍需补齐 RG-03 等级的完整 state/deltas/status-changes 比较、独立 expected/runtime 审查和明确用户批准；publication 仍需后续单独授权。RG-05 expected 在这些闸门完成前保持 `draft_for_review`，v2 不发布。报表、通用导入与对账模块、UI 和平台客户端仍未建立；当前持久化选择也不预先决定同步或更广泛查询方案。
 
 ## 核心原则
 

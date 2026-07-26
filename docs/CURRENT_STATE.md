@@ -13,7 +13,7 @@
 
 ## 验证证据
 
-最新保存的 Gradle JVM 测试 XML 报告日期为 2026-07-25：`ledger-domain` 36 项、`ledger-application` 87 项、`ledger-data` 99 项，均为零 failure、零 error。
+最新保存的 Gradle JVM 测试 XML 报告日期为 2026-07-26：`ledger-domain` 36 项、`ledger-application` 91 项、`ledger-data` 103 项，均为零 failure、零 error。
 
 ## 当前环境
 
@@ -26,6 +26,6 @@
 ## 未完成门槛
 
 - RG-05 expected 仍为 `approval_status: draft_for_review`，v2 未发布。现有 runtime 不构成 expected 审批、完整场景通过或 publication 授权。
-- RG-05 仍缺完整 25-operation E2E 覆盖和确定性 identity 验证。
+- RG-05 的 25 operations 已逐项比较 outcome、rejection reason/field、新增实体 ID 与 returned IDs，确定性 identity 与契约冻结值一致；尚无 RG-03 等级的完整 state/deltas/status-changes 比较。
 - RG-05 仍需独立 expected/runtime 审查和明确用户批准；publication 需要后续单独授权。
 - 其他 RG 的 v1 rewrite、v2 publication 和未完成完整比较仍分别受其现有 gate 约束。
