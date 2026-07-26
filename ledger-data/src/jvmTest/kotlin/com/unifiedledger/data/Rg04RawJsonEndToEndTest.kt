@@ -5,9 +5,6 @@ import com.unifiedledger.application.*
 import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.ByteBuffer
-import java.security.MessageDigest
-import java.util.UUID
 import java.util.Properties
 import kotlinx.serialization.json.*
 import kotlin.test.*
@@ -364,17 +361,8 @@ private fun frozenIds(case: Rg04RawJsonCase) = object : Rg04IdentitySource {
         listOf(case.repaymentIds.assetPostingId, case.repaymentIds.liabilityPostingId).map { rg04MigrationId(rootId, "posting_reconciliation", "$locator.expected.reconciliation", it.value) },
     )
 }
-private val RG04_V2_NAMESPACE: UUID = UUID.fromString("cfad3f84-edb1-5838-ae53-aae49684cf1a")
 private fun rg04RootId(locator: String, discriminator: String): String =
-    rg04Uuid5("RG-04\n@root\nroot\n$locator\noccurrence=$discriminator")
+    goldenV2RootId("RG-04", locator, discriminator)
 private fun rg04MigrationId(rootId: String, kind: String, locator: String, discriminator: String): String =
-    rg04Uuid5("RG-04\n$rootId\n$kind\n$locator\noccurrence=$discriminator")
-private fun rg04Uuid5(name: String): String {
-    val namespace = ByteBuffer.allocate(16).putLong(RG04_V2_NAMESPACE.mostSignificantBits).putLong(RG04_V2_NAMESPACE.leastSignificantBits).array()
-    val bytes = MessageDigest.getInstance("SHA-1").digest(namespace + name.toByteArray(Charsets.UTF_8)).copyOf(16)
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val buffer = ByteBuffer.wrap(bytes)
-    return UUID(buffer.long, buffer.long).toString()
-}
+    goldenV2MigrationId("RG-04", rootId, kind, locator, discriminator)
 private fun repositoryFile(relative: String): Path { var p = Path.of(System.getProperty("user.dir")); repeat(6) { if (Files.isRegularFile(p.resolve("settings.gradle.kts"))) return p.resolve(relative); p = p.parent ?: error("root") }; error("root") }

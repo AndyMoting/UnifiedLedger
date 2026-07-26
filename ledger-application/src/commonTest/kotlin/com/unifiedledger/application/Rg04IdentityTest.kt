@@ -8,9 +8,16 @@ private const val IMPORT_SOURCE = "source-record-rg04-complete"
 private const val CONFIRM_REQUEST = "request-rg04-confirm-candidate"
 private const val CANDIDATE_STATUS_LOCATOR = "$.import_lifecycle.ordered_operations[*].expected.candidate_status"
 private const val RECONCILIATION_LOCATOR = "$.import_lifecycle.ordered_operations[*].expected.reconciliation"
+private const val PENDING_STATUS_LOCATOR = "$.import_lifecycle.ordered_operations[*].expected.candidate.status"
+private const val CANDIDATE = "candidate-purchase-rg04"
+private const val MISSING_LEG_LOCATOR = "$.missing_funding_leg"
+private const val MISSING_LEG_SOURCE = "source-record-rg04-missing-leg"
+private const val MISSING_LEG_STATUS_LOCATOR = "$.missing_funding_leg.expected.candidate.status"
+private const val MISSING_LEG_CANDIDATE = "candidate-purchase-rg04-missing-leg"
 
 class Rg04IdentityTest {
     private val importRoot = rg04RootId(IMPORT_LOCATOR, IMPORT_SOURCE)
+    private val missingLegRoot = rg04RootId(MISSING_LEG_LOCATOR, MISSING_LEG_SOURCE)
 
     /**
      * These are the identities frozen in `docs/migrations/golden-v2/rg-04-expected.json`, which is
@@ -18,9 +25,13 @@ class Rg04IdentityTest {
      * proves this generator agrees with the contract on namespace, name layout, entity kind and the
      * locator/discriminator values declared below.
      *
-     * The point of anchoring output rather than implementation is that the generator is duplicated
-     * across scenarios and is being consolidated: this test must keep passing across that change,
-     * which is what makes the consolidation provably behaviour-preserving.
+     * The point of anchoring output rather than implementation is that the generator is shared
+     * across scenarios: this test must keep passing across changes to it, which is what makes such
+     * changes provably behaviour-preserving.
+     *
+     * It does NOT prove that the decoder passes these locators: the values below are declared here,
+     * not read from `decodeRg04RawJson`. A locator edited in `Rg04RawJsonDecoder` would rename an
+     * entity in an already approved contract, and only an end-to-end comparison catches that.
      */
     @Test
     fun generatedIdentitiesMatchTheFrozenGoldenContractValues() {
@@ -31,6 +42,9 @@ class Rg04IdentityTest {
                 "candidate confirmed status" to "5f6fad69-6379-527c-ac6e-325a639345c4",
                 "asset posting reconciliation" to "3d1d9844-a204-5eb5-a6c0-252ce8a1df25",
                 "liability posting reconciliation" to "24730466-70b5-57c4-8709-147007590f95",
+                "candidate pending status" to "b27b91c0-9243-5713-8fe6-d198cd81a4dd",
+                "missing funding leg root" to "cd0d9d9f-90b0-54ce-9ccc-3e6552817409",
+                "missing funding leg candidate status" to "b0168a14-730a-5ba5-a31b-5842da3e3fba",
             ),
             contractIdentities(),
         )
@@ -62,5 +76,8 @@ class Rg04IdentityTest {
         "candidate confirmed status" to rg04MigrationId(importRoot, "candidate_status", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
         "asset posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-asset-rg04-imported"),
         "liability posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-liability-rg04-imported"),
+        "candidate pending status" to rg04MigrationId(importRoot, "candidate_status", PENDING_STATUS_LOCATOR, CANDIDATE),
+        "missing funding leg root" to missingLegRoot,
+        "missing funding leg candidate status" to rg04MigrationId(missingLegRoot, "candidate_status", MISSING_LEG_STATUS_LOCATOR, MISSING_LEG_CANDIDATE),
     )
 }

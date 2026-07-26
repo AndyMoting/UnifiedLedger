@@ -5,13 +5,9 @@ import com.unifiedledger.application.*
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.*
 import java.math.BigDecimal
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.security.MessageDigest
 import java.util.Properties
-import java.util.UUID
 import kotlinx.serialization.json.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -344,25 +340,11 @@ private fun rg03TransferIds(
     evidenceLinkId,
 )
 
-private val RG03_V2_NAMESPACE: UUID = UUID.fromString("cfad3f84-edb1-5838-ae53-aae49684cf1a")
-
 private fun rg03RootId(locator: String, discriminator: String): String =
-    rg03Uuid5("RG-03\n@root\nroot\n$locator\noccurrence=$discriminator")
+    goldenV2RootId("RG-03", locator, discriminator)
 
 private fun rg03MigrationId(rootId: String, kind: String, locator: String, discriminator: String): String =
-    rg03Uuid5("RG-03\n$rootId\n$kind\n$locator\noccurrence=$discriminator")
-
-private fun rg03Uuid5(name: String): String {
-    val namespace = ByteBuffer.allocate(16)
-        .putLong(RG03_V2_NAMESPACE.mostSignificantBits)
-        .putLong(RG03_V2_NAMESPACE.leastSignificantBits)
-        .array()
-    val digest = MessageDigest.getInstance("SHA-1").digest(namespace + name.toByteArray(StandardCharsets.UTF_8))
-    digest[6] = ((digest[6].toInt() and 0x0f) or 0x50).toByte()
-    digest[8] = ((digest[8].toInt() and 0x3f) or 0x80).toByte()
-    val bytes = ByteBuffer.wrap(digest, 0, 16)
-    return UUID(bytes.long, bytes.long).toString()
-}
+    goldenV2MigrationId("RG-03", rootId, kind, locator, discriminator)
 
 private fun rg03Minor(amount: String): Long = BigDecimal(amount).movePointRight(2).longValueExact()
 

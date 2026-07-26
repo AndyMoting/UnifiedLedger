@@ -21,12 +21,12 @@ private val goldenV2SourceLocatorPattern = Regex("^\\$(?:\\.[^.\\[\\]/\\x00-\\x1
 
 class GoldenV2IdentityException(message: String) : IllegalArgumentException(message)
 
-internal fun goldenV2RootId(caseId: String, sourceLocator: String, occurrenceDiscriminator: String): String {
+fun goldenV2RootId(caseId: String, sourceLocator: String, occurrenceDiscriminator: String): String {
     validateGoldenV2Component("case_id", caseId)
     return goldenV2UuidV5("$caseId\n@root\nroot\n${goldenV2SemanticKey(sourceLocator, occurrenceDiscriminator)}")
 }
 
-internal fun goldenV2MigrationId(
+fun goldenV2MigrationId(
     caseId: String,
     rootId: String,
     entityKind: String,
@@ -55,7 +55,7 @@ private fun validateGoldenV2Component(name: String, value: String) {
 }
 
 /** RFC 4122 name-based version 5 UUID. Kept dependency-free so it runs on every target. */
-internal fun goldenV2UuidV5(name: String): String {
+fun goldenV2UuidV5(name: String): String {
     val bytes = goldenV2Sha1(goldenV2UuidNamespace + name.encodeToByteArray()).copyOf(16)
     bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
     bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
