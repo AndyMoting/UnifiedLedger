@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-05.json`、`docs/specs/2026-07-15-rg-05-merged-payment-design.md`、`docs/specs/2026-07-25-rg-05-contract-closure-proposal.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-059` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-05 语义。本映射只定义 RG-05 v1 到 v2 的逐路径迁移；它批准生成 `draft_for_review` expected output，不批准 adapter、fixture rewrite 或 publication。
+本映射受 `golden/rules/rg-05.json`、`docs/specs/2026-07-15-rg-05-merged-payment-design.md`、`docs/specs/2026-07-25-rg-05-contract-closure-proposal.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-008`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-059` 约束。外部 `CORE_ACCEPTANCE_PLAN.md` 的 RG 编号已经过时，仅作为早期覆盖证据，不覆盖当前冻结的 RG-05 语义。本映射只定义 RG-05 v1 到 v2 的逐路径迁移；它批准生成 expected output，不批准 adapter、fixture rewrite 或 publication。
 
 ## Inventory
 
@@ -98,9 +98,9 @@ The machine path map retains all five resolved audits and their original affecte
 
 ## Expected Output Gate
 
-The generated expected output is deliberately `approval_status: draft_for_review`. It contains `17` roots, `25` operations, and `42` complete states: four accepted operations, four no-change replays, and 17 rejected operations. The rejected set is the 15 invalid manual inputs plus allocation incomplete and allocation conflict. This exact draft must still pass independent specification review, quality review, semantic-equivalence verification, and explicit approval before adapter implementation, fixture migration, or publication.
+The generated expected output is `approval_status: approved` as of `D-075`. It contains `17` roots, `25` operations, and `42` complete states: four accepted operations, four no-change replays, and 17 rejected operations. The rejected set is the 15 invalid manual inputs plus allocation incomplete and allocation conflict. That approval covers the expected artifact only: adapter implementation, fixture migration and publication each still require their own authorisation.
 
 - mapping status: `approved`
-- expected output gate: `draft_for_review`
+- expected output gate: `approved`
 - unresolved gap count: `0`
 - resolved gap count: `5`

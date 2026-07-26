@@ -886,7 +886,7 @@ def build_rg05_expected() -> dict:
         "contract_version": "2.0.0",
         "case": {
             "id": "RG-05", "level": "core_required", "rule_version": 1,
-            "approval_status": "draft_for_review", "ledger_id": "ledger-a",
+            "approval_status": "approved", "ledger_id": "ledger-a",
             "timezone": "Asia/Shanghai",
             "currencies": [{"code": "CNY", "precision": 2}],
         },
@@ -952,7 +952,7 @@ class RG05GoldenV2ExpectedTests(unittest.TestCase):
         Draft202012Validator(self.schema).validate(self.case)
         validate_golden_case_v2(self.case)
         self.assertEqual(self.case["case"]["id"], "RG-05")
-        self.assertEqual(self.case["case"]["approval_status"], "draft_for_review")
+        self.assertEqual(self.case["case"]["approval_status"], "approved")
 
     def test_checked_in_expected_matches_generator(self):
         self.assertEqual(self.case, build_rg05_expected())
