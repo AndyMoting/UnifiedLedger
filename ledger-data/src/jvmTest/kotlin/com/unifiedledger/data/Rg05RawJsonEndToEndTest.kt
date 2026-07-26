@@ -98,7 +98,7 @@ class Rg05RawJsonEndToEndTest {
 
     /**
      * Legal JSON that the decoder cannot turn into a contract must be reported, not thrown. These
-     * four all raise from ordinary library calls inside the decode block rather than from the
+     * three all raise from ordinary library calls inside the decode block rather than from the
      * decoder's own failure type.
      */
     @Test
