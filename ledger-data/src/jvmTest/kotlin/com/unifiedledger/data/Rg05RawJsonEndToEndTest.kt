@@ -50,6 +50,31 @@ class Rg05RawJsonEndToEndTest {
         assertEquals("e8eaaca9-8236-54b5-980a-0f060655bb90", confirm.reconciliationId)
     }
 
+    /**
+     * The manual posting-asset posting is located positionally, and the posting reconciliation
+     * identity is derived from it. A reordered or relabelled fixture must fail the decode rather
+     * than attach reconciliation to an expense posting or bind a consumption to the wrong posting.
+     */
+    @Test
+    fun reorderedManualExpectedPostingsAreRejectedInsteadOfMisbindingIdentities() {
+        val raw = Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))
+        assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(raw))
+
+        val movedFundingPosting = raw.replaceFirst(
+            "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"asset-bank-a\"",
+            "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"expense-account-daily\"",
+        )
+        assertNotEquals(raw, movedFundingPosting)
+        assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(movedFundingPosting))
+
+        val crossedConsumption = raw.replaceFirst(
+            "\"expense_posting_id\": \"posting-expense-a-rg05-manual\"",
+            "\"expense_posting_id\": \"posting-expense-b-rg05-manual\"",
+        )
+        assertNotEquals(raw, crossedConsumption)
+        assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(crossedConsumption))
+    }
+
     @Test
     fun twentyFiveGoldenOperationsMatchTheExpectedContract() {
         val runtime = invalidManualObservations() + manualRootObservations() + importRootObservations()

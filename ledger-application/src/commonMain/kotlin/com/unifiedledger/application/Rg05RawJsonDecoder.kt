@@ -71,7 +71,12 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
             Rg05Field.Value(confirmation.boolean("confirmed", "$.manual_path.confirmation.confirmed")),
         )
         val importOperations = decodeRg05ImportOperations(root["import_path"], ledgerId, currency)
-        val manualIds = decodeRg05ManualIds(manual.obj("expected", "$.manual_path.expected"), manualRequestId, manualInput.items.mapNotNull { (it.itemId as? Rg05Field.Value)?.value })
+        val manualIds = decodeRg05ManualIds(
+            manual.obj("expected", "$.manual_path.expected"),
+            manualRequestId,
+            manualInput.items.mapNotNull { (it.itemId as? Rg05Field.Value)?.value },
+            input.string("funding_account_id", "$.manual_path.input.funding_account_id"),
+        )
         Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations, manualIds))
     } catch (failure: Rg05DecodeFailure) {
         Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError(failure.path, failure.reason))
@@ -83,7 +88,7 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
  * reconciliation are operational identities the fixture never states, so they are derived from the
  * manual root exactly like the imported path derives its own.
  */
-private fun decodeRg05ManualIds(expected: JsonObject, requestId: String, itemIds: List<String>): Rg05PreparedIds {
+private fun decodeRg05ManualIds(expected: JsonObject, requestId: String, itemIds: List<String>, fundingAccountId: String): Rg05PreparedIds {
     val transaction = expected.obj("transaction", "$.manual_path.expected.transaction")
     val postings = transaction.array("postings", "$.manual_path.expected.transaction.postings")
     if (postings.size != 3) fail("$.manual_path.expected.transaction.postings")
@@ -91,18 +96,35 @@ private fun decodeRg05ManualIds(expected: JsonObject, requestId: String, itemIds
         val path = "$.manual_path.expected.transaction.postings[$index]"
         element.objAt(path).string("id", "$path.id")
     }
+    // The payment-asset posting is taken positionally as the last one, and the reconciliation
+    // identity is derived from it. Reconciliation may only ever belong to the owned real funding
+    // posting, so verify the position rather than trusting it: a reordered fixture must fail the
+    // decode instead of silently attaching reconciliation to an expense posting.
+    val postingAccounts = postings.mapIndexed { index, element ->
+        val path = "$.manual_path.expected.transaction.postings[$index]"
+        element.objAt(path).string("account_id", "$path.account_id")
+    }
+    if (postingAccounts.last() != fundingAccountId || postingAccounts.take(2).any { it == fundingAccountId }) {
+        fail("$.manual_path.expected.transaction.postings")
+    }
     val group = expected.obj("association_group", "$.manual_path.expected.association_group")
-    // The manual fixture states consumption records and allocations in input-item order; it carries
-    // no item discriminator of its own, so the binding is positional exactly as on the import path.
+    // Consumption records and allocations are stated in input-item order. That order is confirmed
+    // against each record's own `expense_posting_id` below, so the positional binding cannot go
+    // unnoticed if the fixture is ever reordered.
     val consumptions = expected.array("consumption_records", "$.manual_path.expected.consumption_records")
     val allocations = group.array("item_allocations", "$.manual_path.expected.association_group.item_allocations")
     if (consumptions.size != itemIds.size || allocations.size != itemIds.size) fail("$.manual_path.expected.consumption_records")
     val consumptionIds = itemIds.indices.associate { index ->
-        itemIds[index] to consumptions[index].objAt("$.manual_path.expected.consumption_records[$index]").string("id", "$.manual_path.expected.consumption_records[$index].id")
+        val path = "$.manual_path.expected.consumption_records[$index]"
+        val record = consumptions[index].objAt(path)
+        if (record.string("expense_posting_id", "$path.expense_posting_id") != postingIds[index]) fail("$path.expense_posting_id")
+        itemIds[index] to record.string("id", "$path.id")
     }
     val allocationIds = itemIds.indices.associate { index ->
         val path = "$.manual_path.expected.association_group.item_allocations[$index]"
-        itemIds[index] to allocations[index].objAt(path).string("id", "$path.id")
+        val allocation = allocations[index].objAt(path)
+        if (allocation.string("expense_posting_id", "$path.expense_posting_id") != postingIds[index]) fail("$path.expense_posting_id")
+        itemIds[index] to allocation.string("id", "$path.id")
     }
     val rootId = rg05RootId("$.manual_path", requestId)
     return Rg05PreparedIds(
