@@ -13,7 +13,7 @@
 
 ## 验证证据
 
-最新保存的 Gradle JVM 测试 XML 报告日期为 2026-07-26：`ledger-domain` 36 项、`ledger-application` 99 项、`ledger-data` 105 项，均为零 failure、零 error。
+最新保存的 Gradle JVM 测试 XML 报告日期为 2026-07-26：`ledger-domain` 36 项、`ledger-application` 99 项、`ledger-data` 106 项，均为零 failure、零 error。
 
 ## 当前环境
 

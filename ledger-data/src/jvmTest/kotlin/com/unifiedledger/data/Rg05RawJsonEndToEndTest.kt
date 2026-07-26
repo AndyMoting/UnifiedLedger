@@ -96,6 +96,26 @@ class Rg05RawJsonEndToEndTest {
         assertEquals(frozen.toSet(), derived.toSet())
     }
 
+    /**
+     * Identity derivation rejects empty and control-character discriminators, but those arrive as
+     * perfectly legal JSON strings. Decoding must report them as an invalid contract rather than
+     * throwing: every caller treats `decodeRg05RawJson` as total.
+     */
+    @Test
+    fun fixturesWithUnusableIdentityDiscriminatorsDecodeAsInvalid() {
+        val raw = Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))
+        assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(raw))
+
+        listOf(
+            "\"request_id\": \"\"",
+            "\"request_id\": \"request\u0001rg05\"",
+        ).forEach { replacement ->
+            val mutated = raw.replaceFirst("\"request_id\": \"request-rg05-manual\"", replacement)
+            assertNotEquals(raw, mutated)
+            assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(mutated), "must not throw for: $replacement")
+        }
+    }
+
     @Test
     fun twentyFiveGoldenOperationsMatchTheExpectedContract() {
         val runtime = invalidManualObservations() + manualRootObservations() + importRootObservations()
