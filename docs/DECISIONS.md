@@ -901,3 +901,19 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** RG-04 raw v1 的 26 个 operation 均具有运行时边界；v1 继续是执行输入与身份来源。完整 state/report/reconciliation/delta 比较、v2 oracle 接受、fixture publication 和其他规则场景不在本决定范围内，不能据此宣称 RG-04 已全部关闭。
 
 **关联决定：** `D-008`、`D-015`、`D-017`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-069`、`D-072`
+
+## D-074 RG-05 合并付款执行边界
+
+**状态：** 已确认
+
+**决定：** RG-05 以严格 raw v1 执行四个 action。`manual_merged_payment` 在明确确认下创建一笔费用交易：两条正向费用分录与一条自有真实资产 `payment_asset` 负向分录，两条独立 consumption_record 与 item_allocation，一个 `merged_payment` 关联组绑定该交易、唯一付款分录与两条 allocation。`ingest_merged_payment_facts` 只创建来源、证据与一个待确认候选，零正式、余额、报表与对账效果。只有 `confirm_merged_payment_candidate` 可以创建正式结果并追加 confirmed 候选历史；分摊低于付款总额拒绝为 `allocation_incomplete`，高于则拒绝为 `allocation_conflict`，两者都保持候选待确认且零效果。`merge_item_receipt_evidence` 只追加来源、证据与一条 allocation 证据链接，不创建任何正式实体。
+
+持久化升级为 schema v8 并保留既有 owner。财务对账只属于唯一自有真实 `payment_asset` 分录，两条费用分录不具备对账资格；关联组的 `item_evidence_completeness` 由精确 receipt-to-allocation 链接独立派生，其变化不改变正式交易、版本、分录、余额、报表或财务对账。相同请求与等价快照返回原稳定身份，快照不一致返回原子 identity conflict。
+
+确定性身份必须由契约 v2 生成器产出：命名空间、name 拼接、entity kind、source locator 与 occurrence discriminator 均与 `tools/python/golden_cases/v2.py` 一致，运行时产出与已冻结 expected 输出逐字相等。各场景不得各自实现该生成器。拒绝结果的 `field` 使用契约输入节点粒度。
+
+**理由：** 来源事实、候选推断、用户确认与分录核验具有不同生命周期与写入权限。分离 owner 可以在不重复入账、不自动补平、不依赖进程状态的前提下完成合并付款闭环。身份由单一契约生成器产出，可以防止各场景各写一份实现而在命名空间或 locator 上悄然分叉。
+
+**影响：** RG-05 raw v1 的 25 个 operation 均具有运行时边界，并有 outcome、新增实体身份与 returned ID 比较。本决定不蕴含 expected 审批、v2 oracle 接受或 publication；RG-03 等级的完整 state、delta 与 status-change 比较仍未完成，因此不能据此宣称 RG-05 已全部关闭。
+
+**关联决定：** `D-008`、`D-040`、`D-043`、`D-044`、`D-045`、`D-058`、`D-059`、`D-069`、`D-072`、`D-073`
