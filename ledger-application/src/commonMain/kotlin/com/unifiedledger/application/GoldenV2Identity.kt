@@ -55,7 +55,7 @@ private fun validateGoldenV2Component(name: String, value: String) {
 }
 
 /** RFC 4122 name-based version 5 UUID. Kept dependency-free so it runs on every target. */
-fun goldenV2UuidV5(name: String): String {
+internal fun goldenV2UuidV5(name: String): String {
     val bytes = goldenV2Sha1(goldenV2UuidNamespace + name.encodeToByteArray()).copyOf(16)
     bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x50).toByte()
     bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()

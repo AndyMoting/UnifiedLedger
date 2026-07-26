@@ -80,9 +80,14 @@ fun decodeRg05RawJson(raw: String): Rg05RawJsonDecodeResult {
         Rg05RawJsonDecodeResult.Success(Rg05RawJsonCase(ledgerId, currency, timezone, catalog, manualInput, importOperations, manualIds))
     } catch (failure: Rg05DecodeFailure) {
         Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError(failure.path, failure.reason))
-    } catch (_: GoldenV2IdentityException) {
-        // Identity derivation validates its own components, so a fixture whose discriminator is
-        // empty or carries control characters reaches it as legal JSON. Decoding stays total.
+    } catch (_: IllegalArgumentException) {
+        // Legal JSON can still be an unusable contract: an unknown account/category kind, an
+        // identity discriminator that is empty or carries control characters, a link naming no
+        // allocation, or a singleton array that is not one element. Decoding stays total.
+        Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
+    } catch (_: IndexOutOfBoundsException) {
+        Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
+    } catch (_: NoSuchElementException) {
         Rg05RawJsonDecodeResult.Invalid(Rg05RawJsonContractError("$", Rg05RawJsonContractErrorReason.INVALID_VALUE))
     }
 }

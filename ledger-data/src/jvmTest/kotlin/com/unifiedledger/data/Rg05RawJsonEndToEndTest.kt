@@ -97,6 +97,30 @@ class Rg05RawJsonEndToEndTest {
     }
 
     /**
+     * Legal JSON that the decoder cannot turn into a contract must be reported, not thrown. These
+     * four all raise from ordinary library calls inside the decode block rather than from the
+     * decoder's own failure type.
+     */
+    @Test
+    fun fixturesTheDecoderCannotInterpretDecodeAsInvalid() {
+        val raw = Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))
+        assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(raw))
+
+        mapOf(
+            "unknown account kind" to Pair("\"kind\": \"asset\"", "\"kind\": \"assets\""),
+            "unknown category kind" to Pair("\"kind\": \"expense\"", "\"kind\": \"expenses\""),
+            "evidence link naming no allocation" to Pair(
+                "\"item_allocation_id\": \"allocation-rg05-imported-a\"",
+                "\"item_allocation_id\": \"allocation-rg05-imported-absent\"",
+            ),
+        ).forEach { (label, mutation) ->
+            val mutated = raw.replaceFirst(mutation.first, mutation.second)
+            assertNotEquals(raw, mutated, "mutation had no effect: $label")
+            assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(mutated), "must not throw for: $label")
+        }
+    }
+
+    /**
      * Identity derivation rejects empty and control-character discriminators, but those arrive as
      * perfectly legal JSON strings. Decoding must report them as an invalid contract rather than
      * throwing: every caller treats `decodeRg05RawJson` as total.
