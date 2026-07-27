@@ -272,7 +272,7 @@ private data class GoldenV2ReportKey(
     val type: String,
     val period: String,
     val metric: String,
-    val currency: String,
+    val currency: String?,
 )
 
 private fun goldenV2ReportChanges(before: JsonObject, after: JsonObject): JsonArray {
@@ -286,7 +286,7 @@ private fun goldenV2ReportChanges(before: JsonObject, after: JsonObject): JsonAr
                         report.goldenV2String("period_type"),
                         report.goldenV2String("period"),
                         metric.goldenV2String("metric"),
-                        metric.goldenV2String("currency"),
+                        metric["currency"]?.jsonPrimitive?.content,
                     ),
                     JsonObject(metric.filterKeys { it != "metric" }),
                 )
@@ -305,7 +305,7 @@ private fun goldenV2ReportChanges(before: JsonObject, after: JsonObject): JsonAr
                     "period_type" to JsonPrimitive(key.type),
                     "period" to JsonPrimitive(key.period),
                     "metric" to JsonPrimitive(key.metric),
-                    "currency" to JsonPrimitive(key.currency),
+                    "currency" to key.currency?.let(::JsonPrimitive),
                 ),
                 "before" to (old[key] ?: JsonNull),
                 "after" to (new[key] ?: JsonNull),
