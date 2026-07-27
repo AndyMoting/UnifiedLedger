@@ -24,7 +24,7 @@
 - `RG-02`：`D-071` 批准的 `manual_income` 最小 slice 已完成，包括主创建、重试、2 个变体和 8 个拒绝。`category_rename` unsupported；完整 state runtime 比较、transaction correction/CAS 和 v2 publication 仍待完成。
 - `RG-03`：当前冻结范围的 13 roots、20 operations 已完成 outcome、returned IDs、完整 state、deltas 和 status changes 比较；v1 rewrite 与 v2 publication 仍受 gate 约束。
 - `RG-04`：raw v1 的 26 operations 均有 runtime，18 个 manual operations 有精确 projection 比较，26 项整体有状态计数与部分 returned-ID 比较；import lifecycle、ownership 和 reconciliation 已实现，v2 已发布。全 26 项 RG-03 等级的完整 state/report/reconciliation/delta 比较仍待完成，因此不能视为形式闭环。
-- `RG-05`：领域、应用与持久化 runtime 及 schema v8 已进入共享库。25 operations 已逐项比较 outcome、rejection reason/field、新增实体 ID 与 returned IDs，确定性 identity 与契约冻结值一致；尚无 RG-03 等级的完整 state/deltas/status-changes 比较。expected 仍为 `draft_for_review`，v2 未发布；独立 expected/runtime 审查、明确用户批准和后续单独 publication 授权均待完成。
+- `RG-05`：领域、应用与持久化 runtime 及 schema v8 已进入共享库。`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected；共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较完整 state、deltas 和 status changes。这不关闭其他黄金场景或完整产品闸门；`D-075` 也不授权 adapter 实现或 fixture 迁移。publication 仍未授权，当前没有 `golden/rules-v2` RG-05 工件。
 - `RG-06` 至 `RG-10`：已有冻结 v1、Python 测试和 mapping，无 Kotlin runtime；当前逐场景 gap 数为 `5/3/4/3/6`。
 - `RG-11`、`RG-12`：approved direct-v2 fixtures 与 Python 语义测试已完成，Kotlin runtime 尚未实现。
 - 跨场景可复用范围限于严格解析、明确确认、request snapshot 与正式账务链；不得提前泛化专项 DTO、表或业务 owner。

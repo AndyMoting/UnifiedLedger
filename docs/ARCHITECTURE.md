@@ -4,9 +4,9 @@
 
 本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-05 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库。
 
-`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v8；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。RG-05 已有领域、应用与持久化 runtime，25 operations 已逐项比较 outcome、rejection reason/field、新增实体 ID 与 returned IDs，确定性 identity 与契约冻结值一致；尚无 RG-03 等级的完整 state/deltas/status-changes 比较；expected 仍为 `draft_for_review`，独立 expected/runtime 审查、明确用户批准和后续单独 publication 授权尚未完成。
+`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v8；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。RG-05 已有领域、应用与持久化 runtime，`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected。共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较 outcome、returned IDs、完整 state、deltas 和 status changes。
 
-上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-05 的 expected 与验证闸门仍未关闭；RG-06 至 RG-12 尚无 Kotlin runtime。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
+上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-06 至 RG-12 尚无 Kotlin runtime。`D-075` 不授权 RG-05 adapter 实现或 fixture 迁移，publication 仍需单独授权，且当前没有 `golden/rules-v2` RG-05 工件。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 
