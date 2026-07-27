@@ -1,13 +1,11 @@
 package com.unifiedledger.data
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.*
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.*
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Properties
 import kotlinx.serialization.json.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -16,43 +14,19 @@ import kotlin.test.assertIs
 class Rg03FullStateOracleTest {
     @Test
     fun `v1 independently executes every root before v2 validates all operations states and deltas`() {
+        val caseId = "RG-03"
         val raw = Files.readString(rg03RepositoryFile("golden/rules/rg-03.json"))
         val v1 = Json.parseToJsonElement(raw).jsonObject
         val decoded = assertIs<Rg03RawJsonDecodeResult.Success>(decodeRg03RawJson(raw)).value
         val context = Rg03AdapterContext(decoded.ledgerId, decoded.currency, decoded.timezone, "+08:00")
-        val specs = rg03RootSpecs(v1)
+        val specs = rg03RootSpecs(caseId, v1)
 
-        val observed = specs.map { executeRg03Root(it, decoded, context, v1) }
-        assertEquals(13, observed.size)
-        assertEquals(20, observed.sumOf { it.operations.size })
-        assertEquals(33, observed.sumOf { it.operations.size + 1 })
+        val observed = specs.map { executeRg03Root(caseId, it, decoded, context, v1) }
 
         val v2 = Json.parseToJsonElement(
             Files.readString(rg03RepositoryFile("docs/migrations/golden-v2/rg-03-expected.json")),
         ).jsonObject
-        val expectedRoots = v2.getValue("roots").jsonArray.associateBy { it.jsonObject.string("purpose") }
-        val expectedStates = v2.getValue("states").jsonArray.associateBy { it.jsonObject.string("id") }
-        val expectedOperations = v2.getValue("operations").jsonArray.associateBy { it.jsonObject.string("id") }
-
-        observed.forEach { root ->
-            val expectedRoot = expectedRoots.getValue(root.spec.purpose).jsonObject
-            assertEquals(root.spec.rootId, expectedRoot.string("id"), root.spec.purpose)
-            assertEquals(expectedStates.getValue(expectedRoot.string("initial_state_id")), root.initialState)
-            val operationIds = expectedRoot.getValue("operation_ids").jsonArray.map { it.jsonPrimitive.content }
-            assertEquals(root.operations.size, operationIds.size)
-            root.operations.zip(operationIds).forEach { (actual, operationId) ->
-                val expected = expectedOperations.getValue(operationId).jsonObject
-                assertEquals(actual.operationId, operationId)
-                assertEquals(expected.getValue("outcome"), actual.outcome, "$operationId outcome")
-                assertEquals(expected.getValue("returned_ids"), actual.returnedIds, "$operationId returned_ids")
-                assertEquals(expectedStates.getValue(expected.string("result_state_id")), actual.after, "$operationId state")
-                assertEquals(expected.getValue("deltas"), rg03Deltas(actual.before, actual.after), "$operationId deltas")
-                assertEquals(expected.getValue("status_changes"), rg03StatusChanges(actual.before, actual.after), "$operationId status_changes")
-                if (expected.getValue("outcome").jsonObject.string("status") != "accepted") {
-                    assertEquals(rg03StatePayload(actual.before), rg03StatePayload(actual.after), "$operationId residue")
-                }
-            }
-        }
+        assertGoldenV2Oracle(observed, v2, expectedRootCount = 13, expectedOperationCount = 20, expectedStateCount = 33)
     }
 
     @Test
@@ -88,81 +62,53 @@ class Rg03FullStateOracleTest {
     }
 }
 
-private data class Rg03RootSpec(
-    val purpose: String,
-    val rootId: String,
-    val initialStateId: String,
-    val openingVersionId: String,
-    val openingPostingSetId: String,
-    val operations: List<Rg03OperationSpec>,
-)
-
-private data class Rg03OperationSpec(
-    val index: Int,
-    val locator: String,
-    val discriminator: String,
-    val stateLocator: String = locator,
-)
-private data class Rg03ObservedRoot(
-    val spec: Rg03RootSpec,
-    val initialState: JsonObject,
-    val operations: List<Rg03ObservedOperation>,
-)
-private data class Rg03ObservedOperation(
-    val operationId: String,
-    val before: JsonObject,
-    val after: JsonObject,
-    val outcome: JsonObject,
-    val returnedIds: JsonArray,
-)
-
-private fun rg03RootSpecs(v1: JsonObject): List<Rg03RootSpec> {
+private fun rg03RootSpecs(caseId: String, v1: JsonObject): List<GoldenV2RootSpec> {
     fun root(
         purpose: String,
         rootLocator: String,
         rootDiscriminator: String,
         initialLocator: String,
         initialDiscriminator: String,
-        operations: List<Rg03OperationSpec>,
-    ): Rg03RootSpec {
-        val rootId = rg03RootId(rootLocator, rootDiscriminator)
-        return Rg03RootSpec(
+        operations: List<GoldenV2OperationSpec>,
+    ): GoldenV2RootSpec {
+        val rootId = rg03RootId(caseId, rootLocator, rootDiscriminator)
+        return GoldenV2RootSpec(
             purpose,
             rootId,
-            rg03MigrationId(rootId, "state", initialLocator, initialDiscriminator),
-            rg03MigrationId(rootId, "transaction_version", "$.opening.transactions[*]", "tx-opening-rg03"),
-            rg03MigrationId(rootId, "posting_set", "$.opening.transactions[*]", "tx-opening-rg03"),
+            rg03MigrationId(caseId, rootId, "state", initialLocator, initialDiscriminator),
+            rg03MigrationId(caseId, rootId, "transaction_version", "$.opening.transactions[*]", "tx-opening-rg03"),
+            rg03MigrationId(caseId, rootId, "posting_set", "$.opening.transactions[*]", "tx-opening-rg03"),
             operations,
         )
     }
 
-    val specs = mutableListOf<Rg03RootSpec>()
+    val specs = mutableListOf<GoldenV2RootSpec>()
     specs += root(
         "rg03_manual_account_transfer", "$.manual_create", "request-rg03-manual-create",
         "$.opening.transactions[*]", "tx-opening-rg03",
         listOf(
-            Rg03OperationSpec(0, "$.manual_create.request", "request-rg03-manual-create"),
-            Rg03OperationSpec(5, "$.idempotency.repeated_manual_request_id", "request-rg03-manual-create"),
+            GoldenV2OperationSpec(0, "$.manual_create.request", "request-rg03-manual-create"),
+            GoldenV2OperationSpec(5, "$.idempotency.repeated_manual_request_id", "request-rg03-manual-create"),
         ),
     )
     specs += root(
         "rg03_import_lifecycle", "$.import_lifecycle", "import-complete-source",
         "$.opening", "import-complete-source",
         listOf(
-            Rg03OperationSpec(1, "$.import_lifecycle.ordered_operations[*]", "import-complete-source"),
-            Rg03OperationSpec(6, "$.idempotency.repeated_source_request_id", "request-rg03-import-source"),
-            Rg03OperationSpec(2, "$.import_lifecycle.ordered_operations[*]", "confirm-import-candidate"),
-            Rg03OperationSpec(7, "$.idempotency.repeated_confirmation_request_id", "request-rg03-confirm-candidate"),
-            Rg03OperationSpec(3, "$.import_lifecycle.ordered_operations[*]", "merge-mirror-evidence"),
-            Rg03OperationSpec(8, "$.idempotency.repeated_mirror_request_id", "request-rg03-import-mirror"),
+            GoldenV2OperationSpec(1, "$.import_lifecycle.ordered_operations[*]", "import-complete-source"),
+            GoldenV2OperationSpec(6, "$.idempotency.repeated_source_request_id", "request-rg03-import-source"),
+            GoldenV2OperationSpec(2, "$.import_lifecycle.ordered_operations[*]", "confirm-import-candidate"),
+            GoldenV2OperationSpec(7, "$.idempotency.repeated_confirmation_request_id", "request-rg03-confirm-candidate"),
+            GoldenV2OperationSpec(3, "$.import_lifecycle.ordered_operations[*]", "merge-mirror-evidence"),
+            GoldenV2OperationSpec(8, "$.idempotency.repeated_mirror_request_id", "request-rg03-import-mirror"),
         ),
     )
     specs += root(
         "rg03_incomplete_source", "$.unknown_one_sided_debit", "request-rg03-unknown-debit",
         "$.opening", "request-rg03-unknown-debit",
         listOf(
-            Rg03OperationSpec(4, "$.unknown_one_sided_debit.input", "request-rg03-unknown-debit"),
-            Rg03OperationSpec(9, "$.unknown_one_sided_debit.retry.repeated_request_id", "request-rg03-unknown-debit"),
+            GoldenV2OperationSpec(4, "$.unknown_one_sided_debit.input", "request-rg03-unknown-debit"),
+            GoldenV2OperationSpec(9, "$.unknown_one_sided_debit.retry.repeated_request_id", "request-rg03-unknown-debit"),
         ),
     )
     v1.getValue("invalid_manual_inputs").jsonArray.forEachIndexed { index, item ->
@@ -170,68 +116,39 @@ private fun rg03RootSpecs(v1: JsonObject): List<Rg03RootSpec> {
         specs += root(
             "rg03_invalid_${id.replace('-', '_')}", "$.invalid_manual_inputs[*]", id,
             "$.opening", id,
-            listOf(Rg03OperationSpec(10 + index, "$.invalid_manual_inputs[*]", id, "$.invalid_manual_inputs[*].expected")),
+            listOf(GoldenV2OperationSpec(10 + index, "$.invalid_manual_inputs[*]", id, "$.invalid_manual_inputs[*].expected")),
         )
     }
     return specs.sortedBy { it.rootId }
 }
 
 private fun executeRg03Root(
-    spec: Rg03RootSpec,
+    caseId: String,
+    spec: GoldenV2RootSpec,
     decoded: Rg03RawJsonCase,
     context: Rg03AdapterContext,
     v1: JsonObject,
-): Rg03ObservedRoot {
-    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, Properties().apply { setProperty("foreign_keys", "true") })
-    try {
-        LedgerDatabase.Schema.create(driver)
-        val database = LedgerDatabase(driver)
-        seedRg03Opening(database, decoded.ledgerId, spec, v1)
-        val store = SqlDelightRg03TransferStore(database, driver, decoded.catalog, rg03IdentitySource(spec))
+): GoldenV2ObservedRoot = executeGoldenV2Root(
+    caseId = caseId,
+    spec = spec,
+    ledgerId = decoded.ledgerId,
+    v1 = v1,
+    requestId = { operationSpec ->
+        (decoded.operations[operationSpec.index].input.requestId as? Rg03JsonField.Value)?.value
+    },
+    createRuntime = { database, driver, operationIdsByRequest ->
+        val store = SqlDelightRg03TransferStore(database, driver, decoded.catalog, rg03IdentitySource(caseId, spec))
         val executor = ExecuteRg03Operation(store, store, store)
-        val operationIdsByRequest = linkedMapOf<String, String>()
-        spec.operations.forEach { operationSpec ->
-            val requestId = (decoded.operations[operationSpec.index].input.requestId as? Rg03JsonField.Value)?.value
-            if (requestId != null && requestId !in operationIdsByRequest) {
-                operationIdsByRequest[requestId] = rg03MigrationId(
-                    spec.rootId, "operation", operationSpec.locator, operationSpec.discriminator,
-                )
-            }
-        }
-        val projector = Rg03StateProjector(database, decoded, v1, spec, operationIdsByRequest)
-        val initial = projector.state(spec.initialStateId, null)
-        val operations = spec.operations.map { operationSpec ->
-            val operationId = rg03MigrationId(spec.rootId, "operation", operationSpec.locator, operationSpec.discriminator)
-            val before = projector.state("before-$operationId", null)
-            val result = executeRg03(decoded.operations[operationSpec.index], context, executor)
-            val stateId = rg03MigrationId(spec.rootId, "state", operationSpec.stateLocator, operationSpec.discriminator)
-            val after = projector.state(stateId, operationId)
-            Rg03ObservedOperation(operationId, before, after, rg03Outcome(result), rg03ReturnedIds(result))
-        }
-        return Rg03ObservedRoot(spec, initial, operations)
-    } finally {
-        driver.close()
-    }
-}
-
-private fun seedRg03Opening(database: LedgerDatabase, ledgerId: LedgerId, spec: Rg03RootSpec, v1: JsonObject) {
-    val opening = v1.getValue("opening").jsonObject.getValue("transactions").jsonArray.single().jsonObject
-    database.ledgerQueries.insertPostingSet(spec.openingPostingSetId, ledgerId.value)
-    database.ledgerQueries.insertTransaction(opening.string("id"), ledgerId.value, "OPENING_BALANCE")
-    database.ledgerQueries.insertTransactionVersion(
-        spec.openingVersionId, opening.string("id"), ledgerId.value, 1,
-        spec.openingPostingSetId, opening.string("occurred_at"), opening.string("occurred_at"),
-        opening.string("occurred_at"), null,
-    )
-    database.ledgerQueries.insertTransactionCurrentVersion(opening.string("id"), ledgerId.value, spec.openingVersionId)
-    opening.getValue("postings").jsonArray.forEachIndexed { index, element ->
-        val posting = element.jsonObject
-        database.ledgerQueries.insertPosting(
-            posting.string("id"), spec.openingPostingSetId, ledgerId.value, index.toLong(),
-            posting.string("account_id"), rg03Minor(posting.string("amount")), posting.string("currency"), 2,
+        val projector = Rg03StateProjector(caseId, database, decoded, v1, spec, operationIdsByRequest)
+        GoldenV2RootRuntime(
+            projectState = projector::state,
+            executeOperation = { operationSpec ->
+                val result = executeRg03(decoded.operations[operationSpec.index], context, executor)
+                GoldenV2OperationResult(rg03Outcome(result), rg03ReturnedIds(result))
+            },
         )
-    }
-}
+    },
+)
 
 private fun executeRg03(
     operation: Rg03DecodedOperation,
@@ -276,15 +193,15 @@ private fun rg03ReturnedIds(result: Any): JsonArray {
     return JsonArray(ids.map { jsonObjectOf("kind" to JsonPrimitive(it.kind.name.lowercase()), "id" to JsonPrimitive(it.id)) })
 }
 
-private fun rg03IdentitySource(spec: Rg03RootSpec): Rg03IdentitySource = object : Rg03IdentitySource {
+private fun rg03IdentitySource(caseId: String, spec: GoldenV2RootSpec): Rg03IdentitySource = object : Rg03IdentitySource {
     override fun source(requestId: RequestId): Rg03SourceCommitIds = when (requestId.value) {
         "request-rg03-import-source" -> Rg03SourceCommitIds(
             CandidateId("candidate-transfer-rg03"),
-            rg03MigrationId(spec.rootId, "candidate_status", "$.import_lifecycle.ordered_operations[*].expected.candidate.status", "import-complete-source"),
+            rg03MigrationId(caseId, spec.rootId, "candidate_status", "$.import_lifecycle.ordered_operations[*].expected.candidate.status", "import-complete-source"),
         )
         "request-rg03-unknown-debit" -> Rg03SourceCommitIds(
             CandidateId("candidate-transfer-rg03-unknown-debit"),
-            rg03MigrationId(spec.rootId, "candidate_status", "$.unknown_one_sided_debit.expected.candidate.status", "candidate-transfer-rg03-unknown-debit"),
+            rg03MigrationId(caseId, spec.rootId, "candidate_status", "$.unknown_one_sided_debit.expected.candidate.status", "candidate-transfer-rg03-unknown-debit"),
         )
         else -> error("No source identities for ${requestId.value}")
     }
@@ -292,23 +209,23 @@ private fun rg03IdentitySource(spec: Rg03RootSpec): Rg03IdentitySource = object 
     override fun transfer(requestId: RequestId): Rg03TransferCommitIds = when (requestId.value) {
         "request-rg03-manual-create" -> rg03TransferIds(
             "manual",
-            rg03MigrationId(spec.rootId, "confirmation", "$.manual_create.confirmation", requestId.value),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.manual_create.expected.reconciliation", "posting-source-rg03-manual"),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.manual_create.expected.reconciliation", "posting-destination-rg03-manual"),
+            rg03MigrationId(caseId, spec.rootId, "confirmation", "$.manual_create.confirmation", requestId.value),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.manual_create.expected.reconciliation", "posting-source-rg03-manual"),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.manual_create.expected.reconciliation", "posting-destination-rg03-manual"),
         )
         "request-rg03-confirm-candidate" -> rg03TransferIds(
             "imported",
-            rg03MigrationId(spec.rootId, "confirmation", "$.import_lifecycle.ordered_operations[*].expected.transaction.provenance.confirmation_ref", requestId.value),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.import_lifecycle.ordered_operations[*].expected.reconciliation.posting-source-rg03-imported", "posting-source-rg03-imported"),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.import_lifecycle.ordered_operations[*].expected.reconciliation.posting-destination-rg03-imported", "posting-destination-rg03-imported"),
-            rg03MigrationId(spec.rootId, "candidate_status", "$.import_lifecycle.ordered_operations[*].expected.candidate_status", "confirm-import-candidate"),
+            rg03MigrationId(caseId, spec.rootId, "confirmation", "$.import_lifecycle.ordered_operations[*].expected.transaction.provenance.confirmation_ref", requestId.value),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.import_lifecycle.ordered_operations[*].expected.reconciliation.posting-source-rg03-imported", "posting-source-rg03-imported"),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.import_lifecycle.ordered_operations[*].expected.reconciliation.posting-destination-rg03-imported", "posting-destination-rg03-imported"),
+            rg03MigrationId(caseId, spec.rootId, "candidate_status", "$.import_lifecycle.ordered_operations[*].expected.candidate_status", "confirm-import-candidate"),
             "match-rg03-debit",
         )
         else -> rg03TransferIds(
             "rejected-${requestId.value}",
-            rg03MigrationId(spec.rootId, "confirmation", "$.invalid_manual_inputs[*]", requestId.value),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.invalid_manual_inputs[*]", "source-${requestId.value}"),
-            rg03MigrationId(spec.rootId, "posting_reconciliation", "$.invalid_manual_inputs[*]", "destination-${requestId.value}"),
+            rg03MigrationId(caseId, spec.rootId, "confirmation", "$.invalid_manual_inputs[*]", requestId.value),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.invalid_manual_inputs[*]", "source-${requestId.value}"),
+            rg03MigrationId(caseId, spec.rootId, "posting_reconciliation", "$.invalid_manual_inputs[*]", "destination-${requestId.value}"),
         )
     }
 
@@ -340,13 +257,11 @@ private fun rg03TransferIds(
     evidenceLinkId,
 )
 
-private fun rg03RootId(locator: String, discriminator: String): String =
-    goldenV2RootId("RG-03", locator, discriminator)
+private fun rg03RootId(caseId: String, locator: String, discriminator: String): String =
+    goldenV2RootId(caseId, locator, discriminator)
 
-private fun rg03MigrationId(rootId: String, kind: String, locator: String, discriminator: String): String =
-    goldenV2MigrationId("RG-03", rootId, kind, locator, discriminator)
-
-private fun rg03Minor(amount: String): Long = BigDecimal(amount).movePointRight(2).longValueExact()
+private fun rg03MigrationId(caseId: String, rootId: String, kind: String, locator: String, discriminator: String): String =
+    goldenV2MigrationId(caseId, rootId, kind, locator, discriminator)
 
 private data class ProjectedTransaction(val id: String, val kind: String, val currentVersionId: String)
 private data class ProjectedVersion(
@@ -378,10 +293,11 @@ private data class ProjectedReconciliation(val id: String, val postingId: String
 private data class ProjectedReconciliationSummary(val value: String, val locator: String)
 
 private class Rg03StateProjector(
+    private val caseId: String,
     private val database: LedgerDatabase,
     private val decoded: Rg03RawJsonCase,
     private val v1: JsonObject,
-    private val spec: Rg03RootSpec,
+    private val spec: GoldenV2RootSpec,
     private val operationIdsByRequest: Map<String, String>,
 ) {
     fun state(id: String, asOfOperationId: String?): JsonObject {
@@ -669,7 +585,7 @@ private class Rg03StateProjector(
                 transaction, versions, postings, confirmations, reconciliations,
             )
             values += jsonObjectOf(
-                "id" to JsonPrimitive(rg03MigrationId(spec.rootId, "derived_status", summary.locator, transaction.id)),
+                "id" to JsonPrimitive(rg03MigrationId(caseId, spec.rootId, "derived_status", summary.locator, transaction.id)),
                 "target_kind" to JsonPrimitive("transaction"), "target_id" to JsonPrimitive(transaction.id),
                 "status_name" to JsonPrimitive("reconciliation_summary"), "value" to JsonPrimitive(summary.value),
             )
@@ -716,141 +632,6 @@ private fun jsonObjectOf(vararg fields: Pair<String, JsonElement?>): JsonObject 
     JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())
 
 private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
-
-private val RG03_ENTITY_COLLECTIONS = linkedMapOf(
-    "catalog_accounts" to listOf("catalog", "accounts"),
-    "catalog_categories" to listOf("catalog", "categories"),
-    "transactions" to listOf("transactions"),
-    "transaction_versions" to listOf("transaction_versions"),
-    "posting_sets" to listOf("posting_sets"),
-    "postings" to listOf("postings"),
-    "sources" to listOf("sources"),
-    "candidates" to listOf("candidates"),
-    "confirmations" to listOf("confirmations"),
-    "evidence" to listOf("evidence"),
-    "evidence_links" to listOf("evidence_links"),
-    "relations" to listOf("relations"),
-    "domain_entities" to listOf("domain_entities"),
-    "audit_links" to listOf("audit_links"),
-    "posting_reconciliations" to listOf("posting_reconciliations"),
-)
-
-private fun rg03Deltas(before: JsonObject, after: JsonObject): JsonObject = jsonObjectOf(
-    "entity_changes" to JsonObject(RG03_ENTITY_COLLECTIONS.mapValues { (_, path) ->
-        val beforeItems = before.arrayAt(path).associateBy { it.jsonObject.string("id") }
-        val afterItems = after.arrayAt(path).associateBy { it.jsonObject.string("id") }
-        val beforeIds = beforeItems.keys
-        val afterIds = afterItems.keys
-        jsonObjectOf(
-            "added_ids" to JsonArray((afterIds - beforeIds).sorted().map(::JsonPrimitive)),
-            "changed_ids" to JsonArray((beforeIds intersect afterIds).filter { beforeItems[it] != afterItems[it] }.sorted().map(::JsonPrimitive)),
-            "removed_ids" to JsonArray((beforeIds - afterIds).sorted().map(::JsonPrimitive)),
-        )
-    }),
-    "value_changes" to jsonObjectOf(
-        "balances" to rg03BalanceChanges(before, after),
-        "reports" to rg03ReportChanges(before, after),
-        "derived_statuses" to rg03DerivedChanges(before, after),
-    ),
-)
-
-private fun rg03BalanceChanges(before: JsonObject, after: JsonObject): JsonArray {
-    fun values(state: JsonObject) = state.getValue("balances").jsonArray.associateBy {
-        val item = it.jsonObject
-        item.string("account_id") to item.string("currency")
-    }
-    val old = values(before)
-    val new = values(after)
-    return JsonArray((old.keys + new.keys).distinct().sortedWith(compareBy({ it.first }, { it.second })).mapNotNull { key ->
-        val oldAmount = old[key]?.jsonObject?.string("amount")
-        val newAmount = new[key]?.jsonObject?.string("amount")
-        if (oldAmount == newAmount) null else jsonObjectOf(
-            "key" to jsonObjectOf("account_id" to JsonPrimitive(key.first), "currency" to JsonPrimitive(key.second)),
-            "before" to (oldAmount?.let(::JsonPrimitive) ?: JsonNull),
-            "after" to (newAmount?.let(::JsonPrimitive) ?: JsonNull),
-        )
-    })
-}
-
-private data class Rg03ReportKey(val type: String, val period: String, val metric: String, val currency: String)
-
-private fun rg03ReportChanges(before: JsonObject, after: JsonObject): JsonArray {
-    fun values(state: JsonObject): Map<Rg03ReportKey, JsonObject> = buildMap {
-        state.getValue("reports").jsonArray.forEach { reportElement ->
-            val report = reportElement.jsonObject
-            report.getValue("metrics").jsonArray.forEach { metricElement ->
-                val metric = metricElement.jsonObject
-                put(
-                    Rg03ReportKey(report.string("period_type"), report.string("period"), metric.string("metric"), metric.string("currency")),
-                    JsonObject(metric.filterKeys { it != "metric" }),
-                )
-            }
-        }
-    }
-    val old = values(before)
-    val new = values(after)
-    val comparator = compareBy<Rg03ReportKey>({ it.type }, { it.period }, { it.metric }, { it.currency })
-    return JsonArray((old.keys + new.keys).distinct().sortedWith(comparator).mapNotNull { key ->
-        if (old[key] == new[key]) null else jsonObjectOf(
-            "key" to jsonObjectOf(
-                "period_type" to JsonPrimitive(key.type), "period" to JsonPrimitive(key.period),
-                "metric" to JsonPrimitive(key.metric), "currency" to JsonPrimitive(key.currency),
-            ),
-            "before" to (old[key] ?: JsonNull), "after" to (new[key] ?: JsonNull),
-        )
-    })
-}
-
-private data class Rg03DerivedKey(val kind: String, val targetId: String, val statusName: String)
-
-private fun rg03DerivedChanges(before: JsonObject, after: JsonObject): JsonArray {
-    val changes = rg03DerivedValueChanges(before, after)
-    return JsonArray(changes.map { (key, old, new) ->
-        jsonObjectOf(
-            "key" to jsonObjectOf(
-                "kind" to JsonPrimitive(key.kind), "target_id" to JsonPrimitive(key.targetId),
-                "status_name" to JsonPrimitive(key.statusName),
-            ),
-            "before" to (old?.let(::JsonPrimitive) ?: JsonNull),
-            "after" to (new?.let(::JsonPrimitive) ?: JsonNull),
-        )
-    })
-}
-
-private fun rg03StatusChanges(before: JsonObject, after: JsonObject): JsonArray = JsonArray(
-    rg03DerivedValueChanges(before, after).map { (key, old, new) ->
-        jsonObjectOf(
-            "target_kind" to JsonPrimitive(key.kind), "target_id" to JsonPrimitive(key.targetId),
-            "status_name" to JsonPrimitive(key.statusName),
-            "before" to (old?.let(::JsonPrimitive) ?: JsonNull),
-            "after" to (new?.let(::JsonPrimitive) ?: JsonNull),
-        )
-    },
-)
-
-private data class Rg03DerivedChange(val key: Rg03DerivedKey, val before: String?, val after: String?)
-
-private fun rg03DerivedValueChanges(before: JsonObject, after: JsonObject): List<Rg03DerivedChange> {
-    fun values(state: JsonObject) = state.getValue("derived_statuses").jsonArray.associate { element ->
-        val item = element.jsonObject
-        Rg03DerivedKey(item.string("target_kind"), item.string("target_id"), item.string("status_name")) to item.string("value")
-    }
-    val old = values(before)
-    val new = values(after)
-    val comparator = compareBy<Rg03DerivedKey>({ it.kind }, { it.targetId }, { it.statusName })
-    return (old.keys + new.keys).distinct().sortedWith(comparator).mapNotNull { key ->
-        if (old[key] == new[key]) null else Rg03DerivedChange(key, old[key], new[key])
-    }
-}
-
-private fun JsonObject.arrayAt(path: List<String>): JsonArray {
-    var current: JsonElement = this
-    path.forEach { current = current.jsonObject.getValue(it) }
-    return current.jsonArray
-}
-
-private fun rg03StatePayload(state: JsonObject): JsonObject =
-    JsonObject(state.filterKeys { it !in setOf("id", "as_of_operation_id") })
 
 private fun rg03RepositoryFile(relative: String): Path {
     var candidate = Path.of(System.getProperty("user.dir"))
