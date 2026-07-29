@@ -208,6 +208,65 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "transactions": (0, 1, 0), "transaction_versions": (1, 0, 0),
         "confirmations": (1, 0, 0),
     },
+    "create_staged_payment": {
+        "relations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+    },
+    "record_staged_payment_installment": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "relations": (0, 1, 0),
+        "domain_entities": (1, 1, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "change_staged_payment_fulfillment": {
+        "domain_entities": (0, 1, 0),
+    },
+    "confirm_staged_payment_completion": {
+        "domain_entities": (0, 1, 0),
+    },
+    "ingest_staged_payment_bank_fact": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "candidates": (1, 0, 0),
+    },
+    "confirm_staged_payment_candidate": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "evidence": (0, 1, 0),
+        "candidates": (0, 1, 0),
+        "confirmations": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "relations": (0, 1, 0),
+        "domain_entities": (1, 1, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "link_staged_payment_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "posting_reconciliations": (0, 1, 0),
+    },
+    "merge_staged_payment_mirror_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+    },
+}
+
+_RG06_ACTIONS = {
+    "create_staged_payment",
+    "record_staged_payment_installment",
+    "change_staged_payment_fulfillment",
+    "confirm_staged_payment_completion",
+    "link_staged_payment_evidence",
+    "ingest_staged_payment_bank_fact",
+    "confirm_staged_payment_candidate",
+    "merge_staged_payment_mirror_evidence",
 }
 
 
@@ -1254,6 +1313,399 @@ def _validate_formal_ledger(
     return replay, current
 
 
+def _validate_staged_payment_relation(
+    relation: dict[str, Any],
+    relation_path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    precisions: dict[str, int],
+    member_owners: dict[str, str],
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    categories = indexes["catalog_categories"]
+    entities = indexes["domain_entities"]
+    transactions = indexes["transactions"]
+    postings = indexes["postings"]
+    refs = relation["member_refs"]
+
+    if len({(ref["kind"], ref["id"]) for ref in refs}) != len(refs):
+        _fail(relation_path + ".member_refs", "contains duplicate references")
+
+    members: list[dict[str, Any]] = []
+    for ref_index, ref in enumerate(refs):
+        ref_path = f"{relation_path}.member_refs[{ref_index}]"
+        if ref["kind"] != "domain_entity":
+            _fail(ref_path + ".kind", "staged_payment members must be domain entities")
+        member = entities.get(ref["id"])
+        if member is None:
+            _fail(ref_path + ".id", "dangling staged-payment member reference")
+        if member["type"] not in {"staged_payment_lifecycle", "installment_payment"}:
+            _fail(ref_path + ".id", "must reference a staged-payment lifecycle or installment")
+        owner = member_owners.get(member["id"])
+        if owner is not None and owner != relation["id"]:
+            _fail(ref_path + ".id", "staged-payment member is owned by another relation")
+        member_owners[member["id"]] = relation["id"]
+        members.append(member)
+
+    lifecycles = [
+        member for member in members if member["type"] == "staged_payment_lifecycle"
+    ]
+    installments = [
+        member for member in members if member["type"] == "installment_payment"
+    ]
+    if len(lifecycles) != 1:
+        _fail(
+            relation_path + ".member_refs",
+            "staged_payment requires exactly one lifecycle",
+        )
+
+    installments_by_role: dict[str, dict[str, Any]] = {}
+    for member in installments:
+        role = member["payload"]["role"]
+        if role not in {"deposit", "final"}:
+            _fail(
+                relation_path + ".member_refs",
+                "installment role must be deposit or final",
+            )
+        if role in installments_by_role:
+            _fail(
+                relation_path + ".member_refs",
+                f"staged_payment permits at most one {role} installment",
+            )
+        installments_by_role[role] = member
+    if "final" in installments_by_role and "deposit" not in installments_by_role:
+        _fail(
+            relation_path + ".member_refs",
+            "a final installment requires a deposit installment",
+        )
+
+    lifecycle = lifecycles[0]
+    lifecycle_path = relation_path + ".member_refs"
+    lifecycle_payload = lifecycle["payload"]
+    currency = lifecycle_payload["currency"]
+    total = _amount(
+        lifecycle_payload["total_amount"],
+        currency,
+        lifecycle_path + ".total_amount",
+        precisions,
+    )
+    paid = _amount(
+        lifecycle_payload["paid_amount"],
+        currency,
+        lifecycle_path + ".paid_amount",
+        precisions,
+    )
+    due = _amount(
+        lifecycle_payload["due_amount"],
+        currency,
+        lifecycle_path + ".due_amount",
+        precisions,
+    )
+    if total <= 0 or paid < 0 or due < 0 or total != paid + due:
+        _fail(
+            lifecycle_path,
+            "lifecycle requires positive total and exact total = paid + due arithmetic",
+        )
+
+    installment_amounts: dict[str, Decimal] = {}
+    for member in installments:
+        member_path = lifecycle_path + f"[{member['id']!r}]"
+        payload = member["payload"]
+        if payload["currency"] != currency:
+            _fail(member_path + ".payload.currency", "must match lifecycle currency")
+        amount = _amount(
+            payload["amount"],
+            currency,
+            member_path + ".payload.amount",
+            precisions,
+        )
+        if amount <= 0:
+            _fail(member_path + ".payload.amount", "installment amount must be positive")
+        installment_amounts[member["id"]] = amount
+    if paid != sum(installment_amounts.values(), Decimal(0)):
+        _fail(
+            lifecycle_path + ".paid_amount",
+            "must equal the sum of distinct relation installment amounts",
+        )
+
+    if "final" in installments_by_role:
+        deposit_payload = installments_by_role["deposit"]["payload"]
+        final_payload = installments_by_role["final"]["payload"]
+        if _timestamp_instant(final_payload["actual_payment_at"]) <= _timestamp_instant(
+            deposit_payload["actual_payment_at"]
+        ):
+            _fail(
+                lifecycle_path,
+                "final actual_payment_at must be strictly later than deposit actual_payment_at",
+            )
+        if (
+            "source_payment_at" in deposit_payload
+            and "source_payment_at" in final_payload
+            and _timestamp_instant(final_payload["source_payment_at"])
+            <= _timestamp_instant(deposit_payload["source_payment_at"])
+        ):
+            _fail(
+                lifecycle_path,
+                "final source_payment_at must be strictly later than deposit source_payment_at",
+            )
+
+    category_id = lifecycle_payload["category_id"]
+    category = categories.get(category_id)
+    if category is None or category["parent_id"] is None:
+        _fail(
+            lifecycle_path + ".category_id",
+            "must reference a secondary category",
+        )
+    expense_account_id = category["posting_account_id"]
+    expense_account = accounts.get(expense_account_id)
+    if expense_account is None or expense_account["kind"] != "expense":
+        _fail(
+            lifecycle_path + ".category_id",
+            "secondary category must resolve to an expense posting account",
+        )
+
+    for member in installments:
+        member_path = lifecycle_path + f"[{member['id']!r}]"
+        payload = member["payload"]
+        transaction_id = payload["transaction_id"]
+        transaction = transactions.get(transaction_id)
+        current_entry = current.get(transaction_id)
+        if transaction is None or transaction["type"] != "expense" or current_entry is None:
+            _fail(
+                member_path + ".payload.transaction_id",
+                "must reference one current expense transaction",
+            )
+        current_transaction, version, current_postings = current_entry
+        if (
+            current_transaction["id"] != transaction_id
+            or version["transaction_id"] != transaction_id
+            or transaction["current_version_id"] != version["id"]
+        ):
+            _fail(
+                member_path + ".payload.transaction_id",
+                "must bind the exact current transaction version",
+            )
+
+        expense_posting_id = payload["expense_posting_id"]
+        asset_posting_id = payload["asset_posting_id"]
+        if expense_posting_id == asset_posting_id:
+            _fail(member_path + ".payload", "expense and asset postings must be distinct")
+        current_posting_ids = {posting["id"] for posting in current_postings}
+        if {
+            expense_posting_id,
+            asset_posting_id,
+        } - current_posting_ids:
+            _fail(
+                member_path + ".payload",
+                "both installment postings must belong to the current posting set",
+            )
+        expense_posting = postings.get(expense_posting_id)
+        asset_posting = postings.get(asset_posting_id)
+        if expense_posting is None or asset_posting is None:
+            _fail(member_path + ".payload", "installment posting reference is dangling")
+        if (
+            expense_posting["posting_set_id"] != version["posting_set_id"]
+            or asset_posting["posting_set_id"] != version["posting_set_id"]
+        ):
+            _fail(
+                member_path + ".payload",
+                "installment postings must identify the current posting set",
+            )
+
+        amount = installment_amounts[member["id"]]
+        if expense_posting.get("role") != "expense":
+            _fail(
+                member_path + ".payload.expense_posting_id",
+                "must reference the expense posting",
+            )
+        if asset_posting.get("role") != "payment_asset":
+            _fail(
+                member_path + ".payload.asset_posting_id",
+                "must reference the payment_asset posting",
+            )
+        if expense_posting.get("category_id") != category_id:
+            _fail(
+                member_path + ".payload.expense_posting_id",
+                "expense posting category must match the lifecycle category",
+            )
+        if expense_posting["account_id"] != expense_account_id:
+            _fail(
+                member_path + ".payload.expense_posting_id",
+                "expense posting account must match the category posting account",
+            )
+        if expense_posting["currency"] != currency or asset_posting["currency"] != currency:
+            _fail(member_path + ".payload", "installment postings must match lifecycle currency")
+        if _amount(
+            expense_posting["amount"],
+            currency,
+            member_path + ".payload.expense_posting_id",
+            precisions,
+        ) != amount:
+            _fail(
+                member_path + ".payload.expense_posting_id",
+                "expense posting must equal the positive installment amount",
+            )
+        if _amount(
+            asset_posting["amount"],
+            currency,
+            member_path + ".payload.asset_posting_id",
+            precisions,
+        ) != -amount:
+            _fail(
+                member_path + ".payload.asset_posting_id",
+                "asset posting must equal the negative installment amount",
+            )
+
+        funding_account_id = payload["funding_account_id"]
+        funding_account = accounts.get(funding_account_id)
+        if funding_account is None or asset_posting["account_id"] != funding_account_id:
+            _fail(
+                member_path + ".payload.funding_account_id",
+                "must match the asset posting account",
+            )
+        if not (
+            funding_account["owned_by_user"]
+            and funding_account["real_account"]
+            and funding_account["kind"] == "asset"
+            and funding_account["reconciliation_eligible"]
+            and asset_posting["reconciliation_eligible"]
+        ):
+            _fail(
+                member_path + ".payload.funding_account_id",
+                "must reference an eligible owned real asset account and posting",
+            )
+        if funding_account["currency"] != currency:
+            _fail(
+                member_path + ".payload.funding_account_id",
+                "funding account currency must match the installment",
+            )
+        if version["occurred_at"] != payload["actual_payment_at"]:
+            _fail(
+                member_path + ".payload.actual_payment_at",
+                "must equal the current transaction version occurred_at",
+            )
+        if version["statistics_at"] != payload["statistics_at"]:
+            _fail(
+                member_path + ".payload.statistics_at",
+                "must equal the current transaction version statistics_at",
+            )
+
+    history = lifecycle_payload["state_history"]
+    history_path = lifecycle_path + ".state_history"
+    _unique_index(history, history_path)
+    if [item["sequence"] for item in history] != list(range(1, len(history) + 1)):
+        _fail(history_path, "sequence must be contiguous and ordered from 1")
+    if not history or history[0]["event"] != "group_created":
+        _fail(history_path, "must begin with group_created")
+
+    cumulative_paid = Decimal(0)
+    seen_payment_ids: set[str] = set()
+    previous_instant: datetime | None = None
+    previous_fulfillment = "in_progress"
+    history_by_payment: dict[str, dict[str, Any]] = {}
+    for history_index, item in enumerate(history):
+        item_path = f"{history_path}[{history_index}]"
+        instant = _timestamp_instant(item["occurred_at"])
+        if previous_instant is not None and instant < previous_instant:
+            _fail(item_path + ".occurred_at", "history times must be chronologically ordered")
+        previous_instant = instant
+
+        item_total = _amount(
+            item["total_amount"], currency, item_path + ".total_amount", precisions
+        )
+        item_paid = _amount(
+            item["paid_amount"], currency, item_path + ".paid_amount", precisions
+        )
+        item_due = _amount(
+            item["due_amount"], currency, item_path + ".due_amount", precisions
+        )
+        if item_total != total or item_total != item_paid + item_due:
+            _fail(
+                item_path,
+                "history snapshot must preserve lifecycle total = paid + due arithmetic",
+            )
+
+        payment_id = item["payment_id"]
+        if item["event"] == "payment_confirmed":
+            if payment_id not in installment_amounts or payment_id in seen_payment_ids:
+                _fail(
+                    item_path + ".payment_id",
+                    "must name one previously unconfirmed relation installment",
+                )
+            seen_payment_ids.add(payment_id)
+            history_by_payment[payment_id] = item
+            cumulative_paid += installment_amounts[payment_id]
+        elif payment_id is not None:
+            _fail(
+                item_path + ".payment_id",
+                "only payment_confirmed may name an installment",
+            )
+        if item_paid != cumulative_paid or item_due != total - cumulative_paid:
+            _fail(
+                item_path,
+                "history paid and due must equal the cumulative confirmed installments",
+            )
+
+        expected_progress = (
+            "unpaid"
+            if item_paid == 0
+            else "paid_in_full"
+            if item_due == 0
+            else "partially_paid"
+        )
+        if item["payment_progress"] != expected_progress:
+            _fail(
+                item_path + ".payment_progress",
+                "must match the history monetary snapshot",
+            )
+        if history_index == 0 and item["fulfillment_status"] != "in_progress":
+            _fail(item_path + ".fulfillment_status", "group_created must be in_progress")
+        if item["event"] == "fulfillment_changed":
+            if item["fulfillment_status"] != "fulfilled":
+                _fail(
+                    item_path + ".fulfillment_status",
+                    "fulfillment_changed must project fulfilled",
+                )
+            previous_fulfillment = "fulfilled"
+        elif item["fulfillment_status"] != previous_fulfillment:
+            _fail(
+                item_path + ".fulfillment_status",
+                "non-fulfillment events must preserve fulfillment status",
+            )
+        if item["event"] == "completion_confirmed" and item_due != 0:
+            _fail(item_path, "completion_confirmed requires zero due amount")
+        if item["state_transition_effect_count"] != 0:
+            _fail(item_path + ".state_transition_effect_count", "must be zero")
+
+    if seen_payment_ids != set(installment_amounts):
+        _fail(
+            history_path,
+            "payment_confirmed history must cover every relation installment exactly once",
+        )
+    latest = history[-1]
+    if (
+        latest["total_amount"] != lifecycle_payload["total_amount"]
+        or latest["paid_amount"] != lifecycle_payload["paid_amount"]
+        or latest["due_amount"] != lifecycle_payload["due_amount"]
+    ):
+        _fail(history_path, "latest history snapshot must equal current lifecycle amounts")
+
+    if "final" in installments_by_role:
+        deposit_id = installments_by_role["deposit"]["id"]
+        final_id = installments_by_role["final"]["id"]
+        deposit_event = history_by_payment[deposit_id]
+        final_event = history_by_payment[final_id]
+        if (
+            deposit_event["sequence"] >= final_event["sequence"]
+            or _timestamp_instant(deposit_event["occurred_at"])
+            >= _timestamp_instant(final_event["occurred_at"])
+        ):
+            _fail(
+                history_path,
+                "deposit payment history must precede final payment history",
+            )
+
+
 def _validate_relations(
     state: dict[str, Any],
     path: str,
@@ -1264,7 +1716,18 @@ def _validate_relations(
     accounts = indexes["catalog_accounts"]
     transactions = indexes["transactions"]
     postings = indexes["postings"]
+    staged_member_owners: dict[str, str] = {}
     for index, relation in enumerate(state["relations"]):
+        if relation["type"] == "staged_payment":
+            _validate_staged_payment_relation(
+                relation,
+                f"{path}.relations[{index}]",
+                indexes,
+                current,
+                precisions,
+                staged_member_owners,
+            )
+            continue
         if relation["type"] == "merged_payment":
             _validate_merged_payment_relation(
                 relation,
@@ -1565,12 +2028,251 @@ def _validate_references(
         entity["id"]: f"{path}.domain_entities[{index}]"
         for index, entity in enumerate(state["domain_entities"])
     }
+    source_positions = {
+        source["id"]: index for index, source in enumerate(state["sources"])
+    }
+    evidence_positions = {
+        evidence["id"]: index for index, evidence in enumerate(state["evidence"])
+    }
+    staged_evidence_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for evidence in state["evidence"]:
+        if evidence["type"] == "staged_payment_bank_payment":
+            for source_id in evidence["source_ids"]:
+                staged_evidence_by_source[source_id].append(evidence)
+    links_by_evidence_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for link in state["evidence_links"]:
+        links_by_evidence_id[link["evidence_id"]].append(link)
 
     for index, source in enumerate(state["sources"]):
         payload = source["payload"]
         source_path = f"{path}.sources[{index}].payload"
         if not isinstance(payload, dict):
             _fail(source_path, "must be an object")
+        if source["type"] == "staged_payment_bank_fact":
+            staged_evidence = staged_evidence_by_source[source["id"]]
+            if len(staged_evidence) != 1:
+                _fail(
+                    source_path,
+                    "staged payment bank fact must have exactly one staged payment evidence",
+                )
+            evidence = staged_evidence[0]
+            evidence_index = evidence_positions[evidence["id"]]
+            evidence_path = f"{path}.evidence[{evidence_index}]"
+            if evidence["source_ids"] != [source["id"]]:
+                _fail(
+                    evidence_path + ".source_ids",
+                    "must reference the exact staged payment bank fact",
+                )
+            evidence_payload = evidence["payload"]
+            source_time_keys = [
+                key for key in ("observed_at", "source_payment_at") if key in payload
+            ]
+            evidence_time_keys = [
+                key
+                for key in ("observed_at", "source_payment_at")
+                if key in evidence_payload
+            ]
+            if len(source_time_keys) != 1:
+                _fail(
+                    source_path,
+                    "must contain exactly one observed_at or source_payment_at",
+                )
+            if evidence_time_keys != source_time_keys:
+                _fail(
+                    evidence_path + ".payload",
+                    "must use the source's exact payment time field",
+                )
+            time_key = source_time_keys[0]
+            source_time = payload[time_key]
+            evidence_time = evidence_payload[time_key]
+            _timestamp(source_time, source_path + "." + time_key, timezone)
+            _timestamp(
+                evidence_time,
+                evidence_path + ".payload." + time_key,
+                timezone,
+            )
+            if evidence_time != source_time:
+                _fail(
+                    evidence_path + ".payload." + time_key,
+                    "must byte-equal the staged payment source time",
+                )
+
+            evidence_links = links_by_evidence_id[evidence["id"]]
+            mirror_source_id = payload.get("mirror_of_source_id")
+            payment_id = evidence_payload.get("payment_id")
+            if payment_id is None:
+                if (
+                    time_key != "source_payment_at"
+                    or mirror_source_id is not None
+                    or any(
+                        key in evidence_payload
+                        for key in (
+                            "mirror_of_evidence_id",
+                            "merged_into_evidence_link_id",
+                        )
+                    )
+                    or evidence_links
+                ):
+                    _fail(
+                        evidence_path + ".payload.payment_id",
+                        "only non-mirror imported evidence may remain unbound",
+                    )
+                continue
+            payment = domain_entities.get(payment_id)
+            if payment is None or payment["type"] != "installment_payment":
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "must reference an installment payment",
+                )
+            relation_owners = [
+                relation
+                for relation in state["relations"]
+                if relation["type"] == "staged_payment"
+                and any(
+                    ref["kind"] == "domain_entity" and ref["id"] == payment_id
+                    for ref in relation["member_refs"]
+                )
+            ]
+            if len(relation_owners) != 1:
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "installment payment must belong to exactly one staged payment relation",
+                )
+
+            payment_payload = payment["payload"]
+            currency = payload["currency"]
+            source_amount = _amount(
+                payload["amount"], currency, source_path + ".amount", precisions
+            )
+            payment_amount = _amount(
+                payment_payload["amount"],
+                payment_payload["currency"],
+                evidence_path + ".payload.payment_id",
+                precisions,
+            )
+            if currency != payment_payload["currency"] or abs(source_amount) != payment_amount:
+                _fail(
+                    source_path + ".amount",
+                    "absolute source amount and currency must match the installment",
+                )
+            posting = indexes["postings"].get(payment_payload["asset_posting_id"])
+            if posting is None:
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "installment has a dangling payment_asset posting",
+                )
+            transaction = transactions.get(payment_payload["transaction_id"])
+            if transaction is None:
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "installment has a dangling transaction",
+                )
+            version = versions[transaction["current_version_id"]]
+            posting_set = indexes["posting_sets"][version["posting_set_id"]]
+            if posting["id"] not in posting_set["posting_ids"]:
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "payment_asset posting must belong to the installment's current transaction",
+                )
+            posting_amount = _amount(
+                posting["amount"], posting["currency"], source_path + ".amount", precisions
+            )
+            account = accounts[posting["account_id"]]
+            if (
+                posting["role"] != "payment_asset"
+                or not posting["reconciliation_eligible"]
+                or posting_amount != -payment_amount
+                or posting["currency"] != currency
+                or posting["account_id"] != payment_payload["funding_account_id"]
+                or not account["owned_by_user"]
+                or not account["real_account"]
+                or not account["reconciliation_eligible"]
+                or account["kind"] != "asset"
+            ):
+                _fail(
+                    evidence_path + ".payload.payment_id",
+                    "must bind the exact eligible owned-real negative payment_asset posting",
+                )
+
+            if mirror_source_id is None:
+                if any(
+                    key in evidence_payload
+                    for key in ("mirror_of_evidence_id", "merged_into_evidence_link_id")
+                ):
+                    _fail(
+                        evidence_path + ".payload",
+                        "non-mirror evidence cannot declare mirror lineage",
+                    )
+                expected_link = {
+                    "evidence_id": evidence["id"],
+                    "target_kind": "posting",
+                    "target_id": posting["id"],
+                    "role": "payment_asset_posting",
+                }
+                if len(evidence_links) != 1 or any(
+                    evidence_links[0][key] != value
+                    for key, value in expected_link.items()
+                ):
+                    _fail(
+                        path + ".evidence_links",
+                        "staged payment evidence must have one exact payment_asset_posting link",
+                    )
+            else:
+                if time_key != "source_payment_at":
+                    _fail(source_path, "mirror source must use source_payment_at")
+                original = sources.get(mirror_source_id)
+                if (
+                    original is None
+                    or original["type"] != "staged_payment_bank_fact"
+                    or source_positions[original["id"]] >= index
+                    or "mirror_of_source_id" in original["payload"]
+                ):
+                    _fail(
+                        source_path + ".mirror_of_source_id",
+                        "must reference an earlier original staged payment source",
+                    )
+                original_evidence = staged_evidence_by_source[original["id"]]
+                if len(original_evidence) != 1:
+                    _fail(
+                        source_path + ".mirror_of_source_id",
+                        "original source must own exactly one staged payment evidence",
+                    )
+                original_evidence = original_evidence[0]
+                original_payload = original_evidence["payload"]
+                original_amount = _amount(
+                    original["payload"]["amount"],
+                    original["payload"]["currency"],
+                    source_path + ".mirror_of_source_id",
+                    precisions,
+                )
+                if (
+                    original["payload"]["currency"] != currency
+                    or original_amount != -source_amount
+                    or original_payload["payment_id"] != payment_id
+                    or original["payload"].get("source_payment_at") != source_time
+                    or evidence_positions[original_evidence["id"]] >= evidence_index
+                    or evidence_payload.get("mirror_of_evidence_id")
+                    != original_evidence["id"]
+                ):
+                    _fail(
+                        evidence_path + ".payload.mirror_of_evidence_id",
+                        "mirror must pair the earlier opposite-signed original payment evidence",
+                    )
+                merged_link_id = evidence_payload.get("merged_into_evidence_link_id")
+                merged_link = indexes["evidence_links"].get(merged_link_id)
+                if (
+                    merged_link is None
+                    or merged_link["evidence_id"] != original_evidence["id"]
+                    or merged_link["target_kind"] != "posting"
+                    or merged_link["target_id"] != posting["id"]
+                    or merged_link["role"] != "payment_asset_posting"
+                    or evidence_links
+                ):
+                    _fail(
+                        evidence_path + ".payload.merged_into_evidence_link_id",
+                        "must merge into the original evidence's exact canonical posting link",
+                    )
+            continue
         if source["type"] in {"merged_payment_bank_fact", "merged_payment_item_fact"}:
             currency = payload["currency"]
             _timestamp(payload["observed_at"], source_path + ".observed_at", timezone)
@@ -1777,6 +2479,268 @@ def _validate_references(
             _fail(candidate_path + ".status_history", "sequence must be contiguous and ordered from 1")
         _decimal(candidate["confidence"], candidate_path + ".confidence")
         payload = candidate["payload"]
+        if candidate["type"] == "staged_payment":
+            if len(candidate["source_ids"]) != 1:
+                _fail(
+                    candidate_path + ".source_ids",
+                    "must contain exactly one staged payment bank fact",
+                )
+            source = sources[candidate["source_ids"][0]]
+            if source["type"] != "staged_payment_bank_fact":
+                _fail(
+                    candidate_path + ".source_ids[0]",
+                    "must reference a staged payment bank fact",
+                )
+            source_payload = source["payload"]
+            common_payload_fields = {
+                "payment_role",
+                "amount",
+                "currency",
+                "source_payment_at",
+                "evidence_ref",
+                "provenance",
+                "requires_confirmation",
+            }
+            payment_role = payload.get("payment_role")
+            if (
+                candidate["confidence"] == "1.00"
+                and payment_role in {"deposit", "final"}
+                and set(payload) == common_payload_fields
+            ):
+                ambiguous = False
+            elif (
+                candidate["confidence"] == "0.50"
+                and payment_role is None
+                and "guessed_payment_role" in payload
+                and payload["guessed_payment_role"] is None
+                and set(payload) == common_payload_fields | {"guessed_payment_role"}
+            ):
+                ambiguous = True
+            else:
+                _fail(
+                    candidate_path + ".payload.payment_role",
+                    "role/null shape and confidence must match the exact staged payment candidate variant",
+                )
+            if payload["provenance"] != {
+                "rule": "staged_payment_bank_fact",
+                "rule_version": 1,
+            }:
+                _fail(
+                    candidate_path + ".payload.provenance",
+                    "must contain exact staged payment bank fact provenance",
+                )
+            if payload["requires_confirmation"] != [
+                "relation_id",
+                "payment_role",
+                "category_id",
+                "funding_account_id",
+            ]:
+                _fail(
+                    candidate_path + ".payload.requires_confirmation",
+                    "must contain the exact staged payment confirmation requirements",
+                )
+            evidence = indexes["evidence"].get(payload["evidence_ref"])
+            if (
+                evidence is None
+                or evidence["type"] != "staged_payment_bank_payment"
+                or evidence["source_ids"] != candidate["source_ids"]
+            ):
+                _fail(
+                    candidate_path + ".payload.evidence_ref",
+                    "must reference the source's exact staged payment evidence",
+                )
+            if "source_payment_at" not in source_payload:
+                _fail(
+                    candidate_path + ".payload.source_payment_at",
+                    "candidate source must preserve source_payment_at",
+                )
+            source_time = source_payload["source_payment_at"]
+            if (
+                payload["source_payment_at"] != source_time
+                or evidence["payload"].get("source_payment_at") != source_time
+            ):
+                _fail(
+                    candidate_path + ".payload.source_payment_at",
+                    "must byte-equal the source and evidence payment time",
+                )
+            currency = payload["currency"]
+            candidate_amount = _amount(
+                payload["amount"],
+                currency,
+                candidate_path + ".payload.amount",
+                precisions,
+            )
+            source_amount = _amount(
+                source_payload["amount"],
+                source_payload["currency"],
+                candidate_path + ".source.amount",
+                precisions,
+            )
+            if (
+                candidate_amount <= 0
+                or currency != source_payload["currency"]
+                or candidate_amount != abs(source_amount)
+            ):
+                _fail(
+                    candidate_path + ".payload.amount",
+                    "positive amount and currency must exactly match the staged payment source",
+                )
+            matching_payments = []
+            for entity in domain_entities.values():
+                if entity["type"] != "installment_payment":
+                    continue
+                entity_payload = entity["payload"]
+                entity_amount = _amount(
+                    entity_payload["amount"],
+                    entity_payload["currency"],
+                    candidate_path + ".payload.payment_role",
+                    precisions,
+                )
+                entity_source_time = entity_payload.get(
+                    "source_payment_at", entity_payload["actual_payment_at"]
+                )
+                if (
+                    entity_amount == candidate_amount
+                    and entity_payload["currency"] == currency
+                    and entity_source_time == source_time
+                ):
+                    matching_payments.append(entity)
+            if (
+                not ambiguous
+                and len(matching_payments) == 1
+                and matching_payments[0]["payload"]["role"] != payment_role
+            ):
+                _fail(
+                    candidate_path + ".payload.payment_role",
+                    "known candidate role must match the unique installment facts",
+                )
+            payment_id = evidence["payload"].get("payment_id")
+            payment = domain_entities.get(payment_id) if payment_id else None
+            if payment_id is not None:
+                if payment is None or payment["type"] != "installment_payment":
+                    _fail(
+                        candidate_path + ".payload.evidence_ref",
+                        "staged payment evidence must bind an installment payment",
+                    )
+                payment_payload = payment["payload"]
+                payment_amount = _amount(
+                    payment_payload["amount"],
+                    payment_payload["currency"],
+                    candidate_path + ".payload.evidence_ref",
+                    precisions,
+                )
+                if (
+                    candidate_amount != payment_amount
+                    or currency != payment_payload["currency"]
+                    or source_time != payment_payload["actual_payment_at"]
+                    or (not ambiguous and payment_role != payment_payload["role"])
+                ):
+                    _fail(
+                        candidate_path + ".payload.evidence_ref",
+                        "must bind the exact installment amount, currency, payment time, and known role",
+                    )
+            history_statuses = [item["status"] for item in history]
+            if history_statuses not in (
+                ["pending_confirmation"],
+                ["pending_confirmation", "confirmed"],
+            ):
+                _fail(
+                    candidate_path + ".status_history",
+                    "must be pending or append confirmed exactly once",
+                )
+            confirmation_owners = [
+                confirmation
+                for confirmation in state["confirmations"]
+                if confirmation["type"] == "candidate_confirmation"
+                and confirmation["subject"]["kind"] == "candidate"
+                and confirmation["subject"]["id"] == candidate["id"]
+            ]
+            confirmed = history_statuses[-1] == "confirmed"
+            if len(confirmation_owners) != (1 if confirmed else 0):
+                _fail(
+                    candidate_path + ".status_history",
+                    "candidate confirmation ownership must be absent while pending and exact once confirmed",
+                )
+            if not confirmed and payment_id is not None:
+                _fail(
+                    candidate_path + ".payload.evidence_ref",
+                    "pending candidate evidence must remain unbound",
+                )
+            if confirmed:
+                if payment is None:
+                    _fail(
+                        candidate_path + ".payload.evidence_ref",
+                        "confirmed candidate evidence must bind the exact installment payment",
+                    )
+                confirmation_operation = operations.get(confirmation_owners[0]["operation_id"], {})
+                confirmation_input = confirmation_operation.get("input", {})
+                payment_payload = payment["payload"]
+                expected_source_time = (
+                    payment_payload.get("source_payment_at")
+                    if confirmation_input
+                    else payment_payload.get("actual_payment_at")
+                )
+                if (
+                    _amount(payment_payload["amount"], payment_payload["currency"], candidate_path + ".status_history", precisions) != candidate_amount
+                    or payment_payload["currency"] != currency
+                    or payment_payload["role"] != (payment_role if not ambiguous else confirmation_input.get("payment_role"))
+                    or expected_source_time != source_time
+                ):
+                    _fail(
+                        candidate_path + ".status_history",
+                        "confirmed candidate installment must preserve the candidate source payment time and exact payment facts",
+                    )
+                relation_owners = [
+                    relation
+                    for relation in state["relations"]
+                    if relation["type"] == "staged_payment"
+                    and any(
+                        ref["kind"] == "domain_entity" and ref["id"] == payment_id
+                        for ref in relation["member_refs"]
+                    )
+                ]
+                if len(relation_owners) != 1:
+                    _fail(
+                        candidate_path + ".payload.evidence_ref",
+                        "confirmed candidate installment must belong to exactly one staged payment relation",
+                    )
+                transaction_id = payment_payload["transaction_id"]
+                transaction = transactions.get(transaction_id)
+                if transaction is None or transaction["type"] != "expense":
+                    _fail(
+                        candidate_path + ".payload.evidence_ref",
+                        "confirmed candidate installment must bind an expense transaction",
+                    )
+                confirmation_id = confirmation_owners[0]["id"]
+                bound_versions = [
+                    version
+                    for version in state["transaction_versions"]
+                    if version.get("confirmation_id") == confirmation_id
+                ]
+                if (
+                    len(bound_versions) != 1
+                    or bound_versions[0]["transaction_id"] != transaction_id
+                ):
+                    _fail(
+                        candidate_path + ".status_history",
+                        "candidate confirmation must own exactly one version of the installment transaction",
+                    )
+                evidence_links = links_by_evidence_id[evidence["id"]]
+                expected_link = {
+                    "evidence_id": evidence["id"],
+                    "target_kind": "posting",
+                    "target_id": payment_payload["asset_posting_id"],
+                    "role": "payment_asset_posting",
+                }
+                if len(evidence_links) != 1 or any(
+                    evidence_links[0][key] != value
+                    for key, value in expected_link.items()
+                ):
+                    _fail(
+                        candidate_path + ".status_history",
+                        "confirmed candidate must own one exact payment_asset evidence link",
+                    )
+            continue
         if candidate["type"] == "account_transfer":
             if len(candidate["source_ids"]) != 1:
                 _fail(candidate_path + ".source_ids", "must contain exactly one transfer source reference")
@@ -2026,6 +2990,17 @@ def _validate_references(
         for source_index, source_id in enumerate(evidence["source_ids"]):
             if source_id not in sources:
                 _fail(f"{evidence_path}.source_ids[{source_index}]", "dangling source reference")
+        if evidence["type"] == "staged_payment_bank_payment":
+            if (
+                len(evidence["source_ids"]) != 1
+                or sources[evidence["source_ids"][0]]["type"]
+                != "staged_payment_bank_fact"
+            ):
+                _fail(
+                    evidence_path + ".source_ids",
+                    "must reference exactly one staged payment bank fact",
+                )
+            continue
         _timestamp(evidence["payload"]["observed_at"], evidence_path + ".payload.observed_at", timezone)
         if evidence["type"] == "transfer_record":
             if len(evidence["source_ids"]) != 1:
@@ -2136,16 +3111,19 @@ def _validate_references(
                 _fail(link_path + ".target_id", f"must target domain subtype {expected_type}")
         evidence = indexes["evidence"][link["evidence_id"]]
         evidence_role_types = {
-            "payment_asset_posting": "bank_payment",
-            "item_allocation_fact": "item_receipt",
-            "stored_value_asset_posting": "merchant_stored_value_credit",
-            "stored_value_lot_fact": "merchant_stored_value_credit",
-            "stored_value_bonus_component": "merchant_stored_value_credit",
-            "stored_value_expiry_confirmation": "confirmed_actual_expiry",
+            "payment_asset_posting": {
+                "bank_payment",
+                "staged_payment_bank_payment",
+            },
+            "item_allocation_fact": {"item_receipt"},
+            "stored_value_asset_posting": {"merchant_stored_value_credit"},
+            "stored_value_lot_fact": {"merchant_stored_value_credit"},
+            "stored_value_bonus_component": {"merchant_stored_value_credit"},
+            "stored_value_expiry_confirmation": {"confirmed_actual_expiry"},
         }
         if (
             link["role"] in evidence_role_types
-            and evidence["type"] != evidence_role_types[link["role"]]
+            and evidence["type"] not in evidence_role_types[link["role"]]
         ):
             _fail(
                 link_path + ".evidence_id",
@@ -3448,6 +4426,57 @@ def _expected_derived_statuses(
                 _transaction_reconciliation_status(statuses)
             )
 
+    entities = indexes["domain_entities"]
+    postings = indexes["postings"]
+    for relation in state["relations"]:
+        if relation["type"] != "staged_payment":
+            continue
+        members = [
+            entities.get(ref["id"])
+            for ref in relation["member_refs"]
+            if ref["kind"] == "domain_entity"
+        ]
+        lifecycles = [
+            member
+            for member in members
+            if member is not None and member["type"] == "staged_payment_lifecycle"
+        ]
+        installment_ids = {
+            member["id"]
+            for member in members
+            if member is not None and member["type"] == "installment_payment"
+        }
+        matched_count = 0
+        for installment_id in installment_ids:
+            asset_posting_id = entities[installment_id]["payload"]["asset_posting_id"]
+            posting = postings.get(asset_posting_id)
+            if (
+                posting is not None
+                and posting.get("role") == "payment_asset"
+                and posting.get("reconciliation_eligible") is True
+                and reconciliation_by_posting.get(asset_posting_id) == "matched"
+            ):
+                matched_count += 1
+        installment_count = len(installment_ids)
+        reconciliation = (
+            "pending"
+            if installment_count == 0 or matched_count == 0
+            else "complete"
+            if matched_count == installment_count
+            else "partial"
+        )
+        for lifecycle in lifecycles:
+            latest_history = lifecycle["payload"]["state_history"][-1]
+            expected[("domain_entity", lifecycle["id"], "payment_progress")] = (
+                latest_history["payment_progress"]
+            )
+            expected[("domain_entity", lifecycle["id"], "fulfillment_status")] = (
+                latest_history["fulfillment_status"]
+            )
+            expected[("domain_entity", lifecycle["id"], "reconciliation")] = (
+                reconciliation
+            )
+
     links_by_target = defaultdict(list)
     for link in state["evidence_links"]:
         if link["role"] == "item_allocation_fact":
@@ -3463,7 +4492,6 @@ def _expected_derived_statuses(
         completeness = "none" if matched == 0 else "complete" if matched == len(allocation_ids) else "partial"
         expected[("relation", relation["id"], "item_evidence_completeness")] = completeness
 
-    entities = indexes["domain_entities"]
     transactions = indexes["transactions"]
     allocations_by_adjustment: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entity in state["domain_entities"]:
@@ -3575,6 +4603,18 @@ def _validate_derived_statuses(
         "allocation_status": (
             "domain_entity",
             {"active", "pending", "recognized", "superseded"},
+        ),
+        "payment_progress": (
+            "domain_entity",
+            {"unpaid", "partially_paid", "paid_in_full"},
+        ),
+        "fulfillment_status": (
+            "domain_entity",
+            {"in_progress", "fulfilled"},
+        ),
+        "reconciliation": (
+            "domain_entity",
+            {"pending", "partial", "complete"},
         ),
     }
     _unique_compound(
@@ -4163,6 +5203,111 @@ def _validate_rejected_rg05_attempt(
         _fail(operation_path + ".outcome.reason_code", f"must be {reason!r}")
 
 
+def _validate_rejected_rg06_attempt(
+    operation: dict[str, Any], operation_path: str, baseline: dict[str, Any]
+) -> None:
+    attempted = operation["attempted_input"]
+    attempted_path = operation_path + ".attempted_input"
+    action = operation["action_type"]
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    lifecycles = [
+        item["payload"]
+        for item in baseline["domain_entities"]
+        if item["type"] == "staged_payment_lifecycle"
+    ]
+    lifecycle = lifecycles[0] if len(lifecycles) == 1 else None
+    failure: tuple[str, str] | None = None
+
+    if action == "create_staged_payment":
+        if "total_amount" in attempted:
+            if Decimal(attempted["total_amount"]) <= 0:
+                failure = ("total_amount", "must_be_positive")
+        elif "category_id" in attempted:
+            category_id = attempted["category_id"]
+            category = categories.get(category_id) if isinstance(category_id, str) else None
+            if category_id is None or (
+                category is not None and category.get("parent_id") is None
+            ):
+                failure = ("category_id", "secondary_category_required")
+            elif category is not None and not category.get("active"):
+                failure = ("category_id", "category_inactive")
+            else:
+                posting_account = (
+                    accounts.get(category.get("posting_account_id"))
+                    if category is not None
+                    else None
+                )
+                if posting_account is None or posting_account.get("kind") != "expense":
+                    failure = ("category_id", "expense_category_required")
+    elif action == "record_staged_payment_installment":
+        if "payment_amount" in attempted:
+            payment = Decimal(attempted["payment_amount"])
+            if payment <= 0:
+                failure = ("payment_amount", "must_be_positive")
+            elif attempted.get("payment_role") == "deposit":
+                if lifecycle is None:
+                    _fail(
+                        attempted_path,
+                        "deposit rejection requires exactly one baseline staged-payment lifecycle",
+                    )
+                if payment >= Decimal(lifecycle["total_amount"]):
+                    failure = (
+                        "payment_amount",
+                        "deposit_must_be_less_than_total",
+                    )
+            elif attempted.get("payment_role") == "final":
+                if lifecycle is None:
+                    _fail(
+                        attempted_path,
+                        "final rejection requires exactly one baseline staged-payment lifecycle",
+                    )
+                due = Decimal(lifecycle["due_amount"])
+                if payment > due:
+                    failure = ("payment_amount", "payment_exceeds_due")
+                elif payment != due:
+                    failure = (
+                        "payment_amount",
+                        "final_must_equal_remaining_due",
+                    )
+        elif {"total_currency", "payment_currency"}.issubset(attempted):
+            if attempted["total_currency"] != attempted["payment_currency"]:
+                failure = ("currency", "single_currency_required")
+        elif "funding_account_id" in attempted:
+            account = accounts.get(attempted["funding_account_id"])
+            if account is None:
+                failure = ("funding_account_id", "unknown_real_account")
+            elif not account.get("real_account"):
+                failure = (
+                    "funding_account_id",
+                    "real_financial_account_required",
+                )
+            elif not account.get("owned_by_user"):
+                failure = ("funding_account_id", "owned_account_required")
+            elif account.get("kind") != "asset":
+                failure = ("funding_account_id", "asset_account_required")
+    elif action == "confirm_staged_payment_completion":
+        if attempted.get("payment_progress") == "paid_in_full":
+            if lifecycle is None:
+                _fail(
+                    attempted_path,
+                    "completion rejection requires exactly one baseline staged-payment lifecycle",
+                )
+            if Decimal(lifecycle["due_amount"]) != 0:
+                failure = ("payment_progress", "due_must_be_zero")
+    else:
+        _fail(operation_path + ".action_type", "unregistered RG-06 rejected action")
+
+    if failure is None:
+        _fail(attempted_path, "does not reproduce a registered RG-06 rejection")
+    field, reason = failure
+    expected_path = f"$.attempted_input.{field}"
+    if operation["outcome"]["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+    if operation["outcome"]["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r}")
+
+
 def _validate_rg05_identity_conflict(
     operation: dict[str, Any],
     operation_path: str,
@@ -4593,6 +5738,13 @@ def _validate_action_input(
             "merge_item_receipt_evidence",
         }:
             _validate_rejected_rg05_attempt(operation, operation_path, baseline)
+            return
+        elif action in {
+            "create_staged_payment",
+            "record_staged_payment_installment",
+            "confirm_staged_payment_completion",
+        }:
+            _validate_rejected_rg06_attempt(operation, operation_path, baseline)
             return
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
@@ -5301,6 +6453,8 @@ def _validate_candidate_confirmation_transition(
     before: dict[str, Any],
     after: dict[str, Any],
     path: str,
+    *,
+    immutable_payload: bool = False,
 ) -> None:
     before_outer = {
         key: value
@@ -5314,14 +6468,20 @@ def _validate_candidate_confirmation_transition(
     }
     if not _contract_equivalent(before_outer, after_outer):
         _fail(path, "candidate stable identity is immutable")
-    if "transaction_id" in before["payload"]:
-        _fail(path + ".payload.transaction_id", "pending candidate cannot replace a transaction binding")
-    transaction_id = after["payload"].get("transaction_id")
-    if transaction_id is None:
-        _fail(path + ".payload.transaction_id", "candidate confirmation must add a transaction binding")
-    expected_payload = {**before["payload"], "transaction_id": transaction_id}
-    if not _contract_equivalent(expected_payload, after["payload"]):
-        _fail(path + ".payload", "candidate confirmation may only add transaction_id")
+    if immutable_payload:
+        if "transaction_id" in before["payload"] or "transaction_id" in after["payload"]:
+            _fail(path + ".payload.transaction_id", "candidate payload cannot bind a formal transaction")
+        if not _contract_equivalent(before["payload"], after["payload"]):
+            _fail(path + ".payload", "candidate confirmation cannot mutate candidate payload")
+    else:
+        if "transaction_id" in before["payload"]:
+            _fail(path + ".payload.transaction_id", "pending candidate cannot replace a transaction binding")
+        transaction_id = after["payload"].get("transaction_id")
+        if transaction_id is None:
+            _fail(path + ".payload.transaction_id", "candidate confirmation must add a transaction binding")
+        expected_payload = {**before["payload"], "transaction_id": transaction_id}
+        if not _contract_equivalent(expected_payload, after["payload"]):
+            _fail(path + ".payload", "candidate confirmation may only add transaction_id")
     before_history = before["status_history"]
     after_history = after["status_history"]
     if len(after_history) != len(before_history) + 1 or after_history[: len(before_history)] != before_history:
@@ -5378,6 +6538,7 @@ def _validate_append_only_transition(
     case_id: str | None = None,
     action_type: str | None = None,
     target_candidate_id: str | None = None,
+    target_relation_id: str | None = None,
 ) -> None:
     immutable_collections = {
         "transaction_versions",
@@ -5391,6 +6552,37 @@ def _validate_append_only_transition(
         "audit_links",
         "posting_reconciliations",
     }
+    target_lifecycle_id: str | None = None
+    target_evidence_id: str | None = None
+    if (
+        case_id == "RG-06"
+        and action_type == "confirm_staged_payment_candidate"
+        and target_candidate_id is not None
+    ):
+        target_candidate = next(
+            (
+                candidate
+                for candidate in baseline["candidates"]
+                if candidate["id"] == target_candidate_id
+            ),
+            None,
+        )
+        if target_candidate is not None:
+            target_evidence_id = target_candidate.get("payload", {}).get("evidence_ref")
+    if case_id == "RG-06" and target_relation_id is not None:
+        for relation in baseline["relations"]:
+            if relation["id"] != target_relation_id:
+                continue
+            entities = {item["id"]: item for item in baseline["domain_entities"]}
+            lifecycles = [
+                ref["id"]
+                for ref in relation["member_refs"]
+                if ref["kind"] == "domain_entity"
+                and entities.get(ref["id"], {}).get("type") == "staged_payment_lifecycle"
+            ]
+            if len(lifecycles) == 1:
+                target_lifecycle_id = lifecycles[0]
+            break
     for collection_name, parts in _ENTITY_COLLECTIONS.items():
         before = {item["id"]: item for item in _collection(baseline, parts)}
         after = {item["id"]: item for item in _collection(result, parts)}
@@ -5404,6 +6596,53 @@ def _validate_append_only_transition(
             item_path = operation_path + f".append_only.{collection_name}[{item_id}]"
             if collection_name in immutable_collections:
                 if (
+                    collection_name == "evidence"
+                    and case_id == "RG-06"
+                    and action_type == "confirm_staged_payment_candidate"
+                    and item_id == target_evidence_id
+                ):
+                    old = before[item_id]
+                    new = after[item_id]
+                    expected_payload = {
+                        **old["payload"],
+                        "payment_id": new.get("payload", {}).get("payment_id"),
+                    }
+                    if (
+                        "payment_id" in old["payload"]
+                        or not isinstance(expected_payload["payment_id"], str)
+                        or {key: value for key, value in old.items() if key != "payload"}
+                        != {key: value for key, value in new.items() if key != "payload"}
+                        or new.get("payload") != expected_payload
+                    ):
+                        _fail(
+                            item_path,
+                            "candidate confirmation may add only the exact evidence payment binding",
+                        )
+                    continue
+                if (
+                    collection_name == "relations"
+                    and case_id == "RG-06"
+                    and action_type
+                    in {
+                        "record_staged_payment_installment",
+                        "confirm_staged_payment_candidate",
+                    }
+                    and item_id == target_relation_id
+                    and before[item_id].get("type") == "staged_payment"
+                    and after[item_id].get("type") == "staged_payment"
+                    and before[item_id].get("payload") == after[item_id].get("payload") == {}
+                ):
+                    old_refs = before[item_id]["member_refs"]
+                    new_refs = after[item_id]["member_refs"]
+                    if (
+                        len(new_refs) != len(old_refs) + 1
+                        or any(ref not in new_refs for ref in old_refs)
+                        or len({(ref["kind"], ref["id"]) for ref in new_refs})
+                        != len(new_refs)
+                    ):
+                        _fail(item_path + ".member_refs", "RG-06 relation may append exactly one unique member")
+                    continue
+                if (
                     collection_name == "posting_reconciliations"
                     and (
                         (
@@ -5413,6 +6652,10 @@ def _validate_append_only_transition(
                         or (
                             case_id == "RG-04"
                             and action_type == "merge_mixed_payment_mirror_evidence"
+                        )
+                        or (
+                            case_id == "RG-06"
+                            and action_type == "link_staged_payment_evidence"
                         )
                     )
                 ):
@@ -5449,10 +6692,18 @@ def _validate_append_only_transition(
                             and action_type == "confirm_merged_payment_candidate"
                             and before[item_id].get("type") == "merged_payment"
                         )
+                        or (
+                            case_id == "RG-06"
+                            and action_type == "confirm_staged_payment_candidate"
+                            and before[item_id].get("type") == "staged_payment"
+                        )
                     )
                 ):
                     _validate_candidate_confirmation_transition(
-                        before[item_id], after[item_id], item_path
+                        before[item_id],
+                        after[item_id],
+                        item_path,
+                        immutable_payload=case_id == "RG-06",
                     )
                 else:
                     _validate_history_prefix(
@@ -5461,6 +6712,45 @@ def _validate_append_only_transition(
             elif collection_name == "domain_entities":
                 old_payload = before[item_id].get("payload", {})
                 new_payload = after[item_id].get("payload", {})
+                if (
+                    case_id == "RG-06"
+                    and action_type
+                    in {
+                        "record_staged_payment_installment",
+                        "change_staged_payment_fulfillment",
+                        "confirm_staged_payment_completion",
+                        "confirm_staged_payment_candidate",
+                    }
+                    and item_id == target_lifecycle_id
+                    and before[item_id].get("type") == "staged_payment_lifecycle"
+                    and after[item_id].get("type") == "staged_payment_lifecycle"
+                ):
+                    old_outer = {key: value for key, value in before[item_id].items() if key != "payload"}
+                    new_outer = {key: value for key, value in after[item_id].items() if key != "payload"}
+                    immutable_payload = {
+                        key: value
+                        for key, value in old_payload.items()
+                        if key not in {"paid_amount", "due_amount", "state_history"}
+                    }
+                    new_immutable_payload = {
+                        key: value
+                        for key, value in new_payload.items()
+                        if key not in {"paid_amount", "due_amount", "state_history"}
+                    }
+                    if not _contract_equivalent(old_outer, new_outer) or not _contract_equivalent(immutable_payload, new_immutable_payload):
+                        _fail(item_path, "RG-06 lifecycle identity and immutable payload are unchanged")
+                    old_history = old_payload.get("state_history", [])
+                    new_history = new_payload.get("state_history", [])
+                    if len(new_history) != len(old_history) + 1 or new_history[: len(old_history)] != old_history:
+                        _fail(item_path + ".payload.state_history", "RG-06 lifecycle must append exactly one history event")
+                    if Decimal(new_payload["total_amount"]) != Decimal(new_payload["paid_amount"]) + Decimal(new_payload["due_amount"]):
+                        _fail(item_path + ".payload", "RG-06 lifecycle totals must remain balanced")
+                    if action_type in {"change_staged_payment_fulfillment", "confirm_staged_payment_completion"} and (
+                        new_payload["paid_amount"] != old_payload["paid_amount"]
+                        or new_payload["due_amount"] != old_payload["due_amount"]
+                    ):
+                        _fail(item_path + ".payload", "RG-06 status transitions cannot change payment arithmetic")
+                    continue
                 if (
                     before[item_id].get("type") == "stored_value_reconstruction"
                     and new_payload is not None
@@ -5654,6 +6944,9 @@ def _validate_registered_action_effects(
             )
 
     if not accepted:
+        return
+
+    if action in _RG06_ACTIONS:
         return
 
     if action == "import_mirror_record":
@@ -6376,6 +7669,457 @@ def _validate_mixed_expense_postings(
         _fail(path, "mixed expense postings must balance exactly per currency")
 
 
+def _validate_rg06_action_effects(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    action = operation["action_type"]
+    input_value = operation["input"]
+    baseline_entities = {item["id"]: item for item in baseline["domain_entities"]}
+    result_entities = {item["id"]: item for item in result["domain_entities"]}
+    baseline_relations = {item["id"]: item for item in baseline["relations"]}
+    result_relations = {item["id"]: item for item in result["relations"]}
+    result_transactions = {item["id"]: item for item in result["transactions"]}
+    result_versions = {item["id"]: item for item in result["transaction_versions"]}
+    result_sets = {item["id"]: item for item in result["posting_sets"]}
+    result_postings = {item["id"]: item for item in result["postings"]}
+    result_sources = {item["id"]: item for item in result["sources"]}
+    result_evidence = {item["id"]: item for item in result["evidence"]}
+    result_links = {item["id"]: item for item in result["evidence_links"]}
+    result_candidates = {item["id"]: item for item in result["candidates"]}
+    result_confirmations = {item["id"]: item for item in result["confirmations"]}
+    result_reconciliations = {
+        item["id"]: item for item in result["posting_reconciliations"]
+    }
+
+    def added(collection: str, index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        return [index[item_id] for item_id in expected_entities[collection]["added_ids"]]
+
+    def changed(collection: str) -> list[str]:
+        return expected_entities[collection]["changed_ids"]
+
+    def relation_lifecycle(
+        relation_id: str, relations: dict[str, dict[str, Any]], entities: dict[str, dict[str, Any]]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        relation = relations.get(relation_id)
+        if relation is None or relation.get("type") != "staged_payment":
+            _fail(operation_path + ".input.relation_id", "must bind one staged_payment relation")
+        lifecycles = [
+            entities.get(ref["id"])
+            for ref in relation["member_refs"]
+            if ref["kind"] == "domain_entity"
+            and entities.get(ref["id"], {}).get("type") == "staged_payment_lifecycle"
+        ]
+        if len(lifecycles) != 1:
+            _fail(operation_path + ".input.relation_id", "must bind exactly one lifecycle")
+        return relation, lifecycles[0]
+
+    def exact_history_append(
+        before_lifecycle: dict[str, Any],
+        after_lifecycle: dict[str, Any],
+        event: str,
+        occurred_at: str,
+        payment_id: str | None,
+    ) -> dict[str, Any]:
+        before_history = before_lifecycle["payload"]["state_history"]
+        after_history = after_lifecycle["payload"]["state_history"]
+        if len(after_history) != len(before_history) + 1 or after_history[:-1] != before_history:
+            _fail(operation_path + ".result_state_id", "lifecycle history must append exactly one event")
+        appended = after_history[-1]
+        latest = before_history[-1]
+        if (
+            appended["sequence"] != latest["sequence"] + 1
+            or appended["event"] != event
+            or appended["occurred_at"] != occurred_at
+            or appended["payment_id"] != payment_id
+            or appended["state_transition_effect_count"] != 0
+        ):
+            _fail(operation_path + ".result_state_id", "appended lifecycle event must exactly bind the action")
+        return appended
+
+    def validate_installment(
+        relation_id: str,
+        role: str,
+        amount_text: str,
+        currency: str,
+        funding_account_id: str,
+        occurred_at: str,
+        *,
+        candidate_id: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        before_relation, before_lifecycle = relation_lifecycle(
+            relation_id, baseline_relations, baseline_entities
+        )
+        after_relation, after_lifecycle = relation_lifecycle(
+            relation_id, result_relations, result_entities
+        )
+        if changed("relations") != [relation_id] or changed("domain_entities") != [before_lifecycle["id"]]:
+            _fail(operation_path + ".result_state_id", "installment may change only its relation and lifecycle")
+        payments = added("domain_entities", result_entities)
+        if len(payments) != 1 or payments[0].get("type") != "installment_payment":
+            _fail(operation_path + ".result_state_id", "installment action must add one payment")
+        payment = payments[0]
+        payload = payment["payload"]
+        expected_payment = {
+            "role": role,
+            "amount": amount_text,
+            "currency": currency,
+            "funding_account_id": funding_account_id,
+            "actual_payment_at": occurred_at,
+            "statistics_at": occurred_at,
+        }
+        if any(payload.get(key) != value for key, value in expected_payment.items()):
+            _fail(operation_path + ".result_state_id", "installment payload must exactly bind role, amount, account, currency, and time")
+        old_refs = before_relation["member_refs"]
+        new_ref = {"kind": "domain_entity", "id": payment["id"]}
+        if (
+            after_relation.get("payload") != {}
+            or len(after_relation["member_refs"]) != len(old_refs) + 1
+            or after_relation["member_refs"].count(new_ref) != 1
+            or any(ref not in after_relation["member_refs"] for ref in old_refs)
+            or len({(ref["kind"], ref["id"]) for ref in after_relation["member_refs"]})
+            != len(after_relation["member_refs"])
+        ):
+            _fail(operation_path + ".result_state_id", "relation must append the installment exactly once")
+        old_payments = [
+            baseline_entities[ref["id"]]
+            for ref in old_refs
+            if ref["kind"] == "domain_entity"
+            and baseline_entities.get(ref["id"], {}).get("type") == "installment_payment"
+        ]
+        if any(item["payload"]["role"] == role for item in old_payments):
+            _fail(operation_path + ".input.payment_role", "relation already contains this installment role")
+        if role == "final":
+            deposits = [item for item in old_payments if item["payload"]["role"] == "deposit"]
+            if (
+                len(deposits) != 1
+                or _timestamp_instant(occurred_at)
+                <= _timestamp_instant(deposits[0]["payload"]["actual_payment_at"])
+            ):
+                _fail(operation_path + ".input.actual_payment_at", "final must be strictly later than the unique deposit")
+            if (
+                "source_payment_at" in payload
+                and "source_payment_at" in deposits[0]["payload"]
+                and _timestamp_instant(payload["source_payment_at"])
+                <= _timestamp_instant(deposits[0]["payload"]["source_payment_at"])
+            ):
+                _fail(operation_path + ".result_state_id", "final source time must be strictly later than deposit source time")
+        elif old_payments:
+            _fail(operation_path + ".input.payment_role", "deposit must be the first installment")
+        before_paid = Decimal(before_lifecycle["payload"]["paid_amount"])
+        total = Decimal(before_lifecycle["payload"]["total_amount"])
+        amount = Decimal(amount_text)
+        expected_paid = before_paid + amount
+        expected_due = total - expected_paid
+        after_payload = after_lifecycle["payload"]
+        if (
+            after_payload["total_amount"] != before_lifecycle["payload"]["total_amount"]
+            or Decimal(after_payload["paid_amount"]) != expected_paid
+            or Decimal(after_payload["due_amount"]) != expected_due
+            or after_payload["currency"] != currency
+        ):
+            _fail(operation_path + ".result_state_id", "lifecycle totals must exactly include the installment")
+        appended = exact_history_append(
+            before_lifecycle, after_lifecycle, "payment_confirmed", occurred_at, payment["id"]
+        )
+        expected_progress = "paid_in_full" if expected_due == 0 else "partially_paid"
+        if (
+            Decimal(appended["total_amount"]) != total
+            or Decimal(appended["paid_amount"]) != expected_paid
+            or Decimal(appended["due_amount"]) != expected_due
+            or appended["payment_progress"] != expected_progress
+            or appended["fulfillment_status"]
+            != before_lifecycle["payload"]["state_history"][-1]["fulfillment_status"]
+        ):
+            _fail(operation_path + ".result_state_id", "payment history must exactly project installment arithmetic")
+        transactions = added("transactions", result_transactions)
+        versions = added("transaction_versions", result_versions)
+        posting_sets = added("posting_sets", result_sets)
+        postings = added("postings", result_postings)
+        if len(transactions) != 1 or len(versions) != 1 or len(posting_sets) != 1 or len(postings) != 2:
+            _fail(operation_path + ".result_state_id", "installment must add one balanced expense transaction")
+        transaction, version, posting_set = transactions[0], versions[0], posting_sets[0]
+        if (
+            transaction.get("type") != "expense"
+            or payload.get("transaction_id") != transaction["id"]
+            or transaction["current_version_id"] != version["id"]
+            or version["transaction_id"] != transaction["id"]
+            or version["posting_set_id"] != posting_set["id"]
+            or set(posting_set["posting_ids"]) != {item["id"] for item in postings}
+            or version["occurred_at"] != occurred_at
+            or version["statistics_at"] != payload["statistics_at"]
+        ):
+            _fail(operation_path + ".result_state_id", "formal transaction identities and times must bind the installment")
+        by_role = {item.get("role"): item for item in postings}
+        category_id = input_value.get("category_id", before_lifecycle["payload"]["category_id"])
+        if set(by_role) != {"expense", "payment_asset"}:
+            _fail(operation_path + ".result_state_id", "installment requires expense and payment_asset postings")
+        if (
+            by_role["payment_asset"]["id"] != payload.get("asset_posting_id")
+            or by_role["payment_asset"]["account_id"] != funding_account_id
+            or by_role["payment_asset"]["currency"] != currency
+            or Decimal(by_role["payment_asset"]["amount"]) != -amount
+            or by_role["expense"]["id"] != payload.get("expense_posting_id")
+            or by_role["expense"].get("category_id") != category_id
+            or by_role["expense"]["currency"] != currency
+            or Decimal(by_role["expense"]["amount"]) != amount
+        ):
+            _fail(operation_path + ".result_state_id", "postings must exactly bind installment amount, account, category, and currency")
+        confirmations = added("confirmations", result_confirmations)
+        expected_confirmation_type = "candidate_confirmation" if candidate_id else "explicit_manual_save"
+        expected_subject = (
+            {"kind": "candidate", "id": candidate_id}
+            if candidate_id
+            else {"kind": "operation", "id": operation["id"]}
+        )
+        if (
+            len(confirmations) != 1
+            or confirmations[0]["type"] != expected_confirmation_type
+            or confirmations[0]["operation_id"] != operation["id"]
+            or confirmations[0]["subject"] != expected_subject
+            or version.get("confirmation_id") != confirmations[0]["id"]
+        ):
+            _fail(operation_path + ".result_state_id", "confirmation must own the formal installment version")
+        reconciliations = added("posting_reconciliations", result_reconciliations)
+        if len(reconciliations) != 1 or reconciliations[0] != {
+            "id": reconciliations[0]["id"],
+            "posting_id": by_role["payment_asset"]["id"],
+            "status": "pending",
+        }:
+            _fail(operation_path + ".result_state_id", "new payment_asset reconciliation must be pending")
+        return payment, transaction, confirmations[0]
+
+    if action == "create_staged_payment":
+        relations = added("relations", result_relations)
+        lifecycles = added("domain_entities", result_entities)
+        if len(relations) != 1 or len(lifecycles) != 1 or lifecycles[0].get("type") != "staged_payment_lifecycle":
+            _fail(operation_path + ".result_state_id", "creation must add one relation and one lifecycle")
+        relation, lifecycle = relations[0], lifecycles[0]
+        payload = lifecycle["payload"]
+        history = payload["state_history"]
+        if (
+            relation != {"id": relation["id"], "type": "staged_payment", "member_refs": [{"kind": "domain_entity", "id": lifecycle["id"]}], "payload": {}}
+            or payload["total_amount"] != input_value["total_amount"]
+            or payload["paid_amount"] != "0.00"
+            or payload["due_amount"] != input_value["total_amount"]
+            or payload["currency"] != input_value["currency"]
+            or payload["category_id"] != input_value["category_id"]
+            or len(history) != 1
+        ):
+            _fail(operation_path + ".result_state_id", "creation result must exactly bind relation and lifecycle input")
+        first = history[0]
+        if (
+            first["sequence"] != 1
+            or first["event"] != "group_created"
+            or first["occurred_at"] != input_value["created_at"]
+            or first["total_amount"] != input_value["total_amount"]
+            or first["paid_amount"] != "0.00"
+            or first["due_amount"] != input_value["total_amount"]
+            or first["payment_id"] is not None
+            or first["payment_progress"] != "unpaid"
+            or first["fulfillment_status"] != "in_progress"
+            or first["state_transition_effect_count"] != 0
+        ):
+            _fail(operation_path + ".result_state_id", "group_created history must exactly bind creation input")
+        expected_returned = [
+            {"kind": "relation", "id": relation["id"]},
+            {"kind": "domain_entity", "id": lifecycle["id"]},
+        ]
+    elif action == "record_staged_payment_installment":
+        payment, transaction, confirmation = validate_installment(
+            input_value["relation_id"], input_value["payment_role"], input_value["payment_amount"],
+            input_value["currency"], input_value["funding_account_id"], input_value["actual_payment_at"]
+        )
+        expected_returned = [
+            {"kind": "confirmation", "id": confirmation["id"]},
+            {"kind": "transaction", "id": transaction["id"]},
+            {"kind": "domain_entity", "id": payment["id"]},
+        ]
+    elif action in {"change_staged_payment_fulfillment", "confirm_staged_payment_completion"}:
+        relation_id = input_value["relation_id"]
+        _, before_lifecycle = relation_lifecycle(relation_id, baseline_relations, baseline_entities)
+        _, after_lifecycle = relation_lifecycle(relation_id, result_relations, result_entities)
+        if changed("domain_entities") != [before_lifecycle["id"]]:
+            _fail(operation_path + ".result_state_id", "status action may change only its lifecycle")
+        event = "fulfillment_changed" if action == "change_staged_payment_fulfillment" else "completion_confirmed"
+        appended = exact_history_append(before_lifecycle, after_lifecycle, event, input_value["occurred_at"], None)
+        before_latest = before_lifecycle["payload"]["state_history"][-1]
+        if any(appended[key] != before_latest[key] for key in ("total_amount", "paid_amount", "due_amount", "payment_progress")):
+            _fail(operation_path + ".result_state_id", "status history cannot change payment arithmetic")
+        expected_fulfillment = input_value.get("fulfillment_status", before_latest["fulfillment_status"])
+        if appended["fulfillment_status"] != expected_fulfillment:
+            _fail(operation_path + ".result_state_id", "status history must bind fulfillment input")
+        if action == "confirm_staged_payment_completion" and Decimal(appended["due_amount"]) != 0:
+            _fail(operation_path + ".input.confirmed", "completion requires zero due")
+        expected_returned = [{"kind": "domain_entity", "id": after_lifecycle["id"]}]
+    elif action == "ingest_staged_payment_bank_fact":
+        sources = added("sources", result_sources)
+        evidence_items = added("evidence", result_evidence)
+        candidates = added("candidates", result_candidates)
+        if len(sources) != 1 or len(evidence_items) != 1 or len(candidates) != 1:
+            _fail(operation_path + ".result_state_id", "ingest must add one source, evidence, and candidate")
+        source, evidence, candidate = sources[0], evidence_items[0], candidates[0]
+        expected_source_payload = {"amount": input_value["amount"], "currency": input_value["currency"], "source_payment_at": input_value["source_payment_at"]}
+        ambiguous = "suggested_payment_role" not in input_value
+        payload = candidate["payload"]
+        if (
+            source["id"] != input_value["source_id"]
+            or source["type"] != "staged_payment_bank_fact"
+            or source["payload"] != expected_source_payload
+            or evidence["id"] != input_value["evidence_id"]
+            or evidence["type"] != "staged_payment_bank_payment"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"] != {"source_payment_at": input_value["source_payment_at"]}
+            or candidate["type"] != "staged_payment"
+            or candidate["source_ids"] != [source["id"]]
+            or payload.get("payment_role") != input_value.get("suggested_payment_role")
+            or payload.get("amount") != str(abs(Decimal(input_value["amount"])))
+            or payload.get("currency") != input_value["currency"]
+            or payload.get("source_payment_at") != input_value["source_payment_at"]
+            or payload.get("evidence_ref") != evidence["id"]
+            or payload.get("provenance") != {"rule": "staged_payment_bank_fact", "rule_version": 1}
+            or payload.get("requires_confirmation") != ["relation_id", "payment_role", "category_id", "funding_account_id"]
+            or candidate["status_history"] != [candidate["status_history"][0]]
+            or candidate["status_history"][0].get("sequence") != 1
+            or candidate["status_history"][0].get("status") != "pending_confirmation"
+            or candidate["confidence"] != ("0.50" if ambiguous else "1.00")
+            or (ambiguous and payload.get("guessed_payment_role", object()) is not None)
+            or (not ambiguous and "guessed_payment_role" in payload)
+        ):
+            _fail(operation_path + ".result_state_id", "ingest source, evidence, and candidate must exactly bind input")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "candidate", "id": candidate["id"]},
+        ]
+    elif action == "link_staged_payment_evidence":
+        sources = added("sources", result_sources)
+        evidence_items = added("evidence", result_evidence)
+        links = added("evidence_links", result_links)
+        payment = result_entities.get(input_value["payment_id"])
+        if len(sources) != 1 or len(evidence_items) != 1 or len(links) != 1 or payment is None:
+            _fail(operation_path + ".result_state_id", "evidence link must add one source, evidence, and link")
+        source, evidence, link = sources[0], evidence_items[0], links[0]
+        payment_payload = payment["payload"]
+        if (
+            source["id"] != input_value["source_id"]
+            or source["type"] != "staged_payment_bank_fact"
+            or evidence["id"] != input_value["evidence_id"]
+            or evidence["type"] != "staged_payment_bank_payment"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"].get("payment_id") != payment["id"]
+            or link != {"id": link["id"], "evidence_id": evidence["id"], "target_kind": "posting", "target_id": input_value["posting_id"], "role": "payment_asset_posting"}
+            or payment_payload.get("asset_posting_id") != input_value["posting_id"]
+            or source["payload"].get("currency") != payment_payload["currency"]
+            or abs(Decimal(source["payload"].get("amount"))) != Decimal(payment_payload["amount"])
+        ):
+            _fail(operation_path + ".result_state_id", "manual evidence must exactly bind payment and payment_asset posting")
+        reconciliations = [result_reconciliations[item_id] for item_id in changed("posting_reconciliations")]
+        baseline_reconciliations = {item["id"]: item for item in baseline["posting_reconciliations"]}
+        if len(reconciliations) != 1 or baseline_reconciliations[reconciliations[0]["id"]]["status"] != "pending" or reconciliations[0]["status"] != "matched" or reconciliations[0]["posting_id"] != input_value["posting_id"]:
+            _fail(operation_path + ".result_state_id", "evidence link must match only the target posting reconciliation")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+            {"kind": "evidence_link", "id": link["id"]},
+        ]
+    elif action == "confirm_staged_payment_candidate":
+        candidate_id = input_value["candidate_id"]
+        before_candidate = next((item for item in baseline["candidates"] if item["id"] == candidate_id), None)
+        after_candidate = result_candidates.get(candidate_id)
+        if before_candidate is None or after_candidate is None or changed("candidates") != [candidate_id]:
+            _fail(operation_path + ".input.candidate_id", "must confirm exactly the input candidate")
+        _validate_candidate_confirmation_transition(
+            before_candidate,
+            after_candidate,
+            operation_path + ".result_state_id",
+            immutable_payload=True,
+        )
+        candidate_payload = before_candidate["payload"]
+        if (
+            input_value["exact_binding_confirmed"] is not True
+            or candidate_payload.get("payment_role") not in {None, input_value["payment_role"]}
+        ):
+            _fail(operation_path + ".input.payment_role", "must explicitly bind the pending candidate role")
+        payment, transaction, confirmation = validate_installment(
+            input_value["relation_id"], input_value["payment_role"], candidate_payload["amount"],
+            candidate_payload["currency"], input_value["funding_account_id"], candidate_payload["source_payment_at"],
+            candidate_id=candidate_id,
+        )
+        evidence_id = candidate_payload["evidence_ref"]
+        before_evidence = next(
+            (item for item in baseline["evidence"] if item["id"] == evidence_id), None
+        )
+        after_evidence = result_evidence.get(evidence_id)
+        if (
+            before_evidence is None
+            or after_evidence is None
+            or changed("evidence") != [evidence_id]
+            or "payment_id" in before_evidence["payload"]
+            or after_evidence
+            != {
+                **before_evidence,
+                "payload": {
+                    **before_evidence["payload"],
+                    "payment_id": payment["id"],
+                },
+            }
+        ):
+            _fail(
+                operation_path + ".result_state_id",
+                "candidate confirmation must add the evidence's exact payment binding",
+            )
+        links = added("evidence_links", result_links)
+        if len(links) != 1 or links[0] != {
+            "id": links[0]["id"], "evidence_id": candidate_payload["evidence_ref"],
+            "target_kind": "posting", "target_id": payment["payload"]["asset_posting_id"],
+            "role": "payment_asset_posting",
+        }:
+            _fail(operation_path + ".result_state_id", "candidate confirmation must link its evidence to payment_asset")
+        expected_returned = [
+            {"kind": "confirmation", "id": confirmation["id"]},
+            {"kind": "transaction", "id": transaction["id"]},
+            {"kind": "domain_entity", "id": payment["id"]},
+            {"kind": "evidence_link", "id": links[0]["id"]},
+        ]
+    else:
+        sources = added("sources", result_sources)
+        evidence_items = added("evidence", result_evidence)
+        payment = result_entities.get(input_value["payment_id"])
+        original_links = [
+            item for item in baseline["evidence_links"]
+            if item["target_kind"] == "posting" and item["target_id"] == input_value["posting_id"]
+        ]
+        if len(sources) != 1 or len(evidence_items) != 1 or payment is None or len(original_links) != 1:
+            _fail(operation_path + ".result_state_id", "mirror must bind one existing payment evidence link")
+        source, evidence, original_link = sources[0], evidence_items[0], original_links[0]
+        original_evidence = next(item for item in baseline["evidence"] if item["id"] == original_link["evidence_id"])
+        original_source_id = original_evidence["source_ids"][0]
+        if (
+            payment["payload"].get("asset_posting_id") != input_value["posting_id"]
+            or source["id"] != input_value["source_id"]
+            or source["type"] != "staged_payment_bank_fact"
+            or source["payload"] != {"mirror_of_source_id": original_source_id, "amount": input_value["amount"], "currency": input_value["currency"], "source_payment_at": input_value["source_payment_at"]}
+            or evidence["id"] != input_value["evidence_id"]
+            or evidence["type"] != "staged_payment_bank_payment"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"] != {"payment_id": payment["id"], "source_payment_at": input_value["source_payment_at"], "mirror_of_evidence_id": original_evidence["id"], "merged_into_evidence_link_id": original_link["id"]}
+            or input_value["currency"] != payment["payload"]["currency"]
+            or abs(Decimal(input_value["amount"])) != Decimal(payment["payload"]["amount"])
+        ):
+            _fail(operation_path + ".result_state_id", "mirror source and evidence must exactly bind input and original lineage")
+        expected_returned = [
+            {"kind": "source", "id": source["id"]},
+            {"kind": "evidence", "id": evidence["id"]},
+        ]
+
+    if operation["returned_ids"] != expected_returned:
+        _fail(operation_path + ".returned_ids", "must exactly return the RG-06 action result identities")
+
+
 def _validate_action_semantics(
     operation: dict[str, Any],
     operation_path: str,
@@ -6386,6 +8130,11 @@ def _validate_action_semantics(
     if operation["outcome"]["status"] != "accepted":
         return
     action = operation["action_type"]
+    if action in _RG06_ACTIONS:
+        _validate_rg06_action_effects(
+            operation, operation_path, baseline, result, expected_entities
+        )
+        return
     input_value = operation["input"]
     baseline_accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
     baseline_categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
@@ -7506,6 +9255,7 @@ def _validate_operations(
                 case_id=case["case"]["id"],
                 action_type=operation["action_type"],
                 target_candidate_id=(operation.get("input") or {}).get("candidate_id"),
+                target_relation_id=(operation.get("input") or {}).get("relation_id"),
             )
             if operation["outcome"]["status"] in {"rejected", "no_change"} and not _contract_equivalent(
                 _state_payload(baseline), _state_payload(result)
@@ -7628,6 +9378,7 @@ def validate_golden_case_v2(
         "RG-03": {"opening_balance", "account_transfer"},
         "RG-04": {"opening_balance", "expense", "credit_repayment"},
         "RG-05": {"opening_balance", "expense"},
+        "RG-06": {"opening_balance", "expense"},
         "RG-11": {"opening_balance", "prepaid_purchase", "prepaid_recognition"},
         "RG-12": {"expense"},
     }

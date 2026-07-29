@@ -2,6 +2,9 @@ import json
 import re
 import unittest
 from collections import Counter, defaultdict
+from copy import deepcopy
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -815,6 +818,1048 @@ class GoldenV2MappingTests(unittest.TestCase):
                     "canonical absence" in semantic_text
                     or "omission" in semantic_text
                 )
+
+    def test_rg06_contract_closure_freezes_topology_status_and_evidence_ownership(self):
+        source = json.loads(
+            (ROOT / "golden" / "rules" / "rg-06.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-06-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        contract_text = (ROOT / "docs" / "GOLDEN_SCHEMA.md").read_text(
+            encoding="utf-8"
+        )
+        mapping_text = (
+            ROOT / "docs" / "migrations" / "golden-v2" / "rg-06-mapping.md"
+        ).read_text(encoding="utf-8")
+
+        groups = []
+        group_reconciliations = set()
+
+        def collect_rg06_state(value):
+            if isinstance(value, dict):
+                if value.get("type") == "staged_payment":
+                    groups.append(value)
+                reconciliation = value.get("reconciliation")
+                if isinstance(reconciliation, dict) and "group" in reconciliation:
+                    group_reconciliations.add(reconciliation["group"])
+                for child in value.values():
+                    collect_rg06_state(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect_rg06_state(child)
+
+        collect_rg06_state(source)
+        self.assertTrue(groups)
+        self.assertEqual(
+            {
+                group["payment_progress"]
+                for group in groups
+            }
+            | {
+                history["payment_progress"]
+                for group in groups
+                for history in group["state_history"]
+            },
+            {"unpaid", "partially_paid", "paid_in_full"},
+        )
+        self.assertEqual(
+            {
+                group["fulfillment_status"]
+                for group in groups
+            }
+            | {
+                history["fulfillment_status"]
+                for group in groups
+                for history in group["state_history"]
+            },
+            {"in_progress", "fulfilled"},
+        )
+        self.assertEqual(group_reconciliations, {"pending", "partial", "complete"})
+
+        def assert_valid_payment_roles(roles):
+            self.assertEqual(len(roles), len(set(roles)))
+            self.assertLessEqual(roles.count("deposit"), 1)
+            self.assertLessEqual(roles.count("final"), 1)
+            self.assertTrue(set(roles).issubset({"deposit", "final"}))
+            if "final" in roles:
+                self.assertIn("deposit", roles)
+
+        observed_role_sequences = set()
+        for group in groups:
+            roles = [payment["role"] for payment in group["payments"]]
+            observed_role_sequences.add(frozenset(roles))
+            with self.subTest(group_id=group["id"], roles=roles):
+                assert_valid_payment_roles(roles)
+        self.assertEqual(
+            observed_role_sequences,
+            {
+                frozenset(),
+                frozenset({"deposit"}),
+                frozenset({"deposit", "final"}),
+            },
+        )
+        for contradictory_roles in (
+            ["deposit", "deposit"],
+            ["final"],
+            ["deposit", "final", "final"],
+            ["deposit", "unknown"],
+        ):
+            with self.subTest(contradictory_roles=contradictory_roles):
+                with self.assertRaises(AssertionError):
+                    assert_valid_payment_roles(contradictory_roles)
+
+        def expected_payment_progress(paid_amount, due_amount):
+            if paid_amount == Decimal("0.00"):
+                return "unpaid"
+            if due_amount == Decimal("0.00"):
+                return "paid_in_full"
+            return "partially_paid"
+
+        def assert_valid_lifecycle(group, ordered_operations=None):
+            payments = {payment["id"]: payment for payment in group["payments"]}
+            self.assertEqual(len(payments), len(group["payments"]))
+            total_amount = Decimal(group["total_amount"])
+            paid_amount = Decimal(group["paid_amount"])
+            due_amount = Decimal(group["due_amount"])
+            self.assertEqual(total_amount, paid_amount + due_amount)
+            self.assertEqual(
+                paid_amount,
+                sum(
+                    (Decimal(payment["amount"]) for payment in payments.values()),
+                    Decimal("0.00"),
+                ),
+            )
+            self.assertEqual(
+                group["payment_progress"],
+                expected_payment_progress(paid_amount, due_amount),
+            )
+
+            history = group["state_history"]
+            self.assertTrue(history)
+            seen_payment_ids = set()
+            cumulative_paid = Decimal("0.00")
+            previous_occurred_at = None
+            payment_history_positions = {}
+            for sequence, item in enumerate(history, start=1):
+                item_total = Decimal(item["total_amount"])
+                item_paid = Decimal(item["paid_amount"])
+                item_due = Decimal(item["due_amount"])
+                self.assertEqual(item_total, item_paid + item_due)
+                self.assertEqual(item_total, total_amount)
+                self.assertEqual(
+                    item["payment_progress"],
+                    expected_payment_progress(item_paid, item_due),
+                )
+
+                occurred_at = datetime.fromisoformat(item["occurred_at"])
+                if previous_occurred_at is not None:
+                    self.assertGreater(occurred_at, previous_occurred_at)
+                previous_occurred_at = occurred_at
+
+                payment_id = item["payment_id"]
+                if item["event"] == "payment_confirmed":
+                    self.assertIn(payment_id, payments)
+                    self.assertNotIn(payment_id, seen_payment_ids)
+                    seen_payment_ids.add(payment_id)
+                    cumulative_paid += Decimal(payments[payment_id]["amount"])
+                    payment_history_positions[payments[payment_id]["role"]] = sequence
+                else:
+                    self.assertIsNone(payment_id)
+                self.assertEqual(item_paid, cumulative_paid)
+
+            self.assertEqual(seen_payment_ids, set(payments))
+            latest = history[-1]
+            for field in (
+                "total_amount",
+                "paid_amount",
+                "due_amount",
+                "payment_progress",
+                "fulfillment_status",
+            ):
+                self.assertEqual(group[field], latest[field])
+
+            payments_by_role = {
+                payment["role"]: payment for payment in payments.values()
+            }
+            if "final" in payments_by_role:
+                self.assertIn("deposit", payments_by_role)
+                deposit = payments_by_role["deposit"]
+                final = payments_by_role["final"]
+                self.assertGreater(
+                    datetime.fromisoformat(final["actual_payment_at"]),
+                    datetime.fromisoformat(deposit["actual_payment_at"]),
+                )
+                if (
+                    deposit.get("source_payment_at") is not None
+                    and final.get("source_payment_at") is not None
+                ):
+                    self.assertGreater(
+                        datetime.fromisoformat(final["source_payment_at"]),
+                        datetime.fromisoformat(deposit["source_payment_at"]),
+                    )
+                self.assertLess(
+                    payment_history_positions["deposit"],
+                    payment_history_positions["final"],
+                )
+
+                if ordered_operations is not None:
+                    payment_operation_positions = {}
+                    for position, operation in enumerate(ordered_operations):
+                        payment = operation.get("expected", {}).get("payment")
+                        if payment is not None:
+                            payment_operation_positions[payment["role"]] = position
+                    self.assertLess(
+                        payment_operation_positions["deposit"],
+                        payment_operation_positions["final"],
+                    )
+
+        for group in groups:
+            with self.subTest(lifecycle_group=group["id"]):
+                assert_valid_lifecycle(group)
+
+        manual_group = source["manual_path"]["canonical_final_state"]["group"]
+        manual_operations = source["manual_path"]["ordered_operations"]
+        assert_valid_lifecycle(manual_group, manual_operations)
+
+        reversed_members = deepcopy(manual_group)
+        reversed_members["payments"].reverse()
+        assert_valid_lifecycle(reversed_members, manual_operations)
+
+        contradictory_lifecycles = []
+        contradictory_arithmetic = deepcopy(manual_group)
+        contradictory_arithmetic["paid_amount"] = "299.99"
+        contradictory_lifecycles.append(contradictory_arithmetic)
+        contradictory_history = deepcopy(manual_group)
+        contradictory_history["state_history"][-1]["due_amount"] = "0.01"
+        contradictory_lifecycles.append(contradictory_history)
+        contradictory_progress = deepcopy(manual_group)
+        contradictory_progress["payment_progress"] = "partially_paid"
+        contradictory_lifecycles.append(contradictory_progress)
+        equal_time_final = deepcopy(manual_group)
+        equal_time_payments = {
+            payment["role"]: payment for payment in equal_time_final["payments"]
+        }
+        equal_time_payments["final"]["actual_payment_at"] = (
+            equal_time_payments["deposit"]["actual_payment_at"]
+        )
+        contradictory_lifecycles.append(equal_time_final)
+        earlier_final = deepcopy(manual_group)
+        earlier_final_payments = {
+            payment["role"]: payment for payment in earlier_final["payments"]
+        }
+        earlier_final_payments["final"]["actual_payment_at"] = (
+            "2026-04-28T09:59:59+08:00"
+        )
+        contradictory_lifecycles.append(earlier_final)
+        contradictory_history_order = deepcopy(manual_group)
+        contradictory_history_order["state_history"][1], contradictory_history_order[
+            "state_history"
+        ][3] = (
+            contradictory_history_order["state_history"][3],
+            contradictory_history_order["state_history"][1],
+        )
+        contradictory_lifecycles.append(contradictory_history_order)
+        for contradictory_lifecycle in contradictory_lifecycles:
+            with self.subTest(
+                contradictory_lifecycle=contradictory_lifecycle["id"]
+            ):
+                with self.assertRaises(AssertionError):
+                    assert_valid_lifecycle(contradictory_lifecycle)
+
+        contradictory_operation_order = deepcopy(manual_operations)
+        deposit_operation_index = next(
+            index
+            for index, operation in enumerate(contradictory_operation_order)
+            if operation.get("expected", {}).get("payment", {}).get("role")
+            == "deposit"
+        )
+        final_operation_index = next(
+            index
+            for index, operation in enumerate(contradictory_operation_order)
+            if operation.get("expected", {}).get("payment", {}).get("role")
+            == "final"
+        )
+        contradictory_operation_order[
+            deposit_operation_index
+        ], contradictory_operation_order[final_operation_index] = (
+            contradictory_operation_order[final_operation_index],
+            contradictory_operation_order[deposit_operation_index],
+        )
+        with self.assertRaises(AssertionError):
+            assert_valid_lifecycle(manual_group, contradictory_operation_order)
+
+        categories = {
+            category["id"]: category for category in source["catalog"]["categories"]
+        }
+        for state_name, state in (
+            ("manual", source["manual_path"]["canonical_final_state"]),
+            ("import", source["import_path"]["canonical_final_state"]),
+        ):
+            group = state["group"]
+            transactions = {
+                transaction["id"]: transaction
+                for transaction in state["transactions"]
+            }
+            category_account_id = categories[group["category_id"]]["posting_account_id"]
+            for payment in group["payments"]:
+                transaction = transactions[payment["transaction_id"]]
+                postings = {
+                    posting["id"]: posting for posting in transaction["postings"]
+                }
+                expense_posting = postings[payment["expense_posting_id"]]
+                asset_posting = postings[payment["asset_posting_id"]]
+                amount = Decimal(payment["amount"])
+                with self.subTest(state=state_name, payment_id=payment["id"]):
+                    self.assertNotEqual(expense_posting["id"], asset_posting["id"])
+                    self.assertEqual(expense_posting["account_id"], category_account_id)
+                    self.assertEqual(asset_posting["account_id"], payment["funding_account_id"])
+                    self.assertEqual(Decimal(expense_posting["amount"]), amount)
+                    self.assertEqual(Decimal(asset_posting["amount"]), -amount)
+                    self.assertEqual(expense_posting["currency"], payment["currency"])
+                    self.assertEqual(asset_posting["currency"], payment["currency"])
+                    self.assertEqual(transaction["occurred_at"], payment["actual_payment_at"])
+                    self.assertEqual(transaction["statistics_at"], payment["statistics_at"])
+
+        final_sources = {
+            item["id"]: item
+            for item in source["import_path"]["canonical_final_state"][
+                "source_records"
+            ]
+        }
+        manual_sources = source["manual_path"]["canonical_final_state"][
+            "source_records"
+        ]
+
+        def assert_evidence_bindings_match_installments(state):
+            sources = {item["id"]: item for item in state["source_records"]}
+            payments = {item["id"]: item for item in state["payments"]}
+            postings = {item["id"]: item for item in state["postings"]}
+            for link in state["evidence_links"]:
+                source_fact = sources[link["source_id"]]
+                payment = payments[link["payment_id"]]
+                asset_posting = postings[link["posting_id"]]
+                self.assertEqual(source_fact["evidence_id"], link["evidence_id"])
+                self.assertEqual(link["posting_id"], payment["asset_posting_id"])
+                self.assertEqual(asset_posting["amount"], f"-{payment['amount']}")
+                self.assertEqual(source_fact["currency"], payment["currency"])
+                self.assertEqual(source_fact["currency"], asset_posting["currency"])
+                self.assertEqual(
+                    abs(Decimal(source_fact["amount"])),
+                    Decimal(payment["amount"]),
+                )
+                self.assertEqual(
+                    abs(Decimal(source_fact["amount"])),
+                    abs(Decimal(asset_posting["amount"])),
+                )
+
+        manual_final_state = source["manual_path"]["canonical_final_state"]
+        import_final_state = source["import_path"]["canonical_final_state"]
+        assert_evidence_bindings_match_installments(manual_final_state)
+        assert_evidence_bindings_match_installments(import_final_state)
+        for contradictory_source_fields in (
+            {"amount": "219.99"},
+            {"currency": "USD"},
+        ):
+            contradictory_state = deepcopy(import_final_state)
+            contradictory_source = next(
+                item
+                for item in contradictory_state["source_records"]
+                if item["id"] == "source-rg06-import-final"
+            )
+            contradictory_source.update(contradictory_source_fields)
+            with self.subTest(
+                contradictory_source_fields=contradictory_source_fields
+            ):
+                with self.assertRaises(AssertionError):
+                    assert_evidence_bindings_match_installments(contradictory_state)
+
+        def assert_valid_bank_fact_time(fact, expected_variant):
+            time_fields = {"observed_at", "source_payment_at"}.intersection(fact)
+            self.assertEqual(time_fields, {expected_variant})
+            self.assertIsInstance(fact[expected_variant], str)
+            self.assertTrue(fact[expected_variant])
+            self.assertNotIn("created_at", fact)
+            self.assertNotIn("confirmed_at", fact)
+
+        for manual_source in manual_sources:
+            with self.subTest(manual_source=manual_source["id"]):
+                assert_valid_bank_fact_time(manual_source, "observed_at")
+        for imported_source in final_sources.values():
+            with self.subTest(imported_source=imported_source["id"]):
+                assert_valid_bank_fact_time(imported_source, "source_payment_at")
+
+        for contradictory_fact, expected_variant in (
+            (
+                {
+                    **manual_sources[0],
+                    "source_payment_at": manual_sources[0]["observed_at"],
+                },
+                "observed_at",
+            ),
+            (
+                {
+                    key: value
+                    for key, value in manual_sources[0].items()
+                    if key != "observed_at"
+                },
+                "observed_at",
+            ),
+            ({**manual_sources[0], "observed_at": None}, "observed_at"),
+            (
+                {
+                    **next(iter(final_sources.values())),
+                    "observed_at": next(iter(final_sources.values()))[
+                        "source_payment_at"
+                    ],
+                },
+                "source_payment_at",
+            ),
+            (
+                {
+                    key: value
+                    for key, value in next(iter(final_sources.values())).items()
+                    if key != "source_payment_at"
+                },
+                "source_payment_at",
+            ),
+            (
+                {
+                    **next(iter(final_sources.values())),
+                    "source_payment_at": None,
+                },
+                "source_payment_at",
+            ),
+        ):
+            with self.subTest(
+                contradictory_fact=contradictory_fact,
+                expected_variant=expected_variant,
+            ):
+                with self.assertRaises(AssertionError):
+                    assert_valid_bank_fact_time(
+                        contradictory_fact, expected_variant
+                    )
+
+        def assert_evidence_time_matches_source(source_fact, evidence_payload):
+            source_time_fields = {
+                "observed_at",
+                "source_payment_at",
+            }.intersection(source_fact)
+            evidence_time_fields = {
+                "observed_at",
+                "source_payment_at",
+            }.intersection(evidence_payload)
+            self.assertEqual(len(source_time_fields), 1)
+            self.assertEqual(evidence_time_fields, source_time_fields)
+            time_field = next(iter(source_time_fields))
+            self.assertEqual(evidence_payload[time_field], source_fact[time_field])
+            self.assertNotIn("created_at", evidence_payload)
+            self.assertNotIn("confirmed_at", evidence_payload)
+
+        manual_time = manual_sources[0]["observed_at"]
+        imported_source = next(iter(final_sources.values()))
+        imported_time = imported_source["source_payment_at"]
+        assert_evidence_time_matches_source(
+            manual_sources[0], {"observed_at": manual_time}
+        )
+        assert_evidence_time_matches_source(
+            imported_source, {"source_payment_at": imported_time}
+        )
+        for source_fact, contradictory_evidence in (
+            (manual_sources[0], {"source_payment_at": manual_time}),
+            (manual_sources[0], {}),
+            (manual_sources[0], {"observed_at": None}),
+            (manual_sources[0], {"observed_at": manual_time, "created_at": manual_time}),
+            (manual_sources[0], {"observed_at": manual_time, "confirmed_at": manual_time}),
+            (manual_sources[0], {"observed_at": "2026-04-28T10:00:01+08:00"}),
+            (imported_source, {"observed_at": imported_time}),
+            (imported_source, {}),
+            (imported_source, {"source_payment_at": None}),
+            (
+                imported_source,
+                {"source_payment_at": imported_time, "created_at": imported_time},
+            ),
+            (
+                imported_source,
+                {"source_payment_at": imported_time, "confirmed_at": imported_time},
+            ),
+            (
+                imported_source,
+                {"source_payment_at": "2026-04-28T10:00:01+08:00"},
+            ),
+            (
+                imported_source,
+                {"source_payment_at": imported_time, "observed_at": imported_time},
+            ),
+        ):
+            with self.subTest(
+                source_fact=source_fact["id"],
+                contradictory_evidence=contradictory_evidence,
+            ):
+                with self.assertRaises(AssertionError):
+                    assert_evidence_time_matches_source(
+                        source_fact, contradictory_evidence
+                    )
+
+        source_time_entries = [
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"].endswith(
+                (
+                    ".source_records[*].observed_at",
+                    ".source_records[*].source_payment_at",
+                )
+            )
+        ]
+        self.assertTrue(source_time_entries)
+        observed_entries = []
+        imported_entries = []
+        for entry in source_time_entries:
+            source_path = entry["source_path"]
+            with self.subTest(source_path=source_path):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertIn("RG06-GAP-02", entry["contract_gap_ids"])
+                if source_path.endswith(".observed_at"):
+                    observed_entries.append(entry)
+                    self.assertIn("manual", source_path)
+                    self.assertEqual(
+                        entry["target_paths"],
+                        [
+                            "$.planned_contract.states[*].sources[*].payload."
+                            "observed_at"
+                        ],
+                    )
+                else:
+                    imported_entries.append(entry)
+                    self.assertIn("import", source_path)
+                    self.assertEqual(
+                        entry["target_paths"],
+                        [
+                            "$.planned_contract.states[*].sources[*].payload."
+                            "source_payment_at"
+                        ],
+                    )
+        self.assertTrue(observed_entries)
+        self.assertTrue(imported_entries)
+
+        mirror = final_sources["source-rg06-import-final-mirror"]
+        original = final_sources[mirror["mirror_of_source_id"]]
+
+        def assert_valid_mirror_pair(original_fact, mirror_fact):
+            self.assertEqual(mirror_fact["currency"], original_fact["currency"])
+            self.assertEqual(
+                abs(Decimal(mirror_fact["amount"])),
+                abs(Decimal(original_fact["amount"])),
+            )
+            self.assertEqual(
+                Decimal(mirror_fact["amount"]),
+                -Decimal(original_fact["amount"]),
+            )
+
+        assert_valid_mirror_pair(original, mirror)
+        for contradictory_mirror in (
+            {**mirror, "amount": original["amount"]},
+            {**mirror, "amount": "-219.99"},
+            {**mirror, "currency": "USD"},
+        ):
+            with self.subTest(contradictory_mirror=contradictory_mirror):
+                with self.assertRaises(AssertionError):
+                    assert_valid_mirror_pair(original, contradictory_mirror)
+
+        status_registries = {
+            "payment_progress": {"unpaid", "partially_paid", "paid_in_full"},
+            "fulfillment_status": {"in_progress", "fulfilled"},
+            "reconciliation": {"pending", "partial", "complete"},
+        }
+
+        def project_staged_payment_reconciliation(
+            installments, postings, posting_reconciliations
+        ):
+            postings_by_id = {posting["id"]: posting for posting in postings}
+            reconciliations_by_posting_id = {
+                reconciliation["posting_id"]: reconciliation
+                for reconciliation in posting_reconciliations
+            }
+            installment_count = len(installments)
+            matched_count = 0
+            for installment in installments:
+                posting = postings_by_id.get(installment["asset_posting_id"])
+                if posting is None:
+                    continue
+                reconciliation = reconciliations_by_posting_id.get(posting["id"])
+                if (
+                    posting.get("role") == "payment_asset"
+                    and posting.get("reconciliation_eligible") is True
+                    and reconciliation is not None
+                    and reconciliation["status"] == "matched"
+                ):
+                    matched_count += 1
+            if installment_count == 0 or matched_count == 0:
+                return "pending"
+            if matched_count == installment_count:
+                return "complete"
+            return "partial"
+
+        def assert_valid_lifecycle_statuses(
+            statuses,
+            lifecycle_id,
+            latest_history,
+            installments,
+            postings,
+            posting_reconciliations,
+        ):
+            self.assertEqual(
+                Counter(status["status_name"] for status in statuses),
+                Counter({status_name: 1 for status_name in status_registries}),
+            )
+            statuses_by_name = {
+                status["status_name"]: status for status in statuses
+            }
+            for status in statuses:
+                self.assertEqual(status["target_kind"], "domain_entity")
+                self.assertEqual(status["target_id"], lifecycle_id)
+                self.assertIn(
+                    status["value"], status_registries[status["status_name"]]
+                )
+            self.assertEqual(
+                statuses_by_name["payment_progress"]["value"],
+                latest_history["payment_progress"],
+            )
+            self.assertEqual(
+                statuses_by_name["fulfillment_status"]["value"],
+                latest_history["fulfillment_status"],
+            )
+            self.assertEqual(
+                statuses_by_name["reconciliation"]["value"],
+                project_staged_payment_reconciliation(
+                    installments, postings, posting_reconciliations
+                ),
+            )
+
+        lifecycle_id = "domain-rg06-lifecycle"
+        zero_installment_group = next(group for group in groups if not group["payments"])
+        two_installment_group = next(
+            group for group in groups if len(group["payments"]) == 2
+        )
+        installments = [
+            {
+                "id": payment["id"],
+                "asset_posting_id": payment["asset_posting_id"],
+            }
+            for payment in two_installment_group["payments"]
+        ]
+        postings = [
+            {
+                "id": installment["asset_posting_id"],
+                "role": "payment_asset",
+                "reconciliation_eligible": True,
+            }
+            for installment in installments
+        ]
+        unrelated_posting = {
+            "id": "posting-rg06-unrelated",
+            "role": "payment_asset",
+            "reconciliation_eligible": True,
+        }
+        unrelated_reconciliation = {
+            "id": "reconciliation-rg06-unrelated",
+            "posting_id": unrelated_posting["id"],
+            "status": "matched",
+        }
+        deposit_reconciliation = {
+            "id": "reconciliation-rg06-deposit",
+            "posting_id": installments[0]["asset_posting_id"],
+            "status": "matched",
+        }
+        pending_final_reconciliation = {
+            "id": "reconciliation-rg06-final",
+            "posting_id": installments[1]["asset_posting_id"],
+            "status": "pending",
+        }
+        final_reconciliation = {
+            **pending_final_reconciliation,
+            "status": "matched",
+        }
+
+        projection_cases = (
+            (
+                "zero_installments",
+                zero_installment_group,
+                [],
+                [unrelated_posting],
+                [unrelated_reconciliation],
+                "pending",
+                "complete",
+            ),
+            (
+                "one_matched_one_unmatched",
+                two_installment_group,
+                installments,
+                [*postings, unrelated_posting],
+                [
+                    deposit_reconciliation,
+                    pending_final_reconciliation,
+                    unrelated_reconciliation,
+                ],
+                "partial",
+                "complete",
+            ),
+            (
+                "all_matched",
+                two_installment_group,
+                installments,
+                [*postings, unrelated_posting],
+                [
+                    deposit_reconciliation,
+                    final_reconciliation,
+                    unrelated_reconciliation,
+                ],
+                "complete",
+                "partial",
+            ),
+        )
+        for (
+            case_name,
+            lifecycle_group,
+            case_installments,
+            case_postings,
+            case_reconciliations,
+            expected_reconciliation,
+            contradictory_reconciliation,
+        ) in projection_cases:
+            latest_history = lifecycle_group["state_history"][-1]
+            valid_statuses = [
+                {
+                    "target_kind": "domain_entity",
+                    "target_id": lifecycle_id,
+                    "status_name": "payment_progress",
+                    "value": latest_history["payment_progress"],
+                },
+                {
+                    "target_kind": "domain_entity",
+                    "target_id": lifecycle_id,
+                    "status_name": "fulfillment_status",
+                    "value": latest_history["fulfillment_status"],
+                },
+                {
+                    "target_kind": "domain_entity",
+                    "target_id": lifecycle_id,
+                    "status_name": "reconciliation",
+                    "value": expected_reconciliation,
+                },
+            ]
+            with self.subTest(projection_case=case_name):
+                assert_valid_lifecycle_statuses(
+                    valid_statuses,
+                    lifecycle_id,
+                    latest_history,
+                    case_installments,
+                    case_postings,
+                    case_reconciliations,
+                )
+                contradictory_statuses = [
+                    *valid_statuses[:2],
+                    {
+                        **valid_statuses[2],
+                        "value": contradictory_reconciliation,
+                    },
+                ]
+                with self.assertRaises(AssertionError):
+                    assert_valid_lifecycle_statuses(
+                        contradictory_statuses,
+                        lifecycle_id,
+                        latest_history,
+                        case_installments,
+                        case_postings,
+                        case_reconciliations,
+                    )
+
+        absent_reconciliation_installment = installments[:1]
+        self.assertEqual(
+            project_staged_payment_reconciliation(
+                absent_reconciliation_installment,
+                [postings[0], unrelated_posting],
+                [unrelated_reconciliation],
+            ),
+            "pending",
+        )
+        ineligible_posting = {
+            **postings[0],
+            "reconciliation_eligible": False,
+        }
+        self.assertEqual(
+            project_staged_payment_reconciliation(
+                absent_reconciliation_installment,
+                [ineligible_posting, unrelated_posting],
+                [deposit_reconciliation, unrelated_reconciliation],
+            ),
+            "pending",
+        )
+        difference_reconciliation = {
+            **deposit_reconciliation,
+            "status": "has_difference",
+        }
+        self.assertEqual(
+            project_staged_payment_reconciliation(
+                absent_reconciliation_installment,
+                [postings[0], unrelated_posting],
+                [difference_reconciliation, unrelated_reconciliation],
+            ),
+            "pending",
+        )
+
+        latest_history = two_installment_group["state_history"][-1]
+        valid_statuses = [
+            {
+                "target_kind": "domain_entity",
+                "target_id": lifecycle_id,
+                "status_name": "payment_progress",
+                "value": latest_history["payment_progress"],
+            },
+            {
+                "target_kind": "domain_entity",
+                "target_id": lifecycle_id,
+                "status_name": "fulfillment_status",
+                "value": latest_history["fulfillment_status"],
+            },
+            {
+                "target_kind": "domain_entity",
+                "target_id": lifecycle_id,
+                "status_name": "reconciliation",
+                "value": "complete",
+            },
+        ]
+        contradictory_status_sets = (
+            [*valid_statuses, valid_statuses[0]],
+            [{**valid_statuses[0], "target_kind": "relation"}, *valid_statuses[1:]],
+            [{**valid_statuses[0], "target_id": "other"}, *valid_statuses[1:]],
+            [{**valid_statuses[0], "value": "complete"}, *valid_statuses[1:]],
+            [
+                {**valid_statuses[0], "value": "partially_paid"},
+                *valid_statuses[1:],
+            ],
+        )
+        for contradictory_statuses in contradictory_status_sets:
+            with self.subTest(contradictory_statuses=contradictory_statuses):
+                with self.assertRaises(AssertionError):
+                    assert_valid_lifecycle_statuses(
+                        contradictory_statuses,
+                        lifecycle_id,
+                        latest_history,
+                        installments,
+                        postings,
+                        [deposit_reconciliation, final_reconciliation],
+                    )
+
+        required_status_targets = {
+            "$.planned_contract.states[*].derived_statuses[*].target_kind",
+            "$.planned_contract.states[*].derived_statuses[*].target_id",
+            "$.planned_contract.states[*].derived_statuses[*].status_name",
+            "$.planned_contract.states[*].derived_statuses[*].value",
+        }
+        status_entries = [
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"].endswith(
+                (
+                    ".group.payment_progress",
+                    ".group.fulfillment_status",
+                    ".reconciliation.group",
+                )
+            )
+        ]
+        self.assertTrue(status_entries)
+        for entry in status_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertIn("RG06-GAP-04", entry["contract_gap_ids"])
+                self.assertTrue(required_status_targets.issubset(entry["target_paths"]))
+
+        posting_owner_entry = next(
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"]
+            == "$.manual_path.canonical_final_state.transactions[*].postings[*].account_id"
+        )
+        self.assertIn(
+            "$.states[*].postings[*].role", posting_owner_entry["target_paths"]
+        )
+        self.assertIn("payment_asset", posting_owner_entry["transform"])
+        self.assertIn("expense posting", posting_owner_entry["transform"])
+
+        gap05_entries = [
+            entry
+            for entry in path_map["entries"]
+            if "RG06-GAP-05" in entry["contract_gap_ids"]
+        ]
+        self.assertTrue(gap05_entries)
+        for entry in gap05_entries:
+            semantic_text = f"{entry['transform']} {entry['rationale']}"
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertNotIn("merged_payment_bank_fact", semantic_text)
+
+        rg06_source_row = next(
+            line
+            for line in contract_text.splitlines()
+            if line.startswith("| source `staged_payment_bank_fact`")
+        )
+        self.assertIn("equal absolute magnitude", rg06_source_row)
+        self.assertIn("opposite sign", rg06_source_row)
+        self.assertNotIn("same amount", rg06_source_row)
+        self.assertIn("exactly one of `observed_at` or `source_payment_at`", rg06_source_row)
+        self.assertIn("manual bank-evidence fact requires `observed_at`", rg06_source_row)
+        self.assertIn("imported payment fact requires `source_payment_at`", rg06_source_row)
+        self.assertIn("the other time field is forbidden", rg06_source_row)
+        rg06_evidence_row = next(
+            line
+            for line in contract_text.splitlines()
+            if line.startswith("| evidence `staged_payment_bank_payment`")
+        )
+        self.assertIn("same required time field", rg06_evidence_row)
+        self.assertIn("byte-for-byte equal", rg06_evidence_row)
+        self.assertEqual(
+            next(
+                line
+                for line in contract_text.splitlines()
+                if line.startswith("| source `merged_payment_bank_fact`")
+            ),
+            "| source `merged_payment_bank_fact` | `evidence_id`, immutable "
+            "`observed_at`, `details`, signed `amount`, `currency`, and "
+            "`completeness:\"complete\"` |",
+        )
+        self.assertEqual(
+            next(
+                line
+                for line in contract_text.splitlines()
+                if line.startswith("| evidence `bank_payment`")
+            ),
+            "| evidence `bank_payment` | `observed_at`; exactly one "
+            "`merged_payment_bank_fact` source |",
+        )
+
+        required_contract_clauses = (
+            "At creation it has exactly one `staged_payment_lifecycle` domain-entity "
+            "member; it may then append at most two distinct `installment_payment` "
+            "domain-entity members, one per confirmed payment. Its closed payload is "
+            "exactly `{}`.",
+            "`payload.state_history` is the authoritative lifecycle state.",
+            "`derived_statuses` is the sole current-state projection for "
+            "`payment_progress`, `fulfillment_status`, and staged-payment "
+            "`reconciliation`.",
+            "The lifecycle payload must not duplicate any of those current status "
+            "values.",
+            "Every complete state that owns a `staged_payment_lifecycle` has exactly "
+            "one current derived status for each of `payment_progress`, "
+            "`fulfillment_status`, and `reconciliation`.",
+            "All three use `target_kind=domain_entity` and the exact lifecycle entity "
+            "ID as `target_id`.",
+            "source `staged_payment_bank_fact`",
+            "evidence `staged_payment_bank_payment`",
+            "The existing RG-05 `bank_payment` evidence and its exact "
+            "`merged_payment_bank_fact` source ownership are unchanged; neither RG-06 "
+            "discriminator is an alias for either RG-05 discriminator.",
+            "An RG-06 staged-payment bank evidence link contains only `id`, "
+            "`evidence_id`, `target_kind`, `target_id`, and `role`.",
+            "Its `target_kind` is `posting`, its `target_id` is the exact owned-real "
+            "`payment_asset` posting of the referenced `installment_payment`, and its "
+            "role is `payment_asset_posting`.",
+            "A relation contains at most one `deposit` member and at most one `final` "
+            "member; a `final` member is invalid unless the relation also contains "
+            "its required `deposit` member.",
+            "Relation member array order is not chronological evidence.",
+            "Both referenced postings belong to that transaction's current posting "
+            "set.",
+            "The asset posting uses `funding_account_id`, role `payment_asset`, the "
+            "installment currency, and the exact negative installment amount.",
+            "The expense posting uses the lifecycle's second-level `category_id`, "
+            "role `expense`, the same currency, and the exact positive installment "
+            "amount.",
+            "Neither variant permits both time fields, a missing required time, or a "
+            "`null` time.",
+            "The evidence payload uses the source variant's same required time field "
+            "with the exact same timestamp text.",
+            "`staged_payment_bank_fact` and `staged_payment_bank_payment` forbid "
+            "`created_at` and `confirmed_at` fields entirely.",
+            "Evidence-side `observed_at` and `source_payment_at` are each required "
+            "only for their selected variant, and neither may be missing or `null`.",
+            "The current lifecycle satisfies `total_amount = paid_amount + "
+            "due_amount`, and `paid_amount` equals the sum of its distinct installment "
+            "amounts.",
+            "Current lifecycle totals and current payment/fulfillment projections "
+            "equal the latest history item.",
+            "A final installment's `actual_payment_at` must be strictly later than "
+            "the deposit's `actual_payment_at`.",
+            "The staged-payment evidence's sole source currency equals the referenced "
+            "installment and `payment_asset` posting currency, and the source's "
+            "absolute amount equals both the positive installment amount and the "
+            "absolute posting amount.",
+            "Let `N` be the number of distinct `installment_payment` members in the "
+            "relation, and let `M` be the number of those members whose exact "
+            "`asset_posting_id` resolves to an eligible `payment_asset` posting with "
+            "a `posting_reconciliations` record whose status is `matched`.",
+            "The reconciliation projection is `pending` exactly when `N = 0` or "
+            "`M = 0`, `partial` exactly when `0 < M < N`, and `complete` exactly "
+            "when `N > 0` and `M = N`.",
+            "A missing reconciliation record, an ineligible installment asset "
+            "posting, or any status other than `matched` contributes zero to `M`.",
+            "Posting reconciliations for postings not named by the relation's "
+            "installment members are ignored.",
+        )
+        for clause in required_contract_clauses:
+            with self.subTest(clause=clause):
+                self.assertIn(clause, contract_text)
+
+        required_mapping_clauses = (
+            "The initial relation contains exactly the lifecycle member and "
+            "`payload={}`; each confirmed payment appends its distinct "
+            "`installment_payment` member, up to two payment members total.",
+            "Current `payment_progress`, `fulfillment_status`, and group "
+            "`reconciliation` exist only in `derived_statuses`; none is duplicated in "
+            "the lifecycle payload.",
+            "RG-06 uses the distinct `staged_payment_bank_fact` source and "
+            "`staged_payment_bank_payment` evidence discriminators.",
+            "RG-05 `merged_payment_bank_fact` and `bank_payment` retain their existing "
+            "closed ownership and semantics without aliasing or cross-subtype reuse.",
+            "Each emitted evidence link uses only canonical evidence-link fields and "
+            "targets the exact owned-real `payment_asset` posting with "
+            "`target_kind=posting` and `role=payment_asset_posting`.",
+            "Manual bank-evidence sources preserve `observed_at` only; imported "
+            "payment sources, including mirrors, preserve `source_payment_at` only.",
+            "The staged-payment evidence payload preserves the same field name and "
+            "exact timestamp text as its sole source.",
+            "Evidence-side `created_at` and `confirmed_at` are forbidden, not merely "
+            "ignored.",
+            "Member-array order is set-like and proves no payment chronology.",
+            "Every lifecycle snapshot satisfies `total_amount = paid_amount + "
+            "due_amount`.",
+            "Current lifecycle totals and payment/fulfillment projections equal the "
+            "latest history item.",
+            "The final payment operation and payment-confirmed history item follow "
+            "the deposit equivalents, and final payment time is strictly later than "
+            "deposit payment time.",
+            "Each evidence's sole bank fact has the installment and asset posting "
+            "currency and an absolute amount equal to both.",
+            "Let `N` be the count of distinct installment members and `M` the count "
+            "whose exact eligible `payment_asset` posting reconciliation is "
+            "`matched`.",
+            "Group reconciliation is `pending` when `N = 0` or `M = 0`, `partial` "
+            "when `0 < M < N`, and `complete` when `N > 0` and `M = N`.",
+            "Missing records, ineligible installment postings, non-`matched` "
+            "statuses, and reconciliations for unrelated postings do not increase "
+            "`M`.",
+        )
+        for clause in required_mapping_clauses:
+            with self.subTest(clause=clause):
+                self.assertIn(clause, mapping_text)
 
     def test_rg07_refund_cash_inflow_uses_current_cash_inflow_metric(self):
         source = json.loads(
