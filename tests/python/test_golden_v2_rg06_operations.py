@@ -505,6 +505,7 @@ def rg06_effect_case(action: str) -> tuple[dict, dict, dict]:
         ]
     elif action == "confirm_staged_payment_candidate":
         result = deposit_result()
+        result["posting_reconciliations"][0]["status"] = "matched"
         baseline = creation_result()
         candidate = rg06_effect_case("ingest_staged_payment_bank_fact")[1]["candidates"][0]
         source = rg06_effect_case("ingest_staged_payment_bank_fact")[1]["sources"][0]
@@ -834,6 +835,57 @@ class Rg06OperationRegistryTests(unittest.TestCase):
                     golden_v2._validate_rg06_action_effects(
                         operation, "$.operations[0]", baseline, invalid, expected
                     )
+
+    def test_rg06_reconciliation_status_is_action_specific_and_projection_only(self):
+        manual_baseline, manual_result, _ = rg06_effect_case(
+            "record_staged_payment_installment"
+        )
+        self.assertEqual([], manual_baseline["posting_reconciliations"])
+        self.assertEqual(
+            [{"id": "reconciliation-rg06-deposit", "posting_id": "posting-asset-deposit", "status": "pending"}],
+            manual_result["posting_reconciliations"],
+        )
+
+        ingest_baseline, ingest_result, _ = rg06_effect_case(
+            "ingest_staged_payment_bank_fact"
+        )
+        self.assertEqual(
+            ingest_baseline["posting_reconciliations"],
+            ingest_result["posting_reconciliations"],
+        )
+        self.assertEqual(ingest_baseline["transactions"], ingest_result["transactions"])
+
+        confirm_baseline, confirm_result, confirm_operation = rg06_effect_case(
+            "confirm_staged_payment_candidate"
+        )
+        self.assertEqual([], confirm_baseline["posting_reconciliations"])
+        self.assertEqual("confirmed", confirm_result["candidates"][0]["status_history"][-1]["status"])
+        self.assertEqual("matched", confirm_result["posting_reconciliations"][0]["status"])
+        expected = golden_v2._expected_entity_changes(confirm_baseline, confirm_result)
+        golden_v2._validate_rg06_action_effects(
+            confirm_operation,
+            "$.operations[0]",
+            confirm_baseline,
+            confirm_result,
+            expected,
+        )
+
+        link_baseline, link_result, _ = rg06_effect_case(
+            "link_staged_payment_evidence"
+        )
+        link_values = value_changes(link_baseline, link_result)
+        self.assertEqual([], link_values["balances"])
+        self.assertEqual([], link_values["reports"])
+        self.assertEqual("pending", link_baseline["posting_reconciliations"][0]["status"])
+        self.assertEqual("matched", link_result["posting_reconciliations"][0]["status"])
+
+        mirror_baseline, mirror_result, _ = rg06_effect_case(
+            "merge_staged_payment_mirror_evidence"
+        )
+        self.assertEqual(
+            mirror_baseline["posting_reconciliations"],
+            mirror_result["posting_reconciliations"],
+        )
 
     def test_rg06_all_eight_actions_pass_scoped_append_only_transitions(self):
         for action in rg06_action_inputs():
@@ -1377,6 +1429,7 @@ class Rg06OperationRegistryTests(unittest.TestCase):
             }
         ]
         confirmed = deposit_result()
+        confirmed["posting_reconciliations"][0]["status"] = "matched"
         confirmed["sources"] = deepcopy(ingested["sources"])
         confirmed["evidence"] = deepcopy(ingested["evidence"])
         confirmed["evidence"][0]["payload"]["payment_id"] = "installment-deposit"

@@ -1575,6 +1575,46 @@ class Rg06StateSemanticsCheckpointTests(unittest.TestCase):
                     ),
                 )
 
+    def test_confirmed_candidate_status_is_not_reconciliation_authority(self):
+        state = staged_payment_state()
+        state["candidates"] = [
+            {
+                "id": "candidate-confirmed-without-reconciliation",
+                "type": "staged_payment",
+                "source_ids": ["source-confirmed-without-reconciliation"],
+                "confidence": "1.00",
+                "payload": {},
+                "status_history": [
+                    {"id": "candidate-status-pending", "sequence": 1, "status": "pending_confirmation"},
+                    {"id": "candidate-status-confirmed", "sequence": 2, "status": "confirmed"},
+                ],
+            }
+        ]
+        indexes = golden_v2._state_indexes(state, STATE_PATH)
+        current = {}
+        for transaction in state["transactions"]:
+            version = indexes["transaction_versions"][transaction["current_version_id"]]
+            posting_set = indexes["posting_sets"][version["posting_set_id"]]
+            current[transaction["id"]] = (
+                transaction,
+                version,
+                [indexes["postings"][posting_id] for posting_id in posting_set["posting_ids"]],
+            )
+
+        expected = golden_v2._expected_derived_statuses(
+            state,
+            indexes,
+            current,
+            {
+                "posting-asset-deposit": "pending",
+                "posting-asset-final": "pending",
+            },
+        )
+        self.assertEqual(
+            "pending",
+            expected[("domain_entity", lifecycle(state)["id"], "reconciliation")],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

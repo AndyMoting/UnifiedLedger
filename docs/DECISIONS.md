@@ -943,3 +943,17 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** `python -m project_docs .` 回到纯文档卫生校验，不读取任何构建输出，可在任意工作状态下运行。文档不再声称具体测试数量；需要数字时直接读报告。本决定不放宽任何验证要求：完整套件仍须按 README 运行并全绿。
 
 **关联决定：** `D-075`
+
+## D-077 RG-06 导入对账与领域恢复边界
+
+**状态：** 已确认
+
+**决定：** RG-06 手工 installment 创建其精确 `payment_asset` 分录的 `pending` 对账，后续精确手工证据链接只把该分录改为 `matched`。导入 intake 在确认前没有正式分录或对账；只有原子校验不可变导入证据与明确 relation/role/category/account 精确绑定的候选确认，才创建正式 installment，并为已绑定证据的精确 `payment_asset` 分录直接建立 `matched` 对账。候选 `confirmed` 状态本身不是授权，镜像合并保持 evidence link 与对账不变；所有对账变化的余额、报告和现金流效果均为零。
+
+`StagedPayment` 增加公开、结构化、catalog-free 的 snapshot rehydration factory。snapshot 保留 raw relation member rows，并用 transaction/version/posting-set/posting DTO 接收尚未验证的正式账务图；重复 relation row 在构造领域 set 前按第二次出现的 row index 拒绝。领域以 RG-06 专属 `InvalidSnapshot` problem/index 失败确定性校验 relation、lifecycle checked arithmetic/history、installment 角色/身份/金额/时间、来源 instant/text 结构和正式交易当前链；每个 posting set 先通过 `PostingSet.create`，再通过 `FormalTransaction.create` 重建，任一 factory 拒绝均映射为对应 row 的 `FORMAL_TRANSACTION`。formal rows 必须与 `[deposit, final]` installment rows 同序且逐项一一对应；snapshot 的嵌套正式账务图和恢复后 aggregate 的对外图均防御性复制。不扩展 shared `DomainViolation`。恢复不 replay command、不查询当前 catalog、不使用 opaque aggregate serialization，也不允许 adapter 重写不变量。合法历史在 category/account catalog 漂移后仍可恢复，恢复后的新命令继续使用当前 catalog 准入；现有合法多版本正式交易只在 current posting set 仍匹配 installment 的不可变 posting identity 时有效。
+
+**理由：** 导入证据在精确确认时已经完成该资产分录的核验，创建后再标记待对账会与冻结黄金答案分叉；同时 persistence 需要一个由领域拥有且可验证的恢复边界，避免 command replay、当前目录漂移或 adapter 逻辑改变历史事实。
+
+**影响：** `golden/rules/rg-06.json` 保持不变，Kotlin commit-port 契约与 Python operation/semantic validator 对齐其既有答案。schema v9、decoder、SQLDelight/store/adapter/migration、fixture/expected/path-map rewrite、golden publication、UI、金额或账户修正均未获授权；RG-06 persistence/publication 与 RG-07 以后 runtime 继续未完成。
+
+**关联决定：** `D-008`、`D-040`、`D-042`、`D-043`、`D-045`、`D-058`、`D-069`、`D-076`

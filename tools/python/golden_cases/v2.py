@@ -7884,12 +7884,16 @@ def _validate_rg06_action_effects(
         ):
             _fail(operation_path + ".result_state_id", "confirmation must own the formal installment version")
         reconciliations = added("posting_reconciliations", result_reconciliations)
+        expected_reconciliation_status = "matched" if candidate_id else "pending"
         if len(reconciliations) != 1 or reconciliations[0] != {
             "id": reconciliations[0]["id"],
             "posting_id": by_role["payment_asset"]["id"],
-            "status": "pending",
+            "status": expected_reconciliation_status,
         }:
-            _fail(operation_path + ".result_state_id", "new payment_asset reconciliation must be pending")
+            _fail(
+                operation_path + ".result_state_id",
+                "new payment_asset reconciliation must be matched for exact imported confirmation and pending for manual creation",
+            )
         return payment, transaction, confirmations[0]
 
     if action == "create_staged_payment":
