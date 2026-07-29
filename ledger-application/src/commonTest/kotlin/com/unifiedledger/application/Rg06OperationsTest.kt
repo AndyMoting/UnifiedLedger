@@ -25,6 +25,9 @@ import com.unifiedledger.domain.StagedPaymentHistoryId
 import com.unifiedledger.domain.StagedPaymentInstallmentIds
 import com.unifiedledger.domain.StagedPaymentLifecycleId
 import com.unifiedledger.domain.StagedPaymentRelationId
+import com.unifiedledger.domain.StagedPaymentReconciliation
+import com.unifiedledger.domain.StagedPaymentReconciliationFact
+import com.unifiedledger.domain.StagedPaymentReconciliationStatus
 import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.StagedPaymentResult
 import com.unifiedledger.domain.TransactionId
@@ -45,6 +48,7 @@ class Rg06OperationsTest {
     @Test fun importedTimeContract() = referenceModel.importedSourceTimeUsesInjectedOffsetPolicyBeforeCommitAndRejectedIdentityIsReusable()
     @Test fun signedMirrorContract() = referenceModel.signedFactsUseCheckedMagnitudeAndMirrorsSupportBothDirectionsWithoutNewLinks()
     @Test fun candidateSetOnceContract() = referenceModel.candidateAndEvidenceTransitionsAreClosedRoleCheckedSetOnceAndSourceImmutable()
+    @Test fun reconciliationActionContract() = referenceModel.reconciliationStatusIsCreatedByTheAuthoritativeActionOnly()
     @Test fun manualProvenanceContract() = referenceModel.manualEvidenceResolvesImmutableIntakeObservationWithoutFormalPaymentSynthesis()
     @Test fun manualRejectionContract() = referenceModel.manualEvidenceMissingAmountCurrencyAndPostingMismatchRejectAtomicallyAndReserveNothing()
     @Test fun typedFactoryContract() = referenceModel.typedFactoriesCloseTimeCandidateConfidenceMagnitudeAndMirrorLineageStates()
@@ -65,6 +69,7 @@ private interface Rg06ApplicationReferenceProbe : Rg06CommitPort {
     fun payment(id: InstallmentPaymentId): InstallmentPayment
     fun linkCount(): Int
     fun reconciliationState(): Any
+    fun aggregateReconciliation(id: StagedPaymentRelationId): StagedPaymentReconciliation
     fun occupyGeneratedIdentity(kind: String, value: String)
     fun stageManualObservation(key: Rg06ManualObservationKey, observation: Rg06ManualBankObservation)
 }
@@ -293,6 +298,66 @@ private class Rg06ApplicationReferenceConformanceModel(
         assertEquals(Rg06CandidateRoleFact.ExplicitAmbiguous, port.candidate(fixture.finalCandidateId).payload.roleFact)
         assertEquals(Rg06CandidateConfidence.AMBIGUOUS, port.candidate(fixture.finalCandidateId).confidence)
         assertIs<Rg06ExecutionResult.Accepted>(executor.execute(fixture.confirmFinalCandidate(secondRequest)))
+    }
+
+    fun reconciliationStatusIsCreatedByTheAuthoritativeActionOnly() {
+        fun reconciliationMap(port: Rg06ApplicationReferenceProbe): Map<Rg06ReconciliationId, Pair<PostingId, String>> {
+            @Suppress("UNCHECKED_CAST")
+            return port.reconciliationState() as Map<Rg06ReconciliationId, Pair<PostingId, String>>
+        }
+
+        val manual = Rg06Fixture("reconciliation-manual")
+        val manualPort = portFactory(manual)
+        val manualExecutor = ExecuteRg06Operation(manualPort)
+        val manualDeposit = manual.recordDeposit()
+        val manualFinal = manual.recordFinal()
+        manualExecutor.execute(manual.create()).accepted()
+        manualExecutor.execute(manualDeposit).accepted()
+        manualExecutor.execute(manualFinal).accepted()
+        assertEquals(
+            manualDeposit.ids.paymentIds.expenseIds.paymentPostingId to "pending",
+            reconciliationMap(manualPort)[manualDeposit.ids.reconciliationId],
+        )
+        assertEquals(
+            manualFinal.ids.paymentIds.expenseIds.paymentPostingId to "pending",
+            reconciliationMap(manualPort)[manualFinal.ids.reconciliationId],
+        )
+        assertEquals(StagedPaymentReconciliation.PENDING, manualPort.aggregateReconciliation(manual.relationId))
+
+        manualExecutor.execute(manual.linkDepositEvidence()).accepted()
+        assertEquals(
+            manualDeposit.ids.paymentIds.expenseIds.paymentPostingId to "matched",
+            reconciliationMap(manualPort)[manualDeposit.ids.reconciliationId],
+        )
+        assertEquals(
+            manualFinal.ids.paymentIds.expenseIds.paymentPostingId to "pending",
+            reconciliationMap(manualPort)[manualFinal.ids.reconciliationId],
+        )
+        assertEquals(StagedPaymentReconciliation.PARTIAL, manualPort.aggregateReconciliation(manual.relationId))
+
+        val imported = Rg06Fixture("reconciliation-import")
+        val importedPort = portFactory(imported)
+        val importedExecutor = ExecuteRg06Operation(importedPort)
+        importedExecutor.execute(imported.create()).accepted()
+        importedExecutor.execute(imported.ingestDeposit()).accepted()
+        val detachedConfirmed = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidate>>(
+            importedPort.candidate(imported.depositCandidateId).confirm(Rg06CandidateStatusId("detached-confirmed")),
+        ).value
+        assertEquals(Rg06CandidateStatus.CONFIRMED, detachedConfirmed.statusHistory.last().status)
+        assertEquals(emptyMap(), reconciliationMap(importedPort))
+        assertEquals(StagedPaymentReconciliation.PENDING, importedPort.aggregateReconciliation(imported.relationId))
+
+        val importConfirmation = imported.confirmDepositCandidate()
+        importedExecutor.execute(importConfirmation).accepted()
+        assertEquals(
+            importConfirmation.ids.paymentIds.expenseIds.paymentPostingId to "matched",
+            reconciliationMap(importedPort)[importConfirmation.ids.reconciliationId],
+        )
+        assertEquals(StagedPaymentReconciliation.COMPLETE, importedPort.aggregateReconciliation(imported.relationId))
+        val beforeMirror = reconciliationMap(importedPort)
+        importedExecutor.execute(imported.mergeDepositMirror(amountMinor = 8_000L)).accepted()
+        assertEquals(beforeMirror, reconciliationMap(importedPort))
+        assertEquals(StagedPaymentReconciliation.COMPLETE, importedPort.aggregateReconciliation(imported.relationId))
     }
 
     fun manualEvidenceResolvesImmutableIntakeObservationWithoutFormalPaymentSynthesis() {
@@ -1155,6 +1220,22 @@ private class Rg06ApplicationReferencePort(
     override fun payment(id: InstallmentPaymentId) = aggregates.values.flatMap { it.installments }.single { it.id == id }
     override fun linkCount() = links.size
     override fun reconciliationState(): Any = reconciliations.mapValues { it.value.postingId to it.value.status }
+    override fun aggregateReconciliation(id: StagedPaymentRelationId): StagedPaymentReconciliation {
+        val aggregate = checkNotNull(aggregates[id])
+        return (aggregate.reconciliation(
+            reconciliations.values.map {
+                StagedPaymentReconciliationFact(
+                    postingId = it.postingId,
+                    eligible = true,
+                    status = when (it.status) {
+                        "matched" -> StagedPaymentReconciliationStatus.MATCHED
+                        "pending" -> StagedPaymentReconciliationStatus.PENDING
+                        else -> StagedPaymentReconciliationStatus.HAS_DIFFERENCE
+                    },
+                )
+            },
+        ) as StagedPaymentResult.Success).value
+    }
     override fun occupyGeneratedIdentity(kind: String, value: String) {
         identities[kind to value] = LedgerId("occupied")
     }
@@ -1299,7 +1380,7 @@ private class Rg06ApplicationReferencePort(
         candidates[candidate.id] = confirmedCandidate
         evidence[pending.id] = pending.bind(payment.id)
         links[op.ids.evidenceLinkId] = Link(op.ids.evidenceLinkId, pending.id, payment.id, payment.assetPostingId)
-        reconciliations[op.ids.reconciliationId] = Reconciliation(payment.assetPostingId, "pending")
+        reconciliations[op.ids.reconciliationId] = Reconciliation(payment.assetPostingId, "matched")
         return accepted(op)
     }
 

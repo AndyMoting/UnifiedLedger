@@ -70,13 +70,13 @@
 
 定金和尾款来源分别生成独立 `pending_confirmation` 候选。即使金额、时间和银行证据完整，导入也不构成正式确认。候选明确保存来源、证据、不可变付款时间、规则版本和置信度；确认前正式交易、分录、付款、消费、现金流和对账变化均为零。
 
-确认必须同时指定既有 `staged_payment` 组、`deposit` 或 `final` 角色、二级支出分类和付款资产账户。角色不明确的候选保持待确认，`guessed_payment_role` 为 `null`，不得依据金额、时间或导入顺序推断。定金确认后创建第一笔交易，尾款确认后创建第二笔交易；每笔统计时间默认等于其不可变来源付款时间。
+确认必须在同一原子边界校验不可变导入来源与证据，并明确指定既有 `staged_payment` 组、`deposit` 或 `final` 角色、二级支出分类和付款资产账户的精确绑定。角色不明确的候选保持待确认，`guessed_payment_role` 为 `null`，不得依据金额、时间或导入顺序推断。候选状态变成 `confirmed` 本身不授权正式交易或对账；只有上述原子确认整体成功，定金才创建第一笔交易、尾款才创建第二笔交易，并把已绑定证据核验的精确 `payment_asset` 分录直接建立为 `matched`。每笔统计时间默认等于其不可变来源付款时间。
 
 ## 8. 证据与对账
 
-每笔银行证据只链接其付款交易的资产分录。定金和尾款交易独立处于待对账或已核对状态；费用分录不适用金融对账。关联组可以把付款对账汇总为 `pending`、`partial` 或 `complete`，但汇总只描述证据状态。
+每笔银行证据只链接其付款交易的资产分录。定金和尾款交易独立处于待对账或已核对状态；费用分录不适用金融对账。关联组可以把付款对账汇总为 `pending`、`partial` 或 `complete`，但交易与关联组状态均只从精确分录对账事实派生，不是独立写入授权，也不改变任何余额或报表。
 
-手工路径先有两笔待对账付款，关联组为待对账；定金证据链接后为部分对账；尾款证据链接后为完全对账。导入路径的两份银行证据在明确确认时分别绑定精确资产分录。后到镜像或重复证据只并入原付款，不改变交易、分录、付款、消费、关联组或现金流数量。
+手工路径创建每笔付款时分别建立 `pending` 的资产分录对账：两笔都待对账时关联组为待对账，定金精确证据链接只把定金分录从 `pending` 改为 `matched` 并使组成为部分对账，尾款精确证据链接后才完全对账。导入路径在不可变证据与精确绑定的原子确认成功时，为对应资产分录直接建立 `matched` 对账。未确认 intake 没有正式分录或对账；后到镜像或重复证据只并入原付款并保持既有 evidence link 与对账状态不变。所有这些对账动作的余额、报告与现金流 delta 均为零。
 
 ## 9. 校验与冻结失败
 
@@ -90,13 +90,19 @@
 
 机器答案保存手工完成态与导入完成态的完整快照，包括交易、当前版本、分录、付款、关联组、状态历史、候选、来源、证据链接、余额、统计和对账。幂等重试后的两份快照必须逐字段相等。
 
-## 11. 机器可比较契约
+## 11. 领域恢复契约
+
+`StagedPayment` 通过公开、结构化且 catalog-free 的 snapshot factory 恢复。snapshot 保留 raw relation member rows，并分别使用 transaction、version、posting-set 和 posting DTO 表达尚未验证的正式交易输入，不接受已构造的 `FormalTransaction` 充当持久化输入；恢复不 replay command，不使用 opaque aggregate serialization，也不把不变量下放给 adapter。领域按确定性首错顺序返回 RG-06 专属失败：重复 relation row 在构造领域 set 前按第二次出现的 row index 拒绝，再校验 relation 精确成员、正总额与 nonnegative checked arithmetic、连续且严格递增的 append-only history、合法零效果事件、`[]`/`[deposit]`/`[deposit, final]` 阶段顺序与金额/时间、各 identity kind 内唯一性、来源 instant/text 成对结构，以及 installment 与正式交易的一一对应和当前分录身份。
+
+每个 raw posting set 必须先通过既有公开 `PostingSet.create` 重建，再由这些 posting sets 调用 `FormalTransaction.create`；任一 posting set 或正式交易链无效都按对应 formal row 返回 `InvalidSnapshot(FORMAL_TRANSACTION, index)`。formal rows 必须按 `[deposit, final]` 与 installment rows 同序且逐项一一对应，交换顺序即使 transaction ID 集合相同也无效。已有合法多版本交易可以恢复，但 current posting set 必须仍包含 installment 保存的精确 expense/payment posting IDs、金额、付款账户与时间。历史 category/account catalog 漂移不参与恢复；后续新命令仍必须通过当前 catalog 准入。来源时间按已保存的 RFC 3339 instant/text 结构恢复，不重新套用当前 offset policy。snapshot 输入、嵌套正式账务图和恢复后 aggregate 的对外集合均做防御性复制。金额/账户修正导致的付款分录身份变化仍属于后续修正范围。
+
+## 12. 机器可比较契约
 
 机器答案使用 `schema_version: 1`。所有金额是两位小数十进制字符串，所有正式分录明确使用 `CNY`，所有场景、请求、来源、候选、交易、版本、分录、付款、关联组、历史、证据和匹配均使用稳定 ID。
 
 共享校验器负责场景信封、精确金额、稳定 ID、逐币种平衡、分录唯一性和余额重放。针对性测试冻结非财务建组、两笔独立付款、报告时点、独立状态、完整历史、候选零影响、角色歧义、明确绑定、证据目标、对账汇总、镜像合并、完整幂等快照、输入校验和范围边界。
 
-## 12. 验收标准
+## 13. 验收标准
 
 `RG-06` v1 只有同时满足以下条件才通过：
 

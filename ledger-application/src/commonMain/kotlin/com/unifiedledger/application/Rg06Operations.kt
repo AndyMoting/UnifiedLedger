@@ -742,7 +742,11 @@ sealed interface Rg06ExecutionResult {
  * confidence, provenance/rule version, confirmation requirements, and pending status. Confirmation
  * reads those stored facts (it cannot restate them), uses checked positive magnitude, appends only
  * the confirmed candidate status, binds evidence payment exactly once, and preserves source time
- * as payment occurrence/statistics/source time and text.
+ * as payment occurrence/statistics/source time and text. Candidate status alone is never posting-
+ * reconciliation authority. The same atomic candidate-confirmation commit that validates immutable
+ * evidence and the explicit exact relation/role/category/account binding creates its exact eligible
+ * `payment_asset` reconciliation as matched. A manual installment instead creates that posting
+ * reconciliation as pending; only a later exact manual evidence link changes it to matched.
  *
  * Manual evidence linking must resolve a pre-staged immutable [Rg06ManualBankObservation] by both
  * source and evidence ID through the intake boundary; it must never synthesize observation amount
@@ -753,8 +757,10 @@ sealed interface Rg06ExecutionResult {
  *
  * Mirror commit must resolve the existing original source/evidence/link, require same currency,
  * equal checked magnitude and opposite sign, append only mirror source/evidence lineage, return
- * only source/evidence IDs, and leave evidence links and reconciliation state unchanged. A real
- * port must provide these all-or-nothing guarantees under concurrency and establish its own
+ * only source/evidence IDs, and leave evidence links and reconciliation state unchanged. A
+ * reconciliation transition changes no posting, balance, report, or cash-flow fact. Transaction and
+ * staged-payment reconciliation projections derive from the stored posting reconciliation facts.
+ * A real port must provide these all-or-nothing guarantees under concurrency and establish its own
  * adapter-level tests for them. The application module's private in-memory reference model is not
  * an importable adapter suite and does not establish database concurrency; that remains a separate
  * persistence-gate obligation.

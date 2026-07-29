@@ -2,11 +2,11 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-05 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库。
+本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-06 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及既有场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库；RG-06 已有领域 aggregate、catalog-free validated rehydration、八 action 应用契约与 Golden Schema v2 语义校验，但尚无持久化实现。
 
 `ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v8；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。RG-05 已有领域、应用与持久化 runtime，`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected。共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较 outcome、returned IDs、完整 state、deltas 和 status changes。
 
-上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-06 至 RG-12 尚无 Kotlin runtime。`D-075` 不授权 RG-05 adapter 实现或 fixture 迁移，publication 仍需单独授权，且当前没有 `golden/rules-v2` RG-05 工件。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
+上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-06 的 persistence 与 publication 未完成，RG-07 至 RG-12 尚无 Kotlin runtime。RG-06 恢复边界由领域层验证 snapshot 并通过既有 `FormalTransaction` factory 重建正式链，不查询当前 catalog，也不允许 adapter replay command、解码 opaque aggregate 或重写领域不变量；恢复后的新命令仍按当前 catalog 准入。`D-075` 不授权 RG-05 adapter 实现或 fixture 迁移，publication 仍需单独授权，且当前没有 `golden/rules-v2` RG-05 工件。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 

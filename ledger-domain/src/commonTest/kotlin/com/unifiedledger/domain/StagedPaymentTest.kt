@@ -427,7 +427,7 @@ class StagedPaymentTest {
         )
 
         assertEquals(deposited.installments, fulfilled.installments)
-        assertEquals(deposited.formalTransactions, fulfilled.formalTransactions)
+        assertEquals(deposited.snapshot().formalTransactions, fulfilled.snapshot().formalTransactions)
         assertEquals(deposited.lifecycle.paidAmount, fulfilled.lifecycle.paidAmount)
         assertEquals(deposited.lifecycle.dueAmount, fulfilled.lifecycle.dueAmount)
         assertEquals(StagedPaymentProgress.PARTIALLY_PAID, fulfilled.paymentProgress)
@@ -462,7 +462,7 @@ class StagedPaymentTest {
             ),
         )
         assertEquals(finalized.installments, completed.installments)
-        assertEquals(finalized.formalTransactions, completed.formalTransactions)
+        assertEquals(finalized.snapshot().formalTransactions, completed.snapshot().formalTransactions)
         assertEquals(StagedPaymentEvent.COMPLETION_CONFIRMED, completed.lifecycle.stateHistory.last().event)
         assertEquals(0, completed.lifecycle.stateHistory.last().stateTransitionEffectCount)
     }
@@ -532,6 +532,426 @@ class StagedPaymentTest {
     }
 
     @Test
+    fun rehydratesEveryReachableSnapshotWithoutCatalogOrCommandReplay() {
+        val sourcedDeposit = success(
+            fixture.created().recordInstallment(
+                fixture.catalog,
+                fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
+                fixture.depositIds,
+            ),
+        )
+        val reachable = listOf(
+            fixture.created(),
+            sourcedDeposit,
+            fixture.fulfilled(),
+            fixture.finalized(),
+            fixture.completed(),
+        )
+
+        reachable.forEach { original ->
+            val restored = success(rehydrateStagedPayment(original.snapshot()))
+            assertEquals(original.ledgerId, restored.ledgerId)
+            assertEquals(original.relation.id, restored.relation.id)
+            assertEquals(original.relation.memberRefs, restored.relation.memberRefs)
+            assertEquals(original.lifecycle.id, restored.lifecycle.id)
+            assertEquals(original.lifecycle.totalAmount, restored.lifecycle.totalAmount)
+            assertEquals(original.lifecycle.paidAmount, restored.lifecycle.paidAmount)
+            assertEquals(original.lifecycle.dueAmount, restored.lifecycle.dueAmount)
+            assertEquals(original.lifecycle.stateHistory, restored.lifecycle.stateHistory)
+            assertEquals(original.installments, restored.installments)
+            assertEquals(
+                original.formalTransactions.map { it.transaction },
+                restored.formalTransactions.map { it.transaction },
+            )
+            assertEquals(
+                original.formalTransactions.map { it.versions },
+                restored.formalTransactions.map { it.versions },
+            )
+            assertEquals(
+                original.formalTransactions.flatMap { it.postingSets }.flatMap { it.postings },
+                restored.formalTransactions.flatMap { it.postingSets }.flatMap { it.postings },
+            )
+        }
+    }
+
+    @Test
+    fun snapshotValidationReturnsDeterministicIndexedFailuresForEveryInvariantFamily() {
+        val valid = fixture.finalized().snapshot()
+        val relationFirst = valid.copy(
+            relation = valid.relation.copy(memberRefs = emptyList()),
+            lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
+        )
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.RELATION_MEMBERSHIP, null),
+            failure(rehydrateStagedPayment(relationFirst)),
+        )
+
+        val lifecycleArithmetic = valid.copy(
+            lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
+        )
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.LIFECYCLE_ARITHMETIC, null),
+            failure(rehydrateStagedPayment(lifecycleArithmetic)),
+        )
+
+        val invalidHistory = valid.lifecycle.stateHistory.toMutableList().also {
+            it[1] = it[1].copy(sequence = 7)
+        }
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.HISTORY, 1),
+            failure(rehydrateStagedPayment(valid.copy(lifecycle = valid.lifecycle.copy(stateHistory = invalidHistory)))),
+        )
+
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.INSTALLMENT, 0),
+            failure(
+                rehydrateStagedPayment(
+                    valid.copy(
+                        installments = valid.installments.mapIndexed { index, payment ->
+                            if (index == 0) payment.copy(statisticsAt = fixture.finalAt) else payment
+                        },
+                    ),
+                ),
+            ),
+        )
+
+        val invalidSource = fixture.deposited().snapshot().let { snapshot ->
+            val payment = snapshot.installments.single()
+            snapshot.copy(
+                installments = listOf(
+                    payment.copy(
+                        sourcePaymentAt = fixture.depositAt,
+                        sourcePaymentAtText = "not-an-instant",
+                    ),
+                ),
+            )
+        }
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.SOURCE_TIME, 0),
+            failure(rehydrateStagedPayment(invalidSource)),
+        )
+
+        val duplicateHistoryIdentity = valid.lifecycle.stateHistory.toMutableList().also {
+            it[1] = it[1].copy(id = it[0].id)
+        }
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.IDENTITY, 1),
+            failure(rehydrateStagedPayment(valid.copy(lifecycle = valid.lifecycle.copy(stateHistory = duplicateHistoryIdentity)))),
+        )
+    }
+
+    @Test
+    fun invalidHistoryStructurePrecedesDuplicateHistoryIdentity() {
+        val valid = fixture.finalized().snapshot()
+        val competingHistory = valid.lifecycle.stateHistory.toMutableList().also {
+            it[1] = it[1].copy(id = it[0].id, sequence = 7)
+        }
+
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.HISTORY, 1),
+            failure(
+                rehydrateStagedPayment(
+                    valid.copy(lifecycle = valid.lifecycle.copy(stateHistory = competingHistory)),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun invalidInstallmentStructurePrecedesDuplicateInstallmentAndFormalIdentity() {
+        val valid = fixture.finalized().snapshot()
+        val firstInstallment = valid.installments.first()
+        val invalidInstallments = valid.installments.mapIndexed { index, payment ->
+            when (index) {
+                0 -> payment.copy(statisticsAt = fixture.finalAt)
+                else -> payment.copy(
+                    transactionId = firstInstallment.transactionId,
+                    expensePostingId = firstInstallment.expensePostingId,
+                    assetPostingId = firstInstallment.assetPostingId,
+                )
+            }
+        }
+        val firstFormalTransactionId = valid.formalTransactions.first().transaction.id
+        val duplicateFormalIdentity = valid.formalTransactions.mapIndexed { index, formal ->
+            if (index == 0) formal else formal.copy(transaction = formal.transaction.copy(id = firstFormalTransactionId))
+        }
+
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.INSTALLMENT, 0),
+            failure(
+                rehydrateStagedPayment(
+                    valid.copy(
+                        installments = invalidInstallments,
+                        formalTransactions = duplicateFormalIdentity,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun rehydrationPreservesRawRelationRowsAndRejectsDuplicatesBeforeConstructingTheDomainSet() {
+        val valid = fixture.deposited().snapshot()
+        val duplicateRows = valid.relation.memberRefs + valid.relation.memberRefs.last()
+        val snapshot = valid.copy(
+            relation = valid.relation.copy(memberRefs = duplicateRows),
+        )
+
+        assertEquals(3, snapshot.relation.memberRefs.size)
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.RELATION_MEMBERSHIP, 2),
+            failure(rehydrateStagedPayment(snapshot)),
+        )
+    }
+
+    @Test
+    fun rehydrationIsCatalogFreeButLaterCommandsUseCurrentCatalogAdmission() {
+        val historical = fixture.deposited()
+        val driftedCatalog = success(
+            LedgerCatalog.create(
+                accounts = fixture.catalog.accounts,
+                categories = fixture.catalog.categories.map { category ->
+                    if (category.id == fixture.categoryId) category.copy(active = false) else category
+                },
+            ),
+        )
+
+        val restored = success(rehydrateStagedPayment(historical.snapshot()))
+        assertEquals(historical.installments, restored.installments)
+        assertEquals(
+            StagedPaymentViolation.DependencyViolation(OrdinaryExpenseViolation.CategoryInactive),
+            failure(restored.recordInstallment(driftedCatalog, fixture.finalCommand, fixture.finalIds)),
+        )
+    }
+
+    @Test
+    fun sourceTimeRehydrationIsStructuralAndDoesNotDependOnTheCurrentOffsetPolicy() {
+        val sourced = success(
+            fixture.created().recordInstallment(
+                fixture.catalog,
+                fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
+                fixture.depositIds,
+            ),
+        )
+        val snapshot = sourced.snapshot()
+        val payment = snapshot.installments.single()
+        val utcTextSnapshot = snapshot.copy(
+            installments = listOf(payment.copy(sourcePaymentAtText = "2026-04-28T02:00:00Z")),
+        )
+
+        val restored = success(rehydrateStagedPayment(utcTextSnapshot))
+        assertEquals(fixture.depositAt, restored.installments.single().sourcePaymentAt)
+        assertEquals("2026-04-28T02:00:00Z", restored.installments.single().sourcePaymentAtText)
+    }
+
+    @Test
+    fun rehydrationUsesTheFormalFactoryAndRequiresTheCurrentPostingSetToMatchTheInstallment() {
+        val deposited = fixture.deposited()
+        val snapshot = deposited.snapshot()
+        val original = snapshot.formalTransactions.single()
+        val replacementVersionId = TransactionVersionId("version-deposit-2")
+        val metadataReplacement = original.copy(
+            transaction = original.transaction.copy(currentVersionId = replacementVersionId),
+            versions = original.versions + original.versions.single().copy(
+                id = replacementVersionId,
+                versionNumber = 2,
+                note = "corrected note",
+            ),
+            postingSets = original.postingSets,
+        )
+        assertEquals(
+            2,
+            success(rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(metadataReplacement))))
+                .formalTransactions.single().versions.size,
+        )
+
+        val replacementSet = StagedPaymentPostingSetSnapshot(
+            PostingSetId("posting-set-deposit-2"),
+            listOf(
+                StagedPaymentPostingSnapshot(
+                    PostingId("posting-expense-deposit-2"),
+                    fixture.expenseAccountId,
+                    fixture.depositAmount,
+                ),
+                StagedPaymentPostingSnapshot(
+                    PostingId("posting-asset-deposit-2"),
+                    fixture.fundingAccountId,
+                    Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
+                ),
+            ),
+        )
+        val mismatchedReplacement = original.copy(
+            transaction = original.transaction.copy(currentVersionId = replacementVersionId),
+            versions = original.versions + original.versions.single().copy(
+                id = replacementVersionId,
+                versionNumber = 2,
+                postingSetId = replacementSet.id,
+            ),
+            postingSets = original.postingSets + replacementSet,
+        )
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, 0),
+            failure(rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(mismatchedReplacement)))),
+        )
+    }
+
+    @Test
+    fun rehydratedAggregateRejectsInstallmentThatReusesAHistoricalPostingIdentity() {
+        val snapshot = fixture.deposited().snapshot()
+        val original = snapshot.formalTransactions.single()
+        val originalVersion = original.versions.single()
+        val currentPostingSet = original.postingSets.single()
+        val historicalExpensePostingId = PostingId("posting-expense-deposit-historical")
+        val historicalPostingSet = StagedPaymentPostingSetSnapshot(
+            PostingSetId("posting-set-deposit-historical"),
+            listOf(
+                StagedPaymentPostingSnapshot(
+                    historicalExpensePostingId,
+                    fixture.expenseAccountId,
+                    fixture.depositAmount,
+                ),
+                StagedPaymentPostingSnapshot(
+                    PostingId("posting-asset-deposit-historical"),
+                    fixture.fundingAccountId,
+                    Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
+                ),
+            ),
+        )
+        val currentVersionId = TransactionVersionId("version-deposit-current")
+        val multiVersionFormal = original.copy(
+            transaction = original.transaction.copy(currentVersionId = currentVersionId),
+            versions = listOf(
+                originalVersion.copy(postingSetId = historicalPostingSet.id),
+                originalVersion.copy(
+                    id = currentVersionId,
+                    versionNumber = 2,
+                    postingSetId = currentPostingSet.id,
+                ),
+            ),
+            postingSets = listOf(historicalPostingSet, currentPostingSet),
+        )
+        val restored = success(
+            rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(multiVersionFormal))),
+        )
+        val collidingIds = fixture.finalIds.copy(
+            expenseIds = fixture.finalIds.expenseIds.copy(
+                expensePostingId = historicalExpensePostingId,
+            ),
+        )
+
+        assertFailureLeavesAggregateUnchanged(restored, StagedPaymentViolation.DuplicateIdentity) {
+            restored.recordInstallment(fixture.catalog, fixture.finalCommand, collidingIds)
+        }
+    }
+
+    @Test
+    fun malformedPostingSetsAndFormalChainsReturnDeterministicFormalTransactionFailures() {
+        val valid = fixture.deposited().snapshot()
+        val formal = valid.formalTransactions.single()
+        val postingSet = formal.postingSets.single()
+        val malformedPostingSet = formal.copy(
+            postingSets = listOf(postingSet.copy(postings = postingSet.postings.take(1))),
+        )
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, 0),
+            failure(rehydrateStagedPayment(valid.copy(formalTransactions = listOf(malformedPostingSet)))),
+        )
+
+        val malformedChain = formal.copy(
+            versions = listOf(
+                formal.versions.single().copy(postingSetId = PostingSetId("missing-posting-set")),
+            ),
+        )
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, 0),
+            failure(rehydrateStagedPayment(valid.copy(formalTransactions = listOf(malformedChain)))),
+        )
+    }
+
+    @Test
+    fun installmentAndFormalTransactionOrderMustMatchOneToOne() {
+        val valid = fixture.finalized().snapshot()
+
+        assertEquals(
+            StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, 0),
+            failure(rehydrateStagedPayment(valid.copy(formalTransactions = valid.formalTransactions.reversed()))),
+        )
+    }
+
+    @Test
+    fun snapshotAndRehydratedAggregateDefensivelyCopyCollections() {
+        val original = fixture.deposited()
+        val members = original.relation.memberRefs.toMutableList()
+        val history = original.lifecycle.stateHistory.toMutableList()
+        val installments = original.snapshot().installments.toMutableList()
+        val originalFormal = original.snapshot().formalTransactions.single()
+        val versions = originalFormal.versions.toMutableList()
+        val postingSets = originalFormal.postingSets.toMutableList()
+        val postings = postingSets.single().postings.toMutableList()
+        postingSets[0] = postingSets.single().copy(postings = postings)
+        val formalTransactions = mutableListOf(
+            originalFormal.copy(versions = versions, postingSets = postingSets),
+        )
+        val snapshot = StagedPaymentSnapshot(
+            ledgerId = original.ledgerId,
+            relation = StagedPaymentRelationSnapshot(original.relation.id, members),
+            lifecycle = StagedPaymentLifecycleSnapshot(
+                original.lifecycle.id,
+                original.lifecycle.totalAmount,
+                original.lifecycle.paidAmount,
+                original.lifecycle.dueAmount,
+                original.lifecycle.currency,
+                original.lifecycle.categoryId,
+                history,
+            ),
+            installments = installments,
+            formalTransactions = formalTransactions,
+        )
+        members.clear()
+        history.clear()
+        installments.clear()
+        formalTransactions.clear()
+        versions.clear()
+        postingSets.clear()
+        postings.clear()
+
+        assertEquals(original.relation.memberRefs, snapshot.relation.memberRefs.toSet())
+        assertEquals(original.lifecycle.stateHistory, snapshot.lifecycle.stateHistory)
+        assertEquals(1, snapshot.installments.size)
+        assertEquals(1, snapshot.formalTransactions.size)
+        (snapshot.installments as MutableList).clear()
+        (snapshot.formalTransactions as MutableList).clear()
+        (snapshot.formalTransactions.single().versions as MutableList).clear()
+        (snapshot.formalTransactions.single().postingSets as MutableList).clear()
+        (snapshot.formalTransactions.single().postingSets.single().postings as MutableList).clear()
+        assertEquals(1, snapshot.installments.size)
+        assertEquals(1, snapshot.formalTransactions.size)
+        assertEquals(1, snapshot.formalTransactions.single().versions.size)
+        assertEquals(1, snapshot.formalTransactions.single().postingSets.size)
+        assertEquals(2, snapshot.formalTransactions.single().postingSets.single().postings.size)
+
+        val restored = success(rehydrateStagedPayment(snapshot))
+        val leakedMembers = restored.relation.memberRefs as MutableSet
+        leakedMembers.clear()
+        val leakedHistory = restored.lifecycle.stateHistory as MutableList
+        leakedHistory.clear()
+        val leakedInstallments = restored.installments as MutableList
+        leakedInstallments.clear()
+        val leakedFormals = restored.formalTransactions as MutableList
+        leakedFormals.clear()
+        clearIfMutable(restored.formalTransactions.single().versions)
+        clearIfMutable(restored.formalTransactions.single().postingSets)
+        clearIfMutable(restored.formalTransactions.single().postingSets.single().postings)
+        assertEquals(2, restored.relation.memberRefs.size)
+        assertEquals(2, restored.lifecycle.stateHistory.size)
+        assertEquals(1, restored.installments.size)
+        assertEquals(1, restored.formalTransactions.size)
+        assertEquals(1, restored.formalTransactions.single().versions.size)
+        assertEquals(1, restored.formalTransactions.single().postingSets.size)
+        assertEquals(2, restored.formalTransactions.single().postingSets.single().postings.size)
+    }
+
+    @Test
     fun keepsStagedViolationsOutsideTheSharedDomainViolationHierarchy() {
         val result: StagedPaymentResult<StagedPaymentSourceTime> =
             StagedPaymentSourceTime.create(
@@ -587,7 +1007,7 @@ private fun assertFailureLeavesAggregateUnchanged(
     val paidAmount = staged.lifecycle.paidAmount
     val dueAmount = staged.lifecycle.dueAmount
     val installments = staged.installments
-    val formalTransactions = staged.formalTransactions
+    val formalTransactions = staged.snapshot().formalTransactions
 
     assertEquals(expected, failure(operation()))
     assertEquals(members, staged.relation.memberRefs)
@@ -596,7 +1016,17 @@ private fun assertFailureLeavesAggregateUnchanged(
     assertEquals(paidAmount, staged.lifecycle.paidAmount)
     assertEquals(dueAmount, staged.lifecycle.dueAmount)
     assertEquals(installments, staged.installments)
-    assertEquals(formalTransactions, staged.formalTransactions)
+    assertEquals(formalTransactions, staged.snapshot().formalTransactions)
+}
+
+private fun clearIfMutable(values: List<*>) {
+    try {
+        (values as MutableList<*>).clear()
+    } catch (_: ClassCastException) {
+        // A non-mutable list implementation is already isolated from callers.
+    } catch (_: UnsupportedOperationException) {
+        // A read-only backing implementation is also acceptable at this boundary.
+    }
 }
 
 private inline fun <reified T> success(result: StagedPaymentResult<T>): T =
