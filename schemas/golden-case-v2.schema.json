@@ -334,6 +334,7 @@
         {"$ref": "#/$defs/mixedPaymentMirrorSource"},
         {"$ref": "#/$defs/mergedPaymentBankFactSource"},
         {"$ref": "#/$defs/mergedPaymentItemFactSource"},
+        {"$ref": "#/$defs/stagedPaymentBankFactSource"},
         {"$ref": "#/$defs/reconciliationEvidenceSource"}
       ]
     },
@@ -452,6 +453,39 @@
         "suggested_category_id": {"$ref": "#/$defs/id"}, "completeness": {"enum": ["complete", "summary_only"]}
       }
     },
+    "stagedPaymentBankFactSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment_bank_fact"},
+        "payload": {
+          "oneOf": [
+            {"$ref": "#/$defs/manualStagedPaymentBankFactPayload"},
+            {"$ref": "#/$defs/importedStagedPaymentBankFactPayload"}
+          ]
+        }
+      }
+    },
+    "manualStagedPaymentBankFactPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["amount", "currency", "observed_at"],
+      "properties": {
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "importedStagedPaymentBankFactPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["amount", "currency", "source_payment_at"],
+      "properties": {
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"},
+        "mirror_of_source_id": {"$ref": "#/$defs/id"}
+      }
+    },
     "completeMixedPaymentInputSourceRecord": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "evidence_id", "observed_at", "total_amount", "currency", "suggested_category_id", "funding_components", "completeness"],
@@ -562,7 +596,8 @@
         {"$ref": "#/$defs/completeAccountTransferCandidate"},
         {"$ref": "#/$defs/incompleteAccountTransferCandidate"},
         {"$ref": "#/$defs/mixedPaymentCandidate"},
-        {"$ref": "#/$defs/mergedPaymentCandidate"}
+        {"$ref": "#/$defs/mergedPaymentCandidate"},
+        {"$ref": "#/$defs/stagedPaymentCandidate"}
       ]
     },
     "mergedPaymentCandidate": {
@@ -597,6 +632,114 @@
         "currency": {"type": "string", "minLength": 1}, "suggested_category_id": {"$ref": "#/$defs/id"},
         "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}
       }
+    },
+    "stagedPaymentCandidate": {
+      "oneOf": [
+        {"$ref": "#/$defs/knownRoleStagedPaymentCandidate"},
+        {"$ref": "#/$defs/ambiguousRoleStagedPaymentCandidate"}
+      ]
+    },
+    "knownRoleStagedPaymentCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"const": "1.00"},
+        "payload": {"$ref": "#/$defs/knownRoleStagedPaymentCandidatePayload"},
+        "status_history": {"$ref": "#/$defs/stagedPaymentCandidateStatusHistory"}
+      }
+    },
+    "ambiguousRoleStagedPaymentCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"const": "0.50"},
+        "payload": {"$ref": "#/$defs/ambiguousRoleStagedPaymentCandidatePayload"},
+        "status_history": {"$ref": "#/$defs/stagedPaymentCandidateStatusHistory"}
+      }
+    },
+    "stagedPaymentCandidateProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rule", "rule_version"],
+      "properties": {
+        "rule": {"const": "staged_payment_bank_fact"},
+        "rule_version": {"const": 1}
+      }
+    },
+    "stagedPaymentConfirmationRequirements": {
+      "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+      "items": {"enum": ["relation_id", "payment_role", "category_id", "funding_account_id"]},
+      "allOf": [
+        {"contains": {"const": "relation_id"}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": "payment_role"}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": "category_id"}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": "funding_account_id"}, "minContains": 1, "maxContains": 1}
+      ]
+    },
+    "knownRoleStagedPaymentCandidatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_role", "amount", "currency", "source_payment_at", "evidence_ref", "provenance", "requires_confirmation"],
+      "properties": {
+        "payment_role": {"enum": ["deposit", "final"]},
+        "amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "provenance": {"$ref": "#/$defs/stagedPaymentCandidateProvenance"},
+        "requires_confirmation": {"$ref": "#/$defs/stagedPaymentConfirmationRequirements"}
+      }
+    },
+    "ambiguousRoleStagedPaymentCandidatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_role", "guessed_payment_role", "amount", "currency", "source_payment_at", "evidence_ref", "provenance", "requires_confirmation"],
+      "properties": {
+        "payment_role": {"type": "null"},
+        "guessed_payment_role": {"type": "null"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "provenance": {"$ref": "#/$defs/stagedPaymentCandidateProvenance"},
+        "requires_confirmation": {"$ref": "#/$defs/stagedPaymentConfirmationRequirements"}
+      }
+    },
+    "pendingStagedPaymentCandidateStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "sequence": {"const": 1},
+        "status": {"const": "pending_confirmation"}
+      }
+    },
+    "confirmedStagedPaymentCandidateStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "sequence": {"const": 2},
+        "status": {"const": "confirmed"}
+      }
+    },
+    "stagedPaymentCandidateStatusHistory": {
+      "oneOf": [
+        {
+          "type": "array", "minItems": 1, "maxItems": 1,
+          "prefixItems": [{"$ref": "#/$defs/pendingStagedPaymentCandidateStatus"}]
+        },
+        {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "prefixItems": [
+            {"$ref": "#/$defs/pendingStagedPaymentCandidateStatus"},
+            {"$ref": "#/$defs/confirmedStagedPaymentCandidateStatus"}
+          ]
+        }
+      ]
     },
     "mixedPaymentCandidate": {
       "type": "object", "additionalProperties": false,
@@ -851,6 +994,7 @@
         {"$ref": "#/$defs/assetFundingDebitEvidence"},
         {"$ref": "#/$defs/creditLiabilityMirrorEvidence"},
         {"$ref": "#/$defs/bankPaymentEvidence"},
+        {"$ref": "#/$defs/stagedPaymentBankPaymentEvidence"},
         {"$ref": "#/$defs/itemSummaryEvidence"}
       ]
     },
@@ -928,6 +1072,43 @@
         "id": {"$ref": "#/$defs/id"}, "type": {"const": "bank_payment"},
         "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
         "payload": {"type": "object", "additionalProperties": false, "required": ["observed_at"], "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}}
+      }
+    },
+    "stagedPaymentBankPaymentEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment_bank_payment"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {
+          "oneOf": [
+            {"$ref": "#/$defs/manualStagedPaymentEvidencePayload"},
+            {"$ref": "#/$defs/importedStagedPaymentEvidencePayload"}
+          ]
+        }
+      }
+    },
+    "manualStagedPaymentEvidencePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_id", "observed_at"],
+      "properties": {
+        "payment_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "importedStagedPaymentEvidencePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_payment_at"],
+      "dependentRequired": {
+        "mirror_of_evidence_id": ["merged_into_evidence_link_id"],
+        "merged_into_evidence_link_id": ["mirror_of_evidence_id"]
+      },
+      "properties": {
+        "payment_id": {"$ref": "#/$defs/id"},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"},
+        "mirror_of_evidence_id": {"$ref": "#/$defs/id"},
+        "merged_into_evidence_link_id": {"$ref": "#/$defs/id"}
       }
     },
     "itemSummaryEvidence": {
@@ -1023,7 +1204,8 @@
     "relation": {
       "oneOf": [
         {"$ref": "#/$defs/mixedPaymentRelation"},
-        {"$ref": "#/$defs/mergedPaymentRelation"}
+        {"$ref": "#/$defs/mergedPaymentRelation"},
+        {"$ref": "#/$defs/stagedPaymentRelation"}
       ]
     },
     "mixedPaymentRelation": {
@@ -1119,6 +1301,26 @@
         }
       }
     },
+    "stagedPaymentRelation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "member_refs", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment"},
+        "member_refs": {
+          "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": {"const": "domain_entity"},
+              "id": {"$ref": "#/$defs/id"}
+            }
+          }
+        },
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
     "domainEntity": {
       "oneOf": [
         {"$ref": "#/$defs/targetBalanceObservation"},
@@ -1134,8 +1336,91 @@
         {"$ref": "#/$defs/periodicAllocationSchedule"},
         {"$ref": "#/$defs/periodicAllocationRevision"},
         {"$ref": "#/$defs/periodicAllocationInstallment"},
+        {"$ref": "#/$defs/stagedPaymentLifecycle"},
+        {"$ref": "#/$defs/installmentPayment"},
         {"$ref": "#/$defs/reconciliationMatch"}
       ]
+    },
+    "stagedPaymentLifecycleHistoryEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "id", "sequence", "event", "occurred_at", "total_amount", "paid_amount",
+        "due_amount", "payment_id", "payment_progress", "fulfillment_status",
+        "state_transition_effect_count"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "event": {"enum": ["group_created", "payment_confirmed", "fulfillment_changed", "completion_confirmed"]},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "total_amount": {"$ref": "#/$defs/positiveDecimal"},
+        "paid_amount": {"$ref": "#/$defs/decimal"},
+        "due_amount": {"$ref": "#/$defs/decimal"},
+        "payment_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "payment_progress": {"enum": ["unpaid", "partially_paid", "paid_in_full"]},
+        "fulfillment_status": {"enum": ["in_progress", "fulfilled"]},
+        "state_transition_effect_count": {"const": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"event": {"const": "payment_confirmed"}}, "required": ["event"]},
+          "then": {"properties": {"payment_id": {"$ref": "#/$defs/id"}}},
+          "else": {"properties": {"payment_id": {"type": "null"}}}
+        }
+      ]
+    },
+    "stagedPaymentLifecycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "staged_payment_lifecycle"},
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "total_amount", "paid_amount", "due_amount", "currency", "category_id",
+            "display_name", "system_managed", "generic_order_lifecycle", "state_history"
+          ],
+          "properties": {
+            "total_amount": {"$ref": "#/$defs/positiveDecimal"},
+            "paid_amount": {"$ref": "#/$defs/decimal"},
+            "due_amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "category_id": {"$ref": "#/$defs/id"},
+            "display_name": {"type": "string", "minLength": 1},
+            "system_managed": {"const": true},
+            "generic_order_lifecycle": {"const": false},
+            "state_history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stagedPaymentLifecycleHistoryEvent"}}
+          }
+        }
+      }
+    },
+    "installmentPayment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "installment_payment"},
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "role", "amount", "currency", "funding_account_id", "transaction_id",
+            "expense_posting_id", "asset_posting_id", "actual_payment_at", "statistics_at"
+          ],
+          "properties": {
+            "role": {"enum": ["deposit", "final"]},
+            "amount": {"$ref": "#/$defs/positiveDecimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "funding_account_id": {"$ref": "#/$defs/id"},
+            "transaction_id": {"$ref": "#/$defs/id"},
+            "expense_posting_id": {"$ref": "#/$defs/id"},
+            "asset_posting_id": {"$ref": "#/$defs/id"},
+            "actual_payment_at": {"$ref": "#/$defs/timestamp"},
+            "statistics_at": {"$ref": "#/$defs/timestamp"},
+            "source_payment_at": {"$ref": "#/$defs/timestamp"}
+          }
+        }
+      }
     },
     "periodicAllocationAnchor": {
       "oneOf": [
@@ -1635,6 +1920,27 @@
             "target_kind": {"const": "domain_entity"},
             "status_name": {"const": "allocation_status"},
             "value": {"enum": ["active", "pending", "recognized", "superseded"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "payment_progress"},
+            "value": {"enum": ["unpaid", "partially_paid", "paid_in_full"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "fulfillment_status"},
+            "value": {"enum": ["in_progress", "fulfilled"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "reconciliation"},
+            "value": {"enum": ["pending", "partial", "complete"]}
           }
         }
       ]
@@ -2715,6 +3021,205 @@
         "field_path": {"const": "$.attempted_input.amount"}
       }
     },
+    "createStagedPaymentInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "kind", "total_amount", "currency", "category_id", "created_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "kind": {"const": "staged_payment"},
+        "total_amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "category_id": {"$ref": "#/$defs/id"},
+        "created_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "recordStagedPaymentInstallmentInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "relation_id", "payment_role", "payment_amount", "currency", "funding_account_id", "actual_payment_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "relation_id": {"$ref": "#/$defs/id"},
+        "payment_role": {"enum": ["deposit", "final"]},
+        "payment_amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "funding_account_id": {"$ref": "#/$defs/id"},
+        "actual_payment_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "changeStagedPaymentFulfillmentInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "relation_id", "fulfillment_status", "occurred_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "relation_id": {"$ref": "#/$defs/id"},
+        "fulfillment_status": {"const": "fulfilled"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmStagedPaymentCompletionInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "relation_id", "confirmed", "occurred_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "relation_id": {"$ref": "#/$defs/id"},
+        "confirmed": {"const": true},
+        "occurred_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "linkStagedPaymentEvidenceInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "payment_id", "posting_id"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "payment_id": {"$ref": "#/$defs/id"},
+        "posting_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "ingestStagedPaymentBankFactInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "source_payment_at", "amount", "currency"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "suggested_payment_role": {"enum": ["deposit", "final"]}
+      }
+    },
+    "confirmStagedPaymentCandidateInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "candidate_id", "relation_id", "payment_role", "category_id", "funding_account_id", "exact_binding_confirmed"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "candidate_id": {"$ref": "#/$defs/id"},
+        "relation_id": {"$ref": "#/$defs/id"},
+        "payment_role": {"enum": ["deposit", "final"]},
+        "category_id": {"$ref": "#/$defs/id"},
+        "funding_account_id": {"$ref": "#/$defs/id"},
+        "exact_binding_confirmed": {"const": true}
+      }
+    },
+    "mergeStagedPaymentMirrorEvidenceInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "evidence_id", "payment_id", "posting_id", "amount", "currency", "source_payment_at"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "payment_id": {"$ref": "#/$defs/id"},
+        "posting_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "source_payment_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "createStagedPaymentAmountAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total_amount"],
+      "properties": {"total_amount": {"$ref": "#/$defs/attemptedDecimal"}}
+    },
+    "createStagedPaymentCategoryAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["category_id"],
+      "properties": {"category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}}
+    },
+    "createStagedPaymentAttemptedInput": {
+      "oneOf": [
+        {"$ref": "#/$defs/createStagedPaymentAmountAttempt"},
+        {"$ref": "#/$defs/createStagedPaymentCategoryAttempt"}
+      ]
+    },
+    "stagedPaymentAmountAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_amount"],
+      "properties": {"payment_amount": {"$ref": "#/$defs/attemptedDecimal"}}
+    },
+    "stagedPaymentRoleAmountAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_role", "payment_amount"],
+      "properties": {
+        "payment_role": {"enum": ["deposit", "final"]},
+        "payment_amount": {"$ref": "#/$defs/attemptedDecimal"}
+      }
+    },
+    "stagedPaymentCurrencyAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total_currency", "payment_currency"],
+      "properties": {
+        "total_currency": {"type": "string", "minLength": 1},
+        "payment_currency": {"type": "string", "minLength": 1}
+      }
+    },
+    "stagedPaymentFundingAccountAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["funding_account_id"],
+      "properties": {"funding_account_id": {"$ref": "#/$defs/id"}}
+    },
+    "recordStagedPaymentInstallmentAttemptedInput": {
+      "oneOf": [
+        {"$ref": "#/$defs/stagedPaymentAmountAttempt"},
+        {"$ref": "#/$defs/stagedPaymentRoleAmountAttempt"},
+        {"$ref": "#/$defs/stagedPaymentCurrencyAttempt"},
+        {"$ref": "#/$defs/stagedPaymentFundingAccountAttempt"}
+      ]
+    },
+    "confirmStagedPaymentCompletionAttemptedInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payment_progress"],
+      "properties": {"payment_progress": {"const": "paid_in_full"}}
+    },
+    "createStagedPaymentRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"type": "string"},
+        "field_path": {"type": "string"}
+      },
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"const": "$.attempted_input.total_amount"}}},
+        {"properties": {"reason_code": {"const": "secondary_category_required"}, "field_path": {"const": "$.attempted_input.category_id"}}},
+        {"properties": {"reason_code": {"const": "category_inactive"}, "field_path": {"const": "$.attempted_input.category_id"}}},
+        {"properties": {"reason_code": {"const": "expense_category_required"}, "field_path": {"const": "$.attempted_input.category_id"}}}
+      ]
+    },
+    "recordStagedPaymentInstallmentRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"type": "string"},
+        "field_path": {"type": "string"}
+      },
+      "oneOf": [
+        {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"const": "$.attempted_input.payment_amount"}}},
+        {"properties": {"reason_code": {"const": "deposit_must_be_less_than_total"}, "field_path": {"const": "$.attempted_input.payment_amount"}}},
+        {"properties": {"reason_code": {"const": "final_must_equal_remaining_due"}, "field_path": {"const": "$.attempted_input.payment_amount"}}},
+        {"properties": {"reason_code": {"const": "payment_exceeds_due"}, "field_path": {"const": "$.attempted_input.payment_amount"}}},
+        {"properties": {"reason_code": {"const": "single_currency_required"}, "field_path": {"const": "$.attempted_input.currency"}}},
+        {"properties": {"reason_code": {"const": "unknown_real_account"}, "field_path": {"const": "$.attempted_input.funding_account_id"}}},
+        {"properties": {"reason_code": {"const": "real_financial_account_required"}, "field_path": {"const": "$.attempted_input.funding_account_id"}}},
+        {"properties": {"reason_code": {"const": "owned_account_required"}, "field_path": {"const": "$.attempted_input.funding_account_id"}}},
+        {"properties": {"reason_code": {"const": "asset_account_required"}, "field_path": {"const": "$.attempted_input.funding_account_id"}}}
+      ]
+    },
+    "confirmStagedPaymentCompletionRejectedOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "due_must_be_zero"},
+        "field_path": {"const": "$.attempted_input.payment_progress"}
+      }
+    },
+    "stagedPaymentRejectedOutcome": {
+      "oneOf": [
+        {"$ref": "#/$defs/createStagedPaymentRejectedOutcome"},
+        {"$ref": "#/$defs/recordStagedPaymentInstallmentRejectedOutcome"},
+        {"$ref": "#/$defs/confirmStagedPaymentCompletionRejectedOutcome"}
+      ]
+    },
     "operationBase": {
       "type": "object",
       "additionalProperties": false,
@@ -2750,7 +3255,11 @@
             "manual_merged_payment", "ingest_merged_payment_facts",
             "confirm_merged_payment_candidate", "merge_item_receipt_evidence",
             "create_periodic_allocation", "recognize_periodic_allocation_installment",
-            "revise_periodic_allocation", "correct_transaction_version"
+            "revise_periodic_allocation", "correct_transaction_version",
+            "create_staged_payment", "record_staged_payment_installment",
+            "change_staged_payment_fulfillment", "confirm_staged_payment_completion",
+            "link_staged_payment_evidence", "ingest_staged_payment_bank_fact",
+            "confirm_staged_payment_candidate", "merge_staged_payment_mirror_evidence"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -2776,6 +3285,140 @@
                   "properties": {"status": {"enum": ["accepted", "no_change"]}},
                   "required": ["status"]
                 }
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "create_staged_payment"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/createStagedPaymentInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "create_staged_payment"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/createStagedPaymentRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/createStagedPaymentAttemptedInput"}
+              },
+              "oneOf": [
+                {
+                  "properties": {
+                    "attempted_input": {"$ref": "#/$defs/createStagedPaymentAmountAttempt"},
+                    "outcome": {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"const": "$.attempted_input.total_amount"}}}
+                  }
+                },
+                {
+                  "properties": {
+                    "attempted_input": {"$ref": "#/$defs/createStagedPaymentCategoryAttempt"},
+                    "outcome": {"properties": {"reason_code": {"enum": ["secondary_category_required", "category_inactive", "expense_category_required"]}, "field_path": {"const": "$.attempted_input.category_id"}}}
+                  }
+                }
+              ]
+            },
+            {
+              "properties": {
+                "action_type": {"const": "record_staged_payment_installment"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/recordStagedPaymentInstallmentInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "record_staged_payment_installment"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/recordStagedPaymentInstallmentRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/recordStagedPaymentInstallmentAttemptedInput"}
+              },
+              "oneOf": [
+                {
+                  "properties": {
+                    "attempted_input": {"$ref": "#/$defs/stagedPaymentAmountAttempt"},
+                    "outcome": {"properties": {"reason_code": {"const": "must_be_positive"}, "field_path": {"const": "$.attempted_input.payment_amount"}}}
+                  }
+                },
+                {
+                  "properties": {
+                    "attempted_input": {"properties": {"payment_role": {"const": "deposit"}}},
+                    "outcome": {"properties": {"reason_code": {"const": "deposit_must_be_less_than_total"}, "field_path": {"const": "$.attempted_input.payment_amount"}}}
+                  }
+                },
+                {
+                  "properties": {
+                    "attempted_input": {"properties": {"payment_role": {"const": "final"}}},
+                    "outcome": {"properties": {"reason_code": {"enum": ["final_must_equal_remaining_due", "payment_exceeds_due"]}, "field_path": {"const": "$.attempted_input.payment_amount"}}}
+                  }
+                },
+                {
+                  "properties": {
+                    "attempted_input": {"$ref": "#/$defs/stagedPaymentCurrencyAttempt"},
+                    "outcome": {"properties": {"reason_code": {"const": "single_currency_required"}, "field_path": {"const": "$.attempted_input.currency"}}}
+                  }
+                },
+                {
+                  "properties": {
+                    "attempted_input": {"$ref": "#/$defs/stagedPaymentFundingAccountAttempt"},
+                    "outcome": {"properties": {"reason_code": {"enum": ["unknown_real_account", "real_financial_account_required", "owned_account_required", "asset_account_required"]}, "field_path": {"const": "$.attempted_input.funding_account_id"}}}
+                  }
+                }
+              ]
+            },
+            {
+              "properties": {
+                "action_type": {"const": "change_staged_payment_fulfillment"},
+                "operation_class": {"const": "status_transition"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/changeStagedPaymentFulfillmentInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_staged_payment_completion"},
+                "operation_class": {"const": "status_transition"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmStagedPaymentCompletionInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_staged_payment_completion"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/confirmStagedPaymentCompletionRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/confirmStagedPaymentCompletionAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "link_staged_payment_evidence"},
+                "operation_class": {"const": "reconciliation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/linkStagedPaymentEvidenceInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "ingest_staged_payment_bank_fact"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/ingestStagedPaymentBankFactInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_staged_payment_candidate"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmStagedPaymentCandidateInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "merge_staged_payment_mirror_evidence"},
+                "operation_class": {"const": "reconciliation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/mergeStagedPaymentMirrorEvidenceInput"}
               }
             },
             {
