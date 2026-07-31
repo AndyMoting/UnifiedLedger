@@ -75,6 +75,10 @@
 
 保存当前可构建模块的导航投影，说明源码、测试、依赖方向、任务读取入口和指向 `docs/CONTRIBUTING.md` 的验证入口。模块边界仍由 `docs/ARCHITECTURE.md` 拥有，产品与账务行为仍由各自正式文档拥有；模块导航不得复制详细规则、完整命令或把易变实现名称写成长期契约。
 
+### 3.13 本地协作文档
+
+根 `AGENTS.md`、`docs/PROJECT_STATE.local.md`、`docs/WORK_PLAN.local.md`、`docs/SOURCE_REFERENCES.md` 和任务专属 `docs/*.local.md` 保持 Git ignored，不属于正式文档清单。根 Agent 索引只定义加载触发器，当前 checkpoint 只点名本任务需要的精确本地文件；存档材料和未点名文件不得因为存在而批量加载。正式模块文档、构建和测试不得依赖这些本地文件。
+
 ## 4. 语言与命名
 
 - 正式文档和提交说明以中文为主。
