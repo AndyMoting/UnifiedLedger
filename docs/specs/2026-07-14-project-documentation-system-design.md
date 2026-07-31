@@ -77,7 +77,9 @@
 
 ### 3.13 本地协作文档
 
-根 `AGENTS.md`、`docs/PROJECT_STATE.local.md`、`docs/WORK_PLAN.local.md`、`docs/SOURCE_REFERENCES.md` 和任务专属 `docs/*.local.md` 保持 Git ignored，不属于正式文档清单。根 Agent 索引只定义加载触发器，当前 checkpoint 只点名本任务需要的精确本地文件；存档材料和未点名文件不得因为存在而批量加载。正式模块文档、构建和测试不得依赖这些本地文件。
+根 `AGENTS.md`、`docs/PROJECT_STATE.local.md`、`docs/WORK_PLAN.local.md`、`docs/SOURCE_REFERENCES.md` 和任务专属 `docs/*.local.md` 保持 Git ignored，不属于正式文档清单。根 Agent 索引只定义加载触发器，当前 checkpoint 只点名本任务需要的精确本地文件。
+
+由 checkpoint 路由的每份本地文档（根 `AGENTS.md` 索引除外）必须紧接标题后、且在文件级恰好一次声明 `状态：active` 或 `状态：archived`。只有 `active` 文档可在 checkpoint 点名后按其用途加载；`archived` 文档只作历史记录，不授权执行。状态标记缺失或与 checkpoint 冲突时，必须停止加载该文档并先协调一致的状态。未点名文件不得因为存在而批量加载；正式模块文档、构建和测试不得依赖这些本地文件。
 
 ## 4. 语言与命名
 

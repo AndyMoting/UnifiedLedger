@@ -65,6 +65,8 @@ future adapters ----+
 
 本地材料被 Git 忽略，可能只存在于维护者环境，不属于正式产品规则，也不能成为构建依赖。它们通过根 `AGENTS.md` 和当前 checkpoint 按需路由，不作为模块导航的必读项：
 
+由 checkpoint 路由的每份本地文档（根 `AGENTS.md` 索引除外）必须紧接标题后、且在文件级恰好一次声明 `状态：active` 或 `状态：archived`。只有 `active` 文档可在 checkpoint 点名后按其用途加载；`archived` 文档只作历史记录，不授权执行。状态标记缺失或与 checkpoint 冲突时，必须停止加载该文档并先协调一致的状态。
+
 | 本地入口 | 用途 | 加载规则 |
 | --- | --- | --- |
 | `docs/PROJECT_STATE.local.md` | 当前目标、Git 现实、停止位置和唯一下一步 | 存在时作为恢复 checkpoint 读取，并与仓库现实核对 |
@@ -72,7 +74,7 @@ future adapters ----+
 | `docs/SOURCE_REFERENCES.md` | 本地外部参考树的用途和只读边界 | 只有外部证据门禁触发时读取 |
 | 其他 `docs/*.local.md` | 任务研究、历史基线或 Harness 存档 | 只读取 checkpoint 点名的精确文件；禁止扫描后全部加载 |
 
-`PROJECT_MAP.md` 只登记这些类别和加载边界。当前有哪些本地文件、哪些处于 active 或 archived 状态，由 `PROJECT_STATE.local.md` 维护；三个模块导航不得要求这些文件存在。
+`PROJECT_MAP.md` 只登记这些类别和加载边界。当前有哪些本地文件及其状态，由 `PROJECT_STATE.local.md` 维护；三个模块导航不得要求这些文件存在。
 
 ## 设计文档生命周期
 
