@@ -17,6 +17,12 @@ def build_minimal_document_tree(root: Path) -> Path:
 
 
 class ProjectDocsValidatorTests(unittest.TestCase):
+    def test_project_map_and_module_documents_are_formal(self):
+        self.assertIn("docs/PROJECT_MAP.md", FORMAL_DOCUMENTS)
+        self.assertIn("docs/modules/ledger-domain.md", FORMAL_DOCUMENTS)
+        self.assertIn("docs/modules/ledger-application.md", FORMAL_DOCUMENTS)
+        self.assertIn("docs/modules/ledger-data.md", FORMAL_DOCUMENTS)
+
     def test_reports_missing_required_documents(self):
         with TemporaryDirectory() as directory:
             issues = validate_formal_docs(Path(directory))

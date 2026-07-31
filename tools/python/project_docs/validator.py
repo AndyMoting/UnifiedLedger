@@ -5,6 +5,7 @@ from pathlib import Path
 
 FORMAL_DOCUMENTS = (
     "README.md",
+    "docs/PROJECT_MAP.md",
     "docs/PROJECT_CHARTER.md",
     "docs/PRODUCT_REQUIREMENTS.md",
     "docs/ACCOUNTING_RULES.md",
@@ -14,6 +15,9 @@ FORMAL_DOCUMENTS = (
     "docs/CURRENT_STATE.md",
     "docs/GOLDEN_TESTS.md",
     "docs/CONTRIBUTING.md",
+    "docs/modules/ledger-domain.md",
+    "docs/modules/ledger-application.md",
+    "docs/modules/ledger-data.md",
 )
 
 PROHIBITED_REFERENCES = (
