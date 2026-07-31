@@ -114,3 +114,9 @@
 - 每笔导入在明确确认和精确组/角色绑定前保持待确认与零影响，角色歧义不被猜测。
 - 银行证据只链接对应资产分录，两笔交易独立对账，组汇总和镜像合并不改变金额。
 - 所有无效输入保持精确基线，所有重试保持完整状态相等，范围外组合未被提前实现。
+
+## 14. 持久化边界
+
+SQLDelight schema v9 以 dedicated normalized owner 保存 RG-06 operation canonical typed input、ordered returned-ID receipt、relation/lifecycle/history/installment、immutable source/evidence、candidate/status、confirmation/evidence link 和 posting reconciliation。正式 transaction、version、posting set、posting 与 current-version 仍只由共享正式账本表拥有；adapter 从规范化 rows 装配 raw snapshot，并只通过本设计第 11 节的 catalog-free factory 恢复 aggregate。
+
+每次 commit 在一个 SQLite 写事务内 claim `(ledger_id, request_id/source_id text)`。相同 action 与 typed input 返回原 ordered receipt，生成 ID 不参与 canonical identity；改变 action 或 typed input 冲突。冻结语义首错验证先于 generated-ID collision 检查，随后一次写入全部 owner 与 receipt。任何拒绝、collision、conditional update 或 constraint failure 都回滚 claim，不保留 reservation；v8 到 v9 为 additive migration，不回填不存在的 RG-06 数据并保留全部 v8 owners。

@@ -2653,3 +2653,1075 @@ SELECT count(*) FROM rg05_relation_item;
 
 countRg05Receipts:
 SELECT count(*) FROM rg05_receipt_evidence;
+
+CREATE TABLE rg06_operation (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('create_staged_payment','record_staged_payment_installment','change_staged_payment_fulfillment','confirm_staged_payment_completion','link_staged_payment_evidence','ingest_staged_payment_bank_fact','confirm_staged_payment_candidate','merge_staged_payment_mirror_evidence')),
+  request_id TEXT, source_id TEXT, evidence_id TEXT, candidate_id TEXT, relation_id TEXT, payment_id TEXT,
+  posting_id TEXT, category_id TEXT, funding_account_id TEXT,
+  payment_role TEXT CHECK (payment_role IS NULL OR payment_role IN ('DEPOSIT','FINAL')),
+  fulfillment_status TEXT CHECK (fulfillment_status IS NULL OR fulfillment_status IN ('IN_PROGRESS','FULFILLED')),
+  confirmed INTEGER CHECK (confirmed IS NULL OR confirmed IN (0,1)),
+  exact_binding_confirmed INTEGER CHECK (exact_binding_confirmed IS NULL OR exact_binding_confirmed IN (0,1)),
+  amount_minor INTEGER, currency_code TEXT, currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  occurred_at TEXT, occurred_at_text TEXT,
+  suggested_payment_role TEXT CHECK (suggested_payment_role IS NULL OR suggested_payment_role IN ('DEPOSIT','FINAL')),
+  PRIMARY KEY (ledger_id, identity_value),
+  CHECK (
+    (action_type = 'create_staged_payment'
+      AND source_id IS NULL AND evidence_id IS NULL AND candidate_id IS NULL
+      AND relation_id IS NULL AND payment_id IS NULL AND posting_id IS NULL
+      AND funding_account_id IS NULL AND payment_role IS NULL
+      AND fulfillment_status IS NULL AND confirmed IS NULL
+      AND exact_binding_confirmed IS NULL AND occurred_at_text IS NULL
+      AND suggested_payment_role IS NULL)
+    OR (action_type = 'record_staged_payment_installment'
+      AND source_id IS NULL AND evidence_id IS NULL AND candidate_id IS NULL
+      AND payment_id IS NULL AND posting_id IS NULL AND category_id IS NULL
+      AND fulfillment_status IS NULL AND confirmed IS NULL
+      AND exact_binding_confirmed IS NULL AND occurred_at_text IS NULL
+      AND suggested_payment_role IS NULL)
+    OR (action_type = 'change_staged_payment_fulfillment'
+      AND source_id IS NULL AND evidence_id IS NULL AND candidate_id IS NULL
+      AND payment_id IS NULL AND posting_id IS NULL AND category_id IS NULL
+      AND funding_account_id IS NULL AND payment_role IS NULL
+      AND confirmed IS NULL AND exact_binding_confirmed IS NULL
+      AND amount_minor IS NULL AND currency_code IS NULL
+      AND currency_precision IS NULL AND occurred_at_text IS NULL
+      AND suggested_payment_role IS NULL)
+    OR (action_type = 'confirm_staged_payment_completion'
+      AND source_id IS NULL AND evidence_id IS NULL AND candidate_id IS NULL
+      AND payment_id IS NULL AND posting_id IS NULL AND category_id IS NULL
+      AND funding_account_id IS NULL AND payment_role IS NULL
+      AND fulfillment_status IS NULL AND exact_binding_confirmed IS NULL
+      AND amount_minor IS NULL AND currency_code IS NULL
+      AND currency_precision IS NULL AND occurred_at_text IS NULL
+      AND suggested_payment_role IS NULL)
+    OR (action_type = 'link_staged_payment_evidence'
+      AND request_id IS NULL AND candidate_id IS NULL AND relation_id IS NULL
+      AND category_id IS NULL AND funding_account_id IS NULL
+      AND payment_role IS NULL AND fulfillment_status IS NULL
+      AND confirmed IS NULL AND exact_binding_confirmed IS NULL
+      AND amount_minor IS NULL AND currency_code IS NULL
+      AND currency_precision IS NULL AND occurred_at IS NULL
+      AND occurred_at_text IS NULL AND suggested_payment_role IS NULL)
+    OR (action_type = 'ingest_staged_payment_bank_fact'
+      AND request_id IS NULL AND candidate_id IS NULL AND relation_id IS NULL
+      AND payment_id IS NULL AND posting_id IS NULL AND category_id IS NULL
+      AND funding_account_id IS NULL AND payment_role IS NULL
+      AND fulfillment_status IS NULL AND confirmed IS NULL
+      AND exact_binding_confirmed IS NULL)
+    OR (action_type = 'confirm_staged_payment_candidate'
+      AND source_id IS NULL AND evidence_id IS NULL
+      AND payment_id IS NULL AND posting_id IS NULL
+      AND fulfillment_status IS NULL AND confirmed IS NULL
+      AND amount_minor IS NULL AND currency_code IS NULL
+      AND currency_precision IS NULL AND occurred_at IS NULL
+      AND occurred_at_text IS NULL AND suggested_payment_role IS NULL)
+    OR (action_type = 'merge_staged_payment_mirror_evidence'
+      AND request_id IS NULL AND candidate_id IS NULL AND relation_id IS NULL
+      AND category_id IS NULL AND funding_account_id IS NULL
+      AND payment_role IS NULL AND fulfillment_status IS NULL
+      AND confirmed IS NULL AND exact_binding_confirmed IS NULL
+      AND suggested_payment_role IS NULL)
+  )
+);
+CREATE TABLE rg06_operation_receipt (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, receipt_index INTEGER NOT NULL CHECK (receipt_index >= 0),
+  id_kind TEXT NOT NULL CHECK (id_kind IN ('RELATION','LIFECYCLE','PAYMENT','TRANSACTION','SOURCE','EVIDENCE','CANDIDATE','CONFIRMATION','EVIDENCE_LINK')),
+  id_value TEXT NOT NULL, PRIMARY KEY (ledger_id, identity_value, receipt_index),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg06_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg06_relation (
+  ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL PRIMARY KEY,
+  relation_type TEXT NOT NULL CHECK (relation_type = 'staged_payment'), payload_marker TEXT NOT NULL CHECK (payload_marker = '{}'),
+  UNIQUE (ledger_id, relation_id)
+);
+CREATE TABLE rg06_relation_member (
+  ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, member_index INTEGER NOT NULL CHECK (member_index >= 0),
+  member_kind TEXT NOT NULL CHECK (member_kind IN ('LIFECYCLE','INSTALLMENT')), member_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, relation_id, member_index), UNIQUE (ledger_id, relation_id, member_kind, member_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg06_relation(ledger_id, relation_id) ON DELETE CASCADE
+);
+CREATE TABLE rg06_lifecycle (
+  ledger_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL PRIMARY KEY, relation_id TEXT NOT NULL UNIQUE,
+  total_minor INTEGER NOT NULL CHECK (total_minor > 0), paid_minor INTEGER NOT NULL CHECK (paid_minor >= 0),
+  due_minor INTEGER NOT NULL CHECK (due_minor >= 0), currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0), category_id TEXT NOT NULL,
+  latest_sequence INTEGER NOT NULL CHECK (latest_sequence > 0), CHECK (paid_minor <= total_minor AND due_minor = total_minor - paid_minor),
+  UNIQUE (ledger_id, lifecycle_id), FOREIGN KEY (ledger_id, relation_id) REFERENCES rg06_relation(ledger_id, relation_id)
+);
+CREATE TABLE rg06_lifecycle_history (
+  ledger_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE, operation_identity TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('GROUP_CREATED','PAYMENT_CONFIRMED','FULFILLMENT_CHANGED','COMPLETION_CONFIRMED')),
+  occurred_at TEXT NOT NULL, total_minor INTEGER NOT NULL CHECK (total_minor > 0), paid_minor INTEGER NOT NULL CHECK (paid_minor >= 0),
+  due_minor INTEGER NOT NULL CHECK (due_minor >= 0), payment_id TEXT,
+  payment_progress TEXT NOT NULL CHECK (payment_progress IN ('UNPAID','PARTIALLY_PAID','PAID_IN_FULL')),
+  fulfillment_status TEXT NOT NULL CHECK (fulfillment_status IN ('IN_PROGRESS','FULFILLED')),
+  state_transition_effect_count INTEGER NOT NULL CHECK (state_transition_effect_count = 0),
+  PRIMARY KEY (ledger_id, lifecycle_id, history_sequence), UNIQUE (ledger_id, history_id),
+  CHECK (paid_minor <= total_minor AND due_minor = total_minor - paid_minor),
+  FOREIGN KEY (ledger_id, lifecycle_id) REFERENCES rg06_lifecycle(ledger_id, lifecycle_id),
+  FOREIGN KEY (ledger_id, operation_identity) REFERENCES rg06_operation(ledger_id, identity_value)
+);
+CREATE TABLE rg06_installment (
+  ledger_id TEXT NOT NULL, relation_id TEXT NOT NULL, installment_index INTEGER NOT NULL CHECK (installment_index IN (0,1)),
+  payment_id TEXT NOT NULL PRIMARY KEY, payment_role TEXT NOT NULL CHECK (payment_role IN ('DEPOSIT','FINAL')),
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  funding_account_id TEXT NOT NULL, transaction_id TEXT NOT NULL UNIQUE, transaction_version_id TEXT NOT NULL,
+  posting_set_id TEXT NOT NULL, expense_posting_id TEXT NOT NULL UNIQUE, asset_posting_id TEXT NOT NULL UNIQUE,
+  actual_payment_at TEXT NOT NULL, statistics_at TEXT NOT NULL, source_payment_at TEXT, source_payment_at_text TEXT,
+  UNIQUE (ledger_id, relation_id, installment_index), UNIQUE (ledger_id, payment_id),
+  UNIQUE (ledger_id, relation_id, payment_id), UNIQUE (ledger_id, payment_id, expense_posting_id), UNIQUE (ledger_id, payment_id, asset_posting_id),
+  CHECK ((source_payment_at IS NULL) = (source_payment_at_text IS NULL)),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg06_relation(ledger_id, relation_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, transaction_version_id, ledger_id) REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (posting_set_id, ledger_id) REFERENCES posting_set(posting_set_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (expense_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (asset_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg06_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL, payment_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('expense','payment_asset')), category_id TEXT,
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0,1)), PRIMARY KEY (ledger_id, posting_id),
+  CHECK ((role = 'expense' AND category_id IS NOT NULL AND reconciliation_eligible = 0) OR (role = 'payment_asset' AND category_id IS NULL AND reconciliation_eligible = 1)),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, payment_id) REFERENCES rg06_installment(ledger_id, payment_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg06_source (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL PRIMARY KEY, source_kind TEXT NOT NULL CHECK (source_kind IN ('MANUAL','IMPORTED','MIRROR')),
+  amount_minor INTEGER NOT NULL CHECK (amount_minor != 0), currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL, time_variant TEXT NOT NULL CHECK (time_variant IN ('OBSERVED_AT','SOURCE_PAYMENT_AT')),
+  mirror_of_source_id TEXT, UNIQUE (ledger_id, source_id), CHECK ((source_kind = 'MIRROR') = (mirror_of_source_id IS NOT NULL))
+);
+CREATE TABLE rg06_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('PENDING','BOUND','MIRROR')), observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL,
+  time_variant TEXT NOT NULL CHECK (time_variant IN ('OBSERVED_AT','SOURCE_PAYMENT_AT')), payment_id TEXT, mirror_of_evidence_id TEXT, merged_into_link_id TEXT,
+  UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, source_id), UNIQUE (ledger_id, source_id, evidence_id),
+  UNIQUE (ledger_id, evidence_id, payment_id),
+  CHECK ((evidence_kind = 'PENDING' AND payment_id IS NULL AND mirror_of_evidence_id IS NULL AND merged_into_link_id IS NULL) OR (evidence_kind = 'BOUND' AND payment_id IS NOT NULL AND mirror_of_evidence_id IS NULL AND merged_into_link_id IS NULL) OR (evidence_kind = 'MIRROR' AND payment_id IS NOT NULL AND mirror_of_evidence_id IS NOT NULL AND merged_into_link_id IS NOT NULL)),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg06_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, payment_id) REFERENCES rg06_installment(ledger_id, payment_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg06_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL,
+  role_fact TEXT CHECK (role_fact IS NULL OR role_fact IN ('DEPOSIT','FINAL')), amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0), source_payment_at TEXT NOT NULL,
+  source_payment_at_text TEXT NOT NULL, evidence_id TEXT NOT NULL, confidence TEXT NOT NULL CHECK (confidence IN ('1.00','0.50')),
+  rule_version INTEGER NOT NULL CHECK (rule_version = 1), UNIQUE (ledger_id, candidate_id), UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg06_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id, evidence_id) REFERENCES rg06_evidence(ledger_id, source_id, evidence_id)
+);
+CREATE TABLE rg06_candidate_requirement (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, requirement_index INTEGER NOT NULL CHECK (requirement_index BETWEEN 0 AND 3),
+  requirement TEXT NOT NULL CHECK (requirement IN ('RELATION_ID','PAYMENT_ROLE','CATEGORY_ID','FUNDING_ACCOUNT_ID')),
+  PRIMARY KEY (ledger_id, candidate_id, requirement_index), UNIQUE (ledger_id, candidate_id, requirement),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg06_candidate(ledger_id, candidate_id) ON DELETE CASCADE
+);
+CREATE TABLE rg06_candidate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence IN (1,2)),
+  status_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION','CONFIRMED')),
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence), UNIQUE (ledger_id, status_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg06_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE rg06_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY, identity_value TEXT NOT NULL,
+  confirmation_kind TEXT NOT NULL CHECK (confirmation_kind IN ('MANUAL_INSTALLMENT','CANDIDATE_CONFIRMATION')),
+  candidate_id TEXT, relation_id TEXT NOT NULL, payment_id TEXT NOT NULL, payment_role TEXT NOT NULL CHECK (payment_role IN ('DEPOSIT','FINAL')),
+  category_id TEXT NOT NULL, funding_account_id TEXT NOT NULL, UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, identity_value),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg06_operation(ledger_id, identity_value),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg06_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg06_relation(ledger_id, relation_id),
+  FOREIGN KEY (ledger_id, relation_id, payment_id) REFERENCES rg06_installment(ledger_id, relation_id, payment_id)
+);
+CREATE TABLE rg06_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL PRIMARY KEY, evidence_id TEXT NOT NULL, payment_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  link_kind TEXT NOT NULL CHECK (link_kind IN ('MANUAL','IMPORTED')), UNIQUE (ledger_id, link_id), UNIQUE (ledger_id, evidence_id), UNIQUE (ledger_id, payment_id, posting_id),
+  FOREIGN KEY (ledger_id, evidence_id, payment_id) REFERENCES rg06_evidence(ledger_id, evidence_id, payment_id),
+  FOREIGN KEY (ledger_id, payment_id, posting_id) REFERENCES rg06_installment(ledger_id, payment_id, asset_posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg06_posting_reconciliation (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL PRIMARY KEY, posting_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING','MATCHED','HAS_DIFFERENCE')), latest_sequence INTEGER NOT NULL CHECK (latest_sequence > 0),
+  UNIQUE (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg06_posting_semantic(ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg06_reconciliation_history (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING','MATCHED','HAS_DIFFERENCE')), evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, reconciliation_id, status_sequence),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES rg06_posting_reconciliation(ledger_id, reconciliation_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES rg06_evidence_link(ledger_id, link_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE VIEW rg06_consistent_lifecycle AS
+SELECT lifecycle.ledger_id, lifecycle.relation_id, lifecycle.lifecycle_id
+FROM rg06_lifecycle AS lifecycle
+JOIN rg06_lifecycle_history AS history
+  ON history.ledger_id = lifecycle.ledger_id AND history.lifecycle_id = lifecycle.lifecycle_id
+ AND history.history_sequence = lifecycle.latest_sequence
+JOIN rg06_relation_member AS member
+  ON member.ledger_id = lifecycle.ledger_id AND member.relation_id = lifecycle.relation_id
+ AND member.member_kind = 'LIFECYCLE' AND member.member_id = lifecycle.lifecycle_id
+WHERE history.total_minor = lifecycle.total_minor
+  AND history.paid_minor = lifecycle.paid_minor
+  AND history.due_minor = lifecycle.due_minor
+  AND ((history.payment_progress = 'UNPAID' AND lifecycle.paid_minor = 0)
+    OR (history.payment_progress = 'PARTIALLY_PAID' AND lifecycle.paid_minor > 0 AND lifecycle.due_minor > 0)
+    OR (history.payment_progress = 'PAID_IN_FULL' AND lifecycle.due_minor = 0))
+  AND (history.payment_id IS NULL OR EXISTS (
+    SELECT 1 FROM rg06_installment AS payment
+    WHERE payment.ledger_id = lifecycle.ledger_id AND payment.relation_id = lifecycle.relation_id
+      AND payment.payment_id = history.payment_id
+  ))
+  AND lifecycle.paid_minor = COALESCE((
+    SELECT sum(payment.amount_minor) FROM rg06_installment AS payment
+    WHERE payment.ledger_id = lifecycle.ledger_id AND payment.relation_id = lifecycle.relation_id
+  ), 0)
+  AND (SELECT count(*) FROM rg06_installment AS payment
+       WHERE payment.ledger_id = lifecycle.ledger_id AND payment.relation_id = lifecycle.relation_id)
+    = (SELECT count(*) FROM rg06_relation_member AS payment_member
+       WHERE payment_member.ledger_id = lifecycle.ledger_id AND payment_member.relation_id = lifecycle.relation_id
+         AND payment_member.member_kind = 'INSTALLMENT');
+
+CREATE VIEW rg06_consistent_installment AS
+SELECT payment.ledger_id, payment.relation_id, payment.payment_id, payment.payment_role,
+       payment.amount_minor, payment.currency_code, payment.currency_precision, payment.funding_account_id,
+       payment.transaction_id, payment.transaction_version_id, payment.posting_set_id,
+       payment.expense_posting_id, payment.asset_posting_id,
+       payment.actual_payment_at, payment.statistics_at, payment.source_payment_at, payment.source_payment_at_text,
+       lifecycle.category_id
+FROM rg06_installment AS payment
+JOIN rg06_lifecycle AS lifecycle
+  ON lifecycle.ledger_id = payment.ledger_id AND lifecycle.relation_id = payment.relation_id
+JOIN rg06_relation_member AS member
+  ON member.ledger_id = payment.ledger_id AND member.relation_id = payment.relation_id
+ AND member.member_kind = 'INSTALLMENT' AND member.member_id = payment.payment_id
+JOIN ledger_transaction AS transaction_row
+  ON transaction_row.ledger_id = payment.ledger_id AND transaction_row.transaction_id = payment.transaction_id
+ AND transaction_row.kind = 'EXPENSE'
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = transaction_row.ledger_id
+ AND current_version.transaction_id = transaction_row.transaction_id
+ AND current_version.current_version_id = payment.transaction_version_id
+JOIN transaction_version AS version
+  ON version.ledger_id = current_version.ledger_id
+ AND version.transaction_id = current_version.transaction_id
+ AND version.version_id = payment.transaction_version_id
+ AND version.posting_set_id = payment.posting_set_id
+ AND version.occurred_at = payment.actual_payment_at
+ AND version.statistics_at = payment.statistics_at
+ AND version.effective_at = payment.actual_payment_at
+JOIN posting AS expense_posting
+  ON expense_posting.ledger_id = version.ledger_id AND expense_posting.posting_set_id = version.posting_set_id
+ AND expense_posting.posting_id = payment.expense_posting_id
+ AND expense_posting.amount_minor = payment.amount_minor
+ AND expense_posting.currency_code = payment.currency_code
+ AND expense_posting.currency_precision = payment.currency_precision
+JOIN rg06_posting_semantic AS expense_semantic
+  ON expense_semantic.ledger_id = expense_posting.ledger_id
+ AND expense_semantic.posting_id = expense_posting.posting_id
+ AND expense_semantic.payment_id = payment.payment_id
+ AND expense_semantic.role = 'expense'
+ AND expense_semantic.category_id = lifecycle.category_id
+ AND expense_semantic.reconciliation_eligible = 0
+JOIN posting AS asset_posting
+  ON asset_posting.ledger_id = version.ledger_id AND asset_posting.posting_set_id = version.posting_set_id
+ AND asset_posting.posting_id = payment.asset_posting_id
+ AND asset_posting.account_id = payment.funding_account_id
+ AND asset_posting.amount_minor = -payment.amount_minor
+ AND asset_posting.currency_code = payment.currency_code
+ AND asset_posting.currency_precision = payment.currency_precision
+JOIN rg06_posting_semantic AS asset_semantic
+  ON asset_semantic.ledger_id = asset_posting.ledger_id
+ AND asset_semantic.posting_id = asset_posting.posting_id
+ AND asset_semantic.payment_id = payment.payment_id
+ AND asset_semantic.role = 'payment_asset'
+ AND asset_semantic.category_id IS NULL
+ AND asset_semantic.reconciliation_eligible = 1
+WHERE payment.statistics_at = payment.actual_payment_at
+  AND (SELECT count(*) FROM posting AS current_posting
+       WHERE current_posting.ledger_id = version.ledger_id
+         AND current_posting.posting_set_id = version.posting_set_id) = 2;
+
+CREATE VIEW rg06_consistent_reconciliation AS
+SELECT reconciliation.ledger_id, reconciliation.reconciliation_id, reconciliation.posting_id, reconciliation.status,
+       reconciliation.latest_sequence, history.evidence_link_id
+FROM rg06_posting_reconciliation AS reconciliation
+JOIN rg06_posting_semantic AS semantic
+  ON semantic.ledger_id = reconciliation.ledger_id AND semantic.posting_id = reconciliation.posting_id
+ AND semantic.role = 'payment_asset' AND semantic.reconciliation_eligible = 1
+JOIN rg06_installment AS payment
+  ON payment.ledger_id = semantic.ledger_id AND payment.payment_id = semantic.payment_id
+ AND payment.asset_posting_id = semantic.posting_id
+JOIN rg06_reconciliation_history AS history
+  ON history.ledger_id = reconciliation.ledger_id AND history.reconciliation_id = reconciliation.reconciliation_id
+ AND history.status_sequence = reconciliation.latest_sequence AND history.status = reconciliation.status
+WHERE (reconciliation.status = 'PENDING' AND history.evidence_link_id IS NULL AND NOT EXISTS (
+    SELECT 1 FROM rg06_evidence_link AS link
+    WHERE link.ledger_id = reconciliation.ledger_id AND link.payment_id = payment.payment_id
+      AND link.posting_id = reconciliation.posting_id
+  )) OR (reconciliation.status IN ('MATCHED','HAS_DIFFERENCE') AND EXISTS (
+      SELECT 1 FROM rg06_evidence_link AS link
+      WHERE link.ledger_id = reconciliation.ledger_id AND link.link_id = history.evidence_link_id
+        AND link.payment_id = payment.payment_id AND link.posting_id = reconciliation.posting_id
+  ));
+
+CREATE VIEW rg06_canonical_operation AS
+SELECT operation.ledger_id, operation.identity_value
+FROM rg06_operation AS operation
+WHERE (operation.action_type = 'create_staged_payment'
+       AND operation.request_id IS NOT NULL AND operation.category_id IS NOT NULL
+       AND operation.amount_minor IS NOT NULL AND operation.currency_code IS NOT NULL
+       AND operation.currency_precision IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.source_id IS NULL AND operation.evidence_id IS NULL AND operation.candidate_id IS NULL
+       AND operation.relation_id IS NULL AND operation.payment_id IS NULL AND operation.posting_id IS NULL
+       AND operation.funding_account_id IS NULL AND operation.payment_role IS NULL
+       AND operation.fulfillment_status IS NULL AND operation.confirmed IS NULL
+       AND operation.exact_binding_confirmed IS NULL AND operation.occurred_at_text IS NULL
+       AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'record_staged_payment_installment'
+       AND operation.request_id IS NOT NULL AND operation.relation_id IS NOT NULL
+       AND operation.funding_account_id IS NOT NULL AND operation.payment_role IS NOT NULL
+       AND operation.amount_minor IS NOT NULL AND operation.currency_code IS NOT NULL
+       AND operation.currency_precision IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.source_id IS NULL AND operation.evidence_id IS NULL AND operation.candidate_id IS NULL
+       AND operation.payment_id IS NULL AND operation.posting_id IS NULL AND operation.category_id IS NULL
+       AND operation.fulfillment_status IS NULL AND operation.confirmed IS NULL
+       AND operation.exact_binding_confirmed IS NULL AND operation.occurred_at_text IS NULL
+       AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'change_staged_payment_fulfillment'
+       AND operation.request_id IS NOT NULL AND operation.relation_id IS NOT NULL
+       AND operation.fulfillment_status IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.source_id IS NULL AND operation.evidence_id IS NULL AND operation.candidate_id IS NULL
+       AND operation.payment_id IS NULL AND operation.posting_id IS NULL AND operation.category_id IS NULL
+       AND operation.funding_account_id IS NULL AND operation.payment_role IS NULL
+       AND operation.confirmed IS NULL AND operation.exact_binding_confirmed IS NULL
+       AND operation.amount_minor IS NULL AND operation.currency_code IS NULL
+       AND operation.currency_precision IS NULL AND operation.occurred_at_text IS NULL
+       AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'confirm_staged_payment_completion'
+       AND operation.request_id IS NOT NULL AND operation.relation_id IS NOT NULL
+       AND operation.confirmed IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.source_id IS NULL AND operation.evidence_id IS NULL AND operation.candidate_id IS NULL
+       AND operation.payment_id IS NULL AND operation.posting_id IS NULL AND operation.category_id IS NULL
+       AND operation.funding_account_id IS NULL AND operation.payment_role IS NULL
+       AND operation.fulfillment_status IS NULL AND operation.exact_binding_confirmed IS NULL
+       AND operation.amount_minor IS NULL AND operation.currency_code IS NULL
+       AND operation.currency_precision IS NULL AND operation.occurred_at_text IS NULL
+       AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'link_staged_payment_evidence'
+       AND operation.source_id IS NOT NULL AND operation.evidence_id IS NOT NULL
+       AND operation.payment_id IS NOT NULL AND operation.posting_id IS NOT NULL
+       AND operation.request_id IS NULL AND operation.candidate_id IS NULL AND operation.relation_id IS NULL
+       AND operation.category_id IS NULL AND operation.funding_account_id IS NULL
+       AND operation.payment_role IS NULL AND operation.fulfillment_status IS NULL
+       AND operation.confirmed IS NULL AND operation.exact_binding_confirmed IS NULL
+       AND operation.amount_minor IS NULL AND operation.currency_code IS NULL
+       AND operation.currency_precision IS NULL AND operation.occurred_at IS NULL
+       AND operation.occurred_at_text IS NULL AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'ingest_staged_payment_bank_fact'
+       AND operation.source_id IS NOT NULL AND operation.evidence_id IS NOT NULL
+       AND operation.amount_minor IS NOT NULL AND operation.currency_code IS NOT NULL
+       AND operation.currency_precision IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.occurred_at_text IS NOT NULL
+       AND operation.request_id IS NULL AND operation.candidate_id IS NULL AND operation.relation_id IS NULL
+       AND operation.payment_id IS NULL AND operation.posting_id IS NULL AND operation.category_id IS NULL
+       AND operation.funding_account_id IS NULL AND operation.payment_role IS NULL
+       AND operation.fulfillment_status IS NULL AND operation.confirmed IS NULL
+       AND operation.exact_binding_confirmed IS NULL)
+   OR (operation.action_type = 'confirm_staged_payment_candidate'
+       AND operation.request_id IS NOT NULL AND operation.candidate_id IS NOT NULL
+       AND operation.relation_id IS NOT NULL AND operation.category_id IS NOT NULL
+       AND operation.funding_account_id IS NOT NULL AND operation.payment_role IS NOT NULL
+       AND operation.exact_binding_confirmed IS NOT NULL
+       AND operation.source_id IS NULL AND operation.evidence_id IS NULL
+       AND operation.payment_id IS NULL AND operation.posting_id IS NULL
+       AND operation.fulfillment_status IS NULL AND operation.confirmed IS NULL
+       AND operation.amount_minor IS NULL AND operation.currency_code IS NULL
+       AND operation.currency_precision IS NULL AND operation.occurred_at IS NULL
+       AND operation.occurred_at_text IS NULL AND operation.suggested_payment_role IS NULL)
+   OR (operation.action_type = 'merge_staged_payment_mirror_evidence'
+       AND operation.source_id IS NOT NULL AND operation.evidence_id IS NOT NULL
+       AND operation.payment_id IS NOT NULL AND operation.posting_id IS NOT NULL
+       AND operation.amount_minor IS NOT NULL AND operation.currency_code IS NOT NULL
+       AND operation.currency_precision IS NOT NULL AND operation.occurred_at IS NOT NULL
+       AND operation.occurred_at_text IS NOT NULL
+       AND operation.request_id IS NULL AND operation.candidate_id IS NULL AND operation.relation_id IS NULL
+       AND operation.category_id IS NULL AND operation.funding_account_id IS NULL
+       AND operation.payment_role IS NULL AND operation.fulfillment_status IS NULL
+       AND operation.confirmed IS NULL AND operation.exact_binding_confirmed IS NULL
+       AND operation.suggested_payment_role IS NULL);
+
+CREATE VIEW rg06_accepted_aggregate_violation AS
+SELECT operation.ledger_id, operation.identity_value
+FROM rg06_operation AS operation
+WHERE operation.action_type IN ('record_staged_payment_installment','confirm_staged_payment_candidate')
+  AND EXISTS (
+    SELECT 1 FROM rg06_operation_receipt AS final_receipt
+    WHERE final_receipt.ledger_id = operation.ledger_id
+      AND final_receipt.identity_value = operation.identity_value
+      AND final_receipt.receipt_index = CASE operation.action_type
+        WHEN 'record_staged_payment_installment' THEN 2 ELSE 3 END
+  )
+  AND (NOT EXISTS (
+    SELECT 1 FROM rg06_operation_receipt AS payment_receipt
+    JOIN rg06_consistent_installment AS payment
+      ON payment.ledger_id = payment_receipt.ledger_id AND payment.payment_id = payment_receipt.id_value
+     AND payment.relation_id = operation.relation_id AND payment.payment_role = operation.payment_role
+    WHERE payment_receipt.ledger_id = operation.ledger_id
+      AND payment_receipt.identity_value = operation.identity_value
+      AND payment_receipt.receipt_index = 2 AND payment_receipt.id_kind = 'PAYMENT'
+  ) OR EXISTS (
+    SELECT 1 FROM rg06_operation_receipt AS payment_receipt
+    JOIN rg06_installment AS payment
+      ON payment.ledger_id = payment_receipt.ledger_id AND payment.payment_id = payment_receipt.id_value
+    JOIN ledger_transaction_current_version AS current_version
+      ON current_version.ledger_id = payment.ledger_id AND current_version.transaction_id = payment.transaction_id
+    JOIN transaction_version AS accepted_version
+      ON accepted_version.ledger_id = current_version.ledger_id
+     AND accepted_version.transaction_id = current_version.transaction_id
+     AND accepted_version.version_id = current_version.current_version_id
+    JOIN transaction_version AS aliased_version
+      ON aliased_version.ledger_id = accepted_version.ledger_id
+     AND aliased_version.posting_set_id = accepted_version.posting_set_id
+     AND aliased_version.transaction_id != accepted_version.transaction_id
+    WHERE payment_receipt.ledger_id = operation.ledger_id
+      AND payment_receipt.identity_value = operation.identity_value
+      AND payment_receipt.receipt_index = 2 AND payment_receipt.id_kind = 'PAYMENT'
+  ));
+
+CREATE TRIGGER rg06_reconciliation_semantic_insert
+BEFORE INSERT ON rg06_posting_reconciliation
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg06_posting_semantic AS semantic
+    JOIN rg06_installment AS payment
+      ON payment.ledger_id = semantic.ledger_id AND payment.payment_id = semantic.payment_id
+     AND payment.asset_posting_id = semantic.posting_id
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.role = 'payment_asset' AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg06 reconciliation posting semantic') END;
+END;
+
+CREATE TRIGGER rg06_relation_member_owner_insert
+BEFORE INSERT ON rg06_relation_member
+BEGIN
+  SELECT CASE WHEN (new.member_kind = 'LIFECYCLE' AND NOT EXISTS (
+    SELECT 1 FROM rg06_lifecycle WHERE ledger_id = new.ledger_id AND relation_id = new.relation_id AND lifecycle_id = new.member_id
+  )) OR (new.member_kind = 'INSTALLMENT' AND NOT EXISTS (
+    SELECT 1 FROM rg06_installment WHERE ledger_id = new.ledger_id AND relation_id = new.relation_id AND payment_id = new.member_id
+  )) THEN RAISE(ABORT, 'rg06 relation member ownership') END;
+END;
+
+CREATE TRIGGER rg06_source_lineage_insert
+BEFORE INSERT ON rg06_source
+BEGIN
+  SELECT CASE WHEN new.mirror_of_source_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM rg06_source WHERE ledger_id = new.ledger_id AND source_id = new.mirror_of_source_id
+  ) THEN RAISE(ABORT, 'rg06 source lineage ownership') END;
+END;
+
+CREATE TRIGGER rg06_evidence_lineage_insert
+BEFORE INSERT ON rg06_evidence
+BEGIN
+  SELECT CASE WHEN new.mirror_of_evidence_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM rg06_evidence WHERE ledger_id = new.ledger_id AND evidence_id = new.mirror_of_evidence_id
+  ) THEN RAISE(ABORT, 'rg06 evidence lineage ownership') END;
+  SELECT CASE WHEN new.merged_into_link_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM rg06_evidence_link WHERE ledger_id = new.ledger_id AND link_id = new.merged_into_link_id
+  ) THEN RAISE(ABORT, 'rg06 evidence link lineage ownership') END;
+END;
+
+CREATE TRIGGER rg06_lifecycle_history_sequence_insert
+BEFORE INSERT ON rg06_lifecycle_history
+BEGIN
+  SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (
+    SELECT 1 FROM rg06_lifecycle_history WHERE ledger_id = new.ledger_id AND lifecycle_id = new.lifecycle_id
+  )) OR (new.history_sequence > 1 AND NOT EXISTS (
+    SELECT 1 FROM rg06_lifecycle_history
+    WHERE ledger_id = new.ledger_id AND lifecycle_id = new.lifecycle_id AND history_sequence = new.history_sequence - 1
+  )) THEN RAISE(ABORT, 'rg06 lifecycle history sequence') END;
+END;
+
+CREATE TRIGGER rg06_candidate_status_sequence_insert
+BEFORE INSERT ON rg06_candidate_status_history
+BEGIN
+  SELECT CASE WHEN (new.status_sequence = 1 AND (new.status != 'PENDING_CONFIRMATION' OR EXISTS (
+    SELECT 1 FROM rg06_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id
+  ))) OR (new.status_sequence = 2 AND (new.status != 'CONFIRMED' OR NOT EXISTS (
+    SELECT 1 FROM rg06_candidate_status_history
+    WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status_sequence = 1 AND status = 'PENDING_CONFIRMATION'
+  ))) THEN RAISE(ABORT, 'rg06 candidate status sequence') END;
+END;
+
+CREATE TRIGGER rg06_reconciliation_history_sequence_insert
+BEFORE INSERT ON rg06_reconciliation_history
+BEGIN
+  SELECT CASE WHEN new.status_sequence != (
+    SELECT latest_sequence FROM rg06_posting_reconciliation
+    WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id
+  ) OR new.status != (
+    SELECT status FROM rg06_posting_reconciliation
+    WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id
+  ) OR (new.status_sequence > 1 AND NOT EXISTS (
+    SELECT 1 FROM rg06_reconciliation_history
+    WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id AND status_sequence = new.status_sequence - 1
+  )) THEN RAISE(ABORT, 'rg06 reconciliation history sequence') END;
+END;
+
+CREATE TRIGGER rg06_lifecycle_guard_update
+BEFORE UPDATE ON rg06_lifecycle
+BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.lifecycle_id != old.lifecycle_id OR new.relation_id != old.relation_id
+    OR new.total_minor != old.total_minor OR new.currency_code != old.currency_code
+    OR new.currency_precision != old.currency_precision OR new.category_id != old.category_id
+    OR new.latest_sequence != old.latest_sequence + 1
+    OR (new.paid_minor < old.paid_minor OR new.due_minor > old.due_minor)
+    OR ((new.paid_minor = old.paid_minor) != (new.due_minor = old.due_minor))
+    OR NOT EXISTS (
+      SELECT 1 FROM rg06_lifecycle_history
+      WHERE ledger_id = new.ledger_id AND lifecycle_id = new.lifecycle_id
+        AND history_sequence = new.latest_sequence AND total_minor = new.total_minor
+        AND paid_minor = new.paid_minor AND due_minor = new.due_minor
+        AND ((payment_progress = 'UNPAID' AND new.paid_minor = 0)
+          OR (payment_progress = 'PARTIALLY_PAID' AND new.paid_minor > 0 AND new.due_minor > 0)
+          OR (payment_progress = 'PAID_IN_FULL' AND new.due_minor = 0))
+    ) THEN RAISE(ABORT, 'rg06 lifecycle transition') END;
+END;
+
+CREATE TRIGGER rg06_evidence_guard_update
+BEFORE UPDATE ON rg06_evidence
+BEGIN
+  SELECT CASE WHEN old.evidence_kind != 'PENDING' OR old.payment_id IS NOT NULL
+    OR new.evidence_kind != 'BOUND' OR new.payment_id IS NULL
+    OR new.ledger_id != old.ledger_id OR new.evidence_id != old.evidence_id OR new.source_id != old.source_id
+    OR new.observed_at != old.observed_at OR new.observed_at_text != old.observed_at_text
+    OR new.time_variant != old.time_variant OR new.mirror_of_evidence_id IS NOT old.mirror_of_evidence_id
+    OR new.merged_into_link_id IS NOT old.merged_into_link_id
+    THEN RAISE(ABORT, 'rg06 evidence transition') END;
+END;
+
+CREATE TRIGGER rg06_reconciliation_guard_update
+BEFORE UPDATE ON rg06_posting_reconciliation
+BEGIN
+  SELECT CASE WHEN old.status != 'PENDING' OR new.status != 'MATCHED'
+    OR new.latest_sequence != old.latest_sequence + 1
+    OR new.ledger_id != old.ledger_id OR new.reconciliation_id != old.reconciliation_id OR new.posting_id != old.posting_id
+    THEN RAISE(ABORT, 'rg06 reconciliation transition') END;
+END;
+
+CREATE TRIGGER rg06_lifecycle_guard_delete BEFORE DELETE ON rg06_lifecycle BEGIN SELECT RAISE(ABORT, 'rg06 lifecycle delete'); END;
+CREATE TRIGGER rg06_evidence_guard_delete BEFORE DELETE ON rg06_evidence BEGIN SELECT RAISE(ABORT, 'rg06 evidence delete'); END;
+CREATE TRIGGER rg06_reconciliation_guard_delete BEFORE DELETE ON rg06_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg06 reconciliation delete'); END;
+
+CREATE TRIGGER rg06_operation_receipt_complete_insert
+AFTER INSERT ON rg06_operation_receipt
+BEGIN
+  SELECT CASE WHEN new.receipt_index >= (
+    SELECT CASE action_type
+      WHEN 'create_staged_payment' THEN 2 WHEN 'record_staged_payment_installment' THEN 3
+      WHEN 'change_staged_payment_fulfillment' THEN 1 WHEN 'confirm_staged_payment_completion' THEN 1
+      WHEN 'link_staged_payment_evidence' THEN 3 WHEN 'ingest_staged_payment_bank_fact' THEN 3
+      WHEN 'confirm_staged_payment_candidate' THEN 4 WHEN 'merge_staged_payment_mirror_evidence' THEN 2 END
+    FROM rg06_operation WHERE ledger_id = new.ledger_id AND identity_value = new.identity_value
+  ) THEN RAISE(ABORT, 'rg06 receipt index') END;
+
+  SELECT CASE WHEN new.receipt_index = (
+    SELECT CASE action_type
+      WHEN 'create_staged_payment' THEN 1 WHEN 'record_staged_payment_installment' THEN 2
+      WHEN 'change_staged_payment_fulfillment' THEN 0 WHEN 'confirm_staged_payment_completion' THEN 0
+      WHEN 'link_staged_payment_evidence' THEN 2 WHEN 'ingest_staged_payment_bank_fact' THEN 2
+      WHEN 'confirm_staged_payment_candidate' THEN 3 WHEN 'merge_staged_payment_mirror_evidence' THEN 1 END
+    FROM rg06_operation WHERE ledger_id = new.ledger_id AND identity_value = new.identity_value
+  ) AND (
+    (SELECT count(*) FROM rg06_operation_receipt
+     WHERE ledger_id = new.ledger_id AND identity_value = new.identity_value) != new.receipt_index + 1
+    OR EXISTS (
+      SELECT 1 FROM rg06_operation AS operation
+      WHERE operation.ledger_id = new.ledger_id AND operation.identity_value = new.identity_value AND (
+        NOT EXISTS (
+          SELECT 1 FROM rg06_canonical_operation AS canonical
+          WHERE canonical.ledger_id = operation.ledger_id AND canonical.identity_value = operation.identity_value
+        )
+        OR (operation.action_type = 'create_staged_payment' AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS relation_receipt
+          JOIN rg06_operation_receipt AS lifecycle_receipt
+            ON lifecycle_receipt.ledger_id = relation_receipt.ledger_id AND lifecycle_receipt.identity_value = relation_receipt.identity_value
+           AND lifecycle_receipt.receipt_index = 1 AND lifecycle_receipt.id_kind = 'LIFECYCLE'
+          JOIN rg06_consistent_lifecycle AS lifecycle
+            ON lifecycle.ledger_id = relation_receipt.ledger_id AND lifecycle.relation_id = relation_receipt.id_value
+           AND lifecycle.lifecycle_id = lifecycle_receipt.id_value
+          JOIN rg06_lifecycle AS lifecycle_row
+            ON lifecycle_row.ledger_id = lifecycle.ledger_id AND lifecycle_row.lifecycle_id = lifecycle.lifecycle_id
+          JOIN rg06_lifecycle_history AS history
+            ON history.ledger_id = lifecycle_row.ledger_id AND history.lifecycle_id = lifecycle_row.lifecycle_id
+           AND history.history_sequence = lifecycle_row.latest_sequence
+          WHERE relation_receipt.ledger_id = operation.ledger_id AND relation_receipt.identity_value = operation.identity_value
+            AND relation_receipt.receipt_index = 0 AND relation_receipt.id_kind = 'RELATION'
+            AND operation.request_id = operation.identity_value
+            AND lifecycle_row.latest_sequence = 1
+            AND lifecycle_row.total_minor = operation.amount_minor
+            AND lifecycle_row.currency_code = operation.currency_code
+            AND lifecycle_row.currency_precision = operation.currency_precision
+            AND lifecycle_row.category_id = operation.category_id
+            AND history.operation_identity = operation.identity_value
+            AND history.event_type = 'GROUP_CREATED' AND history.occurred_at = operation.occurred_at
+        ))
+        OR (operation.action_type IN ('record_staged_payment_installment','confirm_staged_payment_candidate') AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS confirmation_receipt
+          JOIN rg06_operation_receipt AS transaction_receipt
+            ON transaction_receipt.ledger_id = confirmation_receipt.ledger_id AND transaction_receipt.identity_value = confirmation_receipt.identity_value
+           AND transaction_receipt.receipt_index = 1 AND transaction_receipt.id_kind = 'TRANSACTION'
+          JOIN rg06_operation_receipt AS payment_receipt
+            ON payment_receipt.ledger_id = confirmation_receipt.ledger_id AND payment_receipt.identity_value = confirmation_receipt.identity_value
+           AND payment_receipt.receipt_index = 2 AND payment_receipt.id_kind = 'PAYMENT'
+          JOIN rg06_confirmation AS confirmation
+            ON confirmation.ledger_id = confirmation_receipt.ledger_id AND confirmation.confirmation_id = confirmation_receipt.id_value
+           AND confirmation.identity_value = operation.identity_value AND confirmation.relation_id = operation.relation_id
+           AND confirmation.payment_id = payment_receipt.id_value AND confirmation.payment_role = operation.payment_role
+           AND (operation.action_type = 'record_staged_payment_installment' OR confirmation.category_id = operation.category_id)
+           AND confirmation.funding_account_id = operation.funding_account_id
+          JOIN rg06_consistent_installment AS payment
+            ON payment.ledger_id = confirmation.ledger_id AND payment.payment_id = confirmation.payment_id
+           AND payment.transaction_id = transaction_receipt.id_value AND payment.payment_role = confirmation.payment_role
+           AND payment.funding_account_id = confirmation.funding_account_id
+          JOIN rg06_consistent_lifecycle AS lifecycle
+            ON lifecycle.ledger_id = confirmation.ledger_id AND lifecycle.relation_id = confirmation.relation_id
+          JOIN rg06_consistent_reconciliation AS reconciliation
+            ON reconciliation.ledger_id = payment.ledger_id AND reconciliation.posting_id = payment.asset_posting_id
+          JOIN rg06_lifecycle AS lifecycle_row
+            ON lifecycle_row.ledger_id = payment.ledger_id AND lifecycle_row.relation_id = payment.relation_id
+          JOIN rg06_lifecycle_history AS history
+            ON history.ledger_id = lifecycle_row.ledger_id AND history.lifecycle_id = lifecycle_row.lifecycle_id
+           AND history.history_sequence = lifecycle_row.latest_sequence
+          WHERE confirmation_receipt.ledger_id = operation.ledger_id AND confirmation_receipt.identity_value = operation.identity_value
+            AND confirmation_receipt.receipt_index = 0 AND confirmation_receipt.id_kind = 'CONFIRMATION'
+            AND operation.request_id = operation.identity_value
+            AND payment.relation_id = operation.relation_id AND payment.payment_role = operation.payment_role
+            AND payment.funding_account_id = operation.funding_account_id
+            AND history.operation_identity = operation.identity_value
+            AND history.event_type = 'PAYMENT_CONFIRMED' AND history.payment_id = payment.payment_id
+            AND history.occurred_at = payment.actual_payment_at
+            AND ((operation.action_type = 'record_staged_payment_installment'
+                  AND confirmation.confirmation_kind = 'MANUAL_INSTALLMENT' AND confirmation.candidate_id IS NULL
+                  AND confirmation.category_id = payment.category_id
+                  AND payment.amount_minor = operation.amount_minor
+                  AND payment.currency_code = operation.currency_code
+                  AND payment.currency_precision = operation.currency_precision
+                  AND payment.actual_payment_at = operation.occurred_at
+                  AND payment.source_payment_at IS NULL AND payment.source_payment_at_text IS NULL
+                  AND reconciliation.status = 'PENDING')
+              OR (operation.action_type = 'confirm_staged_payment_candidate'
+                  AND confirmation.confirmation_kind = 'CANDIDATE_CONFIRMATION' AND confirmation.candidate_id = operation.candidate_id
+                  AND operation.exact_binding_confirmed = 1
+                  AND confirmation.category_id = operation.category_id AND payment.category_id = operation.category_id
+                  AND reconciliation.status = 'MATCHED' AND EXISTS (
+                    SELECT 1 FROM rg06_operation_receipt AS link_receipt
+                    JOIN rg06_candidate AS candidate
+                      ON candidate.ledger_id = confirmation.ledger_id AND candidate.candidate_id = confirmation.candidate_id
+                     AND (candidate.role_fact IS NULL OR candidate.role_fact = operation.payment_role)
+                     AND ((candidate.role_fact IS NULL AND candidate.confidence = '0.50')
+                       OR (candidate.role_fact IS NOT NULL AND candidate.confidence = '1.00'))
+                    JOIN rg06_source AS candidate_source
+                      ON candidate_source.ledger_id = candidate.ledger_id AND candidate_source.source_id = candidate.source_id
+                     AND candidate_source.source_kind = 'IMPORTED'
+                     AND candidate.amount_minor = CASE WHEN candidate_source.amount_minor < 0 THEN -candidate_source.amount_minor ELSE candidate_source.amount_minor END
+                     AND candidate.currency_code = candidate_source.currency_code
+                     AND candidate.currency_precision = candidate_source.currency_precision
+                     AND candidate.source_payment_at = candidate_source.observed_at
+                     AND candidate.source_payment_at_text = candidate_source.observed_at_text
+                     AND candidate_source.time_variant = 'SOURCE_PAYMENT_AT'
+                    JOIN rg06_candidate_status_history AS candidate_status
+                      ON candidate_status.ledger_id = candidate.ledger_id AND candidate_status.candidate_id = candidate.candidate_id
+                     AND candidate_status.status_sequence = 2 AND candidate_status.status = 'CONFIRMED'
+                    JOIN rg06_evidence AS evidence
+                      ON evidence.ledger_id = candidate.ledger_id AND evidence.evidence_id = candidate.evidence_id
+                     AND evidence.source_id = candidate_source.source_id
+                     AND evidence.evidence_kind = 'BOUND' AND evidence.payment_id = payment.payment_id
+                     AND evidence.observed_at = candidate_source.observed_at
+                     AND evidence.observed_at_text = candidate_source.observed_at_text
+                     AND evidence.time_variant = candidate_source.time_variant
+                    JOIN rg06_evidence_link AS link
+                      ON link.ledger_id = evidence.ledger_id AND link.link_id = link_receipt.id_value
+                     AND link.evidence_id = evidence.evidence_id AND link.payment_id = payment.payment_id
+                     AND link.posting_id = payment.asset_posting_id AND link.link_kind = 'IMPORTED'
+                    WHERE link_receipt.ledger_id = operation.ledger_id AND link_receipt.identity_value = operation.identity_value
+                      AND link_receipt.receipt_index = 3 AND link_receipt.id_kind = 'EVIDENCE_LINK'
+                      AND payment.amount_minor = candidate.amount_minor
+                      AND payment.currency_code = candidate.currency_code
+                      AND payment.currency_precision = candidate.currency_precision
+                      AND payment.actual_payment_at = candidate.source_payment_at
+                      AND payment.source_payment_at = candidate.source_payment_at
+                      AND payment.source_payment_at_text = candidate.source_payment_at_text
+                      AND (SELECT count(*) FROM rg06_candidate_requirement AS requirement
+                           WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id) = 4
+                      AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 0 AND requirement.requirement = 'RELATION_ID')
+                      AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 1 AND requirement.requirement = 'PAYMENT_ROLE')
+                      AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 2 AND requirement.requirement = 'CATEGORY_ID')
+                      AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 3 AND requirement.requirement = 'FUNDING_ACCOUNT_ID')
+                  )))
+        ))
+        OR (operation.action_type IN ('change_staged_payment_fulfillment','confirm_staged_payment_completion') AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS lifecycle_receipt
+          JOIN rg06_consistent_lifecycle AS lifecycle
+            ON lifecycle.ledger_id = lifecycle_receipt.ledger_id AND lifecycle.lifecycle_id = lifecycle_receipt.id_value
+           AND lifecycle.relation_id = operation.relation_id
+          JOIN rg06_lifecycle AS lifecycle_row
+            ON lifecycle_row.ledger_id = lifecycle.ledger_id AND lifecycle_row.lifecycle_id = lifecycle.lifecycle_id
+          JOIN rg06_lifecycle_history AS history
+            ON history.ledger_id = lifecycle_row.ledger_id AND history.lifecycle_id = lifecycle_row.lifecycle_id
+           AND history.history_sequence = lifecycle_row.latest_sequence
+          WHERE lifecycle_receipt.ledger_id = operation.ledger_id AND lifecycle_receipt.identity_value = operation.identity_value
+            AND lifecycle_receipt.receipt_index = 0 AND lifecycle_receipt.id_kind = 'LIFECYCLE'
+            AND operation.request_id = operation.identity_value
+            AND history.operation_identity = operation.identity_value
+            AND history.occurred_at = operation.occurred_at AND history.payment_id IS NULL
+            AND ((operation.action_type = 'change_staged_payment_fulfillment'
+                  AND history.event_type = 'FULFILLMENT_CHANGED'
+                  AND history.fulfillment_status = operation.fulfillment_status)
+              OR (operation.action_type = 'confirm_staged_payment_completion'
+                  AND operation.confirmed = 1 AND history.event_type = 'COMPLETION_CONFIRMED'))
+        ))
+        OR (operation.action_type = 'link_staged_payment_evidence' AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS source_receipt
+          JOIN rg06_operation_receipt AS evidence_receipt
+            ON evidence_receipt.ledger_id = source_receipt.ledger_id AND evidence_receipt.identity_value = source_receipt.identity_value
+           AND evidence_receipt.receipt_index = 1 AND evidence_receipt.id_kind = 'EVIDENCE' AND evidence_receipt.id_value = operation.evidence_id
+          JOIN rg06_operation_receipt AS link_receipt
+            ON link_receipt.ledger_id = source_receipt.ledger_id AND link_receipt.identity_value = source_receipt.identity_value
+           AND link_receipt.receipt_index = 2 AND link_receipt.id_kind = 'EVIDENCE_LINK'
+          JOIN rg06_source AS source
+            ON source.ledger_id = source_receipt.ledger_id AND source.source_id = source_receipt.id_value
+           AND source.source_id = operation.source_id AND source.source_kind = 'MANUAL'
+          JOIN rg06_evidence AS evidence
+            ON evidence.ledger_id = source.ledger_id AND evidence.evidence_id = evidence_receipt.id_value
+           AND evidence.source_id = source.source_id AND evidence.evidence_kind = 'BOUND' AND evidence.payment_id = operation.payment_id
+           AND evidence.observed_at = source.observed_at AND evidence.observed_at_text = source.observed_at_text
+           AND evidence.time_variant = source.time_variant
+          JOIN rg06_evidence_link AS link
+            ON link.ledger_id = evidence.ledger_id AND link.link_id = link_receipt.id_value
+           AND link.evidence_id = evidence.evidence_id AND link.payment_id = operation.payment_id
+           AND link.posting_id = operation.posting_id AND link.link_kind = 'MANUAL'
+          JOIN rg06_consistent_reconciliation AS reconciliation
+            ON reconciliation.ledger_id = link.ledger_id AND reconciliation.posting_id = link.posting_id
+           AND reconciliation.status = 'MATCHED' AND reconciliation.evidence_link_id = link.link_id
+          WHERE source_receipt.ledger_id = operation.ledger_id AND source_receipt.identity_value = operation.identity_value
+            AND source_receipt.receipt_index = 0 AND source_receipt.id_kind = 'SOURCE'
+            AND source.time_variant = 'OBSERVED_AT'
+            AND EXISTS (
+              SELECT 1 FROM rg06_consistent_installment AS payment
+              WHERE payment.ledger_id = operation.ledger_id AND payment.payment_id = operation.payment_id
+                AND payment.asset_posting_id = operation.posting_id
+                AND payment.amount_minor = CASE WHEN source.amount_minor < 0 THEN -source.amount_minor ELSE source.amount_minor END
+                AND payment.currency_code = source.currency_code
+                AND payment.currency_precision = source.currency_precision
+            )
+        ))
+        OR (operation.action_type = 'ingest_staged_payment_bank_fact' AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS source_receipt
+          JOIN rg06_operation_receipt AS evidence_receipt
+            ON evidence_receipt.ledger_id = source_receipt.ledger_id AND evidence_receipt.identity_value = source_receipt.identity_value
+           AND evidence_receipt.receipt_index = 1 AND evidence_receipt.id_kind = 'EVIDENCE' AND evidence_receipt.id_value = operation.evidence_id
+          JOIN rg06_operation_receipt AS candidate_receipt
+            ON candidate_receipt.ledger_id = source_receipt.ledger_id AND candidate_receipt.identity_value = source_receipt.identity_value
+           AND candidate_receipt.receipt_index = 2 AND candidate_receipt.id_kind = 'CANDIDATE'
+          JOIN rg06_source AS source
+            ON source.ledger_id = source_receipt.ledger_id AND source.source_id = source_receipt.id_value
+           AND source.source_id = operation.source_id AND source.source_kind = 'IMPORTED'
+           AND source.amount_minor = operation.amount_minor
+           AND source.currency_code = operation.currency_code
+           AND source.currency_precision = operation.currency_precision
+           AND source.observed_at = operation.occurred_at
+           AND source.observed_at_text = operation.occurred_at_text
+           AND source.time_variant = 'SOURCE_PAYMENT_AT' AND source.mirror_of_source_id IS NULL
+          JOIN rg06_evidence AS evidence
+            ON evidence.ledger_id = source.ledger_id AND evidence.evidence_id = evidence_receipt.id_value
+           AND evidence.source_id = source.source_id AND evidence.evidence_kind = 'PENDING' AND evidence.payment_id IS NULL
+           AND evidence.observed_at = source.observed_at AND evidence.observed_at_text = source.observed_at_text
+           AND evidence.time_variant = source.time_variant
+          JOIN rg06_candidate AS candidate
+            ON candidate.ledger_id = evidence.ledger_id AND candidate.candidate_id = candidate_receipt.id_value
+           AND candidate.source_id = source.source_id AND candidate.evidence_id = evidence.evidence_id
+           AND candidate.amount_minor = CASE WHEN source.amount_minor < 0 THEN -source.amount_minor ELSE source.amount_minor END
+           AND candidate.currency_code = source.currency_code
+           AND candidate.currency_precision = source.currency_precision
+           AND candidate.source_payment_at = source.observed_at
+           AND candidate.source_payment_at_text = source.observed_at_text
+           AND candidate.role_fact IS operation.suggested_payment_role
+           AND ((candidate.role_fact IS NULL AND candidate.confidence = '0.50')
+             OR (candidate.role_fact IS NOT NULL AND candidate.confidence = '1.00'))
+          JOIN rg06_candidate_status_history AS candidate_status
+            ON candidate_status.ledger_id = candidate.ledger_id AND candidate_status.candidate_id = candidate.candidate_id
+           AND candidate_status.status_sequence = 1 AND candidate_status.status = 'PENDING_CONFIRMATION'
+          WHERE source_receipt.ledger_id = operation.ledger_id AND source_receipt.identity_value = operation.identity_value
+            AND source_receipt.receipt_index = 0 AND source_receipt.id_kind = 'SOURCE'
+            AND (SELECT count(*) FROM rg06_candidate_requirement AS requirement
+                 WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id) = 4
+            AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 0 AND requirement.requirement = 'RELATION_ID')
+            AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 1 AND requirement.requirement = 'PAYMENT_ROLE')
+            AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 2 AND requirement.requirement = 'CATEGORY_ID')
+            AND EXISTS (SELECT 1 FROM rg06_candidate_requirement AS requirement WHERE requirement.ledger_id = candidate.ledger_id AND requirement.candidate_id = candidate.candidate_id AND requirement.requirement_index = 3 AND requirement.requirement = 'FUNDING_ACCOUNT_ID')
+            AND NOT EXISTS (SELECT 1 FROM rg06_candidate_status_history AS later_status
+                            WHERE later_status.ledger_id = candidate.ledger_id AND later_status.candidate_id = candidate.candidate_id
+                              AND later_status.status_sequence > 1)
+        ))
+        OR (operation.action_type = 'merge_staged_payment_mirror_evidence' AND NOT EXISTS (
+          SELECT 1 FROM rg06_operation_receipt AS source_receipt
+          JOIN rg06_operation_receipt AS evidence_receipt
+            ON evidence_receipt.ledger_id = source_receipt.ledger_id AND evidence_receipt.identity_value = source_receipt.identity_value
+           AND evidence_receipt.receipt_index = 1 AND evidence_receipt.id_kind = 'EVIDENCE' AND evidence_receipt.id_value = operation.evidence_id
+          JOIN rg06_source AS source
+            ON source.ledger_id = source_receipt.ledger_id AND source.source_id = source_receipt.id_value
+           AND source.source_id = operation.source_id AND source.source_kind = 'MIRROR'
+           AND source.amount_minor = operation.amount_minor
+           AND source.currency_code = operation.currency_code
+           AND source.currency_precision = operation.currency_precision
+           AND source.observed_at = operation.occurred_at
+           AND source.observed_at_text = operation.occurred_at_text
+           AND source.time_variant = 'SOURCE_PAYMENT_AT'
+          JOIN rg06_evidence AS evidence
+            ON evidence.ledger_id = source.ledger_id AND evidence.evidence_id = evidence_receipt.id_value
+           AND evidence.source_id = source.source_id AND evidence.evidence_kind = 'MIRROR'
+           AND evidence.payment_id = operation.payment_id AND evidence.mirror_of_evidence_id IS NOT NULL
+           AND evidence.observed_at = source.observed_at AND evidence.observed_at_text = source.observed_at_text
+           AND evidence.time_variant = source.time_variant
+          JOIN rg06_evidence_link AS link
+            ON link.ledger_id = evidence.ledger_id AND link.link_id = evidence.merged_into_link_id
+           AND link.payment_id = operation.payment_id AND link.posting_id = operation.posting_id
+          JOIN rg06_evidence AS original_evidence
+            ON original_evidence.ledger_id = link.ledger_id AND original_evidence.evidence_id = link.evidence_id
+           AND original_evidence.evidence_id = evidence.mirror_of_evidence_id
+          JOIN rg06_source AS original_source
+            ON original_source.ledger_id = original_evidence.ledger_id
+           AND original_source.source_id = original_evidence.source_id
+           AND original_source.source_id = source.mirror_of_source_id
+           AND original_source.amount_minor = -source.amount_minor
+           AND original_source.currency_code = source.currency_code
+           AND original_source.currency_precision = source.currency_precision
+          JOIN rg06_consistent_installment AS payment
+            ON payment.ledger_id = link.ledger_id AND payment.payment_id = link.payment_id
+           AND payment.asset_posting_id = link.posting_id
+           AND payment.amount_minor = CASE WHEN source.amount_minor < 0 THEN -source.amount_minor ELSE source.amount_minor END
+          JOIN rg06_consistent_reconciliation AS reconciliation
+            ON reconciliation.ledger_id = link.ledger_id AND reconciliation.posting_id = link.posting_id
+          WHERE source_receipt.ledger_id = operation.ledger_id AND source_receipt.identity_value = operation.identity_value
+            AND source_receipt.receipt_index = 0 AND source_receipt.id_kind = 'SOURCE'
+        ))
+      )
+    )
+  ) THEN RAISE(ABORT, 'rg06 incomplete accepted operation') END;
+END;
+
+CREATE TRIGGER rg06_guard_ledger_transaction_insert AFTER INSERT ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_ledger_transaction_update AFTER UPDATE ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_ledger_transaction_delete AFTER DELETE ON ledger_transaction BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_current_version_insert AFTER INSERT ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_current_version_update AFTER UPDATE ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_current_version_delete AFTER DELETE ON ledger_transaction_current_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_transaction_version_insert AFTER INSERT ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_transaction_version_update AFTER UPDATE ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_transaction_version_delete AFTER DELETE ON transaction_version BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_set_insert AFTER INSERT ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_set_update AFTER UPDATE ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_set_delete AFTER DELETE ON posting_set BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_insert AFTER INSERT ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_update AFTER UPDATE ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+CREATE TRIGGER rg06_guard_posting_delete AFTER DELETE ON posting BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM rg06_accepted_aggregate_violation) THEN RAISE(ABORT, 'invalid accepted RG06 aggregate') END; END;
+
+CREATE TRIGGER rg06_operation_guard_update BEFORE UPDATE ON rg06_operation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_operation_guard_delete BEFORE DELETE ON rg06_operation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_receipt_guard_update BEFORE UPDATE ON rg06_operation_receipt BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_receipt_guard_delete BEFORE DELETE ON rg06_operation_receipt BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_relation_guard_update BEFORE UPDATE ON rg06_relation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_relation_guard_delete BEFORE DELETE ON rg06_relation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_relation_member_guard_update BEFORE UPDATE ON rg06_relation_member BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_relation_member_guard_delete BEFORE DELETE ON rg06_relation_member BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_history_guard_update BEFORE UPDATE ON rg06_lifecycle_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_history_guard_delete BEFORE DELETE ON rg06_lifecycle_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_installment_guard_update BEFORE UPDATE ON rg06_installment BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_installment_guard_delete BEFORE DELETE ON rg06_installment BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_posting_semantic_guard_update BEFORE UPDATE ON rg06_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_posting_semantic_guard_delete BEFORE DELETE ON rg06_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_source_guard_update BEFORE UPDATE ON rg06_source BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_source_guard_delete BEFORE DELETE ON rg06_source BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_candidate_guard_update BEFORE UPDATE ON rg06_candidate BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_candidate_guard_delete BEFORE DELETE ON rg06_candidate BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_requirement_guard_update BEFORE UPDATE ON rg06_candidate_requirement BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_requirement_guard_delete BEFORE DELETE ON rg06_candidate_requirement BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_candidate_status_guard_update BEFORE UPDATE ON rg06_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_candidate_status_guard_delete BEFORE DELETE ON rg06_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_confirmation_guard_update BEFORE UPDATE ON rg06_confirmation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_confirmation_guard_delete BEFORE DELETE ON rg06_confirmation BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_evidence_link_guard_update BEFORE UPDATE ON rg06_evidence_link BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_evidence_link_guard_delete BEFORE DELETE ON rg06_evidence_link BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_reconciliation_history_guard_update BEFORE UPDATE ON rg06_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+CREATE TRIGGER rg06_reconciliation_history_guard_delete BEFORE DELETE ON rg06_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg06 immutable'); END;
+
+claimRg06Operation:
+INSERT INTO rg06_operation VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ledger_id, identity_value) DO NOTHING;
+selectRg06Operation:
+SELECT * FROM rg06_operation WHERE ledger_id = ? AND identity_value = ?;
+insertRg06Receipt:
+INSERT INTO rg06_operation_receipt VALUES (?, ?, ?, ?, ?);
+selectRg06Receipts:
+SELECT id_kind, id_value FROM rg06_operation_receipt WHERE ledger_id = ? AND identity_value = ? ORDER BY receipt_index;
+selectRg06ReceiptKinds:
+SELECT id_kind FROM rg06_operation_receipt WHERE ledger_id = ? AND identity_value = ? ORDER BY receipt_index;
+insertRg06Relation:
+INSERT INTO rg06_relation VALUES (?, ?, 'staged_payment', '{}');
+insertRg06RelationMember:
+INSERT INTO rg06_relation_member VALUES (?, ?, ?, ?, ?);
+insertRg06Lifecycle:
+INSERT INTO rg06_lifecycle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+updateRg06Lifecycle:
+UPDATE rg06_lifecycle SET paid_minor = ?, due_minor = ?, latest_sequence = ? WHERE ledger_id = ? AND lifecycle_id = ? AND latest_sequence = ?;
+insertRg06History:
+INSERT INTO rg06_lifecycle_history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+insertRg06Installment:
+INSERT INTO rg06_installment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+insertRg06PostingSemantic:
+INSERT INTO rg06_posting_semantic VALUES (?, ?, ?, ?, ?, ?);
+insertRg06Source:
+INSERT INTO rg06_source VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+insertRg06Evidence:
+INSERT INTO rg06_evidence VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+updateRg06EvidenceBinding:
+UPDATE rg06_evidence SET evidence_kind = 'BOUND', payment_id = ? WHERE ledger_id = ? AND evidence_id = ? AND evidence_kind = 'PENDING' AND payment_id IS NULL;
+insertRg06Candidate:
+INSERT INTO rg06_candidate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+insertRg06CandidateRequirement:
+INSERT INTO rg06_candidate_requirement VALUES (?, ?, ?, ?);
+insertRg06CandidateStatus:
+INSERT INTO rg06_candidate_status_history VALUES (?, ?, ?, ?, ?);
+insertRg06Confirmation:
+INSERT INTO rg06_confirmation VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+insertRg06EvidenceLink:
+INSERT INTO rg06_evidence_link VALUES (?, ?, ?, ?, ?, ?);
+insertRg06Reconciliation:
+INSERT INTO rg06_posting_reconciliation VALUES (?, ?, ?, ?, ?);
+insertRg06ReconciliationHistory:
+INSERT INTO rg06_reconciliation_history VALUES (?, ?, ?, ?, ?);
+matchRg06Reconciliation:
+UPDATE rg06_posting_reconciliation SET status = 'MATCHED', latest_sequence = latest_sequence + 1 WHERE ledger_id = ? AND posting_id = ? AND status = 'PENDING';
+selectRg06RelationOwner:
+SELECT ledger_id FROM rg06_relation WHERE relation_id = ?;
+selectRg06PaymentOwner:
+SELECT ledger_id FROM rg06_installment WHERE payment_id = ?;
+selectRg06AggregateLifecycle:
+SELECT * FROM rg06_lifecycle WHERE ledger_id = ? AND relation_id = ?;
+selectRg06RelationMembers:
+SELECT member_kind, member_id FROM rg06_relation_member WHERE ledger_id = ? AND relation_id = ? ORDER BY member_index;
+selectRg06History:
+SELECT * FROM rg06_lifecycle_history WHERE ledger_id = ? AND lifecycle_id = ? ORDER BY history_sequence;
+selectRg06Installments:
+SELECT * FROM rg06_installment WHERE ledger_id = ? AND relation_id = ? ORDER BY installment_index;
+selectRg06FormalTransaction:
+SELECT t.transaction_id, t.ledger_id, t.kind, c.current_version_id FROM ledger_transaction t JOIN ledger_transaction_current_version c ON c.transaction_id = t.transaction_id AND c.ledger_id = t.ledger_id WHERE t.ledger_id = ? AND t.transaction_id = ?;
+selectRg06FormalVersions:
+SELECT * FROM transaction_version WHERE ledger_id = ? AND transaction_id = ? ORDER BY version_number;
+selectRg06FormalPostingSets:
+SELECT DISTINCT ps.posting_set_id FROM posting_set ps JOIN transaction_version v ON v.posting_set_id = ps.posting_set_id AND v.ledger_id = ps.ledger_id WHERE v.ledger_id = ? AND v.transaction_id = ? ORDER BY ps.posting_set_id;
+selectRg06FormalPostings:
+SELECT * FROM posting WHERE ledger_id = ? AND posting_set_id = ? ORDER BY posting_index;
+selectRg06Candidate:
+SELECT * FROM rg06_candidate WHERE ledger_id = ? AND candidate_id = ?;
+selectRg06CandidateOwner:
+SELECT ledger_id FROM rg06_candidate WHERE candidate_id = ?;
+selectRg06CandidateStatuses:
+SELECT status_id, status_sequence, status FROM rg06_candidate_status_history WHERE ledger_id = ? AND candidate_id = ? ORDER BY status_sequence;
+selectRg06Evidence:
+SELECT * FROM rg06_evidence WHERE evidence_id = ?;
+selectRg06Source:
+SELECT * FROM rg06_source WHERE source_id = ?;
+selectRg06Payment:
+SELECT * FROM rg06_installment WHERE payment_id = ?;
+selectRg06EvidenceLinkForPayment:
+SELECT * FROM rg06_evidence_link WHERE ledger_id = ? AND payment_id = ? AND posting_id = ?;
+selectRg06ReconciliationForPosting:
+SELECT * FROM rg06_posting_reconciliation WHERE ledger_id = ? AND posting_id = ?;
+countRg06Operations:
+SELECT count(*) FROM rg06_operation;
+countRg06Relations:
+SELECT count(*) FROM rg06_relation;
+countRg06RelationMembers:
+SELECT count(*) FROM rg06_relation_member;
+countRg06Lifecycles:
+SELECT count(*) FROM rg06_lifecycle;
+countRg06History:
+SELECT count(*) FROM rg06_lifecycle_history;
+countRg06Installments:
+SELECT count(*) FROM rg06_installment;
+countRg06Sources:
+SELECT count(*) FROM rg06_source;
+countRg06Evidence:
+SELECT count(*) FROM rg06_evidence;
+countRg06Candidates:
+SELECT count(*) FROM rg06_candidate;
+countRg06CandidateRequirements:
+SELECT count(*) FROM rg06_candidate_requirement;
+countRg06CandidateStatuses:
+SELECT count(*) FROM rg06_candidate_status_history;
+countRg06Confirmations:
+SELECT count(*) FROM rg06_confirmation;
+countRg06EvidenceLinks:
+SELECT count(*) FROM rg06_evidence_link;
+countRg06Reconciliations:
+SELECT count(*) FROM rg06_posting_reconciliation;
+countRg06ReconciliationHistory:
+SELECT count(*) FROM rg06_reconciliation_history;
+countRg06OperationReceipts:
+SELECT count(*) FROM rg06_operation_receipt;
+countRg06PostingSemantics:
+SELECT count(*) FROM rg06_posting_semantic;
+
+rg06IdentityCount:
+SELECT count(*) FROM (
+  SELECT relation_id AS value, 'relation' AS kind FROM rg06_relation UNION ALL
+  SELECT lifecycle_id, 'lifecycle' FROM rg06_lifecycle UNION ALL
+  SELECT history_id, 'history' FROM rg06_lifecycle_history UNION ALL
+  SELECT payment_id, 'payment' FROM rg06_installment UNION ALL
+  SELECT transaction_id, 'transaction' FROM ledger_transaction UNION ALL
+  SELECT version_id, 'version' FROM transaction_version UNION ALL
+  SELECT posting_set_id, 'posting_set' FROM posting_set UNION ALL
+  SELECT posting_id, 'posting' FROM posting UNION ALL
+  SELECT source_id, 'source' FROM rg06_source UNION ALL
+  SELECT evidence_id, 'evidence' FROM rg06_evidence UNION ALL
+  SELECT candidate_id, 'candidate' FROM rg06_candidate UNION ALL
+  SELECT status_id, 'candidate_status' FROM rg06_candidate_status_history UNION ALL
+  SELECT confirmation_id, 'confirmation' FROM rg06_confirmation UNION ALL
+  SELECT link_id, 'link' FROM rg06_evidence_link UNION ALL
+  SELECT reconciliation_id, 'reconciliation' FROM rg06_posting_reconciliation
+  UNION ALL SELECT relation_id, 'relation' FROM formal_relation
+  UNION ALL SELECT relation_id, 'relation' FROM rg05_relation
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM rg03_confirmation
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM rg04_confirmation
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM confirmed_expense_receipt
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM confirmed_transaction_note_update_receipt
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM confirmed_income_receipt
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM rg04_import_confirmation
+  UNION ALL SELECT confirmation_id, 'confirmation' FROM rg05_confirmation
+  UNION ALL SELECT source_id, 'source' FROM rg03_source_record
+  UNION ALL SELECT source_id, 'source' FROM rg04_import_source
+  UNION ALL SELECT source_id, 'source' FROM rg05_source_record
+  UNION ALL SELECT evidence_id, 'evidence' FROM rg03_evidence
+  UNION ALL SELECT evidence_id, 'evidence' FROM rg04_import_evidence
+  UNION ALL SELECT evidence_id, 'evidence' FROM rg05_evidence
+  UNION ALL SELECT candidate_id, 'candidate' FROM rg03_transfer_candidate
+  UNION ALL SELECT candidate_id, 'candidate' FROM rg04_import_candidate
+  UNION ALL SELECT candidate_id, 'candidate' FROM rg05_candidate
+  UNION ALL SELECT status_id, 'candidate_status' FROM rg03_candidate_status_history
+  UNION ALL SELECT status_id, 'candidate_status' FROM rg04_import_candidate_status_fact
+  UNION ALL SELECT status_id, 'candidate_status' FROM rg05_candidate_status_history
+  UNION ALL SELECT link_id, 'link' FROM rg03_evidence_link
+  UNION ALL SELECT match_id, 'link' FROM rg04_import_evidence_match
+  UNION ALL SELECT link_id, 'link' FROM rg05_evidence_link
+  UNION ALL SELECT reconciliation_id, 'reconciliation' FROM rg03_posting_reconciliation
+  UNION ALL SELECT reconciliation_id, 'reconciliation' FROM rg04_posting_reconciliation
+  UNION ALL SELECT reconciliation_id, 'reconciliation' FROM rg05_posting_reconciliation
+) WHERE kind = ? AND value = ?;

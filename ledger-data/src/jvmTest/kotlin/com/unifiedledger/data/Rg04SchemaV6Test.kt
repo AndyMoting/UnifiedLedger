@@ -20,7 +20,7 @@ class Rg04SchemaV6Test {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(8, LedgerDatabase.Schema.version)
+            assertEquals(9, LedgerDatabase.Schema.version)
             assertEquals(0L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg04Relations().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg04PostingReconciliations().executeAsOne())
