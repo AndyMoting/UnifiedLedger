@@ -2,7 +2,7 @@
 
 ## Authority
 
-This path map is governed by the frozen RG-07 fixture, refund design, golden tests, accounting rules, Golden Schema v2, and D-010, D-013, D-043, D-044, D-045, D-047. Historical external RG numbering is evidence only. This artifact authorizes no schema, adapter, expected output, or fixture rewrite.
+This path map is governed by the frozen RG-07 fixture, refund design, golden tests, accounting rules, Golden Schema v2, and D-010, D-013, D-043, D-044, D-045, D-047, D-061, D-078. Historical external RG numbering is evidence only. This artifact authorizes no adapter, expected output, fixture rewrite, runtime, or publication.
 
 ## Inventory
 
@@ -10,7 +10,7 @@ This path map is governed by the frozen RG-07 fixture, refund design, golden tes
 - leaf occurrences: 6084
 - classified/unclassified: 2523/0
 - classifications: map 1815, derive 613, preserve 87, reject 8
-- dispositions: requires_contract_amendment 1244, ready 1271, test_only_exclusion 8
+- dispositions: ready 2515, test_only_exclusion 8
 
 ## Frozen Semantics
 
@@ -22,7 +22,7 @@ The manual and import paths remain independent roots. Import intake creates only
 
 The v2 relation owns typed membership between the original transaction and each independent refund transaction. The refund_relationship domain entity owns requested and received amounts, inherited category, destination, distinct request, approval, processor, observation, booking, value, arrival, and confirmation times, plus append-only lifecycle history. Evidence never substitutes for these ownership boundaries.
 
-## Planned Action Registry
+## Action Registry
 
 Every family uses a top-level action_type and operation_class. Accepted and no-change forms use a strict closed input. Rejected forms forbid input and use a closed sparse attempted_input; omitted fields are not synthesized. A retry retains its originating discriminator and never becomes a generic retry action.
 
@@ -32,6 +32,7 @@ Every family uses a top-level action_type and operation_class. Accepted and no-c
 | ingest_refund_status_source | status_transition | input | merchant status notice |
 | confirm_manual_refund_receipt | creation | input | confirmed manual arrival |
 | confirm_manual_refund_receipt | rejection | attempted_input | unconfirmed manual arrival |
+| attach_original_payment_evidence | reconciliation | input | original payment source and exact payment-posting evidence |
 | attach_refund_destination_evidence | reconciliation | input | bank or wallet destination evidence |
 | attach_refund_dual_role_evidence | reconciliation | input | independently typed composite evidence links |
 | confirm_refund_receipt | creation | input | accepted cumulative partial-refund receipt |
@@ -44,7 +45,7 @@ Every family uses a top-level action_type and operation_class. Accepted and no-c
 
 The machine path map additionally freezes each row's exact required and optional fields with additional_properties=false. No operation dispatches through input.kind.
 
-## Unresolved Gaps
+## Resolved Contract Gaps
 
 1. RG07-GAP-01: Closed RG-07 action registry and atomic outcomes (265 affected paths)
 2. RG07-GAP-02: Refund relation and refund_relationship lifecycle (504 affected paths)
@@ -52,8 +53,10 @@ The machine path map additionally freezes each row's exact required and optional
 
 ## Gate
 
-- status: needs_contract_amendment
-- expected output gate: closed
-- unresolved gap count: 3
+- status: approved
+- expected output gate: approved
+- unresolved gap count: 0
+- contract gap count: 0
+- resolved contract gap count: 3
 
-Expected output remains closed. No schema, adapter, expected output, or fixture rewrite is implemented.
+Expected output is approved. Contract, Schema, validator, expected output, adapter, fixture replay, schema v10 migration, and Kotlin runtime are implemented; publication remains closed pending an explicit target.

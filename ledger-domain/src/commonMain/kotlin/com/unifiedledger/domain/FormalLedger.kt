@@ -43,6 +43,7 @@ enum class TransactionKind {
     INCOME,
     ACCOUNT_TRANSFER,
     CREDIT_REPAYMENT,
+    REFUND_RECEIPT,
 }
 
 data class Transaction(

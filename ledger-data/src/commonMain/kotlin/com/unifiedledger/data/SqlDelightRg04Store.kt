@@ -168,6 +168,7 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected = when (thi
     DomainViolation.InvalidOrdinaryIncome,
     DomainViolation.InvalidBalanceReplay,
     DomainViolation.InvalidMergedPayment,
+    DomainViolation.InvalidRefundReceipt,
     is OrdinaryExpenseViolation,
     is OrdinaryIncomeViolation,
     is AccountTransferViolation,

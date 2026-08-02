@@ -50,6 +50,20 @@ _ENTITY_COLLECTIONS = {
     "posting_reconciliations": ("posting_reconciliations",),
 }
 _ENTITY_CHANGE_FIELDS = ("added_ids", "changed_ids", "removed_ids")
+_RG07_ACTIONS = {
+    "record_refund_request_status",
+    "ingest_refund_status_source",
+    "confirm_manual_refund_receipt",
+    "attach_original_payment_evidence",
+    "attach_refund_destination_evidence",
+    "attach_refund_dual_role_evidence",
+    "confirm_refund_receipt",
+    "allocate_refund_receipt",
+    "ingest_refund_credit_source",
+    "confirm_imported_refund",
+    "merge_refund_mirror_evidence",
+    "validate_refund_receipt",
+}
 _RG10_STRUCTURAL_ACTIONS = {
     "confirm_stored_value_recharge",
     "confirm_stored_value_spend",
@@ -255,6 +269,74 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
     "merge_staged_payment_mirror_evidence": {
         "sources": (1, 0, 0),
         "evidence": (1, 0, 0),
+    },
+    "record_refund_request_status": {
+        "relations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+    },
+    "ingest_refund_status_source": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+    },
+    "confirm_manual_refund_receipt": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "relations": (0, 1, 0),
+        "domain_entities": (0, 1, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "attach_original_payment_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "posting_reconciliations": (0, 1, 0),
+    },
+    "attach_refund_destination_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "posting_reconciliations": (0, 1, 0),
+    },
+    "attach_refund_dual_role_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (2, 0, 0),
+    },
+    "confirm_refund_receipt": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "relations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "ingest_refund_credit_source": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "candidates": (1, 0, 0),
+    },
+    "confirm_imported_refund": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "candidates": (0, 1, 0),
+        "confirmations": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "relations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "posting_reconciliations": (1, 0, 0),
+    },
+    "merge_refund_mirror_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
     },
 }
 
@@ -1718,6 +1800,25 @@ def _validate_relations(
     postings = indexes["postings"]
     staged_member_owners: dict[str, str] = {}
     for index, relation in enumerate(state["relations"]):
+        if relation["type"] == "refund":
+            relation_path = f"{path}.relations[{index}]"
+            refs = relation["member_refs"]
+            if len(refs) not in {1, 2} or any(ref["kind"] != "transaction" for ref in refs):
+                _fail(relation_path + ".member_refs", "refund requires one original transaction and at most one refund transaction")
+            if len({ref["id"] for ref in refs}) != len(refs):
+                _fail(relation_path + ".member_refs", "contains duplicate references")
+            if any(ref["id"] not in transactions for ref in refs):
+                _fail(relation_path + ".member_refs", "references an unknown transaction")
+            member_types = [transactions[ref["id"]]["type"] for ref in refs]
+            if member_types.count("expense") != 1:
+                _fail(relation_path + ".member_refs", "refund must contain exactly one original expense transaction")
+            if len(refs) == 2 and member_types.count("refund_receipt") != 1:
+                _fail(relation_path + ".member_refs", "refund member must reference one refund_receipt transaction")
+            if len(refs) == 1 and member_types != ["expense"]:
+                _fail(relation_path + ".member_refs", "pre-receipt refund must contain only the original expense")
+            if relation["payload"] != {}:
+                _fail(relation_path + ".payload", "refund relation payload is owned by refund_relationship domain entity")
+            continue
         if relation["type"] == "staged_payment":
             _validate_staged_payment_relation(
                 relation,
@@ -2457,6 +2558,30 @@ def _validate_references(
         if source["type"] == "reconciliation_evidence":
             _timestamp(payload["observed_at"], source_path + ".observed_at", timezone)
             continue
+        if source["type"] in {
+            "bank_debit",
+            "merchant_refund_notice",
+            "wallet_credit",
+            "combined_refund_statement",
+            "wallet_credit_mirror",
+        }:
+            for field in (
+                "observed_at",
+                "processor_reported_at",
+                "source_observed_at",
+                "booking_at",
+                "value_at",
+            ):
+                if field in payload:
+                    _timestamp(payload[field], source_path + "." + field, timezone)
+            if "amount" in payload:
+                _amount(
+                    payload["amount"],
+                    payload["currency"],
+                    source_path + ".amount",
+                    precisions,
+                )
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(source_path + ".account_id", "dangling account reference")
@@ -2950,6 +3075,26 @@ def _validate_references(
             elif "transaction_id" in payload:
                 _fail(candidate_path + ".payload.transaction_id", "pending candidate cannot bind a transaction")
             continue
+        if candidate["type"] == "refund_credit":
+            statuses = [event["status"] for event in history]
+            if statuses not in (["pending_confirmation"], ["pending_confirmation", "confirmed"]):
+                _fail(
+                    candidate_path + ".status_history",
+                    "refund credit must be pending or append one confirmed status",
+                )
+            expected_effects = [0] if len(history) == 1 else [0, 1]
+            if [event["formal_effect_count"] for event in history] != expected_effects:
+                _fail(
+                    candidate_path + ".status_history",
+                    "refund credit formal effects must be zero then one",
+                )
+            for history_index, event in enumerate(history):
+                _timestamp(
+                    event["occurred_at"],
+                    f"{candidate_path}.status_history[{history_index}].occurred_at",
+                    timezone,
+                )
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(candidate_path + ".payload.account_id", "dangling account reference")
@@ -3088,7 +3233,8 @@ def _validate_references(
                 f"must target posting role in {sorted(posting_role_targets[link['role']])}",
             )
         if link["role"] in {"refund_relationship", "counterparty_lending_relationship"}:
-            if target.get("type") != link["role"]:
+            expected_relation_types = {"refund_relationship": {"refund"}, "counterparty_lending_relationship": {"counterparty_lending"}}
+            if target.get("type") not in expected_relation_types[link["role"]]:
                 _fail(
                     link_path + ".target_id",
                     f"requires the reserved {link['role']} relation subtype, which is not implemented by this prototype",
@@ -3114,12 +3260,15 @@ def _validate_references(
             "payment_asset_posting": {
                 "bank_payment",
                 "staged_payment_bank_payment",
+                "asset_debit",
             },
             "item_allocation_fact": {"item_receipt"},
             "stored_value_asset_posting": {"merchant_stored_value_credit"},
             "stored_value_lot_fact": {"merchant_stored_value_credit"},
             "stored_value_bonus_component": {"merchant_stored_value_credit"},
             "stored_value_expiry_confirmation": {"confirmed_actual_expiry"},
+            "refund_relationship": {"refund_notice", "combined_refund_statement"},
+            "destination_asset_posting": {"transfer_record", "asset_credit", "combined_refund_statement", "asset_credit_mirror"},
         }
         if (
             link["role"] in evidence_role_types
@@ -3938,6 +4087,349 @@ def _validate_references(
             )
 
 
+def _validate_rg07_contract(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+    current: dict[str, tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    accounts = indexes["catalog_accounts"]
+    categories = indexes["catalog_categories"]
+    transactions = indexes["transactions"]
+    relations = indexes["relations"]
+    evidence = indexes["evidence"]
+    evidence_links = indexes["evidence_links"]
+    sources = indexes["sources"]
+
+    relationships = [
+        entity
+        for entity in state["domain_entities"]
+        if entity["type"] == "refund_relationship"
+    ]
+    relationships_by_relation: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entity in relationships:
+        relationships_by_relation[entity["payload"]["relation_id"]].append(entity)
+
+    received_by_original: dict[str, Decimal] = defaultdict(Decimal)
+    original_caps: dict[str, Decimal] = {}
+    for relation_index, relation in enumerate(state["relations"]):
+        if relation["type"] != "refund":
+            continue
+        relation_path = f"{path}.relations[{relation_index}]"
+        members = [transactions[ref["id"]] for ref in relation["member_refs"]]
+        originals = [item for item in members if item["type"] == "expense"]
+        receipts = [item for item in members if item["type"] == "refund_receipt"]
+        if len(originals) != 1 or len(receipts) > 1 or len(members) != len(originals) + len(receipts):
+            _fail(
+                relation_path + ".member_refs",
+                "refund membership must contain one expense and at most one refund receipt independent of array order",
+            )
+        owners = relationships_by_relation.get(relation["id"], [])
+        if len(owners) != 1:
+            _fail(
+                relation_path,
+                "refund relation must own exactly one refund_relationship domain entity",
+            )
+        relationship = owners[0]
+        payload = relationship["payload"]
+        relationship_path = (
+            f"{path}.domain_entities[{state['domain_entities'].index(relationship)}].payload"
+        )
+        original = originals[0]
+        if payload["original_transaction_id"] != original["id"]:
+            _fail(
+                relationship_path + ".original_transaction_id",
+                "must identify the relation's original expense",
+            )
+        original_entry = current.get(original["id"])
+        if original_entry is None:
+            _fail(
+                relationship_path + ".original_transaction_id",
+                "must identify a current effective expense",
+            )
+        original_expense_postings = [
+            posting
+            for posting in original_entry[2]
+            if posting.get("role") == "expense"
+            and _decimal(posting["amount"], relationship_path + ".category_id") > 0
+        ]
+        if len(original_expense_postings) != 1:
+            _fail(
+                relationship_path + ".original_transaction_id",
+                "original expense must have exactly one positive expense posting",
+            )
+        original_posting = original_expense_postings[0]
+        category = categories.get(payload["category_id"])
+        if (
+            category is None
+            or category["parent_id"] is None
+            or not category["active"]
+            or category["posting_account_id"] != original_posting["account_id"]
+        ):
+            _fail(
+                relationship_path + ".category_id",
+                "must inherit the original exact active secondary expense category",
+            )
+        original_amount = _amount(
+            original_posting["amount"],
+            original_posting["currency"],
+            relationship_path + ".original_transaction_id",
+            precisions,
+        )
+        requested = _amount(
+            payload["requested_amount"],
+            payload["currency"],
+            relationship_path + ".requested_amount",
+            precisions,
+        )
+        received = _amount(
+            payload["received_amount"],
+            payload["currency"],
+            relationship_path + ".received_amount",
+            precisions,
+        )
+        if requested <= 0 or received < 0:
+            _fail(relationship_path, "refund amounts must be positive requested and non-negative received")
+        if payload["currency"] != original_posting["currency"]:
+            _fail(relationship_path + ".currency", "must match the original expense currency")
+        original_caps[original["id"]] = original_amount
+        received_by_original[original["id"]] += received
+
+        for time_name, time_value in payload["times"].items():
+            _timestamp(time_value, relationship_path + ".times." + time_name, timezone)
+        history = payload["state_history"]
+        if [item["sequence"] for item in history] != list(range(1, len(history) + 1)):
+            _fail(relationship_path + ".state_history", "sequence must be contiguous from 1")
+        states = [item["state"] for item in history]
+        if states not in (
+            ["received"],
+            ["requested"],
+            ["requested", "approved"],
+            ["requested", "approved", "processing"],
+            ["requested", "approved", "processing", "received"],
+        ):
+            _fail(
+                relationship_path + ".state_history",
+                "refund lifecycle must follow requested -> approved -> processing -> received; imported receipts may begin received",
+            )
+        for history_index, event in enumerate(history):
+            event_path = f"{relationship_path}.state_history[{history_index}]"
+            _timestamp(event["occurred_at"], event_path + ".occurred_at", timezone)
+            received_event = event["state"] == "received"
+            if received_event != (event["formal_effect_count"] == 1):
+                _fail(event_path + ".formal_effect_count", "received owns one formal effect; other states own zero")
+            if received_event:
+                if event["transaction_id"] is None:
+                    _fail(event_path + ".transaction_id", "received must identify the receipt transaction")
+            elif event["transaction_id"] is not None or event["formal_effect_count"] != 0:
+                _fail(event_path, "non-received history cannot identify a formal transaction")
+        latest_state = history[-1]["state"]
+        receipt = receipts[0] if receipts else None
+        if receipt is None:
+            if (
+                payload["refund_transaction_id"] is not None
+                or payload["destination_account_id"] is not None
+                or received != 0
+                or latest_state == "received"
+            ):
+                _fail(relationship_path, "pre-receipt relationship cannot own received facts")
+            continue
+
+        if (
+            payload["refund_transaction_id"] != receipt["id"]
+            or payload["destination_account_id"] is None
+            or received <= 0
+            or latest_state != "received"
+            or history[-1]["transaction_id"] != receipt["id"]
+        ):
+            _fail(relationship_path, "received relationship must exactly own its receipt and destination")
+        for required_time in ("confirmed_at", "arrived_at"):
+            if required_time not in payload["times"]:
+                _fail(relationship_path + ".times", f"received relationship requires {required_time}")
+        destination = accounts.get(payload["destination_account_id"])
+        if destination is None or not (
+            destination["owned_by_user"]
+            and destination["real_account"]
+            and destination["reconciliation_eligible"]
+            and destination["kind"] == "asset"
+            and destination["currency"] == payload["currency"]
+        ):
+            _fail(
+                relationship_path + ".destination_account_id",
+                "must identify an owned reconciliation-eligible real asset in the refund currency",
+            )
+        receipt_entry = current.get(receipt["id"])
+        if receipt_entry is None:
+            _fail(relationship_path + ".refund_transaction_id", "refund receipt must be current")
+        receipt_version, receipt_postings = receipt_entry[1], receipt_entry[2]
+        if any(
+            receipt_version[field] != payload["times"]["arrived_at"]
+            for field in ("occurred_at", "statistics_at", "effective_at")
+        ):
+            _fail(relationship_path + ".times.arrived_at", "must own all receipt economic time roles")
+        by_role = {posting.get("role"): posting for posting in receipt_postings}
+        if set(by_role) != {"destination_asset", "expense"} or len(receipt_postings) != 2:
+            _fail(relationship_path + ".refund_transaction_id", "refund receipt requires exact destination_asset and expense postings")
+        destination_posting = by_role["destination_asset"]
+        expense_posting = by_role["expense"]
+        destination_amount = _amount(
+            destination_posting["amount"], payload["currency"], relationship_path, precisions
+        )
+        expense_amount = _amount(
+            expense_posting["amount"], payload["currency"], relationship_path, precisions
+        )
+        if (
+            destination_amount != received
+            or expense_amount != -received
+            or destination_posting["account_id"] != payload["destination_account_id"]
+            or destination_posting["currency"] != payload["currency"]
+            or not destination_posting["reconciliation_eligible"]
+            or expense_posting["account_id"] != original_posting["account_id"]
+            or expense_posting.get("category_id") != payload["category_id"]
+            or expense_posting["currency"] != payload["currency"]
+            or expense_posting["reconciliation_eligible"]
+        ):
+            _fail(relationship_path + ".refund_transaction_id", "refund receipt postings must exactly inherit category and balance the received amount")
+        confirmations = [
+            item
+            for item in state["confirmations"]
+            if item["type"] == "refund_relationship_confirmation"
+            and item["subject"] == {"kind": "relation", "id": relation["id"]}
+        ]
+        if len(confirmations) != 1:
+            _fail(relation_path, "received refund relation requires exactly one relationship confirmation")
+        confirmation = confirmations[0]
+        if (
+            confirmation["payload"] != {"original_transaction_id": original["id"]}
+            or confirmation.get("confirmed_at") != payload["times"]["confirmed_at"]
+            or receipt_version.get("confirmation_id") != confirmation["id"]
+        ):
+            _fail(relation_path, "relationship confirmation must own the original identity, time, and receipt version")
+
+    for relationship in relationships:
+        relation_id = relationship["payload"]["relation_id"]
+        if relation_id not in relations or relations[relation_id]["type"] != "refund":
+            _fail(path + ".domain_entities", "refund_relationship has a dangling or mistyped relation")
+        if len(relationships_by_relation[relation_id]) != 1:
+            _fail(path + ".domain_entities", "refund relation/domain ownership must be one-to-one")
+    for original_id, received_total in received_by_original.items():
+        if received_total > original_caps[original_id]:
+            _fail(path + ".domain_entities", "cumulative active refunds exceed the original categorized expense")
+
+    source_to_evidence_type = {
+        "bank_debit": "asset_debit",
+        "merchant_refund_notice": "refund_notice",
+        "wallet_credit": "asset_credit",
+        "combined_refund_statement": "combined_refund_statement",
+        "wallet_credit_mirror": "asset_credit_mirror",
+    }
+    source_positions = {item["id"]: index for index, item in enumerate(state["sources"])}
+    for source_index, source in enumerate(state["sources"]):
+        if source["type"] not in source_to_evidence_type:
+            continue
+        source_path = f"{path}.sources[{source_index}].payload"
+        payload = source["payload"]
+        if payload["kind"] != source["type"]:
+            _fail(source_path + ".kind", "must equal the closed source subtype")
+        owned_evidence = evidence.get(payload["evidence_id"])
+        if (
+            owned_evidence is None
+            or owned_evidence["type"] != source_to_evidence_type[source["type"]]
+            or owned_evidence["source_ids"] != [source["id"]]
+            or owned_evidence["payload"]["observed_at"] != payload["observed_at"]
+        ):
+            _fail(source_path + ".evidence_id", "must own one exact matching RG-07 evidence item")
+        if "account_id" in payload:
+            account = accounts.get(payload["account_id"])
+            if account is None or not (
+                account["owned_by_user"] and account["real_account"] and account["kind"] == "asset"
+            ):
+                _fail(source_path + ".account_id", "must reference an owned real asset")
+            if payload.get("currency") != account["currency"]:
+                _fail(source_path + ".currency", "must match the source account currency")
+        if source["type"] == "bank_debit" and Decimal(payload["amount"]) >= 0:
+            _fail(source_path + ".amount", "bank debit must be negative")
+        if source["type"] in {"wallet_credit", "wallet_credit_mirror"} and Decimal(payload["amount"]) <= 0:
+            _fail(source_path + ".amount", "wallet credit must be positive")
+        mirror_source_id = payload.get("mirror_of_source_id")
+        if source["type"] == "wallet_credit_mirror":
+            original_source = sources.get(mirror_source_id)
+            if (
+                original_source is None
+                or original_source["type"] != "wallet_credit"
+                or source_positions[original_source["id"]] >= source_index
+                or original_source["payload"].get("amount") != payload.get("amount")
+                or original_source["payload"].get("currency") != payload.get("currency")
+            ):
+                _fail(source_path + ".mirror_of_source_id", "must identify one earlier equal wallet credit source")
+        elif mirror_source_id is not None:
+            _fail(source_path + ".mirror_of_source_id", "only wallet_credit_mirror owns source lineage")
+
+    for evidence_index, item in enumerate(state["evidence"]):
+        if item["type"] not in set(source_to_evidence_type.values()):
+            continue
+        item_path = f"{path}.evidence[{evidence_index}].payload"
+        lineage = {"mirror_of_evidence_id", "merged_into_evidence_link_id"}
+        if item["type"] != "asset_credit_mirror":
+            if lineage & set(item["payload"]):
+                _fail(item_path, "only asset_credit_mirror owns evidence lineage")
+            continue
+        if not lineage.issubset(item["payload"]):
+            _fail(item_path, "asset_credit_mirror requires complete evidence lineage")
+        original_evidence = evidence.get(item["payload"]["mirror_of_evidence_id"])
+        merged_link = evidence_links.get(item["payload"]["merged_into_evidence_link_id"])
+        if (
+            original_evidence is None
+            or original_evidence["type"] != "asset_credit"
+            or merged_link is None
+            or merged_link["evidence_id"] != original_evidence["id"]
+            or merged_link["role"] != "destination_asset_posting"
+        ):
+            _fail(item_path, "mirror evidence must identify the earlier asset credit and its exact posting link")
+
+    required_candidate_confirmations = {
+        "original_transaction_id",
+        "category_id_and_allocation",
+        "destination_account_id",
+        "arrival",
+    }
+    for candidate_index, candidate in enumerate(state["candidates"]):
+        if candidate["type"] != "refund_credit":
+            continue
+        candidate_path = f"{path}.candidates[{candidate_index}]"
+        source = sources[candidate["source_ids"][0]]
+        payload = candidate["payload"]
+        if source["type"] != "wallet_credit":
+            _fail(candidate_path + ".source_ids", "refund credit candidate requires one wallet credit source")
+        source_payload = source["payload"]
+        if (
+            payload["proposed_amount"] != source_payload["amount"]
+            or payload["currency"] != source_payload["currency"]
+            or payload["proposed_destination_account_id"] != source_payload["account_id"]
+            or payload["proposed_arrived_at"] != source_payload["value_at"]
+            or payload["original_source_payload_hash"]
+            != source_payload["original_source_payload_hash"]
+        ):
+            _fail(candidate_path + ".payload", "refund candidate proposals must exactly derive from its wallet credit source")
+        confirmed = candidate["status_history"][-1]["status"] == "confirmed"
+        required = set(payload["requires_confirmation"])
+        if required != required_candidate_confirmations:
+            _fail(candidate_path + ".payload.requires_confirmation", "must preserve the exact confirmation registry")
+        if confirmed:
+            confirming_operations = [
+                operation
+                for operation in operations.values()
+                if operation["action_type"] == "confirm_imported_refund"
+                and operation["outcome"]["status"] == "accepted"
+                and operation.get("input", {}).get("candidate_id") == candidate["id"]
+            ]
+            if len(confirming_operations) != 1:
+                _fail(candidate_path, "confirmed refund candidate must be owned by one accepted imported confirmation")
+
+
 def _periodic_allocation_statuses(
     state: dict[str, Any],
     indexes: dict[str, dict[str, dict[str, Any]]],
@@ -4368,6 +4860,9 @@ def _validate_reports(
             "budget", "cash_outflow", "category_effect", "consumption", "income",
             "net_worth_change",
         },
+        "RG-07": {
+            "cash_inflow", "cash_outflow", "consumption", "income", "net_worth_change"
+        },
     }
     for report_index, report in enumerate(state["reports"]):
         report_path = f"{path}.reports[{report_index}]"
@@ -4417,6 +4912,12 @@ def _expected_derived_statuses(
         expected[("candidate", candidate["id"], "confirmation_status")] = candidate[
             "status_history"
         ][-1]["status"]
+
+    for entity in state["domain_entities"]:
+        if entity["type"] == "refund_relationship":
+            expected[("domain_entity", entity["id"], "refund_status")] = entity[
+                "payload"
+            ]["state_history"][-1]["state"]
 
     for transaction, _, postings in current.values():
         eligible = [item for item in postings if item["reconciliation_eligible"]]
@@ -4595,6 +5096,10 @@ def _validate_derived_statuses(
         "confirmation_status": (
             "candidate",
             {"pending_confirmation", "confirmed", "rejected", "incomplete"},
+        ),
+        "refund_status": (
+            "domain_entity",
+            {"requested", "approved", "processing", "received"},
         ),
         "item_evidence_completeness": (
             "relation",
@@ -5705,6 +6210,263 @@ def _validate_rejected_periodic_allocation_attempt(
         _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
 
 
+def _validate_rejected_rg07_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+) -> None:
+    action = operation["action_type"]
+    attempted = operation["attempted_input"]
+    if action == "confirm_manual_refund_receipt":
+        failure = ("arrival_confirmation_required", "arrival_confirmed")
+    elif action == "allocate_refund_receipt":
+        if Decimal(attempted["requested_allocation"]) <= Decimal(
+            attempted["available_allocation"]
+        ):
+            _fail(
+                operation_path + ".attempted_input.requested_allocation",
+                "does not exceed the available refund allocation",
+            )
+        failure = ("refund_amount_exceeds_remaining_refundable", "requested_allocation")
+    elif action == "confirm_imported_refund":
+        if not attempted.get("original_transaction_id"):
+            failure = ("original_transaction_confirmation_required", "original_transaction_id")
+        elif not attempted.get("category_id") or not attempted.get("allocated_amount"):
+            failure = ("category_allocation_confirmation_required", "category_id")
+        elif not attempted.get("destination_account_id"):
+            failure = ("destination_confirmation_required", "destination_account_id")
+        elif (
+            not attempted.get("arrived_at")
+            or not attempted.get("confirmed_at")
+            or attempted.get("arrival_confirmed") is not True
+        ):
+            failure = ("arrival_confirmation_required", "arrival_confirmed")
+        else:
+            _fail(
+                operation_path + ".attempted_input",
+                "does not omit a registered imported-refund confirmation",
+            )
+    elif action == "validate_refund_receipt":
+        transactions = {item["id"]: item for item in baseline["transactions"]}
+        versions = {item["id"]: item for item in baseline["transaction_versions"]}
+        posting_sets = {item["id"]: item for item in baseline["posting_sets"]}
+        postings = {item["id"]: item for item in baseline["postings"]}
+        accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+        original_id = attempted.get("original_transaction_id")
+        original = transactions.get(original_id) if original_id is not None else None
+        original_posting = None
+        if original is not None:
+            version = versions.get(original["current_version_id"])
+            posting_set = posting_sets.get(version["posting_set_id"]) if version else None
+            if posting_set is not None:
+                expense_postings = [
+                    postings[posting_id]
+                    for posting_id in posting_set["posting_ids"]
+                    if postings[posting_id].get("role") == "expense"
+                    and Decimal(postings[posting_id]["amount"]) > 0
+                ]
+                if len(expense_postings) == 1:
+                    original_posting = expense_postings[0]
+        amount = attempted.get("amount")
+        destination_id = attempted.get("destination_account_id")
+        destination = accounts.get(destination_id) if destination_id is not None else None
+        if amount is not None and Decimal(str(amount)) <= 0:
+            failure = ("must_be_positive", "amount")
+        elif original_id is None:
+            failure = ("original_transaction_confirmation_required", "original_transaction_id")
+        elif original is None or original["type"] != "expense" or original_posting is None:
+            failure = ("effective_confirmed_original_expense_required", "original_transaction_id")
+        elif attempted.get("currency") != original_posting["currency"]:
+            failure = ("same_currency_required", "currency")
+        elif destination is None:
+            failure = ("known_destination_account_required", "destination_account_id")
+        elif not (
+            destination["owned_by_user"]
+            and destination["real_account"]
+            and destination["kind"] == "asset"
+            and destination["reconciliation_eligible"]
+        ):
+            failure = ("owned_real_asset_destination_required", "destination_account_id")
+        elif attempted.get("category_id") != original_posting.get("category_id"):
+            failure = ("exact_original_secondary_category_required", "category_id")
+        elif (
+            amount is not None
+            and attempted.get("remaining_refundable") is not None
+            and Decimal(str(amount)) > Decimal(str(attempted["remaining_refundable"]))
+        ):
+            failure = ("refund_amount_exceeds_remaining_refundable", "amount")
+        elif attempted.get("destination_confirmed") is False:
+            failure = ("destination_confirmation_required", "destination_account_id")
+        else:
+            _fail(
+                operation_path + ".attempted_input",
+                "does not reproduce a registered refund validation rejection",
+            )
+    else:
+        _fail(operation_path + ".action_type", "unregistered RG-07 rejection")
+
+    reason, field = failure
+    outcome = operation["outcome"]
+    if outcome["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r}")
+    expected_path = f"$.attempted_input.{field}"
+    if outcome["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+
+
+def _validate_rg07_action_input(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+    timezone: ZoneInfo,
+) -> None:
+    action = operation["action_type"]
+    value = operation["input"]
+    input_path = operation_path + ".input"
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    transactions = {item["id"]: item for item in baseline["transactions"]}
+    versions = {item["id"]: item for item in baseline["transaction_versions"]}
+    posting_sets = {item["id"]: item for item in baseline["posting_sets"]}
+    postings = {item["id"]: item for item in baseline["postings"]}
+
+    for field in (
+        "requested_at",
+        "approved_at",
+        "processor_reported_at",
+        "observed_at",
+        "source_observed_at",
+        "booking_at",
+        "value_at",
+        "arrived_at",
+        "confirmed_at",
+    ):
+        if field in value:
+            _timestamp(value[field], input_path + "." + field, timezone)
+    currency = value.get("currency")
+    if currency is not None and currency not in precisions:
+        _fail(input_path + ".currency", "undeclared currency")
+    for field in ("requested_amount", "amount", "allocated_amount"):
+        if field in value:
+            amount_currency = currency or (
+                value.get("currency") if field != "allocated_amount" else "CNY"
+            )
+            amount = _amount(value[field], amount_currency, input_path + "." + field, precisions)
+            if amount <= 0 and action != "attach_original_payment_evidence":
+                _fail(input_path + "." + field, "must be positive")
+
+    original_id = value.get("original_transaction_id")
+    original_posting = None
+    if original_id is not None:
+        original = transactions.get(original_id)
+        if original is None or original["type"] != "expense":
+            _fail(input_path + ".original_transaction_id", "must reference the original expense")
+        version = versions.get(original["current_version_id"])
+        posting_set = posting_sets.get(version["posting_set_id"]) if version else None
+        expense_postings = (
+            [
+                postings[posting_id]
+                for posting_id in posting_set["posting_ids"]
+                if postings[posting_id].get("role") == "expense"
+                and Decimal(postings[posting_id]["amount"]) > 0
+            ]
+            if posting_set is not None
+            else []
+        )
+        if len(expense_postings) != 1:
+            _fail(input_path + ".original_transaction_id", "must have one current positive expense posting")
+        original_posting = expense_postings[0]
+        if currency is not None and original_posting["currency"] != currency:
+            _fail(input_path + ".currency", "must match the original expense currency")
+
+    if "category_id" in value:
+        category = categories.get(value["category_id"])
+        if (
+            category is None
+            or category["parent_id"] is None
+            or not category["active"]
+            or original_posting is None
+            or category["posting_account_id"] != original_posting["account_id"]
+        ):
+            _fail(input_path + ".category_id", "must be the original exact active secondary category")
+    account_field = "account_id" if "account_id" in value else "destination_account_id"
+    if account_field in value:
+        account = accounts.get(value[account_field])
+        if account is None or not (
+            account["owned_by_user"]
+            and account["real_account"]
+            and account["kind"] == "asset"
+            and account["reconciliation_eligible"]
+        ):
+            _fail(input_path + "." + account_field, "must reference an owned eligible real asset")
+        if currency is not None and account["currency"] != currency:
+            _fail(input_path + ".currency", "must match the destination account currency")
+
+    if action == "ingest_refund_status_source":
+        if value["reported_state"] not in {"requested", "approved", "processing"}:
+            _fail(input_path + ".reported_state", "merchant status evidence cannot report receipt")
+        if value["proves_arrival"]:
+            _fail(input_path + ".proves_arrival", "merchant status evidence cannot prove asset arrival")
+        relation = next((item for item in baseline["relations"] if item["id"] == value["refund_relation_id"]), None)
+        if relation is None or relation["type"] != "refund":
+            _fail(input_path + ".refund_relation_id", "must reference the exact refund relation")
+    if action == "attach_original_payment_evidence":
+        posting = postings.get(value["payment_asset_posting_id"])
+        if posting is None or posting.get("role") != "payment_asset":
+            _fail(input_path + ".payment_asset_posting_id", "must reference the original payment-asset posting")
+        if not posting["reconciliation_eligible"]:
+            _fail(input_path + ".payment_asset_posting_id", "must reference an eligible real-account posting")
+        if Decimal(value["amount"]) >= 0:
+            _fail(input_path + ".amount", "must preserve the signed negative original debit")
+        if posting["amount"] != value["amount"] or posting["currency"] != value["currency"]:
+            _fail(input_path + ".amount", "must exactly match the original payment-asset posting")
+    if action == "confirm_manual_refund_receipt":
+        relation = next(
+            (item for item in baseline["relations"] if item["id"] == value["refund_relation_id"]),
+            None,
+        )
+        if relation is None or relation["type"] != "refund":
+            _fail(input_path + ".refund_relation_id", "must reference the existing refund relation")
+        if not any(ref["id"] == value["original_transaction_id"] for ref in relation["member_refs"]):
+            _fail(input_path + ".original_transaction_id", "must match the refund relation original")
+    if action in {"attach_refund_destination_evidence", "attach_refund_dual_role_evidence"}:
+        relation = next((item for item in baseline["relations"] if item["id"] == value["refund_relation_id"]), None)
+        if relation is None or relation["type"] != "refund":
+            _fail(input_path + ".refund_relation_id", "must reference the exact refund relation")
+        posting = postings.get(value["destination_asset_posting_id"])
+        if posting is None or posting.get("role") != "destination_asset":
+            _fail(input_path + ".destination_asset_posting_id", "must reference the exact refund destination posting")
+        if not any(ref["id"] == posting["id"] or ref["id"] == value["refund_relation_id"] for ref in relation["member_refs"]):
+            refund_ids = {ref["id"] for ref in relation["member_refs"]}
+            owners = {tx_id for tx_id in refund_ids if transactions.get(tx_id, {}).get("type") == "refund_receipt"}
+            posting_owner = next((tx_id for tx_id in owners if postings[value["destination_asset_posting_id"]]["posting_set_id"] == versions[transactions[tx_id]["current_version_id"]]["posting_set_id"]), None)
+            if posting_owner is None:
+                _fail(input_path + ".destination_asset_posting_id", "posting must belong to the named refund relation")
+    if action == "attach_refund_dual_role_evidence" and (
+        len(value["roles"]) != 2 or set(value["roles"]) != {"refund_relationship", "destination_asset_posting"}
+    ):
+        _fail(input_path + ".roles", "must be the exact set-like dual-role pair")
+    if action == "confirm_imported_refund":
+        candidate = next(
+            (item for item in baseline["candidates"] if item["id"] == value["candidate_id"]),
+            None,
+        )
+        if candidate is None or candidate["type"] != "refund_credit":
+            _fail(input_path + ".candidate_id", "must reference a pending refund credit candidate")
+        allowed_statuses = (
+            {"pending_confirmation"}
+            if operation["outcome"]["status"] == "accepted"
+            else {"confirmed"}
+        )
+        if candidate["status_history"][-1]["status"] not in allowed_statuses:
+            _fail(input_path + ".candidate_id", "candidate must be pending confirmation")
+        if Decimal(value["allocated_amount"]) != Decimal(candidate["payload"]["proposed_amount"]):
+            _fail(input_path + ".allocated_amount", "must exactly match the candidate proposed amount")
+        if value["destination_account_id"] != candidate["payload"]["proposed_destination_account_id"]:
+            _fail(input_path + ".destination_account_id", "must exactly match the candidate source account")
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -5746,6 +6508,9 @@ def _validate_action_input(
         }:
             _validate_rejected_rg06_attempt(operation, operation_path, baseline)
             return
+        elif action in _RG07_ACTIONS:
+            _validate_rejected_rg07_attempt(operation, operation_path, baseline)
+            return
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
                 operation,
@@ -5781,6 +6546,12 @@ def _validate_action_input(
     transactions = {item["id"]: item for item in baseline["transactions"]}
     candidates = {item["id"]: item for item in baseline["candidates"]}
     entities = {item["id"]: item for item in baseline["domain_entities"]}
+
+    if action in _RG07_ACTIONS:
+        _validate_rg07_action_input(
+            operation, operation_path, baseline, precisions, timezone
+        )
+        return
 
     if action == "manual_mixed_expense":
         for field in ("asset_account_id", "liability_account_id"):
@@ -6537,6 +7308,7 @@ def _validate_append_only_transition(
     *,
     case_id: str | None = None,
     action_type: str | None = None,
+    outcome_status: str | None = None,
     target_candidate_id: str | None = None,
     target_relation_id: str | None = None,
 ) -> None:
@@ -6643,6 +7415,24 @@ def _validate_append_only_transition(
                         _fail(item_path + ".member_refs", "RG-06 relation may append exactly one unique member")
                     continue
                 if (
+                    collection_name == "relations"
+                    and case_id == "RG-07"
+                    and action_type == "confirm_manual_refund_receipt"
+                    and outcome_status == "accepted"
+                    and item_id == target_relation_id
+                    and before[item_id].get("type") == after[item_id].get("type") == "refund"
+                    and before[item_id].get("payload") == after[item_id].get("payload") == {}
+                ):
+                    old_refs = before[item_id]["member_refs"]
+                    new_refs = after[item_id]["member_refs"]
+                    if (
+                        len(new_refs) != len(old_refs) + 1
+                        or any(ref not in new_refs for ref in old_refs)
+                        or len({(ref["kind"], ref["id"]) for ref in new_refs}) != len(new_refs)
+                    ):
+                        _fail(item_path + ".member_refs", "RG-07 receipt may append exactly one unique transaction member")
+                    continue
+                if (
                     collection_name == "posting_reconciliations"
                     and (
                         (
@@ -6656,6 +7446,13 @@ def _validate_append_only_transition(
                         or (
                             case_id == "RG-06"
                             and action_type == "link_staged_payment_evidence"
+                        )
+                        or (
+                            case_id == "RG-07"
+                            and action_type in {
+                                "attach_original_payment_evidence",
+                                "attach_refund_destination_evidence",
+                            }
                         )
                     )
                 ):
@@ -6697,13 +7494,19 @@ def _validate_append_only_transition(
                             and action_type == "confirm_staged_payment_candidate"
                             and before[item_id].get("type") == "staged_payment"
                         )
+                        or (
+                            case_id == "RG-07"
+                            and action_type == "confirm_imported_refund"
+                            and outcome_status == "accepted"
+                            and before[item_id].get("type") == "refund_credit"
+                        )
                     )
                 ):
                     _validate_candidate_confirmation_transition(
                         before[item_id],
                         after[item_id],
                         item_path,
-                        immutable_payload=case_id == "RG-06",
+                        immutable_payload=case_id in {"RG-06", "RG-07"},
                     )
                 else:
                     _validate_history_prefix(
@@ -6750,6 +7553,28 @@ def _validate_append_only_transition(
                         or new_payload["due_amount"] != old_payload["due_amount"]
                     ):
                         _fail(item_path + ".payload", "RG-06 status transitions cannot change payment arithmetic")
+                    continue
+                if (
+                    case_id == "RG-07"
+                    and action_type == "confirm_manual_refund_receipt"
+                    and outcome_status == "accepted"
+                    and before[item_id].get("type") == after[item_id].get("type") == "refund_relationship"
+                    and before[item_id].get("payload", {}).get("relation_id") == target_relation_id
+                ):
+                    old_outer = {key: value for key, value in before[item_id].items() if key != "payload"}
+                    new_outer = {key: value for key, value in after[item_id].items() if key != "payload"}
+                    if not _contract_equivalent(old_outer, new_outer):
+                        _fail(item_path, "RG-07 relationship stable identity is immutable")
+                    mutable = {"refund_transaction_id", "received_amount", "destination_account_id", "times", "state_history"}
+                    if not _contract_equivalent(
+                        {key: value for key, value in old_payload.items() if key not in mutable},
+                        {key: value for key, value in new_payload.items() if key not in mutable},
+                    ):
+                        _fail(item_path + ".payload", "RG-07 receipt cannot change relationship identity or original allocation")
+                    old_history = old_payload["state_history"]
+                    new_history = new_payload["state_history"]
+                    if len(new_history) != len(old_history) + 1 or new_history[: len(old_history)] != old_history:
+                        _fail(item_path + ".payload.state_history", "RG-07 receipt must append exactly one history event")
                     continue
                 if (
                     before[item_id].get("type") == "stored_value_reconstruction"
@@ -6893,6 +7718,187 @@ def _validate_no_change_retry(
         _fail(operation_path + ".returned_ids", "must exactly return the prior accepted result IDs")
 
 
+def _validate_rg07_action_effects(
+    operation: dict[str, Any],
+    operation_path: str,
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    action = operation["action_type"]
+    by_collection = {
+        name: {item["id"]: item for item in _collection(result, parts)}
+        for name, parts in _ENTITY_COLLECTIONS.items()
+    }
+
+    def changed(collection: str) -> list[dict[str, Any]]:
+        ids = (
+            expected_entities[collection]["added_ids"]
+            + expected_entities[collection]["changed_ids"]
+        )
+        return [by_collection[collection][item_id] for item_id in ids]
+
+    expected_types = {
+        "record_refund_request_status": {
+            "relations": {"refund"},
+            "domain_entities": {"refund_relationship"},
+        },
+        "ingest_refund_status_source": {
+            "sources": {"merchant_refund_notice"},
+            "evidence": {"refund_notice"},
+        },
+        "confirm_manual_refund_receipt": {
+            "transactions": {"refund_receipt"},
+            "confirmations": {"refund_relationship_confirmation"},
+            "relations": {"refund"},
+            "domain_entities": {"refund_relationship"},
+        },
+        "attach_original_payment_evidence": {
+            "sources": {"bank_debit"},
+            "evidence": {"asset_debit"},
+        },
+        "attach_refund_destination_evidence": {
+            "sources": {"wallet_credit"},
+            "evidence": {"asset_credit"},
+        },
+        "attach_refund_dual_role_evidence": {
+            "sources": {"combined_refund_statement"},
+            "evidence": {"combined_refund_statement"},
+        },
+        "confirm_refund_receipt": {
+            "transactions": {"refund_receipt"},
+            "confirmations": {"refund_relationship_confirmation"},
+            "relations": {"refund"},
+            "domain_entities": {"refund_relationship"},
+        },
+        "ingest_refund_credit_source": {
+            "sources": {"wallet_credit"},
+            "evidence": {"asset_credit"},
+            "candidates": {"refund_credit"},
+        },
+        "confirm_imported_refund": {
+            "transactions": {"refund_receipt"},
+            "candidates": {"refund_credit"},
+            "confirmations": {"refund_relationship_confirmation"},
+            "relations": {"refund"},
+            "domain_entities": {"refund_relationship"},
+        },
+        "merge_refund_mirror_evidence": {
+            "sources": {"wallet_credit_mirror"},
+            "evidence": {"asset_credit_mirror"},
+        },
+    }
+    for collection, allowed_types in expected_types[action].items():
+        items = changed(collection)
+        if not items or {item["type"] for item in items} != allowed_types:
+            _fail(
+                operation_path + f".deltas.entity_changes.{collection}",
+                f"{action} must own exactly the registered RG-07 {collection} subtype",
+            )
+
+    for confirmation in changed("confirmations"):
+        if confirmation["operation_id"] != operation["id"]:
+            _fail(
+                operation_path + ".deltas.entity_changes.confirmations",
+                "RG-07 confirmation must belong to the creating operation",
+            )
+    links = changed("evidence_links")
+    expected_roles = {
+        "attach_original_payment_evidence": {"payment_asset_posting"},
+        "ingest_refund_status_source": {"refund_relationship"},
+        "attach_refund_destination_evidence": {"destination_asset_posting"},
+        "attach_refund_dual_role_evidence": {
+            "refund_relationship",
+            "destination_asset_posting",
+        },
+        "confirm_imported_refund": {"destination_asset_posting"},
+        "merge_refund_mirror_evidence": {"destination_asset_posting"},
+    }
+    if action in expected_roles and {item["role"] for item in links} != expected_roles[action]:
+        _fail(
+            operation_path + ".deltas.entity_changes.evidence_links",
+            "RG-07 evidence links must have the action's exact role set",
+        )
+
+
+def _validate_rg07_input_bindings(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    """Bind accepted RG-07 input facts to the exact entities they create or mutate."""
+    action = operation["action_type"]
+    value = operation["input"]
+
+    def changed(collection: str) -> list[dict[str, Any]]:
+        by_id = {item["id"]: item for item in _collection(result, _ENTITY_COLLECTIONS[collection])}
+        ids = expected_entities[collection]["added_ids"] + expected_entities[collection]["changed_ids"]
+        return [by_id[item_id] for item_id in ids]
+
+    def require(condition: bool, field: str, message: str) -> None:
+        if not condition:
+            _fail(operation_path + ".input." + field, message)
+
+    if action == "record_refund_request_status":
+        relation = changed("relations")[0]
+        entity = changed("domain_entities")[0]
+        payload = entity["payload"]
+        require(relation["id"] == "refund-relation-rg07-manual", "request_id", "request must own the created refund relation")
+        require(payload["original_transaction_id"] == value["original_transaction_id"], "original_transaction_id", "must bind the relationship original")
+        require(payload["requested_amount"] == value["requested_amount"] and payload["currency"] == value["currency"], "requested_amount", "must bind requested amount and currency")
+        require(payload["times"]["requested_at"] == value["requested_at"] and payload["times"]["approved_at"] == value["approved_at"] and payload["times"]["processor_reported_at"] == value["processor_reported_at"], "requested_at", "must bind all request lifecycle times")
+    elif action in {"ingest_refund_status_source", "attach_original_payment_evidence", "attach_refund_destination_evidence", "attach_refund_dual_role_evidence", "merge_refund_mirror_evidence"}:
+        source = changed("sources")[0]
+        evidence = changed("evidence")[0]
+        link = changed("evidence_links")[0]
+        require(source["id"] == value["source_id"], "source_id", "must bind the created source")
+        if "evidence_id" in value:
+            require(evidence["id"] == value["evidence_id"], "evidence_id", "must bind the created evidence")
+        require(evidence["source_ids"] == [source["id"]], "source_id", "must bind the created evidence to the source")
+        require(link["evidence_id"] == evidence["id"], "evidence_id", "must bind the evidence link")
+        source_payload = source["payload"]
+        for field in ("amount", "currency", "account_id", "observed_at", "booking_at", "value_at"):
+            if field in value:
+                require(source_payload.get(field) == value[field], field, "must exactly bind the source payload")
+        if action == "ingest_refund_status_source":
+            require(source_payload.get("observed_at") == value["observed_at"], "observed_at", "must bind source observation time")
+            require(link["target_id"] == value["refund_relation_id"], "refund_relation_id", "must target the exact refund relation")
+        if action == "attach_original_payment_evidence":
+            require(link["target_id"] == value["payment_asset_posting_id"], "payment_asset_posting_id", "must target the exact payment posting")
+        elif action == "attach_refund_destination_evidence":
+            require(link["target_kind"] == "posting", "destination_asset_posting_id", "must target a posting")
+            require(link["target_id"] == value["destination_asset_posting_id"], "destination_asset_posting_id", "must target the exact destination posting")
+        elif action == "attach_refund_dual_role_evidence":
+            links_by_role = {item["role"]: item for item in changed("evidence_links")}
+            require(links_by_role["refund_relationship"]["target_id"] == value["refund_relation_id"], "refund_relation_id", "must target the exact refund relation")
+            require(links_by_role["destination_asset_posting"]["target_id"] == value["destination_asset_posting_id"], "destination_asset_posting_id", "must target the exact destination posting")
+        elif action == "merge_refund_mirror_evidence":
+            require(link["target_kind"] == "posting", "evidence_id", "must target a posting")
+    elif action == "ingest_refund_credit_source":
+        source = changed("sources")[0]
+        evidence = changed("evidence")[0]
+        candidate = changed("candidates")[0]
+        require(source["id"] == value["source_id"], "source_id", "must bind the created source")
+        require(evidence["id"] == value.get("evidence_id", evidence["id"]) and evidence["source_ids"] == [source["id"]], "source_id", "candidate evidence must bind the source")
+        require(candidate["source_ids"] == [source["id"]], "source_id", "candidate must bind the source")
+        require(candidate["payload"]["proposed_amount"] == value["amount"] and candidate["payload"]["currency"] == value["currency"], "amount", "candidate must preserve source amount and currency")
+    elif action in {"confirm_manual_refund_receipt", "confirm_refund_receipt", "confirm_imported_refund"}:
+        transaction = changed("transactions")[0]
+        relation = changed("relations")[0]
+        entity = changed("domain_entities")[0]
+        confirmation = changed("confirmations")[0]
+        payload = entity["payload"]
+        require(transaction["type"] == "refund_receipt", "amount", "must create a refund receipt transaction")
+        require(payload["original_transaction_id"] == value["original_transaction_id"], "original_transaction_id", "must bind the relationship original")
+        require(payload["received_amount"] == value.get("amount", value.get("allocated_amount")), "amount", "must bind the received allocation")
+        require(payload["refund_transaction_id"] == transaction["id"], "original_transaction_id", "relationship must own the created receipt")
+        require(confirmation["subject"] == {"kind": "relation", "id": relation["id"]}, "original_transaction_id", "confirmation must bind the created relation")
+        if action == "confirm_imported_refund":
+            candidate = changed("candidates")[0]
+            require(candidate["id"] == value["candidate_id"] and candidate["status_history"][-1]["status"] == "confirmed", "candidate_id", "must confirm the exact candidate")
+
+
 def _validate_registered_action_effects(
     operation: dict[str, Any],
     operation_path: str,
@@ -6910,6 +7916,8 @@ def _validate_registered_action_effects(
         registered_counts: dict[str, tuple[int, int, int]] | None = {}
     else:
         registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
+        if not accepted and action in _RG07_ACTIONS:
+            registered_counts = {}
     if registered_counts is None:
         _fail(operation_path + ".action_type", "unregistered action type")
     if accepted and action == "create_periodic_allocation":
@@ -6944,6 +7952,15 @@ def _validate_registered_action_effects(
             )
 
     if not accepted:
+        return
+
+    if action in _RG07_ACTIONS:
+        _validate_rg07_action_effects(
+            operation, operation_path, result, expected_entities
+        )
+        _validate_rg07_input_bindings(
+            operation, operation_path, {}, result, expected_entities
+        )
         return
 
     if action in _RG06_ACTIONS:
@@ -9258,8 +10275,12 @@ def _validate_operations(
                 operation_path,
                 case_id=case["case"]["id"],
                 action_type=operation["action_type"],
+                outcome_status=operation["outcome"]["status"],
                 target_candidate_id=(operation.get("input") or {}).get("candidate_id"),
-                target_relation_id=(operation.get("input") or {}).get("relation_id"),
+                target_relation_id=(operation.get("input") or {}).get(
+                    "relation_id",
+                    (operation.get("input") or {}).get("refund_relation_id"),
+                ),
             )
             if operation["outcome"]["status"] in {"rejected", "no_change"} and not _contract_equivalent(
                 _state_payload(baseline), _state_payload(result)
@@ -9385,6 +10406,7 @@ def validate_golden_case_v2(
         "RG-06": {"opening_balance", "expense"},
         "RG-11": {"opening_balance", "prepaid_purchase", "prepaid_recognition"},
         "RG-12": {"expense"},
+        "RG-07": {"opening_balance", "expense", "refund_receipt"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
@@ -9454,6 +10476,16 @@ def validate_golden_case_v2(
         _validate_references(
             state, state_path, indexes, operations, precisions, timezone
         )
+        if case_id == "RG-07":
+            _validate_rg07_contract(
+                state,
+                state_path,
+                indexes,
+                operations,
+                current,
+                precisions,
+                timezone,
+            )
         _validate_periodic_allocations(
             state, state_path, indexes, current, precisions, timezone
         )

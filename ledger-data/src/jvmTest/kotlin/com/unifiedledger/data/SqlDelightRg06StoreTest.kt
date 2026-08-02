@@ -405,7 +405,7 @@ class SqlDelightRg06StoreTest {
             val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> null }
             store.commit(createOperation())
             driver.execute(null, "INSERT INTO posting_set VALUES ('shared-set','ledger-a')", 0)
-            driver.execute(null, "INSERT INTO ledger_transaction VALUES ('shared-transaction','ledger-a','EXPENSE')", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('shared-transaction','ledger-a','EXPENSE')", 0)
             driver.execute(null, "INSERT INTO transaction_version VALUES ('shared-version','shared-transaction','ledger-a',1,'shared-set','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',NULL)", 0)
             driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('shared-transaction','ledger-a','shared-version')", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('shared-expense','shared-set','ledger-a',0,'expense-service-account',100,'CNY',2)", 0)
@@ -1276,7 +1276,7 @@ class SqlDelightRg06StoreTest {
     }
 
     private fun seedLegacyConfirmation(driver: JdbcSqliteDriver, owner: String, confirmationId: String) {
-        driver.execute(null, "INSERT INTO ledger_transaction VALUES ('legacy-tx','ledger-a','EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('legacy-tx','ledger-a','EXPENSE')", 0)
         when (owner) {
             "expense" -> {
                 driver.execute(null, "INSERT INTO manual_expense_request VALUES ('ledger-a','legacy-request',100,'CNY',2,'expense-service','asset-bank','2026-01-01T00:00:00Z','','explicit_manual_save')", 0)

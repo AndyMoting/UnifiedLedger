@@ -1,0 +1,286 @@
+-- RG-07 formal aggregate persistence: rejection outcome, refund relation,
+-- refund_relationship domain entity, source/evidence/evidence-link provenance,
+-- refund-credit candidate, confirmation, posting reconciliation, and rejection audit.
+
+ALTER TABLE ledger_transaction ADD COLUMN canonical_kind TEXT;
+CREATE TABLE rg07_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  transaction_id TEXT,
+  relation_id TEXT,
+  CHECK (operation_class IN ('STATUS_TRANSITION','CREATION','RECONCILIATION','REJECTION')),
+  CHECK (outcome IN ('ACCEPTED','NO_CHANGE','REJECTED')),
+  CHECK (length(fingerprint) > 0),
+  PRIMARY KEY (ledger_id, identity_value)
+);
+
+CREATE TABLE rg07_rejection (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg07_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+
+CREATE TABLE rg07_relation (
+  ledger_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL PRIMARY KEY,
+  relation_type TEXT NOT NULL CHECK (relation_type = 'refund'),
+  payload_marker TEXT NOT NULL CHECK (payload_marker = '{}'),
+  UNIQUE (ledger_id, relation_id)
+);
+
+CREATE TABLE rg07_relation_member (
+  ledger_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL,
+  member_kind TEXT NOT NULL CHECK (member_kind IN ('TRANSACTION')),
+  member_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, relation_id, member_kind, member_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg07_relation(ledger_id, relation_id) ON DELETE CASCADE
+);
+
+CREATE TABLE rg07_refund_relationship (
+  ledger_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL PRIMARY KEY,
+  relation_id TEXT NOT NULL UNIQUE,
+  original_transaction_id TEXT NOT NULL,
+  refund_transaction_id TEXT,
+  category_id TEXT NOT NULL,
+  requested_amount_minor INTEGER NOT NULL CHECK (requested_amount_minor > 0),
+  received_amount_minor INTEGER NOT NULL CHECK (received_amount_minor >= 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  destination_account_id TEXT,
+  requested_at TEXT,
+  approved_at TEXT,
+  processor_reported_at TEXT,
+  source_observed_at TEXT,
+  booking_at TEXT,
+  value_at TEXT,
+  confirmed_at TEXT,
+  arrived_at TEXT,
+  UNIQUE (ledger_id, entity_id),
+  UNIQUE (ledger_id, relation_id),
+  FOREIGN KEY (ledger_id, relation_id) REFERENCES rg07_relation(ledger_id, relation_id)
+);
+
+CREATE TABLE rg07_refund_relationship_history (
+  ledger_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE,
+  operation_identity TEXT NOT NULL,
+  refund_state TEXT NOT NULL CHECK (refund_state IN ('REQUESTED','APPROVED','PROCESSING','RECEIVED')),
+  occurred_at TEXT NOT NULL,
+  transaction_id TEXT,
+  formal_effect_count INTEGER NOT NULL CHECK (formal_effect_count IN (0, 1)),
+  PRIMARY KEY (ledger_id, entity_id, history_sequence),
+  UNIQUE (ledger_id, history_id),
+  CHECK ((refund_state = 'RECEIVED' AND transaction_id IS NOT NULL AND formal_effect_count = 1)
+      OR (refund_state != 'RECEIVED' AND transaction_id IS NULL AND formal_effect_count = 0)),
+  FOREIGN KEY (ledger_id, entity_id) REFERENCES rg07_refund_relationship(ledger_id, entity_id),
+  FOREIGN KEY (ledger_id, operation_identity) REFERENCES rg07_operation(ledger_id, identity_value)
+);
+
+CREATE TABLE rg07_source (
+  ledger_id TEXT NOT NULL,
+  source_id TEXT NOT NULL PRIMARY KEY,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('bank_debit','merchant_refund_notice','wallet_credit','combined_refund_statement','wallet_credit_mirror')),
+  source_record_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  immutable_payload_hash TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  observed_at_text TEXT NOT NULL,
+  amount_minor INTEGER,
+  currency_code TEXT,
+  currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  account_id TEXT,
+  reported_state TEXT,
+  proves_arrival INTEGER CHECK (proves_arrival IS NULL OR proves_arrival IN (0,1)),
+  processor_reported_at TEXT,
+  source_observed_at TEXT,
+  booking_at TEXT,
+  value_at TEXT,
+  original_source_payload_hash TEXT,
+  mirror_of_source_id TEXT,
+  UNIQUE (ledger_id, source_id),
+  CHECK (source_kind != 'merchant_refund_notice' OR (reported_state IN ('REQUESTED','APPROVED','PROCESSING') AND proves_arrival = 0)),
+  CHECK (source_kind != 'wallet_credit_mirror' OR mirror_of_source_id IS NOT NULL),
+  CHECK (source_kind = 'wallet_credit_mirror' OR mirror_of_source_id IS NULL)
+);
+
+CREATE TABLE rg07_evidence (
+  ledger_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('asset_debit','refund_notice','asset_credit','combined_refund_statement','asset_credit_mirror')),
+  observed_at TEXT NOT NULL,
+  observed_at_text TEXT NOT NULL,
+  mirror_of_evidence_id TEXT,
+  merged_into_evidence_link_id TEXT,
+  UNIQUE (ledger_id, evidence_id),
+  UNIQUE (ledger_id, source_id),
+  CHECK ((evidence_kind = 'asset_credit_mirror' AND mirror_of_evidence_id IS NOT NULL AND merged_into_evidence_link_id IS NOT NULL)
+      OR (evidence_kind != 'asset_credit_mirror' AND mirror_of_evidence_id IS NULL AND merged_into_evidence_link_id IS NULL)),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg07_source(ledger_id, source_id)
+);
+
+CREATE TABLE rg07_evidence_link (
+  ledger_id TEXT NOT NULL,
+  link_id TEXT NOT NULL PRIMARY KEY,
+  evidence_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('posting','relation')),
+  target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('payment_asset_posting','destination_asset_posting','refund_relationship')),
+  UNIQUE (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg07_evidence(ledger_id, evidence_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg07_candidate (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  confidence TEXT NOT NULL CHECK (confidence IN ('1.00','0.50','0.97')),
+  proposed_amount_minor INTEGER NOT NULL CHECK (proposed_amount_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  proposed_original_transaction_id TEXT,
+  proposed_category_id TEXT,
+  proposed_destination_account_id TEXT,
+  proposed_arrived_at TEXT,
+  original_source_payload_hash TEXT NOT NULL,
+  rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+  UNIQUE (ledger_id, candidate_id),
+  UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg07_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg07_evidence(ledger_id, evidence_id)
+);
+
+CREATE TABLE rg07_candidate_status_history (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  status_sequence INTEGER NOT NULL CHECK (status_sequence IN (1,2)),
+  status_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION','CONFIRMED')),
+  occurred_at TEXT NOT NULL,
+  formal_effect_count INTEGER NOT NULL CHECK (formal_effect_count IN (0,1)),
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence),
+  UNIQUE (ledger_id, status_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg07_candidate(ledger_id, candidate_id)
+);
+
+CREATE TABLE rg07_confirmation (
+  ledger_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('relation')),
+  subject_id TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  original_transaction_id TEXT NOT NULL,
+  UNIQUE (ledger_id, confirmation_id),
+  UNIQUE (ledger_id, operation_id),
+  UNIQUE (ledger_id, subject_id),
+  FOREIGN KEY (ledger_id, subject_id) REFERENCES rg07_relation(ledger_id, relation_id)
+);
+
+CREATE TABLE rg07_operation_confirmation (
+  ledger_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind = 'operation'),
+  subject_id TEXT NOT NULL,
+  confirmed_at TEXT,
+  original_transaction_id TEXT NOT NULL,
+  UNIQUE (ledger_id, confirmation_id),
+  UNIQUE (ledger_id, operation_id),
+  UNIQUE (ledger_id, subject_id)
+);
+
+CREATE TABLE rg07_transaction_version_metadata (
+  ledger_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  confirmation_id TEXT,
+  PRIMARY KEY (ledger_id, version_id),
+  FOREIGN KEY (version_id) REFERENCES transaction_version(version_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg07_posting_reconciliation (
+  ledger_id TEXT NOT NULL,
+  reconciliation_id TEXT NOT NULL PRIMARY KEY,
+  posting_id TEXT NOT NULL,
+  UNIQUE (ledger_id, reconciliation_id),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg07_posting_semantic (
+  ledger_id TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('expense','payment_asset','destination_asset')),
+  category_id TEXT,
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)),
+  PRIMARY KEY (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((role = 'expense' AND category_id IS NOT NULL AND reconciliation_eligible = 0)
+      OR (role != 'expense' AND category_id IS NULL AND reconciliation_eligible = 1))
+);
+
+CREATE TABLE rg07_reconciliation_history (
+  ledger_id TEXT NOT NULL,
+  reconciliation_id TEXT NOT NULL,
+  status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING','MATCHED')),
+  evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, reconciliation_id, status_sequence),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES rg07_posting_reconciliation(ledger_id, reconciliation_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES rg07_evidence_link(ledger_id, link_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TRIGGER rg07_operation_outcome_update BEFORE UPDATE ON rg07_operation BEGIN SELECT CASE WHEN old.outcome = 'ACCEPTED' AND new.outcome = 'REJECTED' AND new.action = old.action AND new.operation_class = old.operation_class AND new.fingerprint = old.fingerprint AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value AND new.transaction_id IS old.transaction_id AND new.relation_id IS old.relation_id THEN NULL ELSE RAISE(ABORT, 'rg07 operation immutable') END; END;
+CREATE TRIGGER rg07_rejection_guard_update BEFORE UPDATE ON rg07_rejection BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_rejection_guard_delete BEFORE DELETE ON rg07_rejection BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_transaction_version_metadata_guard_update BEFORE UPDATE ON rg07_transaction_version_metadata BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_transaction_version_metadata_guard_delete BEFORE DELETE ON rg07_transaction_version_metadata BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_transaction_version_metadata_owner_insert BEFORE INSERT ON rg07_transaction_version_metadata BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM transaction_version WHERE version_id = new.version_id AND ledger_id = new.ledger_id) THEN RAISE(ABORT, 'rg07 transaction version ownership') END; END;
+CREATE TRIGGER rg07_operation_immutable_delete BEFORE DELETE ON rg07_operation BEGIN SELECT RAISE(ABORT, 'rg07 operation immutable'); END;
+CREATE TRIGGER rg07_relation_guard_update BEFORE UPDATE ON rg07_relation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_relation_guard_delete BEFORE DELETE ON rg07_relation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_relation_member_guard_update BEFORE UPDATE ON rg07_relation_member BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_relation_member_guard_delete BEFORE DELETE ON rg07_relation_member BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_refund_relationship_guard_update BEFORE UPDATE ON rg07_refund_relationship BEGIN SELECT CASE WHEN old.refund_transaction_id IS NULL AND new.refund_transaction_id IS NOT NULL AND old.received_amount_minor = 0 AND new.received_amount_minor = old.requested_amount_minor AND old.destination_account_id IS NULL AND new.destination_account_id IS NOT NULL AND old.source_observed_at IS NULL AND new.source_observed_at IS NOT NULL AND old.booking_at IS NULL AND new.booking_at IS NOT NULL AND old.value_at IS NULL AND new.value_at IS NOT NULL AND old.confirmed_at IS NULL AND new.confirmed_at IS NOT NULL AND old.arrived_at IS NULL AND new.arrived_at IS NOT NULL AND new.ledger_id = old.ledger_id AND new.entity_id = old.entity_id AND new.relation_id = old.relation_id AND new.original_transaction_id = old.original_transaction_id AND new.category_id = old.category_id AND new.requested_amount_minor = old.requested_amount_minor AND new.currency_code = old.currency_code AND new.currency_precision = old.currency_precision AND new.requested_at IS old.requested_at AND new.approved_at IS old.approved_at AND new.processor_reported_at IS old.processor_reported_at THEN NULL ELSE RAISE(ABORT, 'rg07 immutable') END; END;
+CREATE TRIGGER rg07_refund_relationship_guard_delete BEFORE DELETE ON rg07_refund_relationship BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_refund_relationship_history_guard_update BEFORE UPDATE ON rg07_refund_relationship_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_refund_relationship_history_guard_delete BEFORE DELETE ON rg07_refund_relationship_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_source_guard_update BEFORE UPDATE ON rg07_source BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_source_guard_delete BEFORE DELETE ON rg07_source BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_source_lineage_insert BEFORE INSERT ON rg07_source BEGIN SELECT CASE WHEN new.mirror_of_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rg07_source WHERE ledger_id = new.ledger_id AND source_id = new.mirror_of_source_id) THEN RAISE(ABORT, 'rg07 source lineage ownership') END; END;
+CREATE TRIGGER rg07_evidence_lineage_insert BEFORE INSERT ON rg07_evidence BEGIN SELECT CASE WHEN new.mirror_of_evidence_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rg07_evidence WHERE ledger_id = new.ledger_id AND evidence_id = new.mirror_of_evidence_id) THEN RAISE(ABORT, 'rg07 evidence lineage ownership') END; SELECT CASE WHEN new.merged_into_evidence_link_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rg07_evidence_link WHERE ledger_id = new.ledger_id AND link_id = new.merged_into_evidence_link_id) THEN RAISE(ABORT, 'rg07 evidence link lineage ownership') END; END;
+CREATE TRIGGER rg07_refund_history_sequence_insert BEFORE INSERT ON rg07_refund_relationship_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg07_refund_relationship_history WHERE ledger_id = new.ledger_id AND entity_id = new.entity_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg07_refund_relationship_history WHERE ledger_id = new.ledger_id AND entity_id = new.entity_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg07 refund history sequence') END; END;
+CREATE TRIGGER rg07_candidate_status_sequence_insert BEFORE INSERT ON rg07_candidate_status_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND (new.status != 'PENDING_CONFIRMATION' OR EXISTS (SELECT 1 FROM rg07_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id))) OR (new.status_sequence = 2 AND (new.status != 'CONFIRMED' OR NOT EXISTS (SELECT 1 FROM rg07_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status_sequence = 1 AND status = 'PENDING_CONFIRMATION'))) THEN RAISE(ABORT, 'rg07 candidate status sequence') END; END;
+CREATE TRIGGER rg07_reconciliation_history_sequence_insert BEFORE INSERT ON rg07_reconciliation_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg07_reconciliation_history WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg07_reconciliation_history WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg07 reconciliation history sequence') END; END;
+CREATE TRIGGER rg07_evidence_guard_update BEFORE UPDATE ON rg07_evidence BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_evidence_guard_delete BEFORE DELETE ON rg07_evidence BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_evidence_link_guard_update BEFORE UPDATE ON rg07_evidence_link BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_evidence_link_guard_delete BEFORE DELETE ON rg07_evidence_link BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_candidate_guard_update BEFORE UPDATE ON rg07_candidate BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_candidate_guard_delete BEFORE DELETE ON rg07_candidate BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_candidate_status_guard_update BEFORE UPDATE ON rg07_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_candidate_status_guard_delete BEFORE DELETE ON rg07_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_confirmation_guard_update BEFORE UPDATE ON rg07_confirmation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_confirmation_guard_delete BEFORE DELETE ON rg07_confirmation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_operation_confirmation_guard_update BEFORE UPDATE ON rg07_operation_confirmation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_operation_confirmation_guard_delete BEFORE DELETE ON rg07_operation_confirmation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_reconciliation_guard_update BEFORE UPDATE ON rg07_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_reconciliation_guard_delete BEFORE DELETE ON rg07_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_reconciliation_history_guard_update BEFORE UPDATE ON rg07_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_reconciliation_history_guard_delete BEFORE DELETE ON rg07_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_posting_semantic_guard_update BEFORE UPDATE ON rg07_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;
+CREATE TRIGGER rg07_posting_semantic_guard_delete BEFORE DELETE ON rg07_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg07 immutable'); END;

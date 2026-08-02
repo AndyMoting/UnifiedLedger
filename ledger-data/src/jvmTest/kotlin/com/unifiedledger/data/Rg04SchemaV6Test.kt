@@ -20,7 +20,7 @@ class Rg04SchemaV6Test {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(9, LedgerDatabase.Schema.version)
+            assertEquals(10, LedgerDatabase.Schema.version)
             assertEquals(0L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg04Relations().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg04PostingReconciliations().executeAsOne())
@@ -160,7 +160,7 @@ class Rg04SchemaV6Test {
             "INSERT INTO rg04_mixed_expense_component_snapshot VALUES ('ledger-a', '$requestId', 0, 'asset', 7000, 'CNY', 2)",
             "INSERT INTO rg04_mixed_expense_component_snapshot VALUES ('ledger-a', '$requestId', 1, 'liability', 5000, 'CNY', 2)",
             "INSERT INTO posting_set VALUES ('$postingSetId', 'ledger-a')",
-            "INSERT INTO ledger_transaction VALUES ('$transactionId', 'ledger-a', 'EXPENSE')",
+            "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('$transactionId', 'ledger-a', 'EXPENSE')",
             "INSERT INTO transaction_version VALUES ('$versionId', '$transactionId', 'ledger-a', 1, '$postingSetId', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', NULL)",
             "INSERT INTO ledger_transaction_current_version VALUES ('$transactionId', 'ledger-a', '$versionId')",
             "INSERT INTO posting VALUES ('$expensePostingId', '$postingSetId', 'ledger-a', 0, 'expense', 12000, 'CNY', 2)",
@@ -207,7 +207,7 @@ class Rg04SchemaV6Test {
         driver.execute(null, "INSERT INTO transaction_version VALUES ('version-metadata-only', 'tx-protected', 'ledger-a', 2, 'set-protected', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', 'metadata only')", 0)
         assertNoAcceptedAggregateViolation(driver)
         assertAcceptedMutationRejected(driver, "UPDATE ledger_transaction_current_version SET current_version_id = 'version-metadata-only' WHERE ledger_id = 'ledger-a' AND transaction_id = 'tx-protected'")
-        driver.execute(null, "INSERT INTO ledger_transaction VALUES ('tx-set-alias', 'ledger-a', 'EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-set-alias', 'ledger-a', 'EXPENSE')", 0)
         assertNoAcceptedAggregateViolation(driver)
         assertAcceptedMutationRejected(driver, "INSERT INTO transaction_version VALUES ('version-set-alias', 'tx-set-alias', 'ledger-a', 1, 'set-protected', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', NULL)")
         assertAcceptedMutationRejected(driver, "DELETE FROM ledger_transaction_current_version WHERE ledger_id = 'ledger-a' AND transaction_id = 'tx-protected'")
@@ -287,7 +287,7 @@ class Rg04SchemaV6Test {
         insertAcceptedRepaymentAggregate(driver)
         driver.execute(null, "INSERT INTO formal_relation VALUES ('ledger-a', 'repayment-decoy-relation', 'mixed_payment')", 0)
         assertNoAcceptedAggregateViolation(driver)
-        driver.execute(null, "INSERT INTO ledger_transaction VALUES ('repayment-decoy-tx', 'ledger-a', 'EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('repayment-decoy-tx', 'ledger-a', 'EXPENSE')", 0)
         assertNoAcceptedAggregateViolation(driver)
         driver.execute(null, "INSERT INTO rg04_mixed_composition VALUES ('ledger-a', 'repayment-decoy-relation', 'repayment-decoy-tx', 'Decoy composition', 1, 'CNY', 2, 1, 0)", 0)
         assertNoAcceptedAggregateViolation(driver)
@@ -301,14 +301,14 @@ class Rg04SchemaV6Test {
             "INSERT INTO rg04_mixed_expense_component_snapshot VALUES ('ledger-a', 'request-protected', 0, 'asset', 7000, 'CNY', 2)",
             "INSERT INTO rg04_mixed_expense_component_snapshot VALUES ('ledger-a', 'request-protected', 1, 'liability', 5000, 'CNY', 2)",
             "INSERT INTO posting_set VALUES ('set-protected', 'ledger-a')",
-            "INSERT INTO ledger_transaction VALUES ('tx-protected', 'ledger-a', 'EXPENSE')",
+            "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-protected', 'ledger-a', 'EXPENSE')",
             "INSERT INTO transaction_version VALUES ('version-protected', 'tx-protected', 'ledger-a', 1, 'set-protected', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', '2026-02-10T12:00:00+08:00', NULL)",
             "INSERT INTO ledger_transaction_current_version VALUES ('tx-protected', 'ledger-a', 'version-protected')",
             "INSERT INTO posting VALUES ('expense-posting-protected', 'set-protected', 'ledger-a', 0, 'expense', 12000, 'CNY', 2)",
             "INSERT INTO posting VALUES ('asset-posting-protected', 'set-protected', 'ledger-a', 1, 'asset', -7000, 'CNY', 2)",
             "INSERT INTO posting VALUES ('liability-posting-protected', 'set-protected', 'ledger-a', 2, 'liability', -5000, 'CNY', 2)",
             "INSERT INTO posting_set VALUES ('set-decoy', 'ledger-a')",
-            "INSERT INTO ledger_transaction VALUES ('tx-decoy', 'ledger-a', 'CREDIT_REPAYMENT')",
+            "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-decoy', 'ledger-a', 'CREDIT_REPAYMENT')",
             "INSERT INTO transaction_version VALUES ('version-decoy', 'tx-decoy', 'ledger-a', 1, 'set-decoy', '2026-03-01T00:00:00+08:00', '2026-03-01T00:00:00+08:00', '2026-03-01T00:00:00+08:00', NULL)",
             "INSERT INTO ledger_transaction_current_version VALUES ('tx-decoy', 'ledger-a', 'version-decoy')",
             "INSERT INTO posting VALUES ('posting-decoy', 'set-decoy', 'ledger-a', 0, 'asset', -1, 'CNY', 2)",
@@ -343,7 +343,7 @@ class Rg04SchemaV6Test {
             "INSERT INTO rg04_operation_request VALUES ('ledger-a', 'repayment-request-protected', 'CREDIT_PRINCIPAL_REPAYMENT')",
             "INSERT INTO rg04_repayment_snapshot VALUES ('ledger-a', 'repayment-request-protected', '2026-03-05T09:00:00+08:00', 'asset', 'liability', 5000, 'CNY', 2, 'explicit_manual_save')",
             "INSERT INTO posting_set VALUES ('repayment-set-protected', 'ledger-a')",
-            "INSERT INTO ledger_transaction VALUES ('repayment-tx-protected', 'ledger-a', 'CREDIT_REPAYMENT')",
+            "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('repayment-tx-protected', 'ledger-a', 'CREDIT_REPAYMENT')",
             "INSERT INTO transaction_version VALUES ('repayment-version-protected', 'repayment-tx-protected', 'ledger-a', 1, 'repayment-set-protected', '2026-03-05T09:00:00+08:00', '2026-03-05T09:00:00+08:00', '2026-03-05T09:00:00+08:00', NULL)",
             "INSERT INTO ledger_transaction_current_version VALUES ('repayment-tx-protected', 'ledger-a', 'repayment-version-protected')",
             "INSERT INTO posting VALUES ('repayment-asset-posting-protected', 'repayment-set-protected', 'ledger-a', 0, 'asset', -5000, 'CNY', 2)",
