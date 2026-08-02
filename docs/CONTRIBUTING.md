@@ -71,6 +71,10 @@ $env:PYTHONPATH="tools\python"
 python -m project_docs .
 ```
 
+## CI 配置
+
+以上验证命令与 `.github/workflows/ci.yml` 的 CI 步骤保持一致。修改本地验证步骤时需同步更新 CI 配置；修改 CI 步骤时需同步更新本文档。
+
 ## 文档规则
 
 - 正式文档以中文为主，代码类型、文件名、命令和 API 名称保留英文。
