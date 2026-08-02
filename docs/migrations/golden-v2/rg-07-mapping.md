@@ -2,7 +2,7 @@
 
 ## Authority
 
-This path map is governed by the frozen RG-07 fixture, refund design, golden tests, accounting rules, Golden Schema v2, and D-010, D-013, D-043, D-044, D-045, D-047, D-061, D-078. Historical external RG numbering is evidence only. This artifact authorizes no adapter, expected output, fixture rewrite, runtime, or publication.
+This path map is governed by the frozen RG-07 fixture, refund design, golden tests, accounting rules, Golden Schema v2, and D-010, D-013, D-043, D-044, D-045, D-047, D-061, D-078, D-079, and D-080. Historical external RG numbering is evidence only. This artifact records the mapping and does not independently authorize implementation or publication.
 
 ## Inventory
 
@@ -59,4 +59,4 @@ The machine path map additionally freezes each row's exact required and optional
 - contract gap count: 0
 - resolved contract gap count: 3
 
-Expected output is approved. Contract, Schema, validator, expected output, adapter, fixture replay, schema v10 migration, and Kotlin runtime are implemented; publication remains closed pending an explicit target.
+Expected output is approved. Contract, Schema, validator, expected output, adapter, fixture replay, schema v10 migration, and Kotlin runtime are implemented; publication is recorded at `golden/rules-v2/rg-07.json` under D-080.

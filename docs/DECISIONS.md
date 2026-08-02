@@ -985,3 +985,13 @@ RG-07 登记 `record_refund_request_status`、`ingest_refund_status_source`、`c
 **影响：** RG-07 mapping gate 与 expected output gate 为 approved；schema v9 到 v10 的迁移保留 v9 formal rows 并新增 RG-07 owners。该决定不批准 `golden/rules-v2` publication 或 release target；publication 仍需单独明确 target 并在 clean worktree 上执行 release verification。
 
 **关联决定：** `D-061`、`D-078`
+
+## D-080 RG-07 v2 publication target
+
+**状态：** 已确认
+
+**决定：** RG-07 approved v2 expected output is published as the exact byte-preserving artifact `golden/rules-v2/rg-07.json`, copied from `docs/migrations/golden-v2/rg-07-expected.json`.
+
+**影响：** The publication target is explicit and release verification must continue to run on a clean worktree. The artifact is recorded in the v2 manifest with its source, expected, canonical, and output hashes; this decision does not authorize publication of other RG cases or any remote push.
+
+**关联决定：** `D-079`
