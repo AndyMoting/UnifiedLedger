@@ -335,7 +335,8 @@
         {"$ref": "#/$defs/mergedPaymentBankFactSource"},
         {"$ref": "#/$defs/mergedPaymentItemFactSource"},
         {"$ref": "#/$defs/stagedPaymentBankFactSource"},
-        {"$ref": "#/$defs/reconciliationEvidenceSource"}
+        {"$ref": "#/$defs/reconciliationEvidenceSource"},
+        {"$ref": "#/$defs/rg07RefundSource"}
       ]
     },
     "mixedPaymentFundingComponent": {
@@ -597,7 +598,8 @@
         {"$ref": "#/$defs/incompleteAccountTransferCandidate"},
         {"$ref": "#/$defs/mixedPaymentCandidate"},
         {"$ref": "#/$defs/mergedPaymentCandidate"},
-        {"$ref": "#/$defs/stagedPaymentCandidate"}
+        {"$ref": "#/$defs/stagedPaymentCandidate"},
+        {"$ref": "#/$defs/refundCreditCandidate"}
       ]
     },
     "mergedPaymentCandidate": {
@@ -929,7 +931,8 @@
       "oneOf": [
         {"$ref": "#/$defs/explicitManualSaveConfirmation"},
         {"$ref": "#/$defs/candidateConfirmation"},
-        {"$ref": "#/$defs/explicitOperationConfirmation"}
+        {"$ref": "#/$defs/explicitOperationConfirmation"},
+        {"$ref": "#/$defs/rg07RefundConfirmation"}
       ]
     },
     "explicitManualSaveConfirmation": {
@@ -983,6 +986,12 @@
       "required": ["kind", "id"],
       "properties": {"kind": {"const": "candidate"}, "id": {"$ref": "#/$defs/id"}}
     },
+    "relationSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {"kind": {"const": "relation"}, "id": {"$ref": "#/$defs/id"}}
+    },
     "emptyPayload": {"type": "object", "additionalProperties": false, "maxProperties": 0},
     "evidence": {
       "oneOf": [
@@ -995,7 +1004,8 @@
         {"$ref": "#/$defs/creditLiabilityMirrorEvidence"},
         {"$ref": "#/$defs/bankPaymentEvidence"},
         {"$ref": "#/$defs/stagedPaymentBankPaymentEvidence"},
-        {"$ref": "#/$defs/itemSummaryEvidence"}
+        {"$ref": "#/$defs/itemSummaryEvidence"},
+        {"$ref": "#/$defs/rg07RefundEvidence"}
       ]
     },
     "userBalanceObservationEvidence": {
@@ -1201,11 +1211,180 @@
         }
       ]
     },
+    "rg07RefundSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_record_id", "evidence_id", "observed_at", "kind", "immutable_payload_hash"],
+      "properties": {
+        "source_record_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}, "kind": {"type": "string", "minLength": 1},
+        "immutable_payload_hash": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"},
+        "reported_state": {"enum": ["requested", "approved", "processing"]},
+        "proves_arrival": {"type": "boolean"}, "account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1},
+        "processor_reported_at": {"$ref": "#/$defs/timestamp"}, "source_observed_at": {"$ref": "#/$defs/timestamp"},
+        "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"},
+        "original_source_payload_hash": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"},
+        "mirror_of_source_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "rg07RefundConfirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "operation_id", "subject", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "refund_relationship_confirmation"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "subject": {"$ref": "#/$defs/relationSubject"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["original_transaction_id"],
+          "properties": {"original_transaction_id": {"$ref": "#/$defs/id"}}
+        }
+      }
+    },
+    "rg07RefundSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["merchant_refund_notice", "wallet_credit", "combined_refund_statement", "wallet_credit_mirror", "bank_debit"]},
+        "payload": {"$ref": "#/$defs/rg07RefundSourcePayload"}
+      }
+    },
+    "rg07RefundEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["refund_notice", "asset_credit", "combined_refund_statement", "asset_credit_mirror", "asset_debit"]},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {
+          "type": "object", "additionalProperties": false, "required": ["observed_at"],
+          "dependentRequired": {
+            "mirror_of_evidence_id": ["merged_into_evidence_link_id"],
+            "merged_into_evidence_link_id": ["mirror_of_evidence_id"]
+          },
+          "properties": {
+            "observed_at": {"$ref": "#/$defs/timestamp"},
+            "mirror_of_evidence_id": {"$ref": "#/$defs/id"},
+            "merged_into_evidence_link_id": {"$ref": "#/$defs/id"}
+          }
+        }
+      }
+    },
+    "refundCreditCandidateStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status", "occurred_at", "formal_effect_count"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "status": {"enum": ["pending_confirmation", "confirmed"]}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "formal_effect_count": {"type": "integer", "minimum": 0, "maximum": 1}}
+    },
+    "refundCreditCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "refund_credit"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["proposed_amount", "currency", "proposed_original_transaction_id", "proposed_category_id", "proposed_destination_account_id", "proposed_arrived_at", "requires_confirmation", "rule_version", "original_source_payload_hash"],
+          "properties": {
+            "proposed_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+            "proposed_original_transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "proposed_category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+            "proposed_destination_account_id": {"$ref": "#/$defs/id"}, "proposed_arrived_at": {"$ref": "#/$defs/timestamp"},
+            "requires_confirmation": {"type": "array", "uniqueItems": true, "items": {"enum": ["original_transaction_id", "category_id_and_allocation", "destination_account_id", "arrival"]}},
+            "rule_version": {"const": 1}, "original_source_payload_hash": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}
+          }
+        },
+        "status_history": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"$ref": "#/$defs/refundCreditCandidateStatus"}}
+      }
+    },
+    "rg07RefundRelation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "member_refs", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "refund"},
+        "member_refs": {
+          "oneOf": [
+            {
+              "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+              "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": {"kind": {"const": "transaction"}, "id": {"$ref": "#/$defs/id"}}}
+            },
+            {
+              "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true,
+              "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": {"kind": {"const": "transaction"}, "id": {"$ref": "#/$defs/id"}}}
+            }
+          ]
+        },
+        "payload": {"$ref": "#/$defs/emptyPayload"}
+      }
+    },
+    "refundRelationshipHistoryEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "state", "occurred_at", "transaction_id", "formal_effect_count"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["requested", "approved", "processing", "received"]},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "formal_effect_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "refundRelationship": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "refund_relationship"},
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["relation_id", "original_transaction_id", "refund_transaction_id", "category_id", "requested_amount", "received_amount", "currency", "destination_account_id", "times", "state_history"],
+          "properties": {
+            "relation_id": {"$ref": "#/$defs/id"},
+            "original_transaction_id": {"$ref": "#/$defs/id"},
+            "refund_transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+            "category_id": {"$ref": "#/$defs/id"},
+            "requested_amount": {"$ref": "#/$defs/positiveDecimal"},
+            "received_amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "destination_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+            "times": {
+              "type": "object", "additionalProperties": false,
+              "properties": {
+                "requested_at": {"$ref": "#/$defs/timestamp"},
+                "approved_at": {"$ref": "#/$defs/timestamp"},
+                "processor_reported_at": {"$ref": "#/$defs/timestamp"},
+                "source_observed_at": {"$ref": "#/$defs/timestamp"},
+                "booking_at": {"$ref": "#/$defs/timestamp"},
+                "value_at": {"$ref": "#/$defs/timestamp"},
+                "confirmed_at": {"$ref": "#/$defs/timestamp"},
+                "arrived_at": {"$ref": "#/$defs/timestamp"}
+              }
+            },
+            "state_history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/refundRelationshipHistoryEvent"}},
+            "allow_guessed_category": {"type": "boolean"},
+            "allow_refund_category_override": {"type": "boolean"},
+            "inheritance": {"type": "string", "minLength": 1},
+            "misclassified_original_action": {"type": "string", "minLength": 1},
+            "multi_category_allocation": {"type": "boolean"},
+            "original_category_id": {"$ref": "#/$defs/id"},
+            "refund_category_id": {"$ref": "#/$defs/id"},
+            "refund_expense_account_id": {"$ref": "#/$defs/id"},
+            "active_linked_refunds": {"$ref": "#/$defs/decimal"},
+            "original_confirmed_refundable_expense": {"$ref": "#/$defs/decimal"},
+            "remaining_refundable": {"$ref": "#/$defs/decimal"}
+          }
+        }
+      }
+    },
     "relation": {
       "oneOf": [
         {"$ref": "#/$defs/mixedPaymentRelation"},
         {"$ref": "#/$defs/mergedPaymentRelation"},
-        {"$ref": "#/$defs/stagedPaymentRelation"}
+        {"$ref": "#/$defs/stagedPaymentRelation"},
+        {"$ref": "#/$defs/rg07RefundRelation"}
       ]
     },
     "mixedPaymentRelation": {
@@ -1339,6 +1518,7 @@
         {"$ref": "#/$defs/stagedPaymentLifecycle"},
         {"$ref": "#/$defs/installmentPayment"},
         {"$ref": "#/$defs/reconciliationMatch"}
+        ,{"$ref": "#/$defs/refundRelationship"}
       ]
     },
     "stagedPaymentLifecycleHistoryEvent": {
@@ -1906,6 +2086,13 @@
             "target_kind": {"const": "candidate"},
             "status_name": {"const": "confirmation_status"},
             "value": {"enum": ["pending_confirmation", "confirmed", "rejected", "incomplete"]}
+          }
+        },
+        {
+          "properties": {
+            "target_kind": {"const": "domain_entity"},
+            "status_name": {"const": "refund_status"},
+            "value": {"enum": ["requested", "approved", "processing", "received"]}
           }
         },
         {
@@ -3220,6 +3407,24 @@
         {"$ref": "#/$defs/confirmStagedPaymentCompletionRejectedOutcome"}
       ]
     },
+    "rg07RequestInput": {"type": "object", "additionalProperties": false, "required": ["request_id", "original_transaction_id", "requested_amount", "currency", "requested_at", "approved_at", "processor_reported_at"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "requested_amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "requested_at": {"$ref": "#/$defs/timestamp"}, "approved_at": {"$ref": "#/$defs/timestamp"}, "processor_reported_at": {"$ref": "#/$defs/timestamp"}}},
+    "rg07StatusSourceInput": {"type": "object", "additionalProperties": false, "required": ["source_id", "refund_relation_id", "observed_at", "reported_state", "proves_arrival"], "properties": {"source_id": {"$ref": "#/$defs/id"}, "refund_relation_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"}, "reported_state": {"enum": ["requested", "approved", "processing"]}, "proves_arrival": {"const": false}}},
+    "rg07ManualReceiptInput": {"type": "object", "additionalProperties": false, "required": ["request_id", "refund_relation_id", "original_transaction_id", "amount", "currency", "category_id", "destination_account_id", "source_observed_at", "booking_at", "value_at", "arrived_at", "confirmed_at", "confirmation_mode", "observation_mode", "arrival_confirmed"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "refund_relation_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "category_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "source_observed_at": {"$ref": "#/$defs/timestamp"}, "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"}, "arrived_at": {"$ref": "#/$defs/timestamp"}, "confirmed_at": {"$ref": "#/$defs/timestamp"}, "confirmation_mode": {"const": "explicit_manual_receipt"}, "observation_mode": {"const": "manual_account_observation"}, "arrival_confirmed": {"const": true}}},
+    "rg07OriginalPaymentEvidenceInput": {"type": "object", "additionalProperties": false, "required": ["source_id", "evidence_id", "payment_asset_posting_id", "amount", "currency", "observed_at", "booking_at", "value_at", "immutable_payload_hash"], "properties": {"source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "payment_asset_posting_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "observed_at": {"$ref": "#/$defs/timestamp"}, "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"}, "immutable_payload_hash": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}}},
+    "rg07DestinationEvidenceInput": {"type": "object", "additionalProperties": false, "required": ["source_id", "evidence_id", "refund_relation_id", "destination_asset_posting_id", "account_id", "amount", "currency", "booking_at", "value_at"], "properties": {"source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "refund_relation_id": {"$ref": "#/$defs/id"}, "destination_asset_posting_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"}}},
+    "rg07DualRoleEvidenceInput": {"type": "object", "additionalProperties": false, "required": ["source_id", "evidence_id", "refund_relation_id", "destination_asset_posting_id", "observed_at", "roles"], "properties": {"source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "refund_relation_id": {"$ref": "#/$defs/id"}, "destination_asset_posting_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"}, "roles": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"enum": ["refund_relationship", "destination_asset_posting"]}}}},
+    "rg07ReceiptInput": {"type": "object", "additionalProperties": false, "required": ["request_id", "original_transaction_id", "amount", "currency", "category_id", "destination_account_id", "arrived_at", "confirmed_at", "arrival_confirmed"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "category_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "arrived_at": {"$ref": "#/$defs/timestamp"}, "confirmed_at": {"$ref": "#/$defs/timestamp"}, "arrival_confirmed": {"const": true}}},
+    "rg07CreditSourceInput": {"type": "object", "additionalProperties": false, "required": ["source_id", "source_record_id", "account_id", "amount", "currency", "processor_reported_at", "source_observed_at", "booking_at", "value_at", "original_source_payload_hash"], "properties": {"source_id": {"$ref": "#/$defs/id"}, "source_record_id": {"$ref": "#/$defs/id"}, "account_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "processor_reported_at": {"$ref": "#/$defs/timestamp"}, "source_observed_at": {"$ref": "#/$defs/timestamp"}, "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"}, "original_source_payload_hash": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}}},
+    "rg07ImportConfirmationInput": {"type": "object", "additionalProperties": false, "required": ["request_id", "candidate_id", "original_transaction_id", "category_id", "allocated_amount", "destination_account_id", "arrived_at", "confirmed_at", "arrival_confirmed"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"}, "allocated_amount": {"$ref": "#/$defs/positiveDecimal"}, "destination_account_id": {"$ref": "#/$defs/id"}, "arrived_at": {"$ref": "#/$defs/timestamp"}, "confirmed_at": {"$ref": "#/$defs/timestamp"}, "arrival_confirmed": {"const": true}}},
+    "rg07MirrorEvidenceInput": {"type": "object", "additionalProperties": false, "required": ["request_id", "source_id", "evidence_id", "observed_at", "amount", "currency"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "source_id": {"$ref": "#/$defs/id"}, "evidence_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}}},
+    "rg07ManualReceiptAttempt": {"type": "object", "additionalProperties": false, "required": ["request_id", "original_transaction_id", "amount", "currency", "category_id", "destination_account_id", "arrived_at", "arrival_confirmed"], "properties": {"request_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "category_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "arrived_at": {"$ref": "#/$defs/timestamp"}, "arrival_confirmed": {"const": false}}},
+    "rg07AllocationAttempt": {"type": "object", "additionalProperties": false, "required": ["candidate_id", "requested_allocation", "available_allocation"], "properties": {"candidate_id": {"$ref": "#/$defs/id"}, "requested_allocation": {"$ref": "#/$defs/attemptedDecimal"}, "available_allocation": {"$ref": "#/$defs/attemptedDecimal"}}},
+    "rg07ImportAttempt": {"type": "object", "additionalProperties": false, "required": ["attempt_id"], "properties": {"attempt_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"$ref": "#/$defs/id"}, "category_id": {"$ref": "#/$defs/id"}, "allocated_amount": {"$ref": "#/$defs/attemptedDecimal"}, "destination_account_id": {"$ref": "#/$defs/id"}, "arrived_at": {"$ref": "#/$defs/timestamp"}, "confirmed_at": {"$ref": "#/$defs/timestamp"}, "arrival_confirmed": {"type": "boolean"}}},
+    "rg07ValidationAttempt": {"type": "object", "additionalProperties": false, "required": ["attempt_id"], "properties": {"attempt_id": {"$ref": "#/$defs/id"}, "original_transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "amount": {"$ref": "#/$defs/attemptedDecimal"}, "currency": {"type": "string", "minLength": 1}, "category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "destination_account_id": {"$ref": "#/$defs/id"}, "remaining_refundable": {"$ref": "#/$defs/attemptedDecimal"}, "destination_confirmed": {"type": "boolean"}}},
+    "rg07ManualRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"const": "arrival_confirmation_required"}, "field_path": {"const": "$.attempted_input.arrival_confirmed"}}},
+    "rg07AllocationRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"const": "refund_amount_exceeds_remaining_refundable"}, "field_path": {"const": "$.attempted_input.requested_allocation"}}},
+    "rg07ImportRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"enum": ["original_transaction_confirmation_required", "category_allocation_confirmation_required", "destination_confirmation_required", "arrival_confirmation_required"]}, "field_path": {"enum": ["$.attempted_input.original_transaction_id", "$.attempted_input.category_id", "$.attempted_input.destination_account_id", "$.attempted_input.arrival_confirmed"]}}, "oneOf": [{"properties": {"reason_code": {"const": "original_transaction_confirmation_required"}, "field_path": {"const": "$.attempted_input.original_transaction_id"}}}, {"properties": {"reason_code": {"const": "category_allocation_confirmation_required"}, "field_path": {"const": "$.attempted_input.category_id"}}}, {"properties": {"reason_code": {"const": "destination_confirmation_required"}, "field_path": {"const": "$.attempted_input.destination_account_id"}}}, {"properties": {"reason_code": {"const": "arrival_confirmation_required"}, "field_path": {"const": "$.attempted_input.arrival_confirmed"}}}]},
+    "rg07ValidationRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"enum": ["must_be_positive", "same_currency_required", "effective_confirmed_original_expense_required", "original_transaction_confirmation_required", "known_destination_account_required", "owned_real_asset_destination_required", "destination_confirmation_required", "exact_original_secondary_category_required", "refund_amount_exceeds_remaining_refundable"]}, "field_path": {"enum": ["$.attempted_input.amount", "$.attempted_input.currency", "$.attempted_input.original_transaction_id", "$.attempted_input.destination_account_id", "$.attempted_input.category_id"]}}},
     "operationBase": {
       "type": "object",
       "additionalProperties": false,
@@ -3259,7 +3464,13 @@
             "create_staged_payment", "record_staged_payment_installment",
             "change_staged_payment_fulfillment", "confirm_staged_payment_completion",
             "link_staged_payment_evidence", "ingest_staged_payment_bank_fact",
-            "confirm_staged_payment_candidate", "merge_staged_payment_mirror_evidence"
+            "confirm_staged_payment_candidate", "merge_staged_payment_mirror_evidence",
+            "record_refund_request_status", "ingest_refund_status_source",
+            "confirm_manual_refund_receipt", "attach_original_payment_evidence", "attach_refund_destination_evidence",
+            "attach_refund_dual_role_evidence", "confirm_refund_receipt",
+            "allocate_refund_receipt", "ingest_refund_credit_source",
+            "confirm_imported_refund", "merge_refund_mirror_evidence",
+            "validate_refund_receipt"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -3654,6 +3865,21 @@
                 "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
                 "input": {"$ref": "#/$defs/rg10RenameInput"}
               }
+            },
+            {"properties": {"action_type": {"const": "record_refund_request_status"}, "operation_class": {"const": "status_transition"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07RequestInput"}}},
+            {"properties": {"action_type": {"const": "ingest_refund_status_source"}, "operation_class": {"const": "status_transition"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07StatusSourceInput"}}},
+            {"properties": {"action_type": {"const": "confirm_manual_refund_receipt"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07ManualReceiptInput"}}},
+            {"properties": {"action_type": {"const": "confirm_manual_refund_receipt"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ManualRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ManualReceiptAttempt"}}},
+            {"properties": {"action_type": {"const": "attach_original_payment_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07OriginalPaymentEvidenceInput"}}},
+            {"properties": {"action_type": {"const": "attach_refund_destination_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07DestinationEvidenceInput"}}},
+            {"properties": {"action_type": {"const": "attach_refund_dual_role_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07DualRoleEvidenceInput"}}},
+            {"properties": {"action_type": {"const": "confirm_refund_receipt"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07ReceiptInput"}}},
+            {"properties": {"action_type": {"const": "allocate_refund_receipt"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07AllocationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07AllocationAttempt"}}},
+            {"properties": {"action_type": {"const": "ingest_refund_credit_source"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07CreditSourceInput"}}},
+            {"properties": {"action_type": {"const": "confirm_imported_refund"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07ImportConfirmationInput"}}},
+            {"properties": {"action_type": {"const": "confirm_imported_refund"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ImportRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ImportAttempt"}}},
+            {"properties": {"action_type": {"const": "merge_refund_mirror_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07MirrorEvidenceInput"}}},
+            {"properties": {"action_type": {"const": "validate_refund_receipt"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ValidationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ValidationAttempt"}}
             }
           ]
         },

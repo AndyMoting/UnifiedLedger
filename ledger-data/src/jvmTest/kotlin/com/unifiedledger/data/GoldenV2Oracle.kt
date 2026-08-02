@@ -219,7 +219,7 @@ private val GOLDEN_V2_ENTITY_COLLECTIONS = linkedMapOf(
     "posting_reconciliations" to listOf("posting_reconciliations"),
 )
 
-private fun goldenV2Deltas(before: JsonObject, after: JsonObject): JsonObject = goldenV2JsonObjectOf(
+internal fun goldenV2Deltas(before: JsonObject, after: JsonObject): JsonObject = goldenV2JsonObjectOf(
     "entity_changes" to JsonObject(GOLDEN_V2_ENTITY_COLLECTIONS.mapValues { (_, path) ->
         val beforeItems = before.goldenV2ArrayAt(path).associateBy { it.jsonObject.goldenV2String("id") }
         val afterItems = after.goldenV2ArrayAt(path).associateBy { it.jsonObject.goldenV2String("id") }
@@ -340,7 +340,7 @@ private fun goldenV2DerivedChanges(before: JsonObject, after: JsonObject): JsonA
     },
 )
 
-private fun goldenV2StatusChanges(before: JsonObject, after: JsonObject): JsonArray = JsonArray(
+internal fun goldenV2StatusChanges(before: JsonObject, after: JsonObject): JsonArray = JsonArray(
     goldenV2DerivedValueChanges(before, after).map { (key, old, new) ->
         goldenV2JsonObjectOf(
             "target_kind" to JsonPrimitive(key.kind),
@@ -375,7 +375,7 @@ private fun JsonObject.goldenV2ArrayAt(path: List<String>): JsonArray {
     return current.jsonArray
 }
 
-private fun goldenV2StatePayload(state: JsonObject): JsonObject =
+internal fun goldenV2StatePayload(state: JsonObject): JsonObject =
     JsonObject(state.filterKeys { it !in setOf("id", "as_of_operation_id") })
 
 private fun goldenV2JsonObjectOf(vararg fields: Pair<String, JsonElement?>): JsonObject =

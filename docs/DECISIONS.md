@@ -957,3 +957,31 @@ v1 是唯一执行输入与正式身份来源；approved v2 只能在执行完�
 **影响：** `golden/rules/rg-06.json` 保持不变，Kotlin commit-port 契约与 Python operation/semantic validator 对齐其既有答案。schema v9、decoder、SQLDelight/store/adapter/migration、fixture/expected/path-map rewrite、golden publication、UI、金额或账户修正均未获授权；RG-06 persistence/publication 与 RG-07 以后 runtime 继续未完成。
 
 **关联决定：** `D-008`、`D-040`、`D-042`、`D-043`、`D-045`、`D-058`、`D-069`、`D-076`
+
+## D-078 RG-07 Golden Schema v2 契约修订
+
+**状态：** 已确认
+
+**决定：** 在不生成 expected v2、不实现 adapter 或 fixture rewrite 的前提下，登记 RG-07 的 closed Golden Schema v2 contract。每笔退款使用一个 identity-only `refund` relation 关联一笔有效原 `expense` 与至多一笔独立 `refund_receipt`；与该 relation 一一对应的 `refund_relationship` domain entity 拥有金额、原精确二级分类、到账账户、互不替代的时间与追加式历史。当前退款状态是由最后一条历史重算的 `refund_status` derived status，不在 relation payload 或 evidence link 中复制。
+
+`refund_receipt` 在实际到账时以 `destination_asset` 正分录和继承原二级分类的 `expense` 负分录平衡；报表仅使用 canonical `consumption`、`cash_inflow`、`cash_outflow`、`income` 与 `net_worth_change`。v1 `refund_cash_inflow` 映射到 `cash_inflow`，`ordinary_income` 映射到 `income`，两个 v1 token 都不进入 v2 report registry。
+
+RG-07 来源、候选、证据和镜像 lineage 分别由 closed source/evidence/candidate payload 拥有。通用 evidence link 仍严格为 `id,evidence_id,target_kind,target_id,role`；账户入账状态只属于 posting reconciliation，镜像 source/evidence/link lineage 不得作为通用 link 字段。关系确认类型固定为 `refund_relationship_confirmation`，subject 固定为具体 `relation`，payload 只保存 `original_transaction_id`。
+
+RG-07 登记 `record_refund_request_status`、`ingest_refund_status_source`、`confirm_manual_refund_receipt`、`attach_original_payment_evidence`、`attach_refund_destination_evidence`、`attach_refund_dual_role_evidence`、`confirm_refund_receipt`、`allocate_refund_receipt`、`ingest_refund_credit_source`、`confirm_imported_refund`、`merge_refund_mirror_evidence` 和 `validate_refund_receipt` 的 strict action inputs、精确 operation class、原子拒绝与原 action 重放。`attach_original_payment_evidence` 只登记或等价重放原付款的 `bank_debit` source、`asset_debit` evidence 和指向原支出精确 `payment_asset` 分录的 evidence link，并把该分录从 `pending` 核验为 `matched`；它不扩展 `manual_expense` ownership。上限、原交易、分类、到账账户和明确确认均由语义校验器重算；Schema 通过不得降级为只检查路径存在。
+
+**理由：** `D-061` 已冻结退款的业务与账务语义，但现有 Golden Schema v2 仍将 `refund_relationship` payload 保留为未登记。如果只让 path map、Schema 或 validator 自行补齐，会把状态、证据职责、镜像 lineage、报表 token 和确认 subject 的序列化选择错当成已批准事实。
+
+**影响：** RG-07 通过 contract/schema/validator 与 per-RG mapping 门后，只能请求下一个 expected-output 决定。本决定不批准 expected v2、adapter、v1 fixture rewrite、`golden/rules-v2` 工件、Kotlin/runtime/persistence、publication 或 Git 集成；也不扩展跨币种、负债/储值到账、多分类、超额补偿或修正语义。
+
+**关联决定：** `D-010`、`D-013`、`D-043`、`D-044`、`D-045`、`D-047`、`D-061`、`D-076`
+
+## D-079 RG-07 contract closure implementation
+
+**状态：** 已确认
+
+**决定：** 在 `D-078` contract amendment 基础上，批准 RG-07 expected v2、strict adapter、fixture replay、schema v10 persistence/migration 与 Kotlin domain/application/data runtime。runtime 必须逐 operation 比较 outcome、returned IDs、完整 state、deltas 与 status changes，并保持 source/evidence/reconciliation ownership、精确 identity 与原子拒绝边界。
+
+**影响：** RG-07 mapping gate 与 expected output gate 为 approved；schema v9 到 v10 的迁移保留 v9 formal rows 并新增 RG-07 owners。该决定不批准 `golden/rules-v2` publication 或 release target；publication 仍需单独明确 target 并在 clean worktree 上执行 release verification。
+
+**关联决定：** `D-061`、`D-078`

@@ -430,6 +430,7 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = whe
     DomainViolation.InvalidOrdinaryIncome,
     DomainViolation.InvalidBalanceReplay,
     DomainViolation.InvalidMixedPayment,
+    DomainViolation.InvalidRefundReceipt,
     is OrdinaryExpenseViolation,
     is OrdinaryIncomeViolation,
     is AccountTransferViolation,

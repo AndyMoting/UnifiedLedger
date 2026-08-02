@@ -90,12 +90,12 @@ class SqlDelightRg05StoreTest {
         }
     }
     @Test
-    fun schemaIsVersionNineAndManualCommitIsIdempotent() {
+    fun schemaIsVersionTenAndManualCommitIsIdempotent() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(9, LedgerDatabase.Schema.version)
+            assertEquals(10, LedgerDatabase.Schema.version)
             val catalog = catalog()
             val store = SqlDelightRg05Store(database, driver, catalog, object : Rg05IdentitySource {
                 override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation", "reconciliation")

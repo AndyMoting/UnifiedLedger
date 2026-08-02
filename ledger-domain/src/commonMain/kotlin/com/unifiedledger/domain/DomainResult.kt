@@ -26,6 +26,8 @@ sealed interface DomainViolation {
     data object InvalidMixedPayment : DomainViolation
 
     data object InvalidMergedPayment : DomainViolation
+
+    data object InvalidRefundReceipt : DomainViolation
 }
 
 sealed interface MixedPaymentViolation : DomainViolation {

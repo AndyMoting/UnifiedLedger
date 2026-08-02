@@ -1933,6 +1933,7 @@ class GoldenV2MappingTests(unittest.TestCase):
         entries = {entry["source_path"]: entry for entry in path_map["entries"]}
         action_registry = {
             "allocate_refund_receipt": {"rejection"},
+            "attach_original_payment_evidence": {"reconciliation"},
             "attach_refund_destination_evidence": {"reconciliation"},
             "attach_refund_dual_role_evidence": {"reconciliation"},
             "confirm_imported_refund": {"creation", "rejection"},
@@ -1965,7 +1966,7 @@ class GoldenV2MappingTests(unittest.TestCase):
             discovered_registry[action_type].add(operation_class)
         self.assertEqual(dict(discovered_registry), action_registry)
 
-        action_target = "$.planned_contract.operations[*].action_type"
+        action_target = "$.operations[*].action_type"
         class_target = "$.operations[*].operation_class"
         for pair, pair_entries in entries_by_pair.items():
             action_type, operation_class = pair
@@ -2991,6 +2992,9 @@ class GoldenV2MappingTests(unittest.TestCase):
                     self.assertEqual(
                         path_map["expected_output_gate"], "draft_for_review"
                     )
+                elif case_id == "RG-07":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(path_map["expected_output_gate"], "approved")
                 else:
                     self.assertEqual(path_map["status"], "completed")
                     self.assertEqual(path_map["expected_output_gate"], "completed")

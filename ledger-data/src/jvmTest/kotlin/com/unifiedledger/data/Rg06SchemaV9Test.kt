@@ -26,15 +26,48 @@ class Rg06SchemaV9Test {
                 LedgerDatabase.Schema.migrate(driver, 1, 8)
                 driver.execute(null, "INSERT INTO rg05_operation_request VALUES ('ledger-a','existing','MANUAL_MERGED_PAYMENT')", 0)
             }
-            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 9) }
+            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 10) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(9, LedgerDatabase.Schema.version)
+                assertEquals(10, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Operations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Relations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Installments().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Sources().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun authenticVersionNineGainsRg07OwnersAtVersionTen() {
+        val path = Files.createTempFile("ledger-data-v9-v10-rg07-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        val properties = Properties().apply { setProperty("foreign_keys", "true") }
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, properties).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 9)
+                driver.execute(null, "SELECT 1", 0)
+            }
+            JdbcSqliteDriver(url, properties).use { driver ->
+                assertEquals(0L, driver.executeQuery(null, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg07%'", { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0))
+                }, 0).value)
+                LedgerDatabase.Schema.migrate(driver, 9, 10)
+            }
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'rg07_operation'").use { rows ->
+                        assertTrue(rows.next())
+                        assertEquals(1, rows.getInt(1))
+                    }
+                }
             }
         } finally {
             Files.deleteIfExists(path)
@@ -143,7 +176,7 @@ class Rg06SchemaV9Test {
                 "UPDATE ledger_transaction_current_version SET current_version_id = 'version-a-v2' WHERE transaction_id = 'transaction-a'",
             )
 
-            driver.execute(null, "INSERT INTO ledger_transaction VALUES ('transaction-unrelated','ledger-a','EXPENSE')", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-unrelated','ledger-a','EXPENSE')", 0)
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-unrelated','ledger-a')", 0)
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-unrelated-v2','ledger-a')", 0)
             driver.execute(null, "INSERT INTO transaction_version VALUES ('version-unrelated','transaction-unrelated','ledger-a',1,'posting-set-unrelated','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',NULL)", 0)
@@ -198,7 +231,7 @@ class Rg06SchemaV9Test {
             assertAcceptedAggregateRejected(driver, "DELETE FROM ledger_transaction_current_version WHERE transaction_id = 'transaction-a'")
         }
         accepted { driver ->
-            driver.execute(null, "INSERT INTO ledger_transaction VALUES ('transaction-alias','ledger-a','EXPENSE')", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-alias','ledger-a','EXPENSE')", 0)
             assertAcceptedAggregateRejected(driver, "INSERT INTO transaction_version VALUES ('version-alias','transaction-alias','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)")
         }
     }
@@ -286,7 +319,7 @@ class Rg06SchemaV9Test {
         driver.execute(null, "INSERT INTO rg06_lifecycle VALUES ('ledger-a','lifecycle-a','relation-a',30000,0,30000,'CNY',2,'expense-service',1)", 0)
         driver.execute(null, "INSERT INTO rg06_lifecycle_history VALUES ('ledger-a','lifecycle-a',1,'history-a','create-a','GROUP_CREATED','2026-04-20T01:00:00Z',30000,0,30000,NULL,'UNPAID','IN_PROGRESS',0)", 0)
         driver.execute(null, "INSERT INTO rg06_relation_member VALUES ('ledger-a','relation-a',0,'LIFECYCLE','lifecycle-a')", 0)
-        driver.execute(null, "INSERT INTO ledger_transaction VALUES ('transaction-a','ledger-a','EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-a','ledger-a','EXPENSE')", 0)
         driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')", 0)
         driver.execute(null, "INSERT INTO transaction_version VALUES ('version-a','transaction-a','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
         driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('transaction-a','ledger-a','version-a')", 0)
@@ -319,7 +352,7 @@ class Rg06SchemaV9Test {
         driver.execute(null, "INSERT INTO rg06_source VALUES ('ledger-b','source-b','IMPORTED',-8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','SOURCE_PAYMENT_AT',NULL)", 0)
         driver.execute(null, "INSERT INTO rg06_evidence VALUES ('ledger-b','evidence-b','source-b','PENDING','2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','SOURCE_PAYMENT_AT',NULL,NULL,NULL)", 0)
         driver.execute(null, "INSERT INTO rg06_candidate VALUES ('ledger-b','candidate-b','source-b','DEPOSIT',8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','evidence-b','1.00',1)", 0)
-        driver.execute(null, "INSERT INTO ledger_transaction VALUES ('transaction-b','ledger-b','EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-b','ledger-b','EXPENSE')", 0)
         driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-b','ledger-b')", 0)
         driver.execute(null, "INSERT INTO posting VALUES ('posting-b-asset','posting-set-b','ledger-b',0,'asset-bank',-8000,'CNY',2)", 0)
     }
