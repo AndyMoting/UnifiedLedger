@@ -9,7 +9,7 @@
 - `RG-03` 当前冻结范围已实现：13 roots、20 operations 的 outcome、returned IDs、完整 state、deltas 与 status changes 均与 approved expected 精确比较。
 - `RG-04` 的 26 个 raw v1 operations 均有 runtime。18 个 manual operations 有精确 operation projection 比较；26 项整体比较 accepted/no-change/rejected 状态计数和选定 returned IDs。import lifecycle、ownership 与 reconciliation 另有深入持久化测试，approved v2 已发布。
 - `RG-05` 的领域、应用与持久化 runtime、schema v8 及相关迁移和测试已经进入共享库。`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected；共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较完整 state、deltas 和 status changes。
-- `RG-06` 的 Golden Schema v2 契约与语义校验、领域 aggregate、catalog-free validated snapshot rehydration，以及八 action 应用/原子 commit-port 契约已完成。手工付款建立 pending 分录对账；导入候选只在原子精确确认时直接建立 matched 对账；镜像合并不改变对账。
+- `RG-06` 的 Golden Schema v2 契约与语义校验、领域 aggregate、catalog-free validated snapshot rehydration，以及八 action 应用/原子 commit-port 契约已完成。手工付款建立 pending 分录对账；导入候选只在原子精确确认时直接建立 matched 对账；镜像合并不改变对账。当前 gate 状态与执行顺序见 [`RG-06 Gate 清单`](migrations/golden-v2/rg-06-gate-checklist.md)。
 - `RG-07` 的 contract、expected、adapter、fixture replay、schema v10 migration 与 Kotlin runtime 已完成；49 个 operation 比较 outcome、returned IDs、完整 state、deltas 与 status changes，v2 工件已发布到 `golden/rules-v2/rg-07.json`。
 - `RG-08` 至 `RG-10` 已有冻结 v1、Python 测试与逐路径 mapping；`RG-11`、`RG-12` 已有 approved direct-v2 fixtures 与 Python 语义测试。它们尚无 Kotlin runtime。
 
