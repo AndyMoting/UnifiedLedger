@@ -80,4 +80,4 @@ Harness release verification 是本地执行路由，不是仓库内工具或产
 
 ## 唯一下一动作
 
-先在 `docs/PROJECT_STATE.local.md` 精确登记 `docs/RG_06_GATE_EVIDENCE.local.md`，创建带 `状态：active`、base commit 和输入 SHA-256 的 ignored 报告；随后执行 `RG06-GAP-01` 至 `RG06-GAP-05` 的只读 evidence reconciliation，同时保持 `expected_output_gate=closed`。
+执行 `RG06-GAP-01` 至 `RG06-GAP-05` 的只读 evidence reconciliation，先对照 `RG06-GAP-01` 的 71 个 affected mapping entries，同时保持 `expected_output_gate=closed`。证据身份和报告生命周期已由 `docs/PROJECT_STATE.local.md` 与 `docs/RG_06_GATE_EVIDENCE.local.md` 登记。
