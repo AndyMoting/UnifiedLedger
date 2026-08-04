@@ -2,7 +2,10 @@
   "canonicalization": {
     "encoding": "UTF-8",
     "key_order": "sorted",
-    "separators": [",", ":"],
+    "separators": [
+      ",",
+      ":"
+    ],
     "scope": "parsed expected/output JSON"
   },
   "contract": "unifiedledger.golden-case",
@@ -46,6 +49,42 @@
       "source_byte_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d",
       "source_path": "golden/rules/rg-04.json",
       "source_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d"
+    },
+    {
+      "approval_status": "approved",
+      "case": "RG-06",
+      "discovery": {
+        "approval": "explicit user approval",
+        "comparison": "41-operation full comparison",
+        "explicit_user_approval": true,
+        "full_comparison_operation_count": 41,
+        "full_state_comparison": true,
+        "status": "approved expected output independently reviewed and explicitly approved"
+      },
+      "canonical_sha256": "b17f1d5ffe5a9cab289efb2059250e729eba3fa006974bddac001c25e86ae0a0",
+      "expected_byte_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
+      "expected_path": "docs/migrations/golden-v2/rg-06-expected.json",
+      "hashes": {
+        "canonical_sha256": "b17f1d5ffe5a9cab289efb2059250e729eba3fa006974bddac001c25e86ae0a0",
+        "expected_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
+        "output_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
+        "source_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15"
+      },
+      "object_counts": {
+        "operations": 41,
+        "roots": 20,
+        "states": 61
+      },
+      "operation_status_counts": {
+        "accepted": 13,
+        "no_change": 10,
+        "rejected": 18
+      },
+      "output_path": "golden/rules-v2/rg-06.json",
+      "publication_status": "published",
+      "source_byte_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15",
+      "source_path": "golden/rules/rg-06.json",
+      "source_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15"
     },
     {
       "approval_status": "approved",

@@ -264,6 +264,7 @@ class SqlDelightRg06Store private constructor(
         confirmationKind: String,
         candidateId: String?,
         reconciliationEvidenceLinkId: String?,
+        confirmedAt: Instant? = null,
     ) {
         val aggregate = checkNotNull(loadOwnedAggregate(op.ledgerId, op.input.relationId))
         val updated = (aggregate.recordInstallment(
@@ -284,7 +285,19 @@ class SqlDelightRg06Store private constructor(
         database.ledgerQueries.insertRg06History(op.ledgerId.value, updated.lifecycle.id.value, history.sequence.toLong(), history.id.value, op.identity.value, history.event.name, history.occurredAt.toString(), history.totalAmount.minorUnits, history.paidAmount.minorUnits, history.dueAmount.minorUnits, history.paymentId?.value, history.paymentProgress.name, history.fulfillmentStatus.name, history.stateTransitionEffectCount.toLong())
         database.ledgerQueries.updateRg06Lifecycle(updated.lifecycle.paidAmount.minorUnits, updated.lifecycle.dueAmount.minorUnits, history.sequence.toLong(), op.ledgerId.value, updated.lifecycle.id.value, aggregate.lifecycle.stateHistory.size.toLong())
         check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
-        database.ledgerQueries.insertRg06Confirmation(op.ledgerId.value, op.ids.confirmationId.value, op.identity.value, confirmationKind, candidateId, op.input.relationId.value, payment.id.value, payment.role.name, updated.lifecycle.categoryId.value, payment.fundingAccountId.value)
+        database.ledgerQueries.insertRg06Confirmation(
+            op.ledgerId.value,
+            op.ids.confirmationId.value,
+            op.identity.value,
+            confirmationKind,
+            candidateId,
+            op.input.relationId.value,
+            payment.id.value,
+            payment.role.name,
+            updated.lifecycle.categoryId.value,
+            payment.fundingAccountId.value,
+            confirmedAt?.toString(),
+        )
         val status = if (matched) "MATCHED" else "PENDING"
         database.ledgerQueries.insertRg06Reconciliation(op.ledgerId.value, op.ids.reconciliationId.value, payment.assetPostingId.value, status, 1)
         database.ledgerQueries.insertRg06ReconciliationHistory(
@@ -343,7 +356,15 @@ class SqlDelightRg06Store private constructor(
             Rg06RecordStagedPaymentInstallmentInput(op.input.requestId, op.input.relationId, op.input.paymentRole, Money.ofMinor(candidate.amount_minor, CurrencyUnit(candidate.currency_code, candidate.currency_precision.toInt())), op.input.fundingAccountId, source.instant),
             Rg06ManualInstallmentCommitIds(op.ids.confirmationId, op.ids.paymentIds, op.ids.reconciliationId),
         )
-        persistRecord(record, source, true, "CANDIDATE_CONFIRMATION", candidate.candidate_id, op.ids.evidenceLinkId.value)
+        persistRecord(
+            record,
+            source,
+            true,
+            "CANDIDATE_CONFIRMATION",
+            candidate.candidate_id,
+            op.ids.evidenceLinkId.value,
+            op.input.confirmedAt,
+        )
         val payment = database.ledgerQueries.selectRg06Payment(op.ids.paymentIds.paymentId.value).executeAsOne()
         database.ledgerQueries.updateRg06EvidenceBinding(payment.payment_id, op.ledgerId.value, candidate.evidence_id)
         check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
@@ -489,6 +510,14 @@ class SqlDelightRg06Store private constructor(
     private fun replay(op: Rg06Operation, saved: com.unifiedledger.data.db.Rg06_operation): Rg06ExecutionResult {
         val fields = canonicalFields(op)
         if (saved.action_type != op.action.code || saved.request_id != fields.requestId || saved.source_id != fields.sourceId || saved.evidence_id != fields.evidenceId || saved.candidate_id != fields.candidateId || saved.relation_id != fields.relationId || saved.payment_id != fields.paymentId || saved.posting_id != fields.postingId || saved.category_id != fields.categoryId || saved.funding_account_id != fields.fundingAccountId || saved.payment_role != fields.paymentRole || saved.fulfillment_status != fields.fulfillment || saved.confirmed != fields.confirmed || saved.exact_binding_confirmed != fields.exactBinding || saved.amount_minor != fields.amountMinor || saved.currency_code != fields.currencyCode || saved.currency_precision != fields.currencyPrecision || saved.occurred_at != fields.occurredAt || saved.occurred_at_text != fields.occurredAtText || saved.suggested_payment_role != fields.suggestedRole) return Rg06ExecutionResult.RequestIdentityConflict
+        if (op is Rg06Operation.ConfirmStagedPaymentCandidate) {
+            val savedConfirmation = database.ledgerQueries
+                .selectRg06ConfirmationForIdentity(op.ledgerId.value, op.identity.value)
+                .executeAsOneOrNull()
+            if (savedConfirmation?.confirmed_at != op.input.confirmedAt?.toString()) {
+                return Rg06ExecutionResult.RequestIdentityConflict
+            }
+        }
         val ids = database.ledgerQueries.selectRg06Receipts(op.ledgerId.value, op.identity.value).executeAsList().map { it.restored() }
         return Rg06ExecutionResult.NoChange(ids)
     }

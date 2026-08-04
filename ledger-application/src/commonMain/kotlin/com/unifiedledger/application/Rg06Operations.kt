@@ -89,7 +89,7 @@ data class Rg06IngestStagedPaymentBankFactInput(
     val suggestedPaymentRole: StagedPaymentRole?,
 )
 
-/** Confirmation binds stored candidate facts and cannot restate source amount or time. */
+/** Confirmation binds stored candidate facts; provenance time is supplied only by the v1 adapter. */
 data class Rg06ConfirmStagedPaymentCandidateInput(
     val requestId: RequestId,
     val candidateId: Rg06CandidateId,
@@ -98,6 +98,8 @@ data class Rg06ConfirmStagedPaymentCandidateInput(
     val categoryId: CategoryId,
     val fundingAccountId: AccountId,
     val exactBindingConfirmed: Boolean,
+    /** Frozen v1 confirmation provenance; never derive this from payment/source time. */
+    val confirmedAt: Instant? = null,
 )
 
 data class Rg06MergeStagedPaymentMirrorEvidenceInput(

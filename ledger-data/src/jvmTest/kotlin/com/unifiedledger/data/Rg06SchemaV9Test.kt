@@ -26,10 +26,10 @@ class Rg06SchemaV9Test {
                 LedgerDatabase.Schema.migrate(driver, 1, 8)
                 driver.execute(null, "INSERT INTO rg05_operation_request VALUES ('ledger-a','existing','MANUAL_MERGED_PAYMENT')", 0)
             }
-            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 10) }
+            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 11) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(10, LedgerDatabase.Schema.version)
+                assertEquals(11, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Operations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Relations().executeAsOne())
@@ -94,7 +94,7 @@ class Rg06SchemaV9Test {
             assertSqlRejected(driver, "UPDATE rg06_posting_reconciliation SET status = 'PENDING' WHERE reconciliation_id = 'reconciliation-a'")
 
             assertSqlRejected(driver, "INSERT INTO rg06_source VALUES ('ledger-b','mirror-cross','MIRROR',8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','SOURCE_PAYMENT_AT','source-a')")
-            assertSqlRejected(driver, "INSERT INTO rg06_confirmation VALUES ('ledger-a','confirmation-cross','record-a','CANDIDATE_CONFIRMATION','candidate-b','relation-a','payment-a','DEPOSIT','expense-service','asset-bank')")
+            assertSqlRejected(driver, "INSERT INTO rg06_confirmation(ledger_id,confirmation_id,identity_value,confirmation_kind,candidate_id,relation_id,payment_id,payment_role,category_id,funding_account_id) VALUES ('ledger-a','confirmation-cross','record-a','CANDIDATE_CONFIRMATION','candidate-b','relation-a','payment-a','DEPOSIT','expense-service','asset-bank')")
             assertSqlRejected(driver, "INSERT INTO rg06_evidence_link VALUES ('ledger-a','link-cross','evidence-a','payment-a','posting-b-asset','IMPORTED')")
             assertSqlRejected(driver, "INSERT INTO rg06_reconciliation_history VALUES ('ledger-a','reconciliation-a',3,'MATCHED','link-b')")
         } finally {
@@ -342,7 +342,7 @@ class Rg06SchemaV9Test {
         if (includeConfirmedCandidateStatus) {
             driver.execute(null, "INSERT INTO rg06_candidate_status_history VALUES ('ledger-a','candidate-a',2,'status-confirmed-a','CONFIRMED')", 0)
         }
-        driver.execute(null, "INSERT INTO rg06_confirmation VALUES ('ledger-a','confirmation-a','confirm-a','CANDIDATE_CONFIRMATION','candidate-a','relation-a','payment-a','DEPOSIT','expense-service','asset-bank')", 0)
+        driver.execute(null, "INSERT INTO rg06_confirmation(ledger_id,confirmation_id,identity_value,confirmation_kind,candidate_id,relation_id,payment_id,payment_role,category_id,funding_account_id) VALUES ('ledger-a','confirmation-a','confirm-a','CANDIDATE_CONFIRMATION','candidate-a','relation-a','payment-a','DEPOSIT','expense-service','asset-bank')", 0)
         driver.execute(null, "INSERT INTO rg06_evidence_link VALUES ('ledger-a','link-a','evidence-a','payment-a','posting-a-asset','$evidenceLinkKind')", 0)
         if (includeReconciliation) {
             driver.execute(null, "INSERT INTO rg06_posting_reconciliation VALUES ('ledger-a','reconciliation-a','posting-a-asset','MATCHED',1)", 0)
