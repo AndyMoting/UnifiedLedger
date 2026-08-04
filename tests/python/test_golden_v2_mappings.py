@@ -7,9 +7,32 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+import golden_cases.v2 as golden_v2
+from jsonschema import Draft202012Validator
+from tests.python.test_golden_v2_rg06_semantics import (
+    PRECISIONS as RG06_PRECISIONS,
+    STATE_PATH as RG06_STATE_PATH,
+    installment as rg06_installment,
+    staged_payment_state,
+    validate_relations as validate_rg06_relations,
+)
+from tests.python.test_golden_v2_rg06_operations import (
+    creation_result as rg06_creation_result,
+    deposit_result as rg06_deposit_result,
+    final_result as rg06_final_result,
+    lifecycle_entity as rg06_lifecycle_entity,
+    payment_entity as rg06_payment_entity,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = ROOT / "schemas" / "golden-case-v2.schema.json"
+RG06_FIXTURE_PATH = ROOT / "golden" / "rules" / "rg-06.json"
+RG06_CLOSURE_PROPOSAL_PATH = (
+    ROOT / "docs" / "migrations" / "golden-v2" / "rg-06-closure-proposal.md"
+)
+RG06_CLOSURE_RULES_BEGIN = "<!-- rg06-closure-rules:begin -->"
+RG06_CLOSURE_RULES_END = "<!-- rg06-closure-rules:end -->"
 EXPECTED_INVENTORIES = {
     "RG-02": (154, 368),
     "RG-03": (304, 560),
@@ -125,7 +148,70 @@ def normalized_schema_paths(schema, document=None, path="$", seen=None):
     return paths
 
 
+def load_rg06_closure_rules(proposal_text=None):
+    if proposal_text is None:
+        proposal_text = RG06_CLOSURE_PROPOSAL_PATH.read_text(encoding="utf-8")
+    if (
+        proposal_text.count(RG06_CLOSURE_RULES_BEGIN) != 1
+        or proposal_text.count(RG06_CLOSURE_RULES_END) != 1
+    ):
+        raise AssertionError("RG-06 closure rules block must have exactly one marker pair")
+    try:
+        fragment = proposal_text.split(RG06_CLOSURE_RULES_BEGIN, 1)[1].split(
+            RG06_CLOSURE_RULES_END, 1
+        )[0]
+    except IndexError as error:
+        raise AssertionError("RG-06 closure rules block is missing") from error
+    match = re.fullmatch(r"\s*```json\s*(\{.*\})\s*```\s*", fragment, re.DOTALL)
+    if match is None:
+        raise AssertionError("RG-06 closure rules block must contain one JSON object")
+    return json.loads(match.group(1))
+
+
+def schema_validator_for(definition, schema):
+    return Draft202012Validator(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": schema["$defs"],
+            "$ref": f"#/$defs/{definition}",
+        }
+    )
+
+
 class GoldenV2MappingTests(unittest.TestCase):
+    def test_rg06_closure_rules_require_single_marker_pair(self):
+        proposal_text = RG06_CLOSURE_PROPOSAL_PATH.read_text(encoding="utf-8")
+        duplicate_block = (
+            f"\n{RG06_CLOSURE_RULES_BEGIN}\n```json\n"
+            '{"artifact_version": 2}\n'
+            f"```\n{RG06_CLOSURE_RULES_END}\n"
+        )
+        with self.assertRaisesRegex(AssertionError, "exactly one marker pair"):
+            load_rg06_closure_rules(proposal_text + duplicate_block)
+
+    def test_target_paths_are_individual_normalized_json_paths(self):
+        for case_id in EXPECTED_INVENTORIES:
+            suffix = case_id[-2:]
+            path_map = json.loads(
+                (
+                    ROOT
+                    / "docs"
+                    / "migrations"
+                    / "golden-v2"
+                    / f"rg-{suffix}-path-map.json"
+                ).read_text(encoding="utf-8")
+            )
+            for entry in path_map["entries"]:
+                for target_path in entry["target_paths"]:
+                    with self.subTest(
+                        case_id=case_id,
+                        source_path=entry["source_path"],
+                        target_path=target_path,
+                    ):
+                        self.assertTrue(target_path.startswith("$."))
+                        self.assertEqual(target_path.count("$."), 1)
+                        self.assertNotRegex(target_path, r"\s")
+
     def test_path_map_envelope_metadata_is_canonical(self):
         expected_normalization = {
             "root": "$",
@@ -782,7 +868,7 @@ class GoldenV2MappingTests(unittest.TestCase):
                 self.assertEqual(
                     entry["target_paths"],
                     [
-                        "$.planned_contract.states[*].domain_entities[*].payload."
+                        "$.states[*].domain_entities[*].payload."
                         f"state_history[*].{field}"
                     ],
                 )
@@ -791,11 +877,31 @@ class GoldenV2MappingTests(unittest.TestCase):
         for entry in top_level_business_entries:
             field = entry["source_path"].split(".group.", 1)[1]
             with self.subTest(source_path=entry["source_path"]):
-                self.assertIn(
-                    "$.planned_contract.states[*].domain_entities[*].payload."
-                    f"{field}",
-                    entry["target_paths"],
-                )
+                if field in {"payment_progress", "fulfillment_status"}:
+                    self.assertEqual(
+                        set(entry["target_paths"]),
+                        {
+                            "$.states[*].derived_statuses[*].target_kind",
+                            "$.states[*].derived_statuses[*].target_id",
+                            "$.states[*].derived_statuses[*].status_name",
+                            "$.states[*].derived_statuses[*].value",
+                        },
+                    )
+                elif field in {"payment_ids[*]", "payments"}:
+                    self.assertEqual(
+                        set(entry["target_paths"]),
+                        {
+                            "$.states[*].domain_entities[*].id",
+                            "$.states[*].relations[*].member_refs[*].kind",
+                            "$.states[*].relations[*].member_refs[*].id",
+                        },
+                    )
+                else:
+                    self.assertIn(
+                        "$.states[*].domain_entities[*].payload."
+                        f"{field}",
+                        entry["target_paths"],
+                    )
 
         forbidden_provenance_collections = (
             ".sources[*]",
@@ -1325,16 +1431,15 @@ class GoldenV2MappingTests(unittest.TestCase):
         for entry in source_time_entries:
             source_path = entry["source_path"]
             with self.subTest(source_path=source_path):
-                self.assertEqual(entry["disposition"], "requires_contract_amendment")
-                self.assertIn("RG06-GAP-02", entry["contract_gap_ids"])
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(entry["contract_gap_ids"], [])
                 if source_path.endswith(".observed_at"):
                     observed_entries.append(entry)
                     self.assertIn("manual", source_path)
                     self.assertEqual(
                         entry["target_paths"],
                         [
-                            "$.planned_contract.states[*].sources[*].payload."
-                            "observed_at"
+                            "$.states[*].sources[*].payload.observed_at"
                         ],
                     )
                 else:
@@ -1343,8 +1448,7 @@ class GoldenV2MappingTests(unittest.TestCase):
                     self.assertEqual(
                         entry["target_paths"],
                         [
-                            "$.planned_contract.states[*].sources[*].payload."
-                            "source_payment_at"
+                            "$.states[*].sources[*].payload.source_payment_at"
                         ],
                     )
         self.assertTrue(observed_entries)
@@ -1660,10 +1764,10 @@ class GoldenV2MappingTests(unittest.TestCase):
                     )
 
         required_status_targets = {
-            "$.planned_contract.states[*].derived_statuses[*].target_kind",
-            "$.planned_contract.states[*].derived_statuses[*].target_id",
-            "$.planned_contract.states[*].derived_statuses[*].status_name",
-            "$.planned_contract.states[*].derived_statuses[*].value",
+            "$.states[*].derived_statuses[*].target_kind",
+            "$.states[*].derived_statuses[*].target_id",
+            "$.states[*].derived_statuses[*].status_name",
+            "$.states[*].derived_statuses[*].value",
         }
         status_entries = [
             entry
@@ -1679,8 +1783,8 @@ class GoldenV2MappingTests(unittest.TestCase):
         self.assertTrue(status_entries)
         for entry in status_entries:
             with self.subTest(source_path=entry["source_path"]):
-                self.assertEqual(entry["disposition"], "requires_contract_amendment")
-                self.assertIn("RG06-GAP-04", entry["contract_gap_ids"])
+                self.assertEqual(entry["disposition"], "ready")
+                self.assertEqual(entry["contract_gap_ids"], [])
                 self.assertTrue(required_status_targets.issubset(entry["target_paths"]))
 
         posting_owner_entry = next(
@@ -1695,16 +1799,21 @@ class GoldenV2MappingTests(unittest.TestCase):
         self.assertIn("payment_asset", posting_owner_entry["transform"])
         self.assertIn("expense posting", posting_owner_entry["transform"])
 
+        gap05 = next(
+            gap for gap in path_map["resolved_contract_gaps"] if gap["id"] == "RG06-GAP-05"
+        )
+        self.assertEqual("approved_implemented", gap05["status"])
         gap05_entries = [
             entry
             for entry in path_map["entries"]
-            if "RG06-GAP-05" in entry["contract_gap_ids"]
+            if entry["source_path"] in gap05["affected_source_paths"]
         ]
-        self.assertTrue(gap05_entries)
+        self.assertEqual(72, len(gap05_entries))
+        self.assertTrue(all(entry["contract_gap_ids"] == [] for entry in gap05_entries))
         for entry in gap05_entries:
             semantic_text = f"{entry['transform']} {entry['rationale']}"
             with self.subTest(source_path=entry["source_path"]):
-                self.assertEqual(entry["disposition"], "requires_contract_amendment")
+                self.assertEqual(entry["disposition"], "ready")
                 self.assertNotIn("merged_payment_bank_fact", semantic_text)
 
         rg06_source_row = next(
@@ -1860,6 +1969,1827 @@ class GoldenV2MappingTests(unittest.TestCase):
         for clause in required_mapping_clauses:
             with self.subTest(clause=clause):
                 self.assertIn(clause, mapping_text)
+
+    def test_rg06_closure_rules_match_closed_path_map_and_preserve_five_target_corrections(self):
+        rules = load_rg06_closure_rules()
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-06-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        entries = {entry["source_path"]: entry for entry in path_map["entries"]}
+
+        self.assertEqual("rg06_mapping_closure_proposal_rules", rules["artifact_type"])
+        self.assertEqual(1, rules["artifact_version"])
+        self.assertEqual("proposal_only", rules["scope"])
+        self.assertEqual("approved", path_map["status"])
+        self.assertEqual("approved", path_map["expected_output_gate"])
+        self.assertEqual(1188, path_map["source_path_count"])
+        self.assertEqual(3610, path_map["source_leaf_occurrence_count"])
+        self.assertEqual(0, path_map["contract_gap_count"])
+        self.assertEqual([], path_map["unresolved_contract_gaps"])
+        self.assertEqual(5, path_map["resolved_contract_gap_count"])
+        self.assertEqual(
+            {"ready": 1181, "test_only_exclusion": 7},
+            path_map["disposition_counts"],
+        )
+        self.assertTrue(
+            all(
+                gap["status"] == "approved_implemented"
+                for gap in path_map["resolved_contract_gaps"]
+            )
+        )
+        self.assertEqual(
+            path_map["disposition_counts"],
+            dict(Counter(entry["disposition"] for entry in path_map["entries"])),
+        )
+
+        corrected_targets = ["$.states[*].evidence[*].id"]
+        for source_path in rules["five_target_corrections"]["source_paths"]:
+            with self.subTest(source_path=source_path):
+                entry = entries[source_path]
+                self.assertEqual(corrected_targets, entry["target_paths"])
+                self.assertEqual("preserve", entry["classification"])
+                self.assertEqual("ready", entry["disposition"])
+                self.assertEqual([], entry["contract_gap_ids"])
+
+        planned_targets = [
+            target_path
+            for entry in path_map["entries"]
+            for target_path in entry["target_paths"]
+            if target_path.startswith(PLANNED_CONTRACT_PREFIX)
+        ]
+        self.assertEqual([], planned_targets)
+
+        confirmation_entries = [
+            entry
+            for entry in path_map["entries"]
+            if ".candidates[*].confirmation_provenance" in entry["source_path"]
+        ]
+        self.assertTrue(confirmation_entries)
+        for entry in confirmation_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual("ready", entry["disposition"])
+                self.assertEqual([], entry["contract_gap_ids"])
+                self.assertFalse(
+                    any(
+                        target.startswith(PLANNED_CONTRACT_PREFIX)
+                        for target in entry["target_paths"]
+                    )
+                )
+
+        candidate_rule_entries = [
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"].endswith(".candidate.rule_version")
+            or entry["source_path"].endswith(".candidates[*].rule_version")
+        ]
+        self.assertTrue(candidate_rule_entries)
+        for entry in candidate_rule_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(
+                    ["$.states[*].candidates[*].payload.rule_version"],
+                    entry["target_paths"],
+                )
+
+    def test_rg06_closure_rules_cover_exact_legacy_targets_and_schema_paths(self):
+        rules = load_rg06_closure_rules()
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-06-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        schema_paths = normalized_schema_paths(schema)
+
+        self.assertEqual("explicit_per_target", rules["replacement_strategy"])
+        prefix_rewrites = {
+            (item["from"], item["to"]) for item in rules["prefix_rewrites"]
+        }
+        self.assertEqual(
+            {
+                ("$.planned_contract.states[*]", "$.states[*]"),
+                ("$.planned_contract.operations[*]", "$.operations[*]"),
+            },
+            prefix_rewrites,
+        )
+
+        expected_legacy_targets = {
+            "$.operations[*].input.association_group_id",
+            "$.states[*].candidates[*].payload.association_group_id",
+            "$.states[*].candidates[*].payload.candidates",
+            "$.states[*].candidates[*].payload.category_id",
+            "$.states[*].candidates[*].payload.confirmation_provenance",
+            "$.states[*].candidates[*].payload.confirmed_at",
+            "$.states[*].candidates[*].payload.evidence_id",
+            "$.states[*].candidates[*].payload.exact_binding_confirmed",
+            "$.states[*].candidates[*].payload.funding_account_id",
+            "$.states[*].candidates[*].payload.immutable_source_fields[*]",
+            "$.states[*].candidates[*].payload.kind",
+            "$.states[*].candidates[*].payload.request_id",
+            "$.states[*].domain_entities[*].payload.fulfillment_status",
+            "$.states[*].domain_entities[*].payload.payment_ids[*]",
+            "$.states[*].domain_entities[*].payload.payment_progress",
+            "$.states[*].domain_entities[*].payload.payments",
+            "$.states[*].domain_entities[*].payload.user_labels.fulfillment",
+            "$.states[*].domain_entities[*].payload.user_labels.payment",
+        }
+        replacements = {
+            rule["legacy_target"]: rule
+            for rule in rules["legacy_target_replacements"]
+        }
+        self.assertEqual(expected_legacy_targets, set(replacements))
+        self.assertEqual(18, len(replacements))
+
+        def rewrite_prefix(target_path):
+            for old_prefix, new_prefix in prefix_rewrites:
+                if target_path.startswith(old_prefix):
+                    return new_prefix + target_path[len(old_prefix) :]
+            return target_path
+
+        current_targets = {
+            target_path
+            for entry in path_map["entries"]
+            for target_path in entry["target_paths"]
+        }
+        self.assertTrue(current_targets)
+        self.assertTrue(current_targets.issubset(schema_paths))
+        self.assertFalse(
+            any(target.startswith(PLANNED_CONTRACT_PREFIX) for target in current_targets)
+        )
+
+        for legacy_target, rule in replacements.items():
+            planned_target = f"$.planned_contract{legacy_target[1:]}"
+            rewritten_target = rewrite_prefix(planned_target)
+            canonical_targets = [
+                *rule["replacement_targets"],
+                *rule.get("retained_owner_paths", []),
+            ]
+            with self.subTest(legacy_target=legacy_target):
+                self.assertEqual(legacy_target, rewritten_target)
+                self.assertIn(rule["mode"], {"replace", "remove_redundant"})
+                self.assertTrue(canonical_targets)
+                self.assertTrue(set(canonical_targets).issubset(schema_paths))
+
+    def test_rg06_closure_target_transform_emits_current_schema_paths(self):
+        rules = load_rg06_closure_rules()
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-06-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        schema_paths = normalized_schema_paths(schema)
+        prefix_rewrites = [
+            (item["from"], item["to"]) for item in rules["prefix_rewrites"]
+        ]
+        self.assertEqual(
+            [
+                ("$.planned_contract.states[*]", "$.states[*]"),
+                ("$.planned_contract.operations[*]", "$.operations[*]"),
+            ],
+            prefix_rewrites,
+        )
+        replacements = {
+            rule["legacy_target"]: rule
+            for rule in rules["legacy_target_replacements"]
+        }
+        self.assertEqual(18, len(replacements))
+        redirect = rules["source_payload_evidence_id_closure"]
+        special_target = redirect["planned_source_target"]
+        special_emission = redirect["canonical_evidence_ownership"][
+            "legacy_source_payload_evidence_id_emits_to"
+        ]
+        self.assertEqual(
+            redirect["canonical_evidence_ownership"]["evidence_id_owner_path"],
+            special_emission,
+        )
+        self.assertNotEqual(
+            redirect["canonical_evidence_ownership"][
+                "legacy_source_payload_evidence_id_must_not_emit_to"
+            ],
+            special_emission,
+        )
+
+        def rewrite_prefix(target_path):
+            for old_prefix, new_prefix in prefix_rewrites:
+                if target_path.startswith(old_prefix):
+                    return new_prefix + target_path[len(old_prefix) :]
+            return target_path
+
+        def transform(target_path):
+            if target_path == special_target:
+                return [special_emission]
+            rewritten_target = rewrite_prefix(target_path)
+            replacement = replacements.get(rewritten_target)
+            if replacement is None:
+                return [rewritten_target]
+            if replacement["mode"] == "remove_redundant":
+                return []
+            return replacement["replacement_targets"]
+
+        current_targets = {
+            target_path
+            for entry in path_map["entries"]
+            for target_path in entry["target_paths"]
+        }
+        self.assertTrue(current_targets)
+        self.assertTrue(current_targets.issubset(schema_paths))
+        self.assertFalse(
+            any(target.startswith(PLANNED_CONTRACT_PREFIX) for target in current_targets)
+        )
+        planned_target_occurrences = [
+            f"$.planned_contract{legacy_target[1:]}"
+            for legacy_target in replacements
+        ]
+        planned_target_occurrences.append(special_target)
+        self.assertEqual(19, len(planned_target_occurrences))
+
+        emitted_targets = []
+        applied_replacements = Counter()
+        special_emissions = []
+        for target_path in planned_target_occurrences:
+            transformed_targets = transform(target_path)
+            rewritten_target = rewrite_prefix(target_path)
+            if target_path == special_target:
+                special_emissions.extend(transformed_targets)
+            elif rewritten_target in replacements:
+                applied_replacements[rewritten_target] += 1
+            for emitted_target in transformed_targets:
+                with self.subTest(target_path=target_path, emitted_target=emitted_target):
+                    self.assertFalse(
+                        emitted_target.startswith(PLANNED_CONTRACT_PREFIX)
+                    )
+                    self.assertIn(emitted_target, schema_paths)
+            emitted_targets.extend(transformed_targets)
+
+        self.assertTrue(emitted_targets)
+        self.assertEqual(
+            {special_emission}, set(special_emissions)
+        )
+        self.assertNotIn(
+            redirect["canonical_evidence_ownership"][
+                "legacy_source_payload_evidence_id_must_not_emit_to"
+            ],
+            special_emissions,
+        )
+        self.assertEqual(set(replacements), set(applied_replacements))
+
+        for replacement in replacements.values():
+            if replacement["mode"] != "remove_redundant":
+                continue
+            for retained_owner_path in replacement["retained_owner_paths"]:
+                with self.subTest(retained_owner_path=retained_owner_path):
+                    self.assertIn(retained_owner_path, current_targets)
+
+        for target_path in current_targets:
+            with self.subTest(current_target=target_path):
+                self.assertEqual([target_path], transform(target_path))
+
+    def test_rg06_closure_rules_bind_closed_branches_confirmation_and_actions(self):
+        rules = load_rg06_closure_rules()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        schema_paths = normalized_schema_paths(schema)
+        fixture = json.loads(RG06_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+        def assert_valid(definition, value):
+            errors = list(schema_validator_for(definition, schema).iter_errors(value))
+            self.assertEqual([], errors, [error.message for error in errors])
+
+        def assert_invalid(definition, value):
+            self.assertTrue(list(schema_validator_for(definition, schema).iter_errors(value)))
+
+        candidate_branches = {
+            branch["variant"]: branch for branch in rules["candidate_branches"]
+        }
+        self.assertEqual({"known_role", "ambiguous_role"}, set(candidate_branches))
+        required_confirmation = [
+            "relation_id",
+            "payment_role",
+            "category_id",
+            "funding_account_id",
+        ]
+        self.assertEqual(
+            required_confirmation,
+            candidate_branches["known_role"]["requires_confirmation"],
+        )
+        self.assertEqual(
+            required_confirmation,
+            candidate_branches["ambiguous_role"]["requires_confirmation"],
+        )
+        self.assertEqual(
+            {"rule": "staged_payment_bank_fact", "rule_version": 1},
+            candidate_branches["known_role"]["provenance"],
+        )
+        self.assertEqual(
+            candidate_branches["known_role"]["provenance"],
+            candidate_branches["ambiguous_role"]["provenance"],
+        )
+        self.assertEqual(
+            ["pending_confirmation"], rules["candidate_status_history"]["pending"]
+        )
+        self.assertEqual(
+            ["pending_confirmation", "confirmed"],
+            rules["candidate_status_history"]["confirmed"],
+        )
+
+        def staged_candidate(branch, statuses):
+            payload = {
+                "payment_role": (
+                    branch["payment_role"][0]
+                    if isinstance(branch["payment_role"], list)
+                    else branch["payment_role"]
+                ),
+                "amount": "80.00",
+                "currency": "CNY",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "evidence_ref": "evidence-import",
+                "provenance": branch["provenance"],
+                "requires_confirmation": branch["requires_confirmation"],
+            }
+            if branch.get("guessed_payment_role") != "omitted":
+                payload["guessed_payment_role"] = branch["guessed_payment_role"]
+            return {
+                "id": f"candidate-{branch['variant']}",
+                "type": "staged_payment",
+                "source_ids": ["source-import"],
+                "confidence": branch["confidence"],
+                "payload": payload,
+                "status_history": [
+                    {
+                        "id": f"candidate-status-{sequence}",
+                        "sequence": sequence,
+                        "status": status,
+                    }
+                    for sequence, status in enumerate(statuses, start=1)
+                ],
+            }
+
+        known_candidate = staged_candidate(
+            candidate_branches["known_role"], rules["candidate_status_history"]["confirmed"]
+        )
+        ambiguous_candidate = staged_candidate(
+            candidate_branches["ambiguous_role"],
+            rules["candidate_status_history"]["pending"],
+        )
+        assert_valid(candidate_branches["known_role"]["definition"], known_candidate)
+        assert_valid(
+            candidate_branches["ambiguous_role"]["definition"], ambiguous_candidate
+        )
+        assert_valid("stagedPaymentCandidate", known_candidate)
+        assert_valid("stagedPaymentCandidate", ambiguous_candidate)
+
+        wrong_confidence = deepcopy(known_candidate)
+        wrong_confidence["confidence"] = "0.50"
+        assert_invalid("stagedPaymentCandidate", wrong_confidence)
+        missing_ambiguous_null = deepcopy(ambiguous_candidate)
+        missing_ambiguous_null["payload"].pop("guessed_payment_role")
+        assert_invalid("stagedPaymentCandidate", missing_ambiguous_null)
+        wrong_provenance = deepcopy(known_candidate)
+        wrong_provenance["payload"]["provenance"]["rule_version"] = 2
+        assert_invalid("stagedPaymentCandidate", wrong_provenance)
+        wrong_requirements = deepcopy(known_candidate)
+        wrong_requirements["payload"]["requires_confirmation"][-1] = (
+            "association_group_id"
+        )
+        assert_invalid("stagedPaymentCandidate", wrong_requirements)
+
+        authorization = rules["candidate_confirmation"]["authorization_operation"]
+        self.assertTrue(
+            rules["candidate_confirmation"]["candidate_status_is_not_authorization"]
+        )
+        self.assertEqual(
+            authorization["required_input_fields"],
+            schema["$defs"][authorization["input_definition"]]["required"],
+        )
+        self.assertEqual(
+            "creates_installment_payment_only_after_authorized_operation",
+            authorization["formal_effect"],
+        )
+        self.assertIn(authorization["actual_payment_at_owner"], schema_paths)
+
+        confirmation_input = {
+            "request_id": "request-confirm",
+            "candidate_id": known_candidate["id"],
+            "relation_id": "relation-staged-payment",
+            "payment_role": "deposit",
+            "category_id": "category-service",
+            "funding_account_id": "asset-bank",
+            "exact_binding_confirmed": True,
+        }
+        assert_valid(authorization["input_definition"], confirmation_input)
+        for field in authorization["required_input_fields"]:
+            missing = deepcopy(confirmation_input)
+            missing.pop(field)
+            with self.subTest(confirmation_field=field):
+                assert_invalid(authorization["input_definition"], missing)
+        false_confirmation = deepcopy(confirmation_input)
+        false_confirmation["exact_binding_confirmed"] = False
+        assert_invalid(authorization["input_definition"], false_confirmation)
+        alias_confirmation = deepcopy(confirmation_input)
+        alias_confirmation["association_group_id"] = "legacy-group"
+        assert_invalid(authorization["input_definition"], alias_confirmation)
+
+        confirmation = {
+            "id": "confirmation-candidate",
+            "type": authorization["confirmation_type"],
+            "operation_id": "operation-confirm",
+            "subject": {"kind": authorization["subject_kind"], "id": known_candidate["id"]},
+            "confirmed_at": "2026-04-28T10:05:00+08:00",
+            "payload": {},
+        }
+        assert_valid(authorization["confirmation_definition"], confirmation)
+        wrong_subject = deepcopy(confirmation)
+        wrong_subject["subject"]["kind"] = "operation"
+        assert_invalid(authorization["confirmation_definition"], wrong_subject)
+        wrong_confirmation_type = deepcopy(confirmation)
+        wrong_confirmation_type["type"] = "explicit_operation_confirmation"
+        assert_invalid(authorization["confirmation_definition"], wrong_confirmation_type)
+
+        source_branches = {branch["variant"]: branch for branch in rules["source_branches"]}
+        evidence_branches = {
+            branch["variant"]: branch for branch in rules["evidence_branches"]
+        }
+        self.assertEqual({"manual", "imported"}, set(source_branches))
+        self.assertEqual({"manual", "imported"}, set(evidence_branches))
+        self.assertFalse(source_branches["manual"]["mirror"]["allowed"])
+        self.assertTrue(source_branches["imported"]["mirror"]["allowed"])
+        self.assertFalse(evidence_branches["manual"]["mirror"]["allowed"])
+        self.assertTrue(evidence_branches["imported"]["mirror"]["allowed"])
+
+        manual_source = {
+            "id": "source-manual",
+            "type": source_branches["manual"]["type"],
+            "payload": {
+                "amount": "-80.00",
+                "currency": "CNY",
+                "observed_at": "2026-04-28T10:00:00+08:00",
+            },
+        }
+        frozen_import_sources = fixture["import_path"]["canonical_final_state"][
+            "source_records"
+        ]
+        original_source_index, original_record = next(
+            (index, record)
+            for index, record in enumerate(frozen_import_sources)
+            if record["id"] == "source-rg06-import-final"
+        )
+        mirror_source_index, mirror_record = next(
+            (index, record)
+            for index, record in enumerate(frozen_import_sources)
+            if record["id"] == "source-rg06-import-final-mirror"
+        )
+        self.assertEqual(original_record["id"], mirror_record["mirror_of_source_id"])
+        self.assertLess(original_source_index, mirror_source_index)
+        original_source = {
+            "id": original_record["id"],
+            "type": source_branches["imported"]["type"],
+            "payload": {
+                "amount": original_record["amount"],
+                "currency": original_record["currency"],
+                "source_payment_at": original_record["source_payment_at"],
+            },
+        }
+        mirror_source = {
+            "id": mirror_record["id"],
+            "type": source_branches["imported"]["type"],
+            "payload": {
+                "amount": mirror_record["amount"],
+                "currency": mirror_record["currency"],
+                "source_payment_at": mirror_record["source_payment_at"],
+                "mirror_of_source_id": mirror_record["mirror_of_source_id"],
+            },
+        }
+        assert_valid(source_branches["manual"]["definition"], manual_source)
+        assert_valid(source_branches["imported"]["definition"], original_source)
+        assert_valid(source_branches["imported"]["definition"], mirror_source)
+        manual_as_imported = deepcopy(manual_source)
+        manual_as_imported["payload"]["source_payment_at"] = "2026-04-28T10:00:00+08:00"
+        assert_invalid(source_branches["manual"]["definition"], manual_as_imported)
+        manual_mirror = deepcopy(manual_source)
+        manual_mirror["payload"]["mirror_of_source_id"] = original_source["id"]
+        assert_invalid(source_branches["manual"]["definition"], manual_mirror)
+        imported_with_observed = deepcopy(original_source)
+        imported_with_observed["payload"]["observed_at"] = original_source["payload"][
+            "source_payment_at"
+        ]
+        assert_invalid(source_branches["imported"]["definition"], imported_with_observed)
+        null_source_mirror = deepcopy(mirror_source)
+        null_source_mirror["payload"]["mirror_of_source_id"] = None
+        assert_invalid(source_branches["imported"]["definition"], null_source_mirror)
+
+        manual_evidence = {
+            "id": "evidence-manual",
+            "type": evidence_branches["manual"]["type"],
+            "source_ids": [manual_source["id"]],
+            "payload": {
+                "payment_id": "installment-deposit",
+                "observed_at": "2026-04-28T10:00:00+08:00",
+            },
+        }
+        original_evidence = {
+            "id": "evidence-original",
+            "type": evidence_branches["imported"]["type"],
+            "source_ids": [original_source["id"]],
+            "payload": {
+                "payment_id": "installment-final",
+                "source_payment_at": original_source["payload"]["source_payment_at"],
+            },
+        }
+        mirror_evidence = {
+            "id": "evidence-mirror",
+            "type": evidence_branches["imported"]["type"],
+            "source_ids": [mirror_source["id"]],
+            "payload": {
+                "payment_id": "installment-final",
+                "source_payment_at": mirror_source["payload"]["source_payment_at"],
+                "mirror_of_evidence_id": original_evidence["id"],
+                "merged_into_evidence_link_id": "evidence-link-original",
+            },
+        }
+        assert_valid(evidence_branches["manual"]["definition"], manual_evidence)
+        assert_valid(evidence_branches["imported"]["definition"], original_evidence)
+        assert_valid(evidence_branches["imported"]["definition"], mirror_evidence)
+        manual_evidence_as_imported = deepcopy(manual_evidence)
+        manual_evidence_as_imported["payload"]["source_payment_at"] = (
+            "2026-04-28T10:00:00+08:00"
+        )
+        assert_invalid(
+            evidence_branches["manual"]["definition"], manual_evidence_as_imported
+        )
+        incomplete_evidence_mirror = deepcopy(mirror_evidence)
+        incomplete_evidence_mirror["payload"].pop("merged_into_evidence_link_id")
+        assert_invalid(
+            evidence_branches["imported"]["definition"], incomplete_evidence_mirror
+        )
+        null_evidence_mirror = deepcopy(mirror_evidence)
+        null_evidence_mirror["payload"]["mirror_of_evidence_id"] = None
+        assert_invalid(
+            evidence_branches["imported"]["definition"], null_evidence_mirror
+        )
+
+        mirror_rule = rules["mirror_branch"]
+        self.assertEqual("none", mirror_rule["formal_effect"])
+        self.assertNotIn("mirror_of_source_id", original_source["payload"])
+        self.assertLess(
+            original_source_index,
+            mirror_source_index,
+        )
+        self.assertEqual(
+            original_source["payload"]["source_payment_at"],
+            mirror_source["payload"]["source_payment_at"],
+        )
+        self.assertEqual(
+            original_source["payload"]["currency"], mirror_source["payload"]["currency"]
+        )
+        self.assertEqual(
+            abs(Decimal(original_source["payload"]["amount"])),
+            abs(Decimal(mirror_source["payload"]["amount"])),
+        )
+        self.assertLess(
+            Decimal(original_source["payload"]["amount"])
+            * Decimal(mirror_source["payload"]["amount"]),
+            Decimal("0"),
+        )
+        for invariant in (
+            "original_is_non_mirror",
+            "original_precedes_mirror_in_frozen_source_collection",
+            "source_payment_at_must_be_byte_for_byte_equal",
+            "currency_must_match",
+            "absolute_amount_must_match",
+            "amounts_must_have_opposite_sign",
+        ):
+            with self.subTest(mirror_invariant=invariant):
+                self.assertTrue(mirror_rule[invariant])
+
+        expected_action_classes = {
+            "create_staged_payment": "creation",
+            "record_staged_payment_installment": "creation",
+            "change_staged_payment_fulfillment": "status_transition",
+            "confirm_staged_payment_completion": "status_transition",
+            "link_staged_payment_evidence": "reconciliation",
+            "ingest_staged_payment_bank_fact": "creation",
+            "confirm_staged_payment_candidate": "creation",
+            "merge_staged_payment_mirror_evidence": "reconciliation",
+        }
+        action_rules = {rule["action_type"]: rule for rule in rules["action_rules"]}
+        self.assertEqual(set(expected_action_classes), set(action_rules))
+        for action_type, operation_class in expected_action_classes.items():
+            rule = action_rules[action_type]
+            with self.subTest(action_type=action_type):
+                self.assertEqual(operation_class, rule["operation_class"])
+                self.assertEqual(
+                    rule["required_input_fields"],
+                    schema["$defs"][rule["input_definition"]]["required"],
+                )
+                for optional_field in rule.get("optional_input_fields", []):
+                    self.assertIn(
+                        optional_field,
+                        schema["$defs"][rule["input_definition"]]["properties"],
+                    )
+                    self.assertNotIn(optional_field, rule["required_input_fields"])
+
+        action_inputs = {
+            "create_staged_payment": {
+                "request_id": "request-create",
+                "kind": "staged_payment",
+                "total_amount": "300.00",
+                "currency": "CNY",
+                "category_id": "category-service",
+                "created_at": "2026-04-20T09:00:00+08:00",
+            },
+            "record_staged_payment_installment": {
+                "request_id": "request-deposit",
+                "relation_id": "relation-staged-payment",
+                "payment_role": "deposit",
+                "payment_amount": "80.00",
+                "currency": "CNY",
+                "funding_account_id": "asset-bank",
+                "actual_payment_at": "2026-04-28T10:00:00+08:00",
+            },
+            "change_staged_payment_fulfillment": {
+                "request_id": "request-fulfillment",
+                "relation_id": "relation-staged-payment",
+                "fulfillment_status": "fulfilled",
+                "occurred_at": "2026-05-01T12:00:00+08:00",
+            },
+            "confirm_staged_payment_completion": {
+                "request_id": "request-completion",
+                "relation_id": "relation-staged-payment",
+                "confirmed": True,
+                "occurred_at": "2026-05-04T09:00:00+08:00",
+            },
+            "link_staged_payment_evidence": {
+                "source_id": "source-manual",
+                "evidence_id": "evidence-manual",
+                "payment_id": "installment-deposit",
+                "posting_id": "posting-asset",
+            },
+            "ingest_staged_payment_bank_fact": {
+                "source_id": "source-import",
+                "evidence_id": "evidence-import",
+                "source_payment_at": "2026-04-28T10:00:00+08:00",
+                "amount": "80.00",
+                "currency": "CNY",
+                "suggested_payment_role": "deposit",
+            },
+            "confirm_staged_payment_candidate": confirmation_input,
+            "merge_staged_payment_mirror_evidence": {
+                "source_id": "source-mirror",
+                "evidence_id": "evidence-mirror",
+                "payment_id": "installment-final",
+                "posting_id": "posting-asset-final",
+                "amount": "-220.00",
+                "currency": "CNY",
+                "source_payment_at": "2026-05-03T16:30:00+08:00",
+            },
+        }
+        entity_collections = (
+            "catalog_accounts",
+            "catalog_categories",
+            "transactions",
+            "transaction_versions",
+            "posting_sets",
+            "postings",
+            "sources",
+            "candidates",
+            "confirmations",
+            "evidence",
+            "evidence_links",
+            "relations",
+            "domain_entities",
+            "audit_links",
+            "posting_reconciliations",
+        )
+        for action_type, action_input in action_inputs.items():
+            rule = action_rules[action_type]
+            for status in ("accepted", "no_change"):
+                outcome = {"status": status}
+                if status == "no_change":
+                    outcome["reason_code"] = "idempotent_replay"
+                operation = {
+                    "id": f"operation-{action_type}-{status}",
+                    "root_id": "root-rg06",
+                    "sequence": 1,
+                    "operation_class": rule["operation_class"],
+                    "action_type": action_type,
+                    "baseline_state_id": "state-before",
+                    "result_state_id": "state-after",
+                    "outcome": outcome,
+                    "status_changes": [],
+                    "deltas": {
+                        "entity_changes": {
+                            name: {
+                                "added_ids": [],
+                                "changed_ids": [],
+                                "removed_ids": [],
+                            }
+                            for name in entity_collections
+                        },
+                        "value_changes": {
+                            "balances": [],
+                            "reports": [],
+                            "derived_statuses": [],
+                        },
+                    },
+                    "returned_ids": [],
+                    "input": action_input,
+                }
+                with self.subTest(action_type=action_type, status=status):
+                    assert_valid("operation", operation)
+
+    def test_rg06_rejection_dispatch_replays_all_fixture_invalid_inputs(self):
+        rules = load_rg06_closure_rules()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fixture = json.loads(RG06_FIXTURE_PATH.read_text(encoding="utf-8"))
+        action_rules = {rule["action_type"]: rule for rule in rules["action_rules"]}
+        dispatch = {
+            action: action_rules[action]["rejection"]
+            for action in (
+                "create_staged_payment",
+                "record_staged_payment_installment",
+                "confirm_staged_payment_completion",
+            )
+        }
+        self.assertEqual(
+            [
+                {
+                    "legacy_operation_context": "group_creation",
+                    "action_type": "create_staged_payment",
+                    "operation_class": "rejection",
+                    "attempted_input_definition": "createStagedPaymentAttemptedInput",
+                    "outcome_definition": "createStagedPaymentRejectedOutcome",
+                },
+                {
+                    "legacy_operation_context": "payment_creation",
+                    "action_type": "record_staged_payment_installment",
+                    "operation_class": "rejection",
+                    "attempted_input_definition": "recordStagedPaymentInstallmentAttemptedInput",
+                    "outcome_definition": "recordStagedPaymentInstallmentRejectedOutcome",
+                },
+                {
+                    "legacy_operation_context": "payment_progress_transition",
+                    "action_type": "confirm_staged_payment_completion",
+                    "operation_class": "rejection",
+                    "attempted_input_definition": "confirmStagedPaymentCompletionAttemptedInput",
+                    "outcome_definition": "confirmStagedPaymentCompletionRejectedOutcome",
+                },
+            ],
+            rules["rejection_dispatch"],
+        )
+        self.assertEqual(
+            {
+                "group_creation": "create_staged_payment",
+                "payment_creation": "record_staged_payment_installment",
+                "payment_progress_transition": "confirm_staged_payment_completion",
+            },
+            {
+                context: action
+                for action, rule in dispatch.items()
+                for context in rule["legacy_operation_contexts"]
+            },
+        )
+
+        def assert_valid(definition, value):
+            errors = list(schema_validator_for(definition, schema).iter_errors(value))
+            self.assertEqual([], errors, [error.message for error in errors])
+
+        def empty_deltas():
+            collections = (
+                "catalog_accounts",
+                "catalog_categories",
+                "transactions",
+                "transaction_versions",
+                "posting_sets",
+                "postings",
+                "sources",
+                "candidates",
+                "confirmations",
+                "evidence",
+                "evidence_links",
+                "relations",
+                "domain_entities",
+                "audit_links",
+                "posting_reconciliations",
+            )
+            return {
+                "entity_changes": {
+                    name: {
+                        "added_ids": [],
+                        "changed_ids": [],
+                        "removed_ids": [],
+                    }
+                    for name in collections
+                },
+                "value_changes": {
+                    "balances": [],
+                    "reports": [],
+                    "derived_statuses": [],
+                },
+            }
+
+        def baseline_for(action, baseline_id):
+            state = deepcopy(staged_payment_state())
+            state["catalog"]["categories"].extend(
+                [
+                    {
+                        "id": "expense-category-service-parent",
+                        "name": "Synthetic parent",
+                        "parent_id": None,
+                        "posting_account_id": None,
+                        "active": True,
+                    },
+                    {
+                        "id": "expense-category-inactive",
+                        "name": "Synthetic inactive",
+                        "parent_id": "expense-category-service-parent",
+                        "posting_account_id": "expense-service",
+                        "active": False,
+                    },
+                    {
+                        "id": "income-category-other",
+                        "name": "Synthetic income",
+                        "parent_id": "expense-category-service-parent",
+                        "posting_account_id": "income-account",
+                        "active": True,
+                    },
+                ]
+            )
+            state["catalog"]["accounts"].extend(
+                [
+                    {
+                        "id": "income-account",
+                        "name": "Synthetic income",
+                        "kind": "income",
+                        "currency": "CNY",
+                        "owned_by_user": False,
+                        "real_account": False,
+                        "reconciliation_eligible": False,
+                    },
+                    {
+                        "id": "expense-account-service",
+                        "name": "Synthetic expense",
+                        "kind": "expense",
+                        "currency": "CNY",
+                        "owned_by_user": False,
+                        "real_account": False,
+                        "reconciliation_eligible": False,
+                    },
+                    {
+                        "id": "asset-external-x",
+                        "name": "Synthetic external asset",
+                        "kind": "asset",
+                        "currency": "CNY",
+                        "owned_by_user": False,
+                        "real_account": True,
+                        "reconciliation_eligible": True,
+                    },
+                    {
+                        "id": "liability-credit-a",
+                        "name": "Synthetic liability",
+                        "kind": "liability",
+                        "currency": "CNY",
+                        "owned_by_user": True,
+                        "real_account": True,
+                        "reconciliation_eligible": True,
+                    },
+                ]
+            )
+            if baseline_id == "after_deposit":
+                lifecycle = rg06_lifecycle_entity(state)["payload"]
+                lifecycle["paid_amount"] = "80.00"
+                lifecycle["due_amount"] = "220.00"
+            return state
+
+        fixture_cases = {item["id"]: item for item in fixture["invalid_inputs"]}
+        declared_cases = [
+            case
+            for rule in dispatch.values()
+            for case in rule["cases"]
+        ]
+        self.assertEqual(18, len(declared_cases))
+        self.assertEqual(set(fixture_cases), {case["fixture_id"] for case in declared_cases})
+
+        for action, rejection in dispatch.items():
+            self.assertTrue(rejection["sparse_attempted_input"])
+            self.assertEqual("rejection", rejection["operation_class"])
+            self.assertEqual(
+                {
+                    "status": "rejected",
+                    "deltas": "empty",
+                    "status_changes": [],
+                    "returned_ids": [],
+                    "state_effect": "none",
+                },
+                rejection["atomic_effect"],
+            )
+            for case in rejection["cases"]:
+                fixture_case = fixture_cases[case["fixture_id"]]
+                attempted_input = fixture_case["input"]
+                outcome = fixture_case["expected"]
+                operation = {
+                    "id": f"operation-rg06-{fixture_case['id']}",
+                    "root_id": "root-rg06",
+                    "sequence": 1,
+                    "operation_class": "rejection",
+                    "action_type": action,
+                    "baseline_state_id": "state-rg06-rejection-before",
+                    "result_state_id": "state-rg06-rejection-after",
+                    "attempted_input": deepcopy(attempted_input),
+                    "outcome": {
+                        "status": "rejected",
+                        "reason_code": outcome["reason"],
+                        "field_path": f"$.attempted_input.{outcome['field']}",
+                    },
+                    "status_changes": [],
+                    "deltas": empty_deltas(),
+                    "returned_ids": [],
+                }
+                baseline = baseline_for(action, case["baseline_id"])
+                result = deepcopy(baseline)
+                with self.subTest(fixture_id=fixture_case["id"], action=action):
+                    self.assertEqual(case["baseline_id"], outcome["baseline_id"])
+                    self.assertEqual(case["reason_code"], outcome["reason"])
+                    self.assertEqual(case["field_path"], operation["outcome"]["field_path"])
+                    assert_valid(case["attempted_input_definition"], attempted_input)
+                    assert_valid(rejection["outcome_definition"], operation["outcome"])
+                    assert_valid("operation", operation)
+                    golden_v2._validate_action_input(
+                        operation,
+                        "$.operations[0]",
+                        baseline,
+                        RG06_PRECISIONS,
+                        golden_v2.ZoneInfo("Asia/Shanghai"),
+                    )
+                    expected = golden_v2._expected_entity_changes(baseline, result)
+                    golden_v2._validate_registered_action_effects(
+                        operation, "$.operations[0]", result, expected
+                    )
+                    self.assertEqual(golden_v2._state_payload(baseline), golden_v2._state_payload(result))
+                    self.assertEqual([], operation["status_changes"])
+                    self.assertEqual([], operation["returned_ids"])
+                    self.assertTrue(
+                        all(
+                            not ids
+                            for changes in expected.values()
+                            for ids in changes.values()
+                        )
+                    )
+                    self.assertEqual(
+                        0,
+                        sum(outcome_count for outcome_count in fixture_case["expected"]["effect_counts"].values()),
+                    )
+
+    def test_rg06_manual_installment_confirmation_replay_owns_version(self):
+        rules = load_rg06_closure_rules()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fixture = json.loads(RG06_FIXTURE_PATH.read_text(encoding="utf-8"))
+        manual_rule = next(
+            rule
+            for rule in rules["action_rules"]
+            if rule["action_type"] == "record_staged_payment_installment"
+        )
+        confirmation_rule = manual_rule["manual_confirmation"]
+        self.assertEqual("explicit_manual_save", confirmation_rule["confirmation_type"])
+        self.assertEqual("confirmation-{payment_role}", confirmation_rule["confirmation_id_template"])
+        self.assertEqual(
+            {"kind": "operation", "id_source": "operation.id"},
+            confirmation_rule["subject"],
+        )
+        self.assertEqual(
+            "confirmation.id",
+            confirmation_rule["transaction_version_confirmation_id_source"],
+        )
+        self.assertEqual(
+            [
+                {"kind": "confirmation", "id_source": "confirmation.id"},
+                {"kind": "transaction", "id_source": "transaction.id"},
+                {"kind": "domain_entity", "id_source": "installment.id"},
+            ],
+            confirmation_rule["returned_ids"],
+        )
+
+        manual_operations = {
+            operation["id"]: operation
+            for operation in fixture["manual_path"]["ordered_operations"]
+            if operation["id"] in {"save-deposit", "save-final"}
+        }
+        self.assertEqual({"save-deposit", "save-final"}, set(manual_operations))
+        self.assertEqual(
+            {"save-deposit", "save-final"},
+            {item["fixture_operation_id"] for item in confirmation_rule["fixture_replay"]},
+        )
+
+        for replay in confirmation_rule["fixture_replay"]:
+            legacy = manual_operations[replay["fixture_operation_id"]]
+            legacy_input = legacy["input"]
+            operation_id = f"operation-{legacy['id']}"
+            canonical_input = {
+                "request_id": legacy_input["request_id"],
+                "relation_id": "relation-staged-payment",
+                "payment_role": legacy_input["payment_role"],
+                "payment_amount": legacy_input["payment_amount"],
+                "currency": legacy_input["currency"],
+                "funding_account_id": "asset-bank",
+                "actual_payment_at": legacy_input["actual_payment_at"],
+            }
+            confirmation_id = f"confirmation-{canonical_input['payment_role']}"
+            if canonical_input["payment_role"] == "deposit":
+                baseline = rg06_creation_result()
+                result = rg06_deposit_result()
+            else:
+                result = rg06_final_result()
+                baseline = deepcopy(result)
+                final_payment = rg06_payment_entity(baseline, "final")
+                final_transaction_id = final_payment["payload"]["transaction_id"]
+                final_transaction = next(
+                    item for item in baseline["transactions"] if item["id"] == final_transaction_id
+                )
+                final_version_id = final_transaction["current_version_id"]
+                final_version = next(
+                    item for item in baseline["transaction_versions"] if item["id"] == final_version_id
+                )
+                final_set_id = final_version["posting_set_id"]
+                final_posting_ids = set(
+                    next(item for item in baseline["posting_sets"] if item["id"] == final_set_id)["posting_ids"]
+                )
+                baseline["transactions"] = [
+                    item for item in baseline["transactions"] if item["id"] != final_transaction_id
+                ]
+                baseline["transaction_versions"] = [
+                    item for item in baseline["transaction_versions"] if item["id"] != final_version_id
+                ]
+                baseline["posting_sets"] = [
+                    item for item in baseline["posting_sets"] if item["id"] != final_set_id
+                ]
+                baseline["postings"] = [
+                    item for item in baseline["postings"] if item["id"] not in final_posting_ids
+                ]
+                baseline["domain_entities"] = [
+                    item for item in baseline["domain_entities"] if item["id"] != final_payment["id"]
+                ]
+                baseline["relations"][0]["member_refs"] = [
+                    item for item in baseline["relations"][0]["member_refs"] if item["id"] != final_payment["id"]
+                ]
+                baseline["confirmations"] = [
+                    item for item in baseline["confirmations"] if item["id"] != confirmation_id
+                ]
+                baseline["posting_reconciliations"] = [
+                    item
+                    for item in baseline["posting_reconciliations"]
+                    if item["posting_id"] not in final_posting_ids
+                ]
+                lifecycle = rg06_lifecycle_entity(baseline)["payload"]
+                lifecycle["paid_amount"] = "80.00"
+                lifecycle["due_amount"] = "220.00"
+                lifecycle["state_history"] = lifecycle["state_history"][:3]
+
+            result_confirmation = next(
+                item for item in result["confirmations"] if item["id"] == confirmation_id
+            )
+            result_confirmation["operation_id"] = operation_id
+            result_confirmation["subject"] = {"kind": "operation", "id": operation_id}
+            operation = {
+                "id": operation_id,
+                "action_type": "record_staged_payment_installment",
+                "operation_class": "creation",
+                "input": canonical_input,
+                "outcome": {"status": "accepted"},
+                "returned_ids": [
+                    {"kind": "confirmation", "id": confirmation_id},
+                    {"kind": "transaction", "id": f"transaction-{canonical_input['payment_role']}"},
+                    {"kind": "domain_entity", "id": f"installment-{canonical_input['payment_role']}"},
+                ],
+            }
+            version = next(
+                item
+                for item in result["transaction_versions"]
+                if item["id"] == next(
+                    tx["current_version_id"]
+                    for tx in result["transactions"]
+                    if tx["id"] == f"transaction-{canonical_input['payment_role']}"
+                )
+            )
+            with self.subTest(fixture_operation_id=legacy["id"]):
+                self.assertEqual(confirmation_id, version["confirmation_id"])
+                errors = list(
+                    schema_validator_for("explicitManualSaveConfirmation", schema).iter_errors(
+                        result_confirmation
+                    )
+                )
+                self.assertEqual([], errors, [error.message for error in errors])
+                expected = golden_v2._expected_entity_changes(baseline, result)
+                golden_v2._validate_rg06_action_effects(
+                    operation, "$.operations[0]", baseline, result, expected
+                )
+
+    def test_rg06_source_payload_evidence_redirect_uses_closed_branches(self):
+        rules = load_rg06_closure_rules()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fixture = json.loads(RG06_FIXTURE_PATH.read_text(encoding="utf-8"))
+        path_map = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "migrations"
+                / "golden-v2"
+                / "rg-06-path-map.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        def assert_valid(definition, value):
+            errors = list(schema_validator_for(definition, schema).iter_errors(value))
+            self.assertEqual([], errors, [error.message for error in errors])
+
+        def assert_invalid(definition, value):
+            self.assertTrue(list(schema_validator_for(definition, schema).iter_errors(value)))
+
+        redirect = rules["source_payload_evidence_id_closure"]
+        self.assertEqual("RG-06", redirect["case_id"])
+        self.assertFalse(redirect["future_closure_only"])
+        self.assertEqual("redirected", redirect["current_path_map_action"])
+        self.assertEqual(
+            "remove_after_redirect", redirect["source_payload_action"]
+        )
+        self.assertEqual(
+            "$.planned_contract.states[*].sources[*].payload.evidence_id",
+            redirect["planned_source_target"],
+        )
+        self.assertEqual(
+            "stagedPaymentBankFactSource", redirect["source_definition"]
+        )
+        self.assertEqual("evidence_id", redirect["forbidden_source_payload_field"])
+        self.assertEqual("direct_schema_branches_only", redirect["validation"])
+        self.assertEqual(
+            {
+                "evidence_definition": "stagedPaymentBankPaymentEvidence",
+                "evidence_id_owner_path": "$.states[*].evidence[*].id",
+                "legacy_source_payload_evidence_id_emits_to": (
+                    "$.states[*].evidence[*].id"
+                ),
+                "evidence_source_reference_path": (
+                    "$.states[*].evidence[*].source_ids[*]"
+                ),
+                "evidence_source_reference_value_source": "$.source_records[*].id",
+                "linked_evidence_source_reference_validation": (
+                    "$.evidence_links[*].source_id"
+                ),
+                "unlinked_pending_candidate_source_reference_value_source": (
+                    "$.candidates[*].source_id"
+                ),
+                "unlinked_pending_candidate_evidence_link": "absent",
+                "legacy_source_payload_evidence_id_must_not_emit_to": (
+                    "$.states[*].evidence[*].source_ids[*]"
+                ),
+                "source_payload_evidence_id": "forbidden",
+            },
+            redirect["canonical_evidence_ownership"],
+        )
+
+        corrected_source_paths = set(rules["five_target_corrections"]["source_paths"])
+        source_target_entries = [
+            entry
+            for entry in path_map["entries"]
+            if entry["source_path"] in corrected_source_paths
+        ]
+        self.assertEqual(5, len(source_target_entries))
+        self.assertEqual(
+            set(rules["five_target_corrections"]["source_paths"]),
+            {entry["source_path"] for entry in source_target_entries},
+        )
+        source_reference_entries = [
+            entry
+            for entry in path_map["entries"]
+            if "$.states[*].evidence[*].source_ids[*]"
+            in entry["target_paths"]
+        ]
+        self.assertTrue(source_reference_entries)
+        self.assertTrue(
+            all(
+                entry["source_path"].endswith(".evidence_links[*].source_id")
+                for entry in source_reference_entries
+            )
+        )
+        for entry in source_target_entries:
+            with self.subTest(source_path=entry["source_path"]):
+                self.assertEqual(
+                    ["$.states[*].evidence[*].id"],
+                    entry["target_paths"],
+                )
+                self.assertEqual("ready", entry["disposition"])
+                self.assertEqual([], entry["contract_gap_ids"])
+
+        branches = {branch["source_variant"]: branch for branch in redirect["branches"]}
+        source_branches = {
+            branch["variant"]: branch for branch in rules["source_branches"]
+        }
+        evidence_branches = {
+            branch["variant"]: branch for branch in rules["evidence_branches"]
+        }
+        self.assertEqual({"manual", "imported"}, set(branches))
+        for variant, route in branches.items():
+            with self.subTest(variant=variant):
+                self.assertEqual("stagedPaymentBankFactSource", route["source_definition"])
+                self.assertEqual(
+                    "stagedPaymentBankPaymentEvidence", route["evidence_definition"]
+                )
+                self.assertEqual(
+                    "$.states[*].evidence[*].id", route["evidence_id_owner_path"]
+                )
+                self.assertEqual(
+                    "$.states[*].evidence[*].id",
+                    route["legacy_source_payload_evidence_id_emits_to"],
+                )
+                self.assertEqual(
+                    "$.states[*].evidence[*].source_ids[*]",
+                    route["evidence_source_reference_path"],
+                )
+                self.assertEqual(
+                    "$.source_records[*].id",
+                    route["evidence_source_reference_value_source"],
+                )
+                self.assertEqual(
+                    "$.evidence_links[*].source_id",
+                    route["linked_evidence_source_reference_validation"],
+                )
+                if variant == "imported":
+                    self.assertEqual(
+                        "$.candidates[*].source_id",
+                        route["unlinked_pending_candidate_source_reference_value_source"],
+                    )
+                    self.assertEqual("absent", route["unlinked_pending_candidate_evidence_link"])
+                self.assertEqual(
+                    "$.states[*].evidence[*].source_ids[*]",
+                    route["legacy_source_payload_evidence_id_must_not_emit_to"],
+                )
+                self.assertEqual("forbidden", route["source_payload_evidence_id"])
+                self.assertEqual(route["source_definition"], source_branches[variant]["definition"])
+                self.assertEqual(
+                    route["evidence_definition"], evidence_branches[variant]["definition"]
+                )
+                self.assertIn(
+                    "evidence_id", source_branches[variant]["forbidden_payload_fields"]
+                )
+        self.assertNotIn("candidate_evidence_reference_path", branches["manual"])
+        self.assertEqual(
+            "$.states[*].candidates[*].payload.evidence_ref",
+            branches["imported"]["candidate_evidence_reference_path"],
+        )
+        direct_proof = rules["future_closure_acceptance"]["direct_schema_branch_proof"]
+        self.assertEqual(["manual", "imported"], direct_proof["source_evidence_variants"])
+        self.assertEqual("stagedPaymentCandidate", direct_proof["candidate_definition"])
+        self.assertEqual(
+            ["known_role", "ambiguous_role"], direct_proof["candidate_variants"]
+        )
+        self.assertTrue(direct_proof["candidate_cross_branch_rejections_required"])
+        self.assertTrue(direct_proof["unlinked_pending_evidence_source_reference_required"])
+        self.assertEqual("absent", direct_proof["unlinked_pending_evidence_link"])
+        self.assertEqual(0, direct_proof["unlinked_pending_formal_effect"])
+        self.assertEqual(0, direct_proof["unlinked_pending_reconciliation_effect"])
+
+        fixture_paths = {"manual": "manual_path", "imported": "import_path"}
+        for variant, route in branches.items():
+            state = fixture[fixture_paths[variant]]["canonical_final_state"]
+            links_by_source = {
+                link["source_id"]: link for link in state["evidence_links"]
+            }
+            candidates_by_source = {
+                candidate["source_id"]: candidate
+                for candidate in state.get("candidates", [])
+                if candidate.get("source_id") is not None
+            }
+            emitted_evidence_by_id = {}
+            for record in state["source_records"]:
+                payload = {
+                    "amount": record["amount"],
+                    "currency": record["currency"],
+                }
+                if variant == "manual":
+                    payload["observed_at"] = record["observed_at"]
+                else:
+                    payload["source_payment_at"] = record["source_payment_at"]
+                    if record["mirror_of_source_id"] is not None:
+                        payload["mirror_of_source_id"] = record["mirror_of_source_id"]
+                source = {
+                    "id": record["id"],
+                    "type": "staged_payment_bank_fact",
+                    "payload": payload,
+                }
+                with self.subTest(variant=variant, source_id=record["id"]):
+                    assert_valid(route["source_definition"], source)
+                    assert_valid(
+                        source_branches[variant]["payload_definition"],
+                        source["payload"],
+                    )
+                    self.assertNotIn("evidence_id", source["payload"])
+                    invalid_source = deepcopy(source)
+                    invalid_source["payload"]["evidence_id"] = record["evidence_id"]
+                    assert_invalid(route["source_definition"], invalid_source)
+                    assert_invalid(
+                        source_branches[variant]["payload_definition"],
+                        invalid_source["payload"],
+                    )
+
+                    if variant == "manual":
+                        evidence_payload = {
+                            "payment_id": links_by_source[record["id"]]["payment_id"],
+                            "observed_at": record["observed_at"],
+                        }
+                    else:
+                        evidence_payload = {
+                            "source_payment_at": record["source_payment_at"]
+                        }
+                        link = links_by_source.get(record["id"])
+                        if link is not None:
+                            evidence_payload["payment_id"] = link["payment_id"]
+                            if link["mirror_of_evidence_id"] is not None:
+                                evidence_payload["mirror_of_evidence_id"] = link[
+                                    "mirror_of_evidence_id"
+                                ]
+                                evidence_payload["merged_into_evidence_link_id"] = link[
+                                    "merged_into_evidence_link_id"
+                                ]
+                    evidence = {
+                        "id": record["evidence_id"],
+                        "type": "staged_payment_bank_payment",
+                        "source_ids": [record["id"]],
+                        "payload": evidence_payload,
+                    }
+                    assert_valid(route["evidence_definition"], evidence)
+                    assert_valid(
+                        evidence_branches[variant]["payload_definition"],
+                        evidence["payload"],
+                    )
+                    self.assertEqual(record["evidence_id"], evidence["id"])
+                    self.assertEqual([record["id"]], evidence["source_ids"])
+                    self.assertNotIn(record["evidence_id"], evidence["source_ids"])
+                    link = links_by_source.get(record["id"])
+                    if link is not None:
+                        self.assertEqual(record["id"], link["source_id"])
+                    else:
+                        self.assertEqual("imported", variant)
+                        candidate = candidates_by_source[record["id"]]
+                        self.assertEqual("pending_confirmation", candidate["status"])
+                        self.assertEqual(record["id"], candidate["source_id"])
+                        self.assertEqual(record["evidence_id"], candidate["evidence_id"])
+                        self.assertEqual(
+                            [],
+                            [
+                                candidate_link
+                                for candidate_link in state["evidence_links"]
+                                if candidate_link["source_id"] == record["id"]
+                            ],
+                        )
+                    emitted_evidence_by_id[evidence["id"]] = evidence
+
+            for link in state["evidence_links"]:
+                record = next(
+                    record
+                    for record in state["source_records"]
+                    if record["id"] == link["source_id"]
+                )
+                with self.subTest(variant=variant, evidence_id=link["evidence_id"]):
+                    self.assertEqual(record["id"], link["source_id"])
+                    self.assertEqual(record["evidence_id"], link["evidence_id"])
+                    self.assertNotEqual(link["evidence_id"], link["source_id"])
+                    emitted_evidence = emitted_evidence_by_id[link["evidence_id"]]
+                    self.assertEqual([link["source_id"]], emitted_evidence["source_ids"])
+                    self.assertNotIn(
+                        record["evidence_id"], emitted_evidence["source_ids"]
+                    )
+
+    def test_rg06_unlinked_pending_evidence_is_semantically_zero_effect(self):
+        state = staged_payment_state()
+        payment_at = rg06_installment(state, "deposit")["payload"]["actual_payment_at"]
+        state["sources"] = [
+            {
+                "id": "source-pending-unbound",
+                "type": "staged_payment_bank_fact",
+                "payload": {
+                    "amount": "-80.00",
+                    "currency": "CNY",
+                    "source_payment_at": payment_at,
+                },
+            }
+        ]
+        state["evidence"] = [
+            {
+                "id": "evidence-pending-unbound",
+                "type": "staged_payment_bank_payment",
+                "source_ids": ["source-pending-unbound"],
+                "payload": {"source_payment_at": payment_at},
+            }
+        ]
+        state["evidence_links"] = []
+        state["candidates"] = [
+            {
+                "id": "candidate-pending-unbound",
+                "type": "staged_payment",
+                "source_ids": ["source-pending-unbound"],
+                "confidence": "1.00",
+                "payload": {
+                    "payment_role": "deposit",
+                    "amount": "80.00",
+                    "currency": "CNY",
+                    "source_payment_at": payment_at,
+                    "evidence_ref": "evidence-pending-unbound",
+                    "provenance": {
+                        "rule": "staged_payment_bank_fact",
+                        "rule_version": 1,
+                    },
+                    "requires_confirmation": [
+                        "relation_id",
+                        "payment_role",
+                        "category_id",
+                        "funding_account_id",
+                    ],
+                },
+                "status_history": [
+                    {
+                        "id": "candidate-status-pending-unbound",
+                        "sequence": 1,
+                        "status": "pending_confirmation",
+                    }
+                ],
+            }
+        ]
+
+        golden_v2._validate_references(
+            state,
+            RG06_STATE_PATH,
+            golden_v2._state_indexes(state, RG06_STATE_PATH),
+            {"operation-confirm-pending-unbound": {"root_id": state["root_id"]}},
+            RG06_PRECISIONS,
+            golden_v2.ZoneInfo("Asia/Shanghai"),
+        )
+        validate_rg06_relations(state)
+        self.assertEqual([], state["evidence_links"])
+        self.assertEqual("pending_confirmation", state["candidates"][0]["status_history"][0]["status"])
+        self.assertEqual([], state["posting_reconciliations"])
+
+    def test_rg06_fixture_candidate_rewrites_and_confirmation_branches(self):
+        rules = load_rg06_closure_rules()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fixture = json.loads(RG06_FIXTURE_PATH.read_text(encoding="utf-8"))
+        import_path = fixture["import_path"]
+        state = import_path["canonical_final_state"]
+
+        def assert_valid(definition, value):
+            errors = list(schema_validator_for(definition, schema).iter_errors(value))
+            self.assertEqual([], errors, [error.message for error in errors])
+
+        token_rewrite = rules["candidate_requires_confirmation_token_rewrite"]
+        self.assertEqual("RG-06", token_rewrite["case_id"])
+        self.assertFalse(token_rewrite["future_closure_only"])
+        self.assertEqual("staged_payment", token_rewrite["legacy_candidate_kind"])
+        self.assertEqual("stagedPaymentCandidate", token_rewrite["source_definition"])
+        self.assertEqual("requires_confirmation", token_rewrite["legacy_field"])
+        self.assertEqual("payload.requires_confirmation", token_rewrite["target_field"])
+        self.assertEqual("array_token", token_rewrite["rewrite_kind"])
+        self.assertEqual(
+            "staged_payment_candidate_requires_confirmation_token_only",
+            token_rewrite["scope"],
+        )
+        self.assertTrue(token_rewrite["frozen_source_values_unchanged"])
+        self.assertTrue(token_rewrite["forbid_broad_value_substitution"])
+        self.assertEqual("association_group_id", token_rewrite["from"])
+        self.assertEqual("relation_id", token_rewrite["to"])
+        canonical_tokens = [
+            "relation_id",
+            "payment_role",
+            "category_id",
+            "funding_account_id",
+        ]
+        self.assertEqual(canonical_tokens, token_rewrite["canonical_tokens"])
+        candidate_branches = {
+            branch["variant"]: branch for branch in rules["candidate_branches"]
+        }
+        self.assertEqual({"known_role", "ambiguous_role"}, set(candidate_branches))
+
+        def rewrite_token(value, entity_kind, field):
+            if (
+                entity_kind == token_rewrite["legacy_candidate_kind"]
+                and field == token_rewrite["legacy_field"]
+                and value == token_rewrite["from"]
+            ):
+                return token_rewrite["to"]
+            return value
+
+        candidates = state["candidates"]
+        self.assertEqual(3, len(candidates))
+        for candidate in candidates:
+            with self.subTest(candidate_id=candidate["id"]):
+                self.assertEqual("staged_payment", candidate["kind"])
+                frozen_requires_confirmation = list(candidate["requires_confirmation"])
+                self.assertEqual(
+                    [
+                        "association_group_id",
+                        "payment_role",
+                        "category_id",
+                        "funding_account_id",
+                    ],
+                    frozen_requires_confirmation,
+                )
+                rewritten = [
+                    rewrite_token(
+                        token,
+                        candidate["kind"],
+                        token_rewrite["legacy_field"],
+                    )
+                    for token in frozen_requires_confirmation
+                ]
+                self.assertEqual(canonical_tokens, rewritten)
+                self.assertEqual(canonical_tokens, list(rewritten))
+                self.assertNotIn(token_rewrite["from"], rewritten)
+                self.assertEqual(frozen_requires_confirmation, candidate["requires_confirmation"])
+
+                variant = (
+                    "ambiguous_role"
+                    if candidate["payment_role"] is None
+                    else "known_role"
+                )
+                branch = candidate_branches[variant]
+                self.assertEqual(candidate["rule_version"], branch["provenance"]["rule_version"])
+                payload = {
+                    "payment_role": candidate["payment_role"],
+                    "amount": candidate["amount"],
+                    "currency": candidate["currency"],
+                    "source_payment_at": candidate["source_payment_at"],
+                    "evidence_ref": candidate["evidence_id"],
+                    "provenance": branch["provenance"],
+                    "requires_confirmation": rewritten,
+                }
+                if variant == "ambiguous_role":
+                    payload["guessed_payment_role"] = candidate["guessed_payment_role"]
+                status_key = (
+                    "confirmed"
+                    if candidate["confirmation_provenance"] is not None
+                    else "pending"
+                )
+                emitted_candidate = {
+                    "id": candidate["id"],
+                    "type": "staged_payment",
+                    "source_ids": [candidate["source_id"]],
+                    "confidence": candidate["confidence"],
+                    "payload": payload,
+                    "status_history": [
+                        {
+                            "id": f"{candidate['id']}-status-{sequence}",
+                            "sequence": sequence,
+                            "status": status,
+                        }
+                        for sequence, status in enumerate(
+                            rules["candidate_status_history"][status_key], start=1
+                        )
+                    ],
+                }
+                assert_valid(branch["schema_branch_definition"], emitted_candidate)
+                assert_valid("stagedPaymentCandidate", emitted_candidate)
+                self.assertEqual(
+                    canonical_tokens,
+                    emitted_candidate["payload"]["requires_confirmation"],
+                )
+
+        confirmation_operations = [
+            operation
+            for operation in import_path["ordered_operations"]
+            if "candidate_id" in operation["input"]
+        ]
+        self.assertEqual(2, len(confirmation_operations))
+        for operation in confirmation_operations:
+            with self.subTest(operation_id=operation["id"]):
+                self.assertIn("association_group_id", operation["input"])
+                self.assertNotIn("relation_id", operation["input"])
+                self.assertEqual(
+                    "association_group_id",
+                    rewrite_token(
+                        "association_group_id", "operation", "association_group_id"
+                    ),
+                )
+
+        authorization = rules["candidate_confirmation"]["authorization_operation"]
+        provenance_branches = rules["candidate_confirmation"][
+            "legacy_confirmation_provenance_branches"
+        ]
+        pending_branch = provenance_branches["pending_null"]
+        confirmed_branch = provenance_branches["confirmed_non_null"]
+        self.assertIsNone(pending_branch["legacy_confirmation_provenance"])
+        self.assertEqual("pending_confirmation", pending_branch["candidate_status"])
+        self.assertEqual(0, pending_branch["confirmation_count"])
+        self.assertEqual(0, pending_branch["operation_count"])
+        self.assertEqual("none", pending_branch["formal_effect"])
+        self.assertEqual("non_null", confirmed_branch["legacy_confirmation_provenance"])
+        self.assertEqual(1, confirmed_branch["confirmation_count"])
+        self.assertEqual(1, confirmed_branch["operation_count"])
+        self.assertEqual(
+            authorization["confirmation_type"], confirmed_branch["confirmation_type"]
+        )
+        self.assertEqual(
+            "$.states[*].confirmations[*].confirmed_at",
+            confirmed_branch["confirmed_at_owner_path"],
+        )
+        self.assertEqual(
+            authorization["subject_kind"], confirmed_branch["subject_kind"]
+        )
+        self.assertEqual(
+            authorization["action_type"], confirmed_branch["operation_action_type"]
+        )
+        self.assertEqual(
+            authorization["input_definition"],
+            confirmed_branch["operation_input_definition"],
+        )
+        self.assertEqual(
+            "candidate_id", confirmed_branch["operation_input_candidate_field"]
+        )
+        self.assertEqual(
+            {
+                "confirmed_at": {
+                    "source": "confirmation_provenance.confirmed_at",
+                    "preservation": "identical",
+                },
+                "subject": {"kind": "candidate", "id_source": "candidate.id"},
+            },
+            confirmed_branch["confirmation_projection"],
+        )
+        self.assertEqual(
+            {
+                "request_id": "confirmation_provenance.request_id",
+                "candidate_id": "candidate.id",
+                "relation_id": "confirmation_provenance.association_group_id",
+                "payment_role": "confirmation_provenance.payment_role",
+                "category_id": "confirmation_provenance.category_id",
+                "funding_account_id": "confirmation_provenance.funding_account_id",
+                "exact_binding_confirmed": (
+                    "confirmation_provenance.exact_binding_confirmed"
+                ),
+            },
+            confirmed_branch["operation_input_projection"],
+        )
+        self.assertEqual(
+            "creates_installment_payment_only_after_authorized_operation",
+            confirmed_branch["formal_effect"],
+        )
+
+        operations_by_request = {
+            operation["input"]["request_id"]: operation
+            for operation in confirmation_operations
+        }
+        entity_collections = (
+            "catalog_accounts",
+            "catalog_categories",
+            "transactions",
+            "transaction_versions",
+            "posting_sets",
+            "postings",
+            "sources",
+            "candidates",
+            "confirmations",
+            "evidence",
+            "evidence_links",
+            "relations",
+            "domain_entities",
+            "audit_links",
+            "posting_reconciliations",
+        )
+
+        def target_confirmation_operation(operation_id, operation_input):
+            return {
+                "id": operation_id,
+                "root_id": "root-rg06",
+                "sequence": 1,
+                "operation_class": authorization["operation_class"],
+                "action_type": authorization["action_type"],
+                "baseline_state_id": "state-before",
+                "result_state_id": "state-after",
+                "outcome": {"status": "accepted"},
+                "status_changes": [],
+                "deltas": {
+                    "entity_changes": {
+                        name: {
+                            "added_ids": [],
+                            "changed_ids": [],
+                            "removed_ids": [],
+                        }
+                        for name in entity_collections
+                    },
+                    "value_changes": {
+                        "balances": [],
+                        "reports": [],
+                        "derived_statuses": [],
+                    },
+                },
+                "returned_ids": [],
+                "input": operation_input,
+            }
+
+        confirmations = []
+        confirming_operations = []
+        for candidate in candidates:
+            provenance = candidate["confirmation_provenance"]
+            if provenance is None:
+                with self.subTest(candidate_id=candidate["id"], branch="pending"):
+                    self.assertEqual("pending_confirmation", candidate["status"])
+                    self.assertNotIn(
+                        candidate["id"],
+                        {
+                            operation["input"]["candidate_id"]
+                            for operation in confirmation_operations
+                        },
+                    )
+                    self.assertNotIn(
+                        candidate["source_id"],
+                        {
+                            source_id
+                            for transaction in state["transactions"]
+                            for source_id in transaction["source_refs"]
+                        },
+                    )
+                continue
+
+            operation = operations_by_request[provenance["request_id"]]
+            legacy_input = operation["input"]
+            canonical_input = deepcopy(legacy_input)
+            canonical_input["relation_id"] = canonical_input.pop(
+                "association_group_id"
+            )
+            confirmation = {
+                "id": f"confirmation-{candidate['id']}",
+                "type": confirmed_branch["confirmation_type"],
+                "operation_id": operation["id"],
+                "subject": {
+                    "kind": confirmed_branch["subject_kind"],
+                    "id": candidate["id"],
+                },
+                "confirmed_at": provenance[confirmed_branch["confirmed_at_source_field"]],
+                "payload": {},
+            }
+            target_operation = target_confirmation_operation(
+                operation["id"], canonical_input
+            )
+            with self.subTest(candidate_id=candidate["id"], branch="confirmed"):
+                self.assertEqual("confirmed", candidate["status"])
+                self.assertEqual(candidate["id"], legacy_input["candidate_id"])
+                self.assertEqual(
+                    provenance["association_group_id"], canonical_input["relation_id"]
+                )
+                for field in (
+                    "payment_role",
+                    "category_id",
+                    "funding_account_id",
+                    "exact_binding_confirmed",
+                ):
+                    self.assertEqual(provenance[field], canonical_input[field])
+                self.assertEqual(
+                    set(authorization["required_input_fields"]), set(canonical_input)
+                )
+                assert_valid(authorization["input_definition"], canonical_input)
+                assert_valid(authorization["confirmation_definition"], confirmation)
+                assert_valid("operation", target_operation)
+                self.assertEqual(
+                    provenance["confirmed_at"], confirmation["confirmed_at"]
+                )
+                self.assertEqual(
+                    {"kind": "candidate", "id": candidate["id"]},
+                    confirmation["subject"],
+                )
+                self.assertEqual(operation["id"], confirmation["operation_id"])
+                self.assertEqual(
+                    authorization["action_type"], target_operation["action_type"]
+                )
+                self.assertEqual(canonical_input, target_operation["input"])
+            confirmations.append(confirmation)
+            confirming_operations.append(target_operation)
+
+        non_null_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate["confirmation_provenance"] is not None
+        ]
+        self.assertEqual(len(non_null_candidates), len(confirmations))
+        self.assertEqual(len(non_null_candidates), len(confirming_operations))
+        self.assertEqual(
+            {candidate["id"] for candidate in non_null_candidates},
+            {confirmation["subject"]["id"] for confirmation in confirmations},
+        )
+        self.assertEqual(
+            {
+                candidate["confirmation_provenance"]["confirmed_at"]
+                for candidate in non_null_candidates
+            },
+            {confirmation["confirmed_at"] for confirmation in confirmations},
+        )
 
     def test_rg07_refund_cash_inflow_uses_current_cash_inflow_metric(self):
         source = json.loads(
@@ -2991,6 +4921,11 @@ class GoldenV2MappingTests(unittest.TestCase):
                     self.assertEqual(path_map["status"], "approved")
                     self.assertEqual(
                         path_map["expected_output_gate"], "draft_for_review"
+                    )
+                elif case_id == "RG-06":
+                    self.assertEqual(path_map["status"], "approved")
+                    self.assertEqual(
+                        path_map["expected_output_gate"], "approved"
                     )
                 elif case_id == "RG-07":
                     self.assertEqual(path_map["status"], "approved")

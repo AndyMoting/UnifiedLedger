@@ -24,7 +24,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 1, 6)
                 driver.execute(null, "INSERT INTO rg04_operation_request VALUES ('ledger-a','rg04-existing','CREDIT_PRINCIPAL_REPAYMENT')", 0)
             }
-                JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 10) }
+                JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 11) }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
                 assertEquals(1L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
@@ -148,7 +148,7 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(10, LedgerDatabase.Schema.version)
+            assertEquals(11, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -194,16 +194,117 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(10, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(
+                    0L,
+                    queryCount(
+                        driver,
+                        "SELECT count(*) FROM pragma_table_info('rg06_confirmation') WHERE name = 'confirmed_at'",
+                    ),
+                )
                 database.ledgerQueries.insertTransaction("refund-v10", "ledger-v9", "REFUND_RECEIPT")
                 val rg07Table = driver.executeQuery(null, "SELECT name FROM sqlite_master WHERE type='table' AND name='rg07_operation'", { cursor ->
                     cursor.next()
                     app.cash.sqldelight.db.QueryResult.Value(cursor.getString(0))
                 }, 0).value
                 assertEquals("rg07_operation", rg07Table)
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionTenToElevenAddsConfirmedAtAndPreservesRowsAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v10-v11-rg06-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            Files.copy(
+                migrationRepositoryFile("ledger-data/src/commonMain/sqldelight/databases/9.db"),
+                path,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 9, newVersion = 10)
+                driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-v10', 'ledger-v10', 'EXPENSE')", 0)
+                driver.execute(null, "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-v10', 'ledger-v10')", 0)
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note
+                        ) VALUES (
+                          'version-v10', 'transaction-v10', 'ledger-v10', 1, 'posting-set-v10',
+                          '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL
+                        )
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('transaction-v10', 'ledger-v10', 'version-v10')", 0)
+                driver.execute(null, "INSERT INTO posting VALUES ('expense-v10', 'posting-set-v10', 'ledger-v10', 0, 'expense-service', 1000, 'CNY', 2)", 0)
+                driver.execute(null, "INSERT INTO posting VALUES ('asset-v10', 'posting-set-v10', 'ledger-v10', 1, 'asset-bank', -1000, 'CNY', 2)", 0)
+                driver.execute(null, "INSERT INTO rg06_operation(ledger_id, identity_value, action_type) VALUES ('ledger-v10', 'identity-v10', 'create_staged_payment')", 0)
+                driver.execute(null, "INSERT INTO rg06_relation VALUES ('ledger-v10', 'relation-v10', 'staged_payment', '{}')", 0)
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO rg06_installment(
+                          ledger_id, relation_id, installment_index, payment_id, payment_role,
+                          amount_minor, currency_code, currency_precision, funding_account_id,
+                          transaction_id, transaction_version_id, posting_set_id, expense_posting_id,
+                          asset_posting_id, actual_payment_at, statistics_at, source_payment_at,
+                          source_payment_at_text
+                        ) VALUES (
+                          'ledger-v10', 'relation-v10', 0, 'payment-v10', 'DEPOSIT',
+                          1000, 'CNY', 2, 'asset-bank', 'transaction-v10', 'version-v10',
+                          'posting-set-v10', 'expense-v10', 'asset-v10',
+                          '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL, NULL
+                        )
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO rg06_confirmation(
+                          ledger_id, confirmation_id, identity_value, confirmation_kind,
+                          candidate_id, relation_id, payment_id, payment_role, category_id, funding_account_id
+                        ) VALUES (
+                          'ledger-v10', 'confirmation-v10', 'identity-v10', 'MANUAL_INSTALLMENT',
+                          NULL, 'relation-v10', 'payment-v10', 'DEPOSIT', 'expense-service', 'asset-bank'
+                        )
+                    """.trimIndent(),
+                    0,
+                )
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 10, newVersion = 11)
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(
+                    1L,
+                    queryCount(
+                        driver,
+                        "SELECT count(*) FROM pragma_table_info('rg06_confirmation') WHERE name = 'confirmed_at'",
+                    ),
+                )
+                assertEquals(
+                    1L,
+                    queryCount(driver, "SELECT count(*) FROM rg06_confirmation WHERE confirmed_at IS NULL"),
+                )
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val confirmed = database.ledgerQueries
+                    .selectRg06ConfirmationForIdentity("ledger-v10", "identity-v10")
+                    .executeAsOne()
+                assertEquals(null, confirmed.confirmed_at)
             }
         } finally {
             Files.deleteIfExists(path)
@@ -303,7 +404,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionTenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionElevenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -318,7 +419,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 10)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 11)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

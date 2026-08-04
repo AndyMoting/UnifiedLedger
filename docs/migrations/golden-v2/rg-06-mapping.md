@@ -2,7 +2,7 @@
 
 ## Authority
 
-本映射受 `golden/rules/rg-06.json`、`docs/specs/2026-07-15-rg-06-staged-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md` 与正式 `D-060` 约束。它只定义 RG-06 v1 到 v2 的逐路径迁移，不授权 schema amendment、adapter、fixture rewrite 或 expected output 生成。
+本映射受 `golden/rules/rg-06.json`、`docs/specs/2026-07-15-rg-06-staged-payment-design.md`、`docs/GOLDEN_TESTS.md`、`docs/ACCOUNTING_RULES.md`、`docs/GOLDEN_SCHEMA.md`、正式 `D-060` 和 `D-081` 约束。RG-06 v1 到 v2 的逐路径 closure 与 expected gate 已批准；adapter/replay、fixture rewrite 和 publication 已按 D-081 的独立验收条件执行，最终 clean release gate 仍由 RG-06 gate 清单追踪。
 
 ## Inventory
 
@@ -12,7 +12,7 @@
 - leaf occurrences: `3610`
 - classified/unclassified: `1188/0`
 - classifications: `preserve 666`, `map 216`, `derive 299`, `reject 7`
-- dispositions: `ready 411`, `requires_contract_amendment 770`, `test_only_exclusion 7`
+- dispositions: `ready 1181`, `test_only_exclusion 7`
 
 ## Section Mapping
 
@@ -21,7 +21,7 @@
 | `schema_version` / `case` | required `contract` and `contract_version` envelope, case metadata, CNY declaration, isolated roots, states, and operations |
 | `catalog` | every complete state's account/category catalog and posting reconciliation eligibility |
 | `opening` | balanced opening transaction, version, posting set, postings, and replayed initial balances |
-| `baselines` | complete balance/report projections plus the planned staged-payment lifecycle domain entity and independent statuses |
+| `baselines` | complete balance/report projections plus the staged-payment lifecycle domain entity and independent statuses |
 | `manual_path` | group creation, two independent actual-payment transactions, fulfillment/completion status operations, evidence links, and full final state |
 | `import_path` | immutable payment sources, pending candidates, exact group/role/category/account confirmation, two formal payments, evidence binding, and mirror merge |
 | `invalid_baselines` | independent complete states used by rejected operations; empty collections remain canonical absence |
@@ -69,18 +69,18 @@ Each evidence's sole bank fact has the installment and asset posting currency an
 
 Each emitted evidence link uses only canonical evidence-link fields and targets the exact owned-real `payment_asset` posting with `target_kind=posting` and `role=payment_asset_posting`. Legacy `payment_id`, `source_id`, `status`, `mirror_of_evidence_id`, and `merged_into_evidence_link_id` values therefore map to their canonical source, evidence, installment-payment, and posting-reconciliation owners, never to extra evidence-link fields. Expense-posting `not_applicable` becomes `postings[*].reconciliation_eligible=false` with no `posting_reconciliations` record. Mirror evidence preserves lineage and merges into the original payment/posting evidence result without adding a transaction, posting, payment, consumption record, relation, or cash flow.
 
-## Unresolved Gaps
+## Resolved Contract Gaps
 
-1. `RG06-GAP-01` - RG-06 staged-payment operation registry (`71` affected paths). Register closed group, payment, status, import, confirmation, evidence, mirror, rejection, and retry actions with strict inputs and exhaustive deltas.
-2. `RG06-GAP-02` - staged-payment source and candidate payloads (`147` affected paths). Preserve real imported source facts, confidence, explicit null role ambiguity, status history, and exact confirmation binding; exclude canonical manual source absence.
-3. `RG06-GAP-03` - identity-only `staged_payment` relation, separate lifecycle entity, and `installment_payment` payloads (`508` affected paths). Preserve relation `id/type/member_refs`, lifecycle business facts, two stable payment identities, and exact transaction/posting bindings without relation payload.
-4. `RG06-GAP-04` - independent staged-payment status and history registries (`170` affected paths). Register payment progress, fulfillment, domain-entity reconciliation, and complete ordered immutable `payload.state_history[*]` fields without flattening or combining meanings.
-5. `RG06-GAP-05` - bank payment evidence and mirror lineage (`72` affected paths). Register the bank-payment evidence subtype while retaining exact typed asset-posting links.
+1. `RG06-GAP-01` - RG-06 staged-payment operation registry (`71` affected paths). Closed with the eight action types, strict accepted/no-change/rejected outcomes, exhaustive deltas, retry identity and fixture-derived rejection dispatch.
+2. `RG06-GAP-02` - staged-payment source and candidate payloads (`147` affected paths). Closed with immutable source times, explicit role ambiguity, bounded candidate history, confirmation ownership and canonical manual source absence.
+3. `RG06-GAP-03` - identity-only `staged_payment` relation, separate lifecycle entity, and `installment_payment` payloads (`508` affected paths). Closed with relation member refs, separate lifecycle/installment entities and exact transaction/posting bindings.
+4. `RG06-GAP-04` - independent staged-payment status and history registries (`170` affected paths). Closed with independent derived statuses and ordered immutable lifecycle history.
+5. `RG06-GAP-05` - bank payment evidence and mirror lineage (`72` affected paths). Closed with typed source/evidence ownership, exact posting-level links, source-time preservation and mirror lineage.
 
-Affected path counts overlap where one source fact crosses contract boundaries. `unresolved_contract_gaps[*].affected_source_paths` is generated from entry references and is bidirectionally closed.
+Affected path counts overlap where one source fact crosses contract boundaries. `resolved_contract_gaps[*].affected_source_paths` is generated from entry references and is bidirectionally closed; every resolved gap is `approved_implemented`.
 
-The approved topology, status ownership, and RG-06 evidence discriminators above close wording choices only. They do not change any path-map entry, disposition, gap status, or schema/validator capability; all five gaps remain unresolved at this mapping gate until the separately authorized contract implementation and review are complete.
+The approved topology, status ownership, and RG-06 evidence discriminators above are implemented by the candidate path-map. Five malformed target strings shared by GAP-02 and GAP-05 were split into independent JSONPaths, then the two approved envelope prefix rewrites, the 18 explicit legacy-target replacements and the branch-scoped evidence redirect were applied. The closure rules and artifact-level proof obligations remain recorded in [`RG-06 Mapping Closure Proposal`](rg-06-closure-proposal.md).
 
 ## Gate
 
-The artifact remains `status=needs_contract_amendment` and `expected_output_gate=closed`. The `411` ready paths may use current v2 targets, but the complete RG-06 document cannot be generated until all five gaps are separately reviewed and registered. This mapping does not implement schema changes, an adapter, expected output, or a fixture rewrite.
+The artifact is `status=approved` with `expected_output_gate=approved`. The path-map contains `1188` source paths, `3610` leaf occurrences, `1181` ready entries and `7` test-only exclusions; it has zero unresolved contract gaps. `docs/migrations/golden-v2/rg-06-expected.json` is an approved deterministic artifact containing `20` roots, `41` operations and `61` states. Adapter/replay and fixture rewrite are closed; publication is recorded in `golden/rules-v2/rg-06.json` and `golden/rules-v2/manifest.json`, with the final clean release gate tracked separately under `D-081`.

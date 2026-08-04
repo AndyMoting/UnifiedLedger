@@ -808,6 +808,28 @@ class Rg06OperationRegistryTests(unittest.TestCase):
                 target_candidate_id="candidate-import",
             )
 
+    def test_rg06_nonaccepted_append_only_transitions_have_zero_effect(self):
+        for action in (
+            "change_staged_payment_fulfillment",
+            "link_staged_payment_evidence",
+            "confirm_staged_payment_candidate",
+        ):
+            with self.subTest(action=action):
+                baseline, result, operation = rg06_effect_case(action)
+                for outcome_status in ("no_change", "rejected"):
+                    with self.subTest(outcome_status=outcome_status):
+                        with self.assertRaises(golden_v2.GoldenCaseError):
+                            golden_v2._validate_append_only_transition(
+                                baseline,
+                                result,
+                                "$.operations[0]",
+                                case_id="RG-06",
+                                action_type=action,
+                                outcome_status=outcome_status,
+                                target_candidate_id=operation["input"].get("candidate_id"),
+                                target_relation_id=operation["input"].get("relation_id"),
+                            )
+
     def test_rg06_all_eight_actions_bind_exact_input_effects(self):
         mutations = {
             "create_staged_payment": lambda result: lifecycle_entity(result)["payload"].update(total_amount="301.00"),

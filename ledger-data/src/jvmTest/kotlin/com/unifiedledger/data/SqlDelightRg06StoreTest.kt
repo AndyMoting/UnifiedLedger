@@ -397,6 +397,103 @@ class SqlDelightRg06StoreTest {
     }
 
     @Test
+    fun injectedFailureAfterFormalRollsBackPersistentStateAndReopensForIdempotentRetry() {
+        val path = Files.createTempFile("rg06-failure-reopen-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        val properties = Properties().apply { setProperty("busy_timeout", "5000") }
+        val deposit = record(
+            "deposit",
+            StagedPaymentRole.DEPOSIT,
+            8_000,
+            Instant.parse("2026-04-28T10:00:00+08:00"),
+        )
+        try {
+            JdbcSqliteDriver(url, properties).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> null }
+                assertIs<Rg06ExecutionResult.Accepted>(store.commit(createOperation()))
+                val before = storeSnapshot(database)
+                val failingStore = SqlDelightRg06Store(
+                    database,
+                    driver,
+                    catalog(),
+                    "+08:00",
+                    Rg06ManualObservationSource { _, _ -> null },
+                    Rg06FailureInjector { point ->
+                        if (point == Rg06FailurePoint.AFTER_FORMAL) {
+                            throw SQLException("injected-after-formal")
+                        }
+                    },
+                )
+
+                assertFailsWith<SQLException> { failingStore.commit(deposit) }
+                assertEquals(before, storeSnapshot(database))
+                assertEquals(
+                    null,
+                    database.ledgerQueries
+                        .selectRg06Operation("ledger-a", deposit.identity.value)
+                        .executeAsOneOrNull(),
+                )
+            }
+
+            JdbcSqliteDriver(url, properties).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> null }
+                val accepted = assertIs<Rg06ExecutionResult.Accepted>(store.commit(deposit))
+                assertEquals(Rg06ExecutionResult.NoChange(accepted.returnedIds), store.commit(deposit))
+                assertEquals(1L, database.ledgerQueries.countRg06Installments().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun explicitCandidateConfirmationTimeSurvivesPersistentReopenAndReplay() {
+        val path = Files.createTempFile("rg06-confirmed-at-reopen-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        val properties = Properties().apply { setProperty("busy_timeout", "5000") }
+        val confirmedAt = Instant.parse("2026-04-28T10:05:00Z")
+        val operation = confirmCandidate().copy(
+            input = confirmCandidate().input.copy(confirmedAt = confirmedAt),
+        )
+        try {
+            val returnedIds = JdbcSqliteDriver(url, properties).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> null }
+                assertIs<Rg06ExecutionResult.Accepted>(store.commit(createOperation()))
+                assertIs<Rg06ExecutionResult.Accepted>(store.commit(ingest()))
+                val accepted = assertIs<Rg06ExecutionResult.Accepted>(store.commit(operation))
+                assertEquals(
+                    confirmedAt.toString(),
+                    database.ledgerQueries
+                        .selectRg06ConfirmationForIdentity("ledger-a", operation.identity.value)
+                        .executeAsOne()
+                        .confirmed_at,
+                )
+                accepted.returnedIds
+            }
+
+            JdbcSqliteDriver(url, properties).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> null }
+                assertEquals(Rg06ExecutionResult.NoChange(returnedIds), store.commit(operation))
+                assertEquals(
+                    confirmedAt.toString(),
+                    database.ledgerQueries
+                        .selectRg06ConfirmationForIdentity("ledger-a", operation.identity.value)
+                        .executeAsOne()
+                        .confirmed_at,
+                )
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun semanticFailurePrecedesSharedFormalCollisionAndCollisionRollsBackClaim() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {

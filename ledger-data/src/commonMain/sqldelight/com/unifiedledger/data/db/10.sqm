@@ -1,0 +1,3 @@
+-- RG-06 candidate confirmation provenance is an explicit v1 fact. It is
+-- nullable for manual installment confirmations, which have no such source.
+ALTER TABLE rg06_confirmation ADD COLUMN confirmed_at TEXT;

@@ -2833,7 +2833,8 @@ CREATE TABLE rg06_confirmation (
   ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY, identity_value TEXT NOT NULL,
   confirmation_kind TEXT NOT NULL CHECK (confirmation_kind IN ('MANUAL_INSTALLMENT','CANDIDATE_CONFIRMATION')),
   candidate_id TEXT, relation_id TEXT NOT NULL, payment_id TEXT NOT NULL, payment_role TEXT NOT NULL CHECK (payment_role IN ('DEPOSIT','FINAL')),
-  category_id TEXT NOT NULL, funding_account_id TEXT NOT NULL, UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, identity_value),
+  category_id TEXT NOT NULL, funding_account_id TEXT NOT NULL, confirmed_at TEXT,
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, identity_value),
   FOREIGN KEY (ledger_id, identity_value) REFERENCES rg06_operation(ledger_id, identity_value),
   FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg06_candidate(ledger_id, candidate_id),
   FOREIGN KEY (ledger_id, relation_id) REFERENCES rg06_relation(ledger_id, relation_id),
@@ -3602,7 +3603,10 @@ INSERT INTO rg06_candidate_requirement VALUES (?, ?, ?, ?);
 insertRg06CandidateStatus:
 INSERT INTO rg06_candidate_status_history VALUES (?, ?, ?, ?, ?);
 insertRg06Confirmation:
-INSERT INTO rg06_confirmation VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO rg06_confirmation(
+  ledger_id, confirmation_id, identity_value, confirmation_kind, candidate_id, relation_id,
+  payment_id, payment_role, category_id, funding_account_id, confirmed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 insertRg06EvidenceLink:
 INSERT INTO rg06_evidence_link VALUES (?, ?, ?, ?, ?, ?);
 insertRg06Reconciliation:
@@ -3645,6 +3649,8 @@ selectRg06Payment:
 SELECT * FROM rg06_installment WHERE payment_id = ?;
 selectRg06EvidenceLinkForPayment:
 SELECT * FROM rg06_evidence_link WHERE ledger_id = ? AND payment_id = ? AND posting_id = ?;
+selectRg06ConfirmationForIdentity:
+SELECT * FROM rg06_confirmation WHERE ledger_id = ? AND identity_value = ?;
 selectRg06ReconciliationForPosting:
 SELECT * FROM rg06_posting_reconciliation WHERE ledger_id = ? AND posting_id = ?;
 countRg06Operations:

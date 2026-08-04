@@ -95,7 +95,7 @@ class SqlDelightRg05StoreTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(10, LedgerDatabase.Schema.version)
+            assertEquals(11, LedgerDatabase.Schema.version)
             val catalog = catalog()
             val store = SqlDelightRg05Store(database, driver, catalog, object : Rg05IdentitySource {
                 override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation", "reconciliation")

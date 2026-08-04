@@ -995,3 +995,21 @@ RG-07 登记 `record_refund_request_status`、`ingest_refund_status_source`、`c
 **影响：** The publication target is explicit and release verification must continue to run on a clean worktree. The artifact is recorded in the v2 manifest with its source, expected, canonical, and output hashes; this decision does not authorize publication of other RG cases or any remote push.
 
 **关联决定：** `D-079`
+
+## D-081 RG-06 closure migration and publication approval
+
+**状态：** 已确认
+
+**决定：** 根据用户 2026-08-05 明确批准的 RG-06 1～5 gate，批准 RG-06 mapping closure 与 expected output、`RG06-AUTH-01` authority trace、严格 v1-to-v2 adapter/replay、fixture rewrite、publication 和 clean release verification。`golden/rules/rg-06.json` 是只读的冻结 v1 source；adapter 必须以 v1 operation/input、returned IDs、outcome、完整 state、deltas 和 status changes 为输入和比较对象，不能反向读取或改写 v2 expected 来驱动执行。accepted、no_change 和 rejected 均须逐 operation 比较；no_change/rejected 必须证明零正式写入、零余额/report/status 变化，失败和重放必须保持原子性、幂等和失败隔离。
+
+mapping closure 的五个 resolved gaps、`docs/migrations/golden-v2/rg-06-expected.json` 和 path-map gate 可标记为 `approved`。fixture rewrite 只能生成明确的 v2 publication candidate，必须保留临时副本、source/target hash、失败恢复、幂等和失败隔离证据；publication target 固定为 `golden/rules-v2/rg-06.json`，manifest 记录 source、expected、canonical 和 output hash 以及对象计数。只在 clean worktree 上完成 release verification；本决定不授权远程 push。
+
+RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段，不得从 `source_payment_at`、`actual_payment_at`、operation time 或运行时当前时间推导。adapter/fixture 必须从冻结 v1 `confirmation_provenance.confirmed_at` 显式提供它；当前冻结值为 `2026-04-28T10:05:00+08:00` 和 `2026-05-03T16:35:00+08:00`。runtime persistence 以 additive migration 保存该字段，并在 reopen/replay 后原样恢复；manual installment confirmation 没有该来源时保持 `null`。该字段参与确认结果一致性检查，但不得扩展 v2 operation input 的业务语义。
+
+本决定确认 D-077 的 RG-06 领域/账务边界仍然有效；D-077 影响段中“未获授权”的 schema v9、decoder、SQLDelight/store、adapter、migration、fixture、expected 和 publication 表述由本决定在上述明确范围内 supersede。D-081 不扩展 RG-06 的产品账务行为、金额规则、跨币种范围或 UI。
+
+**理由：** mapping/expected、adapter/replay、fixture rewrite 与 publication 是相互依赖但权限不同的 gate；显式 authority trace 可以消除旧影响段与现有实现的冲突。确认时间属于 provenance，不属于支付发生时间，必须持久化以避免 replay 或 fixture rewrite 静默改变审计事实。
+
+**影响：** RG-06 schema/store/adapter/replay/migration、fixture rewrite 和 publication 可以在本决定的 acceptance topology 下实施；publication 仍受 clean release verification 和 manifest/hash 审计约束。`golden/rules/rg-06.json` 不得原地修改，`.external/` 保持只读。
+
+**关联决定：** `D-008`、`D-013`、`D-015`、`D-017`、`D-043`、`D-045`、`D-058`、`D-060`、`D-077`、`D-080`

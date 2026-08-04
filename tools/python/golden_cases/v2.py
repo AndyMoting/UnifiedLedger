@@ -7324,6 +7324,17 @@ def _validate_append_only_transition(
         "audit_links",
         "posting_reconciliations",
     }
+    if (
+        case_id == "RG-06"
+        and outcome_status in {"rejected", "no_change"}
+        and not _contract_equivalent(
+            _state_payload(baseline), _state_payload(result)
+        )
+    ):
+        _fail(
+            operation_path,
+            "rejected and no_change baseline/result states must be contract-equivalent after set-like normalization",
+        )
     target_lifecycle_id: str | None = None
     target_evidence_id: str | None = None
     if (
@@ -7371,6 +7382,7 @@ def _validate_append_only_transition(
                     collection_name == "evidence"
                     and case_id == "RG-06"
                     and action_type == "confirm_staged_payment_candidate"
+                    and outcome_status in {None, "accepted"}
                     and item_id == target_evidence_id
                 ):
                     old = before[item_id]
@@ -7399,6 +7411,7 @@ def _validate_append_only_transition(
                         "record_staged_payment_installment",
                         "confirm_staged_payment_candidate",
                     }
+                    and outcome_status in {None, "accepted"}
                     and item_id == target_relation_id
                     and before[item_id].get("type") == "staged_payment"
                     and after[item_id].get("type") == "staged_payment"
@@ -7446,6 +7459,7 @@ def _validate_append_only_transition(
                         or (
                             case_id == "RG-06"
                             and action_type == "link_staged_payment_evidence"
+                            and outcome_status in {None, "accepted"}
                         )
                         or (
                             case_id == "RG-07"
@@ -7492,6 +7506,7 @@ def _validate_append_only_transition(
                         or (
                             case_id == "RG-06"
                             and action_type == "confirm_staged_payment_candidate"
+                            and outcome_status in {None, "accepted"}
                             and before[item_id].get("type") == "staged_payment"
                         )
                         or (
@@ -7524,6 +7539,7 @@ def _validate_append_only_transition(
                         "confirm_staged_payment_completion",
                         "confirm_staged_payment_candidate",
                     }
+                    and outcome_status in {None, "accepted"}
                     and item_id == target_lifecycle_id
                     and before[item_id].get("type") == "staged_payment_lifecycle"
                     and after[item_id].get("type") == "staged_payment_lifecycle"
