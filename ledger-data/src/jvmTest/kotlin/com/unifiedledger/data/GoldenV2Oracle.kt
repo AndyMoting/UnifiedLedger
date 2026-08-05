@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 internal data class GoldenV2RootSpec(
     val purpose: String,
@@ -128,24 +129,80 @@ internal fun assertGoldenV2Oracle(
     assertEquals(expectedOperationCount, observed.sumOf { it.operations.size })
     assertEquals(expectedStateCount, observed.sumOf { it.operations.size + 1 })
 
-    val expectedRoots = expected.getValue("roots").jsonArray.associateBy { it.jsonObject.goldenV2String("purpose") }
-    val expectedStates = expected.getValue("states").jsonArray.associateBy { it.jsonObject.goldenV2String("id") }
-    val expectedOperations = expected.getValue("operations").jsonArray.associateBy { it.jsonObject.goldenV2String("id") }
+    val expectedRootArray = expected.getValue("roots").jsonArray
+    val expectedStateArray = expected.getValue("states").jsonArray
+    val expectedOperationArray = expected.getValue("operations").jsonArray
+    assertEquals(expectedRootCount, expectedRootArray.size, "expected roots count")
+    assertEquals(expectedStateCount, expectedStateArray.size, "expected states count")
+    assertEquals(expectedOperationCount, expectedOperationArray.size, "expected operations count")
+
+    val expectedRoots = expectedRootArray.associateBy { it.jsonObject.goldenV2String("purpose") }
+    val expectedStates = expectedStateArray.associateBy { it.jsonObject.goldenV2String("id") }
+    val expectedOperations = expectedOperationArray.associateBy { it.jsonObject.goldenV2String("id") }
+    val expectedRootIds = expectedRootArray.map { it.jsonObject.goldenV2String("id") }
+    assertEquals(expectedRootCount, expectedRoots.size, "expected root purposes unique")
+    assertEquals(expectedRootCount, expectedRootIds.toSet().size, "expected root IDs unique")
+    assertEquals(expectedStateCount, expectedStates.size, "expected state IDs unique")
+    assertEquals(expectedOperationCount, expectedOperations.size, "expected operation IDs unique")
+
+    val expectedOperationIds = expectedRootArray.flatMap { root ->
+        root.jsonObject.getValue("operation_ids").jsonArray.map { it.jsonPrimitive.content }
+    }
+    assertEquals(expectedOperationCount, expectedOperationIds.size, "expected operation references count")
+    assertEquals(expectedOperationCount, expectedOperationIds.toSet().size, "expected operation references unique")
+    assertEquals(expectedOperations.keys, expectedOperationIds.toSet(), "expected operation closure")
+
+    val expectedReferencedStateIds = expectedRootArray.flatMap { root ->
+        val rootObject = root.jsonObject
+        listOf(rootObject.goldenV2String("initial_state_id")) + rootObject.getValue("operation_ids").jsonArray.map { operationId ->
+            expectedOperations.getValue(operationId.jsonPrimitive.content).jsonObject.goldenV2String("result_state_id")
+        }
+    }
+    assertEquals(expectedStateCount, expectedReferencedStateIds.size, "expected state references count")
+    assertEquals(expectedStateCount, expectedReferencedStateIds.toSet().size, "expected state references unique")
+    assertEquals(expectedStates.keys, expectedReferencedStateIds.toSet(), "expected state closure")
+    expectedOperations.forEach { (operationId, operation) ->
+        val operationObject = operation.jsonObject
+        assertTrue(expectedStates.containsKey(operationObject.goldenV2String("baseline_state_id")), "$operationId baseline state reference")
+        assertTrue(expectedStates.containsKey(operationObject.goldenV2String("result_state_id")), "$operationId result state reference")
+    }
+
+    val observedRootPurposes = observed.map { it.spec.purpose }
+    val observedRootIds = observed.map { it.spec.rootId }
+    assertEquals(expectedRootCount, observedRootPurposes.toSet().size, "observed root purposes unique")
+    assertEquals(expectedRoots.keys, observedRootPurposes.toSet(), "observed root closure")
+    assertEquals(expectedRootCount, observedRootIds.toSet().size, "observed root IDs unique")
+    assertEquals(expectedRootIds.toSet(), observedRootIds.toSet(), "observed root ID closure")
+    val observedOperationIds = observed.flatMap { root -> root.operations.map { it.operationId } }
+    assertEquals(expectedOperationCount, observedOperationIds.toSet().size, "observed operation IDs unique")
+    assertEquals(expectedOperations.keys, observedOperationIds.toSet(), "observed operation closure")
+    val observedStateIds = observed.flatMap { root ->
+        listOf(root.initialState.goldenV2String("id")) + root.operations.map { it.after.goldenV2String("id") }
+    }
+    assertEquals(expectedStateCount, observedStateIds.toSet().size, "observed state IDs unique")
+    assertEquals(expectedStates.keys, observedStateIds.toSet(), "observed state closure")
 
     observed.forEach { root ->
         val expectedRoot = expectedRoots.getValue(root.spec.purpose).jsonObject
         assertEquals(root.spec.rootId, expectedRoot.goldenV2String("id"), root.spec.purpose)
-        assertEquals(expectedStates.getValue(expectedRoot.goldenV2String("initial_state_id")), root.initialState)
+        assertEquals(
+            goldenV2CanonicalState(expectedStates.getValue(expectedRoot.goldenV2String("initial_state_id")).jsonObject),
+            goldenV2CanonicalState(root.initialState),
+        )
         val operationIds = expectedRoot.getValue("operation_ids").jsonArray.map { it.jsonPrimitive.content }
         assertEquals(root.operations.size, operationIds.size)
         root.operations.zip(operationIds).forEach { (actual, operationId) ->
             val expectedOperation = expectedOperations.getValue(operationId).jsonObject
             assertEquals(actual.operationId, operationId)
             assertEquals(expectedOperation.getValue("outcome"), actual.outcome, "$operationId outcome")
-            assertEquals(expectedOperation.getValue("returned_ids"), actual.returnedIds, "$operationId returned_ids")
             assertEquals(
-                expectedStates.getValue(expectedOperation.goldenV2String("result_state_id")),
-                actual.after,
+                goldenV2CanonicalReturnedIds(expectedOperation.getValue("returned_ids").jsonArray),
+                goldenV2CanonicalReturnedIds(actual.returnedIds),
+                "$operationId returned_ids",
+            )
+            assertEquals(
+                goldenV2CanonicalState(expectedStates.getValue(expectedOperation.goldenV2String("result_state_id")).jsonObject),
+                goldenV2CanonicalState(actual.after),
                 "$operationId state",
             )
             assertEquals(expectedOperation.getValue("deltas"), goldenV2Deltas(actual.before, actual.after), "$operationId deltas")
@@ -160,6 +217,63 @@ internal fun assertGoldenV2Oracle(
         }
     }
 }
+
+private val GOLDEN_V2_ID_COLLECTIONS = setOf(
+    "transactions",
+    "transaction_versions",
+    "posting_sets",
+    "postings",
+    "sources",
+    "candidates",
+    "confirmations",
+    "evidence",
+    "evidence_links",
+    "relations",
+    "domain_entities",
+    "audit_links",
+    "posting_reconciliations",
+)
+
+private fun goldenV2CanonicalState(state: JsonObject): JsonObject =
+    goldenV2CanonicalElement(state, emptyList()).jsonObject
+
+private fun goldenV2CanonicalElement(element: JsonElement, path: List<String>): JsonElement = when (element) {
+    is JsonObject -> JsonObject(element.entries.associate { (key, value) ->
+        key to goldenV2CanonicalElement(value, path + key)
+    })
+    is JsonArray -> goldenV2CanonicalArray(element, path)
+    else -> element
+}
+
+private fun goldenV2CanonicalArray(array: JsonArray, path: List<String>): JsonArray {
+    val items = array.map { goldenV2CanonicalElement(it, path) }
+    val key = path.lastOrNull()
+    val sorted = when {
+        path.size == 1 && key != null && key in GOLDEN_V2_ID_COLLECTIONS -> items.sortedWith(compareBy { it.goldenV2Scalar("id") })
+        path == listOf("catalog", "accounts") || path == listOf("catalog", "categories") ->
+            items.sortedWith(compareBy { it.goldenV2Scalar("id") })
+        key == "balances" -> items.sortedWith(compareBy({ it.goldenV2Scalar("account_id") }, { it.goldenV2Scalar("currency") }))
+        key == "reports" -> items.sortedWith(compareBy({ it.goldenV2Scalar("period_type") }, { it.goldenV2Scalar("period") }))
+        key == "metrics" -> items.sortedWith(compareBy({ it.goldenV2Scalar("metric") }, { it.goldenV2Scalar("currency") }))
+        key == "derived_statuses" -> items.sortedWith(compareBy({ it.goldenV2Scalar("target_kind") }, { it.goldenV2Scalar("target_id") }, { it.goldenV2Scalar("status_name") }))
+        key == "member_refs" -> items.sortedWith(compareBy({ it.goldenV2Scalar("kind") }, { it.goldenV2Scalar("id") }))
+        key == "funding_components" || key == "known_funding_components" -> items.sortedWith(
+            compareBy({ it.goldenV2Scalar("posting_id") }, { it.goldenV2Scalar("account_id") }, { it.goldenV2Scalar("funding_amount") }, { it.goldenV2Scalar("currency") }),
+        )
+        key == "posting_ids" || key == "source_ids" || key == "evidence_refs" || key == "requires_confirmation" ->
+            items.sortedBy { it.jsonPrimitive.content }
+        else -> items
+    }
+    return JsonArray(sorted)
+}
+
+private fun JsonElement.goldenV2Scalar(key: String): String = when (this) {
+    is JsonObject -> this[key]?.let { value -> if (value is JsonNull) "" else value.jsonPrimitive.content } ?: ""
+    else -> jsonPrimitive.content
+}
+
+private fun goldenV2CanonicalReturnedIds(returnedIds: JsonArray): JsonArray =
+    JsonArray(returnedIds.map { it }.sortedWith(compareBy({ it.goldenV2Scalar("kind") }, { it.goldenV2Scalar("id") })))
 
 private fun seedGoldenV2Opening(
     database: LedgerDatabase,
@@ -376,7 +490,7 @@ private fun JsonObject.goldenV2ArrayAt(path: List<String>): JsonArray {
 }
 
 internal fun goldenV2StatePayload(state: JsonObject): JsonObject =
-    JsonObject(state.filterKeys { it !in setOf("id", "as_of_operation_id") })
+    JsonObject(goldenV2CanonicalState(state).filterKeys { it !in setOf("id", "as_of_operation_id") })
 
 private fun goldenV2JsonObjectOf(vararg fields: Pair<String, JsonElement?>): JsonObject =
     JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())
