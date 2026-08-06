@@ -107,3 +107,41 @@ sealed interface AccountTransferViolation : DomainViolation {
 
     data object InvalidFeeCategory : AccountTransferViolation
 }
+
+enum class BalanceAdjustmentField {
+    TARGET_ACCOUNT,
+    ADJUSTMENT_EQUITY_ACCOUNT,
+    AMOUNT,
+}
+
+sealed interface BalanceAdjustmentViolation : DomainViolation {
+    data class KnownAccountRequired(val field: BalanceAdjustmentField) : BalanceAdjustmentViolation
+
+    data class OwnedRealAssetRequired(val field: BalanceAdjustmentField) : BalanceAdjustmentViolation
+
+    data object DedicatedAdjustmentEquityRequired : BalanceAdjustmentViolation
+
+    data object NonZeroAmountRequired : BalanceAdjustmentViolation
+
+    data object SameCurrencyRequired : BalanceAdjustmentViolation
+
+    data object SupportedKindRequired : BalanceAdjustmentViolation
+}
+
+enum class PrincipalTransferField {
+    SOURCE_ACCOUNT,
+    DESTINATION_ACCOUNT,
+    AMOUNT,
+}
+
+sealed interface PrincipalTransferViolation : DomainViolation {
+    data class KnownAccountRequired(val field: PrincipalTransferField) : PrincipalTransferViolation
+
+    data class OwnedRealAssetRequired(val field: PrincipalTransferField) : PrincipalTransferViolation
+
+    data object DistinctAccountsRequired : PrincipalTransferViolation
+
+    data object AmountMustBePositive : PrincipalTransferViolation
+
+    data object SameCurrencyRequired : PrincipalTransferViolation
+}

@@ -44,6 +44,8 @@ enum class TransactionKind {
     ACCOUNT_TRANSFER,
     CREDIT_REPAYMENT,
     REFUND_RECEIPT,
+    BALANCE_ADJUSTMENT,
+    BALANCE_ADJUSTMENT_REVERSAL,
 }
 
 data class Transaction(
@@ -107,6 +109,8 @@ class FormalTransaction private constructor(
         val currentVersion = versionsById.getValue(transaction.currentVersionId)
         return postingSetsById.getValue(currentVersion.postingSetId)
     }
+
+    fun currentPostings(): List<Posting> = currentPostingSet().postings
 }
 
 private fun validateFormalChain(

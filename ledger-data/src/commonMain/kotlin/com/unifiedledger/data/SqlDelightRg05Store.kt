@@ -434,5 +434,7 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = whe
     is OrdinaryExpenseViolation,
     is OrdinaryIncomeViolation,
     is AccountTransferViolation,
-    is MixedPaymentViolation -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
+    is MixedPaymentViolation,
+    is BalanceAdjustmentViolation,
+    is PrincipalTransferViolation -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
 }

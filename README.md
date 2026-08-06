@@ -4,7 +4,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v11。RG-05、RG-06 和 RG-07 的领域、应用与持久化 runtime 已进入共享库；RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成。RG-04、RG-06 和 RG-07 v2 工件已按各自发布记录发布。这不表示所有黄金场景或正式账务核心已经完成。仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
+Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v12。RG-05、RG-06、RG-07 和 RG-09 的领域、应用与持久化 runtime 已进入共享库；RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现。这不表示所有黄金场景或正式账务核心已经完成。仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
 
 阶段 3 的规则场景实现范围如下：
 
@@ -17,10 +17,10 @@ Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `le
 | `RG-05` | 领域、应用与持久化 runtime 已进入共享库；`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected。共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较完整 state、deltas 和 status changes | 未发布；尚无 `golden/rules-v2` RG-05 工件 |
 | `RG-06` | Golden Schema v2 契约与语义校验、领域 aggregate、catalog-free validated rehydration、八 action 应用契约，以及 schema v9/SQLDelight 原子持久化 runtime 已完成；41 operations 已比较完整 state、deltas、status changes | 已发布：`golden/rules-v2/rg-06.json` |
 | `RG-07` | contract、expected、adapter、fixture replay、schema v10、migration 与 Kotlin runtime 已完成；49 个 operation 比较完整 state、deltas、status changes | 已发布：`golden/rules-v2/rg-07.json` |
-| `RG-08` 至 `RG-10` | 有冻结 v1、Python 测试和逐路径 mapping，无 Kotlin runtime | 未发布 |
+| `RG-08`、`RG-10` | 有冻结 v1、Python 测试和逐路径 mapping，无 Kotlin runtime | 未发布 |
 | `RG-11`、`RG-12` | 有 approved direct-v2 fixtures 与 Python 语义测试，无 Kotlin runtime | direct-v2 fixture 已批准 |
 
-这些结果不等于全部黄金场景或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整比较。`D-075` 只批准 RG-05 expected；`D-079` 批准 RG-07 expected、adapter、fixture replay、schema v10 migration 与 runtime，`D-080` 记录了 RG-07 的明确 publication target；`D-081` 批准 RG-06 closure、adapter/replay、fixture rewrite 和 publication。报表、通用导入与对账模块、UI 和平台客户端仍未建立；当前持久化选择也不预先决定同步或更广泛查询方案。
+这些结果不等于全部黄金场景或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整比较。`D-075` 只批准 RG-05 expected；`D-079` 批准 RG-07 expected、adapter、fixture replay、schema v10 migration 与 runtime，`D-080` 记录了 RG-07 的明确 publication target；`D-081` 批准 RG-06 closure、adapter/replay、fixture rewrite 和 publication；`D-082` 批准 RG-09 contract closure、完整 oracle、schema v12 persistence 与 migration，但不授权 publication。RG-09 mapping gate 仍需独立高风险审查和主代理最终复跑。报表、通用导入与对账模块、UI 和平台客户端仍未建立；当前持久化选择也不预先决定同步或更广泛查询方案。
 
 ## 核心原则
 

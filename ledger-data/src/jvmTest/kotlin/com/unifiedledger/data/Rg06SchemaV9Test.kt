@@ -26,10 +26,10 @@ class Rg06SchemaV9Test {
                 LedgerDatabase.Schema.migrate(driver, 1, 8)
                 driver.execute(null, "INSERT INTO rg05_operation_request VALUES ('ledger-a','existing','MANUAL_MERGED_PAYMENT')", 0)
             }
-            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 11) }
+                JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 12) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(11, LedgerDatabase.Schema.version)
+                assertEquals(12, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Operations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Relations().executeAsOne())

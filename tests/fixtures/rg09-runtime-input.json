@@ -1,0 +1,249 @@
+{
+  "ids": {
+    "request-preview-rg09": {
+      "candidate_id": "candidate-adjustment-rg09",
+      "observation_id": "observation-target-rg09",
+      "source_record_id": "source-target-observation-rg09",
+      "evidence_id": "evidence-target-rg09",
+      "evidence_link_id": "evidence-link-target-rg09"
+    },
+    "request-confirm-adjustment-rg09": {
+      "transaction_id": "transaction-adjustment-rg09",
+      "version_id": "version-adjustment-rg09-v1",
+      "adjustment_id": "adjustment-rg09",
+      "confirmation_id": "confirmation-adjustment-rg09",
+      "posting_set_id": "posting-set-adjustment-rg09",
+      "target_posting_id": "posting-adjustment-asset-rg09",
+      "equity_posting_id": "posting-adjustment-equity-rg09",
+      "history_id": "history-adjustment-open-rg09"
+    },
+    "request-transfer-rg09": {
+      "transaction_id": "transaction-transfer-rg09",
+      "version_id": "version-transfer-rg09-v1",
+      "confirmation_id": "confirmation-transfer-rg09",
+      "posting_set_id": "posting-set-transfer-rg09",
+      "source_posting_id": "posting-transfer-b-rg09",
+      "destination_posting_id": "posting-transfer-a-rg09"
+    },
+    "request-confirm-allocation-rg09": {
+      "adjustment_id": "adjustment-rg09",
+      "allocation_id": "allocation-rg09-20",
+      "transaction_id": "transaction-adjustment-reversal-rg09",
+      "version_id": "version-adjustment-reversal-rg09-v1",
+      "confirmation_id": "confirmation-allocation-rg09",
+      "reversal_posting_set_id": "posting-set-adjustment-reversal-rg09",
+      "reversal_target_posting_id": "posting-reversal-a-rg09",
+      "reversal_equity_posting_id": "posting-reversal-equity-rg09",
+      "adjustment_audit_link_id": "audit-link-adjustment-rg09",
+      "explanation_audit_link_id": "audit-link-explanation-rg09",
+      "reversal_audit_link_id": "audit-link-reversal-rg09",
+      "history_id": "history-adjustment-partial-rg09"
+    },
+    "request-transfer-rg09-remaining": {
+      "transaction_id": "transaction-transfer-rg09-remaining",
+      "version_id": "version-transfer-rg09-remaining-v1",
+      "confirmation_id": "confirmation-transfer-rg09-remaining",
+      "posting_set_id": "posting-set-transfer-rg09-remaining",
+      "source_posting_id": "posting-transfer-b-rg09-remaining",
+      "destination_posting_id": "posting-transfer-a-rg09-remaining"
+    },
+    "request-confirm-allocation-rg09-remaining": {
+      "adjustment_id": "adjustment-rg09",
+      "allocation_id": "allocation-rg09-remaining",
+      "transaction_id": "transaction-adjustment-reversal-rg09-remaining",
+      "version_id": "version-adjustment-reversal-rg09-remaining-v1",
+      "confirmation_id": "confirmation-allocation-rg09-remaining",
+      "reversal_posting_set_id": "posting-set-adjustment-reversal-rg09-remaining",
+      "reversal_target_posting_id": "posting-reversal-a-rg09-remaining",
+      "reversal_equity_posting_id": "posting-reversal-equity-rg09-remaining",
+      "adjustment_audit_link_id": "audit-link-adjustment-rg09-remaining",
+      "explanation_audit_link_id": "audit-link-explanation-rg09-remaining",
+      "reversal_audit_link_id": "audit-link-reversal-rg09-remaining",
+      "history_id": "history-adjustment-full-rg09"
+    },
+    "request-import-transfer-confirm-rg09": {
+      "transaction_id": "transaction-transfer-rg09-import",
+      "version_id": "version-transfer-rg09-import-v1",
+      "confirmation_id": "confirmation-import-transfer-rg09",
+      "posting_set_id": "posting-set-transfer-rg09-import",
+      "source_posting_id": "posting-transfer-b-rg09-import",
+      "destination_posting_id": "posting-transfer-a-rg09-import"
+    },
+    "request-import-allocation-confirm-rg09": {
+      "adjustment_id": "adjustment-rg09",
+      "allocation_id": "allocation-rg09-import-20",
+      "transaction_id": "transaction-adjustment-reversal-rg09-import",
+      "version_id": "version-adjustment-reversal-rg09-import-v1",
+      "confirmation_id": "confirmation-import-allocation-rg09",
+      "reversal_posting_set_id": "posting-set-adjustment-reversal-rg09-import",
+      "reversal_target_posting_id": "posting-reversal-a-rg09-import",
+      "reversal_equity_posting_id": "posting-reversal-equity-rg09-import",
+      "adjustment_audit_link_id": "audit-link-adjustment-rg09-import",
+      "explanation_audit_link_id": "audit-link-explanation-rg09-import",
+      "reversal_audit_link_id": "audit-link-reversal-rg09-import",
+      "history_id": "history-adjustment-partial-rg09"
+    },
+    "source-target-observation-rg09": {
+      "source_record_id": "source-target-observation-rg09",
+      "observation_id": "observation-target-rg09",
+      "evidence_id": "evidence-target-rg09",
+      "evidence_link_id": "evidence-link-target-rg09"
+    },
+    "source-zero-target-rg09": {
+      "source_record_id": "source-zero-target-rg09",
+      "observation_id": "observation-zero-target-rg09",
+      "evidence_id": "evidence-zero-target-rg09",
+      "evidence_link_id": "evidence-link-zero-target-rg09"
+    },
+    "source-import-transfer-rg09": {
+      "source_record_id": "source-import-transfer-rg09",
+      "evidence_id": "evidence-import-transfer-rg09",
+      "candidate_id": "candidate-import-transfer-rg09",
+      "transaction_id": "transaction-transfer-rg09-import"
+    },
+    "source-real-transfer-confirmation-rg09": {
+      "source_record_id": "source-real-transfer-confirmation-rg09",
+      "evidence_id": "evidence-real-transfer-confirmation-rg09"
+    },
+    "source-real-transfer-confirmation-rg09-remaining": {
+      "source_record_id": "source-real-transfer-confirmation-rg09-remaining",
+      "evidence_id": "evidence-real-transfer-confirmation-rg09-remaining"
+    },
+    "source-transfer-a-rg09": {
+      "source_record_id": "source-transfer-a-rg09",
+      "evidence_id": "evidence-transfer-a-rg09",
+      "evidence_link_id": "evidence-link-transfer-a-rg09"
+    },
+    "source-transfer-b-rg09": {
+      "source_record_id": "source-transfer-b-rg09",
+      "evidence_id": "evidence-transfer-b-rg09",
+      "evidence_link_id": "evidence-link-transfer-b-rg09"
+    },
+    "source-transfer-a-rg09-remaining": {
+      "source_record_id": "source-transfer-a-rg09-remaining",
+      "evidence_id": "evidence-transfer-a-rg09-remaining",
+      "evidence_link_id": "evidence-link-transfer-a-rg09-remaining"
+    },
+    "source-transfer-b-rg09-remaining": {
+      "source_record_id": "source-transfer-b-rg09-remaining",
+      "evidence_id": "evidence-transfer-b-rg09-remaining",
+      "evidence_link_id": "evidence-link-transfer-b-rg09-remaining"
+    },
+    "request-zero-delta-rg09": {
+      "source_record_id": "source-zero-target-rg09",
+      "observation_id": "observation-zero-target-rg09",
+      "evidence_id": "evidence-zero-target-rg09",
+      "evidence_link_id": "evidence-link-zero-target-rg09"
+    }
+  },
+  "sources": [
+    {
+      "id": "source-target-observation-rg09",
+      "source_type": "manual_balance_observation",
+      "observed_at": "2026-01-31T23:59:59+08:00",
+      "saved_at": "2026-02-01T09:00:00+08:00",
+      "account_id": "asset-a",
+      "amount": "130.00",
+      "immutable_payload_digest": "sha256:rg09-target"
+    },
+    {
+      "id": "source-zero-target-rg09",
+      "source_type": "manual_balance_observation",
+      "observed_at": "2026-01-31T23:59:59+08:00",
+      "saved_at": "2026-02-01T10:00:00+08:00",
+      "account_id": "asset-a",
+      "amount": "100.00",
+      "immutable_payload_digest": "sha256:rg09-zero"
+    },
+    {
+      "id": "source-real-transfer-confirmation-rg09",
+      "source_type": "manual_transaction_confirmation",
+      "observed_at": "2026-02-10T17:30:00+08:00",
+      "account_id": "asset-a",
+      "counter_account_id": "asset-b",
+      "amount": "20.00",
+      "actual_at": "2026-01-20T12:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-transfer"
+    },
+    {
+      "id": "source-real-transfer-confirmation-rg09-remaining",
+      "source_type": "manual_transaction_confirmation",
+      "observed_at": "2026-02-11T17:30:00+08:00",
+      "account_id": "asset-a",
+      "counter_account_id": "asset-b",
+      "amount": "10.00",
+      "actual_at": "2026-01-22T10:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-transfer-remaining"
+    },
+    {
+      "id": "source-import-transfer-rg09",
+      "source_type": "imported_transfer_candidate",
+      "observed_at": "2026-02-08T10:00:00+08:00",
+      "account_id": "asset-a",
+      "counter_account_id": "asset-b",
+      "amount": "20.00",
+      "actual_at": "2026-01-20T12:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-import"
+    },
+    {
+      "id": "source-transfer-a-rg09",
+      "source_type": "account_statement",
+      "observed_at": "2026-02-11T09:00:00+08:00",
+      "account_id": "asset-a",
+      "amount": "20.00",
+      "actual_at": "2026-01-20T12:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-a"
+    },
+    {
+      "id": "source-transfer-b-rg09",
+      "source_type": "account_statement",
+      "observed_at": "2026-02-11T09:01:00+08:00",
+      "account_id": "asset-b",
+      "amount": "-20.00",
+      "actual_at": "2026-01-20T12:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-b"
+    },
+    {
+      "id": "source-transfer-a-rg09-remaining",
+      "source_type": "account_statement",
+      "observed_at": "2026-02-12T09:00:00+08:00",
+      "account_id": "asset-a",
+      "amount": "10.00",
+      "actual_at": "2026-01-22T10:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-a-remaining"
+    },
+    {
+      "id": "source-transfer-b-rg09-remaining",
+      "source_type": "account_statement",
+      "observed_at": "2026-02-12T09:01:00+08:00",
+      "account_id": "asset-b",
+      "amount": "-10.00",
+      "actual_at": "2026-01-22T10:00:00+08:00",
+      "immutable_payload_digest": "sha256:rg09-b-remaining"
+    }
+  ],
+  "source_by_request": {
+    "request-preview-rg09": "source-target-observation-rg09",
+    "request-zero-delta-rg09": "source-zero-target-rg09",
+    "request-transfer-rg09": "source-real-transfer-confirmation-rg09",
+    "request-confirm-allocation-rg09": "source-real-transfer-confirmation-rg09",
+    "request-transfer-rg09-remaining": "source-real-transfer-confirmation-rg09-remaining",
+    "request-confirm-allocation-rg09-remaining": "source-real-transfer-confirmation-rg09-remaining",
+    "request-import-transfer-confirm-rg09": "source-import-transfer-rg09",
+    "request-import-allocation-confirm-rg09": "source-import-transfer-rg09"
+  },
+  "direction_by_request": {
+    "request-transfer-rg09": "increase",
+    "request-confirm-allocation-rg09": "increase",
+    "request-transfer-rg09-remaining": "increase",
+    "request-confirm-allocation-rg09-remaining": "increase",
+    "request-import-transfer-confirm-rg09": "increase",
+    "request-import-allocation-confirm-rg09": "increase"
+  },
+  "target_observed_at_by_request": {
+    "request-confirm-adjustment-rg09": "2026-01-31T23:59:59+08:00",
+    "request-confirm-allocation-rg09": "2026-01-31T23:59:59+08:00",
+    "request-confirm-allocation-rg09-remaining": "2026-01-31T23:59:59+08:00",
+    "request-import-allocation-confirm-rg09": "2026-01-31T23:59:59+08:00"
+  }
+}

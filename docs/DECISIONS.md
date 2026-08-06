@@ -1013,3 +1013,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** RG-06 schema/store/adapter/replay/migration、fixture rewrite 和 publication 可以在本决定的 acceptance topology 下实施；publication 仍受 clean release verification 和 manifest/hash 审计约束。`golden/rules/rg-06.json` 不得原地修改，`.external/` 保持只读。
 
 **关联决定：** `D-008`、`D-013`、`D-015`、`D-017`、`D-043`、`D-045`、`D-058`、`D-060`、`D-077`、`D-080`
+
+## D-082 RG-09 contract closure and implementation approval
+
+**状态：** 已确认
+
+**决定：** 在 `D-063`、`D-065` 和 RG-09 设计的基础上，批准 RG-09 三项 mapping gap 的 contract amendment、完整 fixture oracle、Kotlin runtime 和正式 SQLDelight persistence。`RG09-GAP-01` 关闭为完整 action registry：预览、零差额观察、过期拒绝、导入来源/候选、缺失确认、真实转账确认、解释分配、四个精确真实分录证据链接、无效尝试和原 action retry 都必须有闭合的 operation class、严格 input 或 sparse attempted_input、typed outcome、完整 baseline/result snapshot、returned IDs、formal/intake/reconciliation deltas 和 status changes；retry 保留原 action，不引入 generic retry action。所有 rejected、stale、incomplete 和 no-change 路径保持零正式账务效果，并逐字段保留操作前状态。
+
+`RG09-GAP-02` 关闭为强制 D-065 输入和 stale contract。预览从目标时点及以前的 current-version postings 重新生成 RFC 8785 JCS + SHA-256 fingerprint；候选和确认只接受该真实 digest，历史 fixture 中的 `sha256:rg09-ledger-v1/v2` 仅作迁移来源 token，不能作为正式 digest。确认过期时返回 `preview_ledger_fingerprint`、`current_ledger_fingerprint`、`recomputed_replay_amount` 和 `recomputed_delta`，且不写入 transaction、version、posting、adjustment、confirmation、allocation 或 evidence link。金额使用精确 minor units，输入 decimal 必须为闭合的两位十进制文本；target timestamp 必须保留带 `+08:00` 的原始文本并通过 `Asia/Shanghai` boundary validation。
+
+`RG09-GAP-03` 关闭为正式 source/candidate/evidence ownership。导入只保存 immutable source、evidence、candidate 和 pending/incomplete status；source payload digest、observed/actual time、account、amount 和 currency 不从名称、匹配、置信度或候选推导。明确确认必须逐字段提供真实交易、目标账户、实际时间、币种、金额和解释分配；目标余额证据只链接 observation，真实账户证据只链接精确 real-account posting，四条 posting evidence link 分别确认，审计 link 不代替 evidence link。
+
+正式 persistence 由 `ledger-data` 的 `SqlDelightRg09Store` 独占，formal transaction chain 继续使用共享 `ledger_transaction`、`transaction_version`、`posting_set` 和 `posting` owner；RG-09 专用表、immutable/sequence/target-type guards 和 v11→v12 additive migration 保存其 intake、operation、candidate、evidence、adjustment、allocation、audit 和 reconciliation facts。成功操作的 identity claim、领域校验、formal writes、derived history 和 receipt 在一个 transaction 内完成；失败回滚后 reopen/readback 必须保持完整 baseline。旧 schema rows 不重写，`canonical_kind` bridge 保持现有 legacy kind 兼容。
+
+完整 oracle 必须逐 operation 比较 outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality 和 retry equality；独立 verifier 必须用冻结 v1 输入驱动执行，不能反向读取 expected 来生成 runtime input。`.external/`、冻结 `golden/rules/rg-09.json` 和 publication target 不在本决定中被修改或发布。
+
+**理由：** 现有 D-065 只定义计算基础，候选仍缺失完整输入、导入 provenance、负面路径、逐 operation oracle 和数据库 owner。把这些边界一次性登记为 closed contract，才能使 mapping closure、runtime、migration 和 review 使用同一套可审计事实，同时保留确认才产生正式账务的边界。
+
+**影响：** RG-09 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
+
+**关联决定：** `D-063`、`D-065`、`D-077`、`D-079`
