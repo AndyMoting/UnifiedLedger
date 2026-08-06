@@ -20,6 +20,7 @@ data class Account(
     val currency: CurrencyUnit,
     val ownedByUser: Boolean,
     val realAccount: Boolean,
+    val systemRole: String? = null,
 )
 
 data class Category(

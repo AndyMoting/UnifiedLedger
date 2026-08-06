@@ -1,0 +1,304 @@
+-- RG-09 additive owner: v11 -> v12. Existing formal rows and all prior
+-- RG owners remain untouched.
+CREATE TABLE rg09_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED')),
+  reason_code TEXT,
+  field_path TEXT,
+  preview_fingerprint TEXT,
+  current_fingerprint TEXT,
+  recomputed_replay_minor INTEGER,
+  recomputed_delta_minor INTEGER,
+  currency_code TEXT,
+  currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  PRIMARY KEY (ledger_id, identity_value)
+);
+CREATE TABLE rg09_returned_id (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  id_kind TEXT NOT NULL, id_value TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value, sequence),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg09_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg09_source (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL PRIMARY KEY, source_type TEXT NOT NULL,
+  observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL, account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL, currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  counter_account_id TEXT, actual_at TEXT, actual_at_text TEXT,
+  booking_at TEXT, booking_at_text TEXT, immutable_payload_digest TEXT NOT NULL,
+  UNIQUE (ledger_id, source_id)
+);
+CREATE TABLE rg09_observation (
+  ledger_id TEXT NOT NULL, observation_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL UNIQUE,
+  account_id TEXT NOT NULL, target_amount_minor INTEGER NOT NULL, currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0), target_observed_at TEXT NOT NULL,
+  target_observed_at_text TEXT NOT NULL, saved_at TEXT NOT NULL, saved_at_text TEXT NOT NULL, UNIQUE (ledger_id, observation_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg09_source(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg09_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL,
+  evidence_type TEXT NOT NULL, observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL, UNIQUE (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg09_source(ledger_id, source_id)
+);
+CREATE TABLE rg09_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('OBSERVATION', 'POSTING')), target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('TARGET_BALANCE_OBSERVATION', 'REAL_ACCOUNT_POSTING')),
+  status TEXT NOT NULL CHECK (status IN ('RECORDED', 'MATCHED')), UNIQUE (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg09_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg09_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg09_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL PRIMARY KEY, observation_id TEXT, source_id TEXT NOT NULL,
+  account_id TEXT NOT NULL, replayed_amount_minor INTEGER NOT NULL, target_amount_minor INTEGER NOT NULL,
+  delta_minor INTEGER NOT NULL, currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  target_observed_at TEXT NOT NULL, target_observed_at_text TEXT NOT NULL, ledger_fingerprint TEXT NOT NULL,
+  candidate_type TEXT NOT NULL, confidence TEXT,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'INCOMPLETE')),
+  adjustment_id TEXT, confirmation_request_id TEXT, UNIQUE (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg09_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, observation_id) REFERENCES rg09_observation(ledger_id, observation_id)
+);
+CREATE TABLE rg09_candidate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'INCOMPLETE')),
+  occurred_at TEXT NOT NULL, adjustment_id TEXT, confirmation_request_id TEXT, operation_identity TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg09_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, operation_identity) REFERENCES rg09_operation(ledger_id, identity_value)
+);
+CREATE TABLE rg09_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY, request_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('BALANCE_ADJUSTMENT_CONFIRMATION', 'REAL_TRANSFER_CONFIRMATION', 'EXPLANATION_ALLOCATION_CONFIRMATION')), confirmed_at TEXT NOT NULL, confirmed_at_text TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_at_text TEXT NOT NULL, target_id TEXT NOT NULL,
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id)
+);
+CREATE TABLE rg09_balance_adjustment (
+  ledger_id TEXT NOT NULL, adjustment_id TEXT NOT NULL PRIMARY KEY, transaction_id TEXT NOT NULL UNIQUE,
+  observation_id TEXT NOT NULL, target_account_id TEXT NOT NULL, equity_account_id TEXT NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  target_observed_at TEXT NOT NULL, target_observed_at_text TEXT NOT NULL, replayed_amount_minor INTEGER NOT NULL,
+  target_amount_minor INTEGER NOT NULL, original_delta_minor INTEGER NOT NULL CHECK (original_delta_minor != 0),
+  explained_amount_minor INTEGER NOT NULL CHECK (explained_amount_minor >= 0),
+  remaining_amount_minor INTEGER NOT NULL CHECK (remaining_amount_minor >= 0),
+  state TEXT NOT NULL CHECK (state IN ('OPEN', 'PARTIALLY_EXPLAINED', 'FULLY_EXPLAINED')),
+  UNIQUE (ledger_id, adjustment_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, observation_id) REFERENCES rg09_observation(ledger_id, observation_id)
+);
+CREATE TABLE rg09_adjustment_history (
+  ledger_id TEXT NOT NULL, adjustment_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL CHECK (state IN ('OPEN', 'PARTIALLY_EXPLAINED', 'FULLY_EXPLAINED')),
+  occurred_at TEXT NOT NULL, occurred_at_text TEXT NOT NULL, created_at TEXT NOT NULL, created_at_text TEXT NOT NULL,
+  allocation_id TEXT, remaining_amount_minor INTEGER NOT NULL CHECK (remaining_amount_minor >= 0),
+  PRIMARY KEY (ledger_id, adjustment_id, history_sequence),
+  FOREIGN KEY (ledger_id, adjustment_id) REFERENCES rg09_balance_adjustment(ledger_id, adjustment_id)
+);
+CREATE TABLE rg09_allocation (
+  ledger_id TEXT NOT NULL, allocation_id TEXT NOT NULL PRIMARY KEY, adjustment_id TEXT NOT NULL,
+  target_account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  real_transaction_id TEXT NOT NULL, reversal_transaction_id TEXT NOT NULL UNIQUE, confirmed_at TEXT NOT NULL,
+  discovered_at TEXT NOT NULL, discovered_at_text TEXT NOT NULL, confirmed_at_text TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_at_text TEXT NOT NULL,
+  UNIQUE (ledger_id, allocation_id),
+  FOREIGN KEY (ledger_id, adjustment_id) REFERENCES rg09_balance_adjustment(ledger_id, adjustment_id),
+  FOREIGN KEY (real_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (reversal_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg09_audit_link (
+  ledger_id TEXT NOT NULL, audit_link_id TEXT NOT NULL PRIMARY KEY, allocation_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('ADJUSTMENT_TRANSACTION', 'EXPLANATION_TRANSACTION', 'ALLOCATION_REVERSAL')),
+  target_id TEXT NOT NULL, created_at TEXT NOT NULL, created_at_text TEXT NOT NULL, UNIQUE (ledger_id, audit_link_id),
+  FOREIGN KEY (ledger_id, allocation_id) REFERENCES rg09_allocation(ledger_id, allocation_id)
+);
+CREATE TABLE rg09_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('ADJUSTMENT_TARGET', 'ADJUSTMENT_EQUITY', 'TRANSFER_SOURCE', 'TRANSFER_DESTINATION', 'REVERSAL_TARGET', 'REVERSAL_EQUITY')),
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg09_posting_reconciliation (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_EVIDENCE', 'MATCHED')), latest_sequence INTEGER NOT NULL CHECK (latest_sequence > 0),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg09_posting_semantic(ledger_id, posting_id)
+);
+CREATE TABLE rg09_reconciliation_history (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING_EVIDENCE', 'MATCHED')), evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, posting_id, status_sequence),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg09_posting_reconciliation(ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES rg09_evidence_link(ledger_id, link_id)
+);
+CREATE TABLE rg09_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL, source_record_id TEXT, created_at TEXT NOT NULL, effective_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id) REFERENCES rg09_source(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER rg09_observation_guard_update BEFORE UPDATE ON rg09_observation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_observation_guard_delete BEFORE DELETE ON rg09_observation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_source_guard_update BEFORE UPDATE ON rg09_source BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_source_guard_delete BEFORE DELETE ON rg09_source BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_evidence_guard_update BEFORE UPDATE ON rg09_evidence BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_evidence_guard_delete BEFORE DELETE ON rg09_evidence BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_evidence_link_guard_update BEFORE UPDATE ON rg09_evidence_link BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_evidence_link_guard_delete BEFORE DELETE ON rg09_evidence_link BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_candidate_guard_update BEFORE UPDATE ON rg09_candidate BEGIN SELECT CASE WHEN (old.ledger_id = new.ledger_id AND old.candidate_id = new.candidate_id AND old.observation_id IS new.observation_id AND old.source_id = new.source_id AND old.account_id = new.account_id AND old.replayed_amount_minor = new.replayed_amount_minor AND old.target_amount_minor = new.target_amount_minor AND old.delta_minor = new.delta_minor AND old.currency_code = new.currency_code AND old.currency_precision = new.currency_precision AND old.target_observed_at = new.target_observed_at AND old.target_observed_at_text = new.target_observed_at_text AND old.ledger_fingerprint = new.ledger_fingerprint AND old.candidate_type = new.candidate_type AND old.confidence IS new.confidence AND ((old.status = new.status AND old.adjustment_id IS new.adjustment_id AND old.confirmation_request_id IS new.confirmation_request_id) OR (old.status = 'PENDING_CONFIRMATION' AND new.status = 'CONFIRMED' AND new.adjustment_id IS NOT NULL AND new.confirmation_request_id IS NOT NULL AND EXISTS (SELECT 1 FROM rg09_balance_adjustment AS adjustment WHERE adjustment.ledger_id = new.ledger_id AND adjustment.adjustment_id = new.adjustment_id) AND EXISTS (SELECT 1 FROM rg09_candidate_status_history AS history WHERE history.ledger_id = new.ledger_id AND history.candidate_id = new.candidate_id AND history.status_sequence = (SELECT MAX(latest.status_sequence) FROM rg09_candidate_status_history AS latest WHERE latest.ledger_id = new.ledger_id AND latest.candidate_id = new.candidate_id) AND history.status = new.status AND history.adjustment_id IS new.adjustment_id AND history.confirmation_request_id IS new.confirmation_request_id)))) THEN NULL ELSE RAISE(ABORT, 'rg09 candidate current projection') END; END;
+CREATE TRIGGER rg09_candidate_guard_delete BEFORE DELETE ON rg09_candidate BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_adjustment_guard_update BEFORE UPDATE ON rg09_balance_adjustment BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_adjustment_guard_delete BEFORE DELETE ON rg09_balance_adjustment BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_allocation_guard_update BEFORE UPDATE ON rg09_allocation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_allocation_guard_delete BEFORE DELETE ON rg09_allocation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_audit_guard_update BEFORE UPDATE ON rg09_audit_link BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_audit_guard_delete BEFORE DELETE ON rg09_audit_link BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_candidate_history_sequence BEFORE INSERT ON rg09_candidate_status_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg09_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg09_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg09 candidate history sequence') END; END;
+CREATE TRIGGER rg09_adjustment_history_sequence BEFORE INSERT ON rg09_adjustment_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg09_adjustment_history WHERE ledger_id = new.ledger_id AND adjustment_id = new.adjustment_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg09_adjustment_history WHERE ledger_id = new.ledger_id AND adjustment_id = new.adjustment_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg09 adjustment history sequence') END; END;
+CREATE TRIGGER rg09_reconciliation_history_sequence BEFORE INSERT ON rg09_reconciliation_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg09_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg09_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg09 reconciliation history sequence') END; END;
+CREATE TRIGGER rg09_operation_guard_delete BEFORE DELETE ON rg09_operation BEGIN SELECT RAISE(ABORT, 'rg09 operation immutable'); END;
+CREATE TRIGGER rg09_operation_guard_update BEFORE UPDATE ON rg09_operation BEGIN
+  SELECT CASE WHEN old.outcome = 'PENDING' AND new.outcome IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED')
+    AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value
+    AND new.action = old.action AND new.operation_class = old.operation_class
+    AND new.input_fingerprint = old.input_fingerprint
+    THEN NULL ELSE RAISE(ABORT, 'rg09 operation immutable') END;
+END;
+CREATE TRIGGER rg09_returned_id_guard_update BEFORE UPDATE ON rg09_returned_id BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_returned_id_guard_delete BEFORE DELETE ON rg09_returned_id BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_confirmation_guard_update BEFORE UPDATE ON rg09_confirmation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_confirmation_guard_delete BEFORE DELETE ON rg09_confirmation BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_semantic_guard_update BEFORE UPDATE ON rg09_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_semantic_guard_delete BEFORE DELETE ON rg09_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_candidate_status_guard_update BEFORE UPDATE ON rg09_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_candidate_status_guard_delete BEFORE DELETE ON rg09_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_adjustment_history_guard_update BEFORE UPDATE ON rg09_adjustment_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_adjustment_history_guard_delete BEFORE DELETE ON rg09_adjustment_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_reconciliation_history_guard_update BEFORE UPDATE ON rg09_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_reconciliation_history_guard_delete BEFORE DELETE ON rg09_reconciliation_history BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_formal_metadata_guard_update BEFORE UPDATE ON rg09_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_formal_metadata_guard_delete BEFORE DELETE ON rg09_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+
+CREATE TRIGGER rg09_balance_adjustment_formal_owner_guard_insert BEFORE INSERT ON rg09_balance_adjustment BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM ledger_transaction AS transaction_row WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'BALANCE_ADJUSTMENT') THEN RAISE(ABORT, 'rg09 adjustment formal ownership') END; END;
+CREATE TRIGGER rg09_candidate_status_owner_guard_insert BEFORE INSERT ON rg09_candidate_status_history WHEN new.adjustment_id IS NOT NULL BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM rg09_balance_adjustment AS adjustment WHERE adjustment.ledger_id = new.ledger_id AND adjustment.adjustment_id = new.adjustment_id) THEN RAISE(ABORT, 'rg09 candidate adjustment ownership') END; END;
+CREATE TRIGGER rg09_confirmation_target_guard_insert BEFORE INSERT ON rg09_confirmation BEGIN SELECT CASE WHEN new.role = 'BALANCE_ADJUSTMENT_CONFIRMATION' AND EXISTS (SELECT 1 FROM rg09_balance_adjustment AS adjustment WHERE adjustment.ledger_id = new.ledger_id AND adjustment.adjustment_id = new.target_id) THEN NULL WHEN new.role = 'EXPLANATION_ALLOCATION_CONFIRMATION' AND EXISTS (SELECT 1 FROM rg09_allocation AS allocation WHERE allocation.ledger_id = new.ledger_id AND allocation.allocation_id = new.target_id) THEN NULL WHEN new.role = 'REAL_TRANSFER_CONFIRMATION' AND EXISTS (SELECT 1 FROM ledger_transaction AS transaction_row WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.target_id AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'ACCOUNT_TRANSFER') THEN NULL ELSE RAISE(ABORT, 'rg09 confirmation target ownership') END; END;
+CREATE TRIGGER rg09_posting_semantic_formal_owner_guard_insert BEFORE INSERT ON rg09_posting_semantic BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM posting AS posting_row JOIN transaction_version AS version_row ON version_row.ledger_id = posting_row.ledger_id AND version_row.posting_set_id = posting_row.posting_set_id JOIN ledger_transaction_current_version AS current_row ON current_row.ledger_id = version_row.ledger_id AND current_row.transaction_id = version_row.transaction_id AND current_row.current_version_id = version_row.version_id JOIN ledger_transaction AS transaction_row ON transaction_row.ledger_id = current_row.ledger_id AND transaction_row.transaction_id = current_row.transaction_id WHERE posting_row.ledger_id = new.ledger_id AND posting_row.posting_id = new.posting_id AND ((new.role IN ('ADJUSTMENT_TARGET', 'ADJUSTMENT_EQUITY') AND new.reconciliation_eligible = 0 AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'BALANCE_ADJUSTMENT') OR (new.role IN ('REVERSAL_TARGET', 'REVERSAL_EQUITY') AND new.reconciliation_eligible = 0 AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'BALANCE_ADJUSTMENT_REVERSAL') OR (new.role IN ('TRANSFER_SOURCE', 'TRANSFER_DESTINATION') AND new.reconciliation_eligible = 1 AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'ACCOUNT_TRANSFER'))) THEN RAISE(ABORT, 'rg09 posting formal ownership') END; END;
+CREATE TRIGGER rg09_reconciliation_current_guard_insert BEFORE INSERT ON rg09_posting_reconciliation BEGIN SELECT CASE WHEN new.status != 'PENDING_EVIDENCE' OR new.latest_sequence != 1 OR NOT EXISTS (SELECT 1 FROM rg09_posting_semantic AS semantic WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id AND semantic.role IN ('TRANSFER_SOURCE', 'TRANSFER_DESTINATION') AND semantic.reconciliation_eligible = 1) THEN RAISE(ABORT, 'rg09 reconciliation current ownership') END; END;
+CREATE TRIGGER rg09_reconciliation_current_guard_update BEFORE UPDATE ON rg09_posting_reconciliation BEGIN SELECT CASE WHEN new.ledger_id = old.ledger_id AND new.posting_id = old.posting_id AND old.status = 'PENDING_EVIDENCE' AND new.status = 'MATCHED' AND new.latest_sequence = old.latest_sequence + 1 AND EXISTS (SELECT 1 FROM rg09_reconciliation_history AS history WHERE history.ledger_id = new.ledger_id AND history.posting_id = new.posting_id AND history.status_sequence = new.latest_sequence AND history.status = new.status AND history.evidence_link_id IS NOT NULL) THEN NULL ELSE RAISE(ABORT, 'rg09 reconciliation current transition') END; END;
+CREATE TRIGGER rg09_reconciliation_current_guard_delete BEFORE DELETE ON rg09_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg09 reconciliation current immutable'); END;
+
+-- Evidence links are typed edges, not free-form labels. Keep the target, role,
+-- source lineage, and status consistent even when callers bypass the adapter.
+CREATE TRIGGER rg09_evidence_link_target_guard_insert
+BEFORE INSERT ON rg09_evidence_link
+BEGIN
+  SELECT CASE
+    WHEN new.target_kind = 'OBSERVATION'
+      AND new.role = 'TARGET_BALANCE_OBSERVATION'
+      AND new.status = 'RECORDED'
+      AND EXISTS (
+        SELECT 1
+        FROM rg09_observation AS observation
+        WHERE observation.ledger_id = new.ledger_id
+          AND observation.observation_id = new.target_id
+          AND observation.source_id = new.source_id
+      )
+      THEN NULL
+    WHEN new.target_kind = 'POSTING'
+      AND new.role = 'REAL_ACCOUNT_POSTING'
+      AND new.status = 'MATCHED'
+      AND EXISTS (
+        SELECT 1
+        FROM rg09_posting_semantic AS semantic
+        WHERE semantic.ledger_id = new.ledger_id
+          AND semantic.posting_id = new.target_id
+          AND semantic.role IN ('TRANSFER_SOURCE', 'TRANSFER_DESTINATION')
+          AND semantic.reconciliation_eligible = 1
+      )
+      THEN NULL
+    ELSE RAISE(ABORT, 'rg09 evidence link target mismatch')
+  END;
+END;
+
+CREATE TRIGGER rg09_evidence_link_lineage_guard_insert
+BEFORE INSERT ON rg09_evidence_link
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM rg09_evidence AS evidence
+    WHERE evidence.ledger_id = new.ledger_id
+      AND evidence.evidence_id = new.evidence_id
+      AND evidence.source_id = new.source_id
+  ) THEN RAISE(ABORT, 'rg09 evidence link lineage mismatch') END;
+END;
+
+CREATE TRIGGER rg09_reconciliation_history_evidence_guard_insert
+BEFORE INSERT ON rg09_reconciliation_history
+WHEN new.evidence_link_id IS NOT NULL
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM rg09_evidence_link AS link
+    WHERE link.ledger_id = new.ledger_id
+      AND link.link_id = new.evidence_link_id
+      AND link.target_kind = 'POSTING'
+      AND link.target_id = new.posting_id
+      AND link.role = 'REAL_ACCOUNT_POSTING'
+      AND link.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg09 reconciliation evidence target mismatch') END;
+END;
+
+CREATE TRIGGER rg09_allocation_formal_target_guard_insert
+BEFORE INSERT ON rg09_allocation
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id
+      AND transaction_row.transaction_id = new.real_transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'ACCOUNT_TRANSFER'
+  ) THEN RAISE(ABORT, 'rg09 allocation real transaction mismatch') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id
+      AND transaction_row.transaction_id = new.reversal_transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'BALANCE_ADJUSTMENT_REVERSAL'
+  ) THEN RAISE(ABORT, 'rg09 allocation reversal transaction mismatch') END;
+END;
+
+CREATE TRIGGER rg09_audit_link_target_guard_insert
+BEFORE INSERT ON rg09_audit_link
+BEGIN
+  SELECT CASE
+    WHEN new.role = 'ADJUSTMENT_TRANSACTION'
+      AND EXISTS (
+        SELECT 1
+        FROM rg09_allocation AS allocation
+        JOIN rg09_balance_adjustment AS adjustment
+          ON adjustment.ledger_id = allocation.ledger_id
+         AND adjustment.adjustment_id = allocation.adjustment_id
+        WHERE allocation.ledger_id = new.ledger_id
+          AND allocation.allocation_id = new.allocation_id
+          AND new.target_id = adjustment.transaction_id
+      ) THEN NULL
+    WHEN new.role = 'EXPLANATION_TRANSACTION'
+      AND EXISTS (
+        SELECT 1 FROM rg09_allocation AS allocation
+        WHERE allocation.ledger_id = new.ledger_id
+          AND allocation.allocation_id = new.allocation_id
+          AND new.target_id = allocation.real_transaction_id
+      ) THEN NULL
+    WHEN new.role = 'ALLOCATION_REVERSAL'
+      AND EXISTS (
+        SELECT 1 FROM rg09_allocation AS allocation
+        WHERE allocation.ledger_id = new.ledger_id
+          AND allocation.allocation_id = new.allocation_id
+          AND new.target_id = allocation.reversal_transaction_id
+      ) THEN NULL
+    ELSE RAISE(ABORT, 'rg09 audit link target mismatch')
+  END;
+END;
