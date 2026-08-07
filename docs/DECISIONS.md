@@ -1033,3 +1033,35 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** RG-09 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
 
 **关联决定：** `D-063`、`D-065`、`D-077`、`D-079`
+
+---
+
+## D-083 RG-10 contract closure and implementation approval
+
+**状态：** 已确认
+
+**决定：** 在 `D-034`、`D-035`、`D-036`、`D-037`、`D-043`、`D-044`、`D-045`、`D-047`、`D-050`、`D-063`、`D-064`、`D-066`、`D-067`、`D-068` 与 RG-10 设计（`docs/specs/2026-07-16-rg-10-stored-value-design.md`）、v2 mapping（`docs/migrations/golden-v2/rg-10-mapping.md`）的基础上，批准 RG-10 六项 mapping gap 的 contract amendment、完整 Kotlin runtime、50-operation fixture oracle 与正式 SQLDelight persistence。
+
+`RG10-GAP-01` 关闭为完整 action registry：13 个 action（`confirm_stored_value_recharge`、`confirm_stored_value_spend`、`ingest_stored_value_recharge_candidate`、`ingest_stored_value_spend_candidate`、`confirm_imported_stored_value_recharge`、`confirm_imported_stored_value_spend`、`record_expiry_reminder`、`confirm_stored_value_expiry_loss`、`reconcile_merchant_credit`、`reconcile_bank_payment`、`apply_merchant_lot_allocation`、`confirm_stored_value_activation_balance`、`rename_stored_value_labels`）都必须有闭合的 operation class、严格 input 或 sparse attempted_input、typed outcome、完整 baseline/result snapshot、returned IDs、formal/intake/reconciliation deltas 和 status changes；retry 保留原 action，不引入 generic retry action。充值（paid+bonus=credited）、消费、到期损失、接入调整的经济效果完整实现；所有 rejected、stale、incomplete 和 no-change 路径保持零正式账务效果并逐字段保留操作前状态。
+
+`RG10-GAP-02` 关闭为完整 lifecycle payload owner：stored-value lot（面值、实付/赠送组成、到期日、载入时间、来源）、consumption、allocation（商户分配覆盖默认批次顺序）、expiry（reminder 零影响、confirmed 才生成损失）的完整 payload 与效果。
+
+`RG10-GAP-03` 关闭为 import provenance owner：充值/消费导入保持 `pending_confirmation` 且正式影响为零，直到模型、账户、实付/到账/赠送、实际时间、批次事实、消费分类、分配和显式确认全部逐字段闭合；imported 不自动确认。
+
+`RG10-GAP-04` 关闭为 activation boundary + replace-not-append replay：`D-067` 的 `stored_value_reconstruction` 实体在 runtime 中实现，`active_mode` 取 `adjustment` 或 `reconstructed` 且任一时刻唯一经济归属生效；原调整与重建交易均追加保留，不原地改写、不重复计入。
+
+`RG10-GAP-05` fail-closed：`D-066` 已决定不得猜测 `parent_id`；该 path（numeric `level`）保持待确认，不映射、不推断。
+
+`RG10-GAP-06` 部分关闭 + fail-closed：bonus/expiry evidence roles（`D-068` 的 `stored_value_bonus_component` / `stored_value_expiry_confirmation`）在 runtime 中可执行；legacy link status 无 owner，fail-closed 不映射到 posting reconciliation 或 domain lifecycle 状态。
+
+新增 `TransactionKind`：`STORED_VALUE_RECHARGE`、`STORED_VALUE_SPEND`、`STORED_VALUE_EXPIRY_LOSS`、`STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT`。
+
+正式 persistence 由 `ledger-data` 的 `SqlDelightRg10Store` 独占；formal transaction chain 继续使用共享 `ledger_transaction`、`transaction_version`、`posting_set`、`posting` owner；RG-10 专用表、immutable/sequence/target-type guards 与 additive schema migration 保存其 intake、candidate、lot、consumption、allocation、expiry、reconstruction、evidence、audit 与 reconciliation facts。成功操作在一个 transaction 内完成；失败回滚后 reopen/readback 保持完整 baseline。
+
+完整 oracle 必须逐 operation 比较 outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality 和 retry equality；独立 verifier 用冻结 v1 输入驱动执行，不反向读取 expected 生成 runtime input。`.external/`、冻结 `golden/rules/rg-10.json` 和 publication target 不在本决定中被修改或发布。
+
+**理由：** 现有决定只授权领域身份、audit topology 与 structural registry；runtime、经济效果、oracle、persistence 与 import/replay owners 缺失。把这些边界一次性登记为 closed contract，使 mapping closure、runtime、migration 和 review 使用同一套可审计事实，同时保留确认才产生正式账务、证据与确认分离、replace-not-append 的边界。
+
+**影响：** RG-10 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
+
+**关联决定：** `D-034`、`D-035`、`D-036`、`D-037`、`D-043`、`D-044`、`D-045`、`D-047`、`D-050`、`D-063`、`D-064`、`D-066`、`D-067`、`D-068`
