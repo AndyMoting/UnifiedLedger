@@ -64,6 +64,26 @@ _RG07_ACTIONS = {
     "merge_refund_mirror_evidence",
     "validate_refund_receipt",
 }
+_RG09_ACCEPTED_ACTIONS = {
+    "save_zero_delta_observation",
+    "receive_import_candidate",
+    "confirm_imported_real_transfer",
+    "confirm_imported_explanation_allocation",
+    "link_real_posting_evidence",
+    "confirm_second_real_transfer",
+    "confirm_second_explanation_allocation",
+}
+_RG09_REJECTED_ACTIONS = {
+    "reject_invalid_rg09_input",
+    "reject_incomplete_import_confirmation",
+    "reject_stale_preview",
+}
+_RG09_TRANSACTION_ACTIONS = {
+    "confirm_imported_real_transfer",
+    "confirm_imported_explanation_allocation",
+    "confirm_second_real_transfer",
+    "confirm_second_explanation_allocation",
+}
 _RG10_STRUCTURAL_ACTIONS = {
     "confirm_stored_value_recharge",
     "confirm_stored_value_spend",
@@ -185,6 +205,56 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "confirmations": (1, 0, 0),
         "domain_entities": (1, 0, 0),
         "audit_links": (2, 0, 0),
+    },
+    "confirm_second_real_transfer": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "sources": (1, 0, 0),
+    },
+    "confirm_second_explanation_allocation": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "audit_links": (3, 0, 0),
+    },
+    "save_zero_delta_observation": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+    },
+    "receive_import_candidate": {
+        "sources": (1, 0, 0),
+        "candidates": (1, 0, 0),
+        "evidence": (1, 0, 0),
+    },
+    "confirm_imported_real_transfer": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+    },
+    "confirm_imported_explanation_allocation": {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "postings": (2, 0, 0),
+        "confirmations": (1, 0, 0),
+        "domain_entities": (1, 0, 0),
+        "audit_links": (3, 0, 0),
+    },
+    "link_real_posting_evidence": {
+        "sources": (1, 0, 0),
+        "evidence": (1, 0, 0),
+        "evidence_links": (1, 0, 0),
+        "posting_reconciliations": (0, 1, 0),
     },
     "manual_account_transfer": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
@@ -2582,6 +2652,46 @@ def _validate_references(
                     precisions,
                 )
             continue
+        if source["type"] == "imported_transfer_candidate":
+            account = accounts.get(payload["account_id"])
+            if account is None:
+                _fail(source_path + ".account_id", "dangling account reference")
+            counter_account = accounts.get(payload["counter_account_id"])
+            if counter_account is None:
+                _fail(source_path + ".counter_account_id", "dangling account reference")
+            if payload["currency"] != account["currency"]:
+                _fail(source_path + ".currency", "must match the observed account currency")
+            if payload["currency"] != counter_account["currency"]:
+                _fail(source_path + ".currency", "must match the counter account currency")
+            _amount(payload["amount"], payload["currency"], source_path + ".amount", precisions)
+            for field in ("observed_at", "actual_at"):
+                _timestamp(payload[field], source_path + "." + field, timezone)
+            continue
+        if source["type"] == "account_statement":
+            account = accounts.get(payload["account_id"])
+            if account is None:
+                _fail(source_path + ".account_id", "dangling account reference")
+            if payload["currency"] != account["currency"]:
+                _fail(source_path + ".currency", "must match the observed account currency")
+            _amount(payload["amount"], payload["currency"], source_path + ".amount", precisions)
+            for field in ("observed_at", "booking_at"):
+                _timestamp(payload[field], source_path + "." + field, timezone)
+            continue
+        if source["type"] == "manual_transaction_confirmation":
+            account = accounts.get(payload["account_id"])
+            if account is None:
+                _fail(source_path + ".account_id", "dangling account reference")
+            counter_account = accounts.get(payload["counter_account_id"])
+            if counter_account is None:
+                _fail(source_path + ".counter_account_id", "dangling account reference")
+            if payload["currency"] != account["currency"]:
+                _fail(source_path + ".currency", "must match the observed account currency")
+            if payload["currency"] != counter_account["currency"]:
+                _fail(source_path + ".currency", "must match the counter account currency")
+            _amount(payload["amount"], payload["currency"], source_path + ".amount", precisions)
+            for field in ("observed_at", "actual_at"):
+                _timestamp(payload[field], source_path + "." + field, timezone)
+            continue
         account = accounts.get(payload["account_id"])
         if account is None:
             _fail(source_path + ".account_id", "dangling account reference")
@@ -3093,6 +3203,43 @@ def _validate_references(
                     event["occurred_at"],
                     f"{candidate_path}.status_history[{history_index}].occurred_at",
                     timezone,
+                )
+            continue
+        if candidate["type"] == "omitted_real_transaction_and_adjustment_explanation":
+            statuses = [event["status"] for event in history]
+            if statuses != ["pending_confirmation"]:
+                _fail(
+                    candidate_path + ".status_history",
+                    "imported transfer candidate must remain pending under the frozen v1 contract",
+                )
+            if len(candidate["source_ids"]) != 1:
+                _fail(
+                    candidate_path + ".source_ids",
+                    "must contain exactly one imported transfer source reference",
+                )
+            source = sources[candidate["source_ids"][0]]
+            if source["type"] != "imported_transfer_candidate":
+                _fail(
+                    candidate_path + ".source_ids[0]",
+                    "must reference an imported_transfer_candidate source",
+                )
+            source_payload = source["payload"]
+            if payload["proposed_transaction_id"] is not None:
+                _fail(
+                    candidate_path + ".payload.proposed_transaction_id",
+                    "pending imported candidate cannot bind a transaction",
+                )
+            for field in ("proposed_target_account_id", "proposed_counter_account_id"):
+                if payload[field] not in accounts:
+                    _fail(candidate_path + f".payload.{field}", "dangling account reference")
+            if payload["proposed_currency"] != source_payload["currency"]:
+                _fail(candidate_path + ".payload.proposed_currency", "must match the source currency")
+            if payload["proposed_actual_at"] != source_payload["actual_at"]:
+                _fail(candidate_path + ".payload.proposed_actual_at", "must match the source actual time")
+            if Decimal(payload["proposed_allocation_amount"]) != Decimal(source_payload["amount"]):
+                _fail(
+                    candidate_path + ".payload.proposed_allocation_amount",
+                    "must match the source amount",
                 )
             continue
         account = accounts.get(payload["account_id"])
@@ -6314,6 +6461,156 @@ def _validate_rejected_rg07_attempt(
         _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
 
 
+def _validate_rejected_rg09_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+) -> None:
+    action = operation["action_type"]
+    attempted = operation["attempted_input"]
+    if action == "reject_stale_preview":
+        failure = ("ledger_changed_since_preview", "current_ledger_fingerprint")
+    elif action == "reject_incomplete_import_confirmation":
+        if "transaction_id" in attempted and attempted["transaction_id"] is None:
+            failure = ("exact_transaction_required", "transaction_id")
+        elif "target_account_id" in attempted and attempted["target_account_id"] is None:
+            failure = ("exact_target_account_required", "target_account_id")
+        elif "actual_at" in attempted and attempted["actual_at"] is None:
+            failure = ("actual_time_required", "actual_at")
+        elif "currency" in attempted and attempted["currency"] is None:
+            failure = ("exact_currency_required", "currency")
+        elif "allocation_amount" in attempted and attempted["allocation_amount"] is None:
+            failure = ("explicit_explanation_allocation_required", "allocation_amount")
+        else:
+            _fail(
+                operation_path + ".attempted_input",
+                "does not omit a registered imported-confirmation fact",
+            )
+    elif action == "reject_invalid_rg09_input":
+        accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+        if "target_amount" in attempted and not isinstance(attempted["target_amount"], str):
+            failure = ("exact_decimal_string_required", "target_amount")
+        elif "target_observed_at" in attempted and not _TIMESTAMP_PATTERN.fullmatch(
+            attempted["target_observed_at"] or ""
+        ):
+            failure = ("timezone_aware_target_time_required", "target_observed_at")
+        elif "target_observed_at" in attempted:
+            failure = ("ledger_timezone_required", "target_observed_at")
+        elif "account_id" in attempted and attempted["account_id"] not in accounts:
+            failure = ("unknown_account", "account_id")
+        elif "account_id" in attempted:
+            account = accounts[attempted["account_id"]]
+            if not (
+                account["owned_by_user"]
+                and account["real_account"]
+                and account["kind"] == "asset"
+            ):
+                failure = ("owned_real_asset_required", "account_id")
+            else:
+                failure = ("same_target_account_required", "account_id")
+        elif "currency" in attempted and attempted["currency"] != "CNY":
+            failure = ("same_currency_required", "currency")
+        elif "equity_account_id" in attempted and attempted["equity_account_id"] != "equity-balance-adjustments":
+            failure = ("dedicated_adjustment_equity_required", "equity_account_id")
+        elif "direction" in attempted and attempted["direction"] != "increase_target_account":
+            failure = ("explanation_direction_mismatch", "direction")
+        elif "actual_at" in attempted:
+            observation = next(
+                (
+                    entity
+                    for entity in baseline["domain_entities"]
+                    if entity["type"] == "target_balance_observation"
+                ),
+                None,
+            )
+            target_observed_at = (
+                observation["payload"]["observed_at"] if observation is not None else None
+            )
+            if (
+                target_observed_at is not None
+                and _timestamp_instant(attempted["actual_at"])
+                >= _timestamp_instant(target_observed_at)
+            ):
+                failure = ("explanation_must_not_follow_target_time", "actual_at")
+            else:
+                _fail(
+                    operation_path + ".attempted_input",
+                    "does not reproduce a registered RG-09 input rejection",
+                )
+        elif "requested_amount" in attempted and Decimal(attempted["requested_amount"]) > Decimal(
+            attempted["remaining_amount"]
+        ):
+            failure = ("allocation_exceeds_remaining_adjustment", "requested_amount")
+        elif "matcher_confidence" in attempted and attempted.get("explicit_confirmation") is not True:
+            failure = ("explicit_link_confirmation_required", "explicit_confirmation")
+        elif "request_id" in attempted:
+            failure = ("idempotency_key_conflict", "request_id")
+        else:
+            _fail(
+                operation_path + ".attempted_input",
+                "does not reproduce a registered RG-09 input rejection",
+            )
+    else:
+        _fail(operation_path + ".action_type", "unregistered RG-09 rejection")
+
+    reason, field = failure
+    outcome = operation["outcome"]
+    if outcome["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r}")
+    expected_path = f"$.attempted_input.{field}"
+    if outcome["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+
+
+def _validate_imported_source_binding(
+    baseline: dict[str, Any],
+    operation_path: str,
+    input_value: dict[str, Any],
+) -> None:
+    """Confirmed imports must reference the exact pending imported candidate's source.
+
+    The intake source named by the confirmation input must be the sole source of the
+    baseline's imported candidate (v1 import_path.pending), and must not be shared with
+    or replaced by any other candidate or import.
+    """
+    candidates = [
+        item
+        for item in baseline["candidates"]
+        if item.get("type") == "omitted_real_transaction_and_adjustment_explanation"
+    ]
+    if len(candidates) != 1:
+        _fail(
+            operation_path + ".input.source_id",
+            "requires exactly one pending imported-transfer candidate in the baseline",
+        )
+    candidate = candidates[0]
+    source_ids = candidate.get("source_ids")
+    if source_ids != [input_value["source_id"]]:
+        _fail(
+            operation_path + ".input.source_id",
+            "must be the exact imported candidate source and must not be reused for a different import",
+        )
+    source = next(
+        (item for item in baseline["sources"] if item["id"] == input_value["source_id"]),
+        None,
+    )
+    if source is None or source.get("type") != "imported_transfer_candidate":
+        _fail(
+            operation_path + ".input.source_id",
+            "must reference the imported transfer candidate source",
+        )
+    shared = [
+        item["id"]
+        for item in baseline["candidates"]
+        if item.get("source_ids") == source_ids and item["id"] != candidate["id"]
+    ]
+    if shared:
+        _fail(
+            operation_path + ".input.source_id",
+            "source is bound to more than one candidate and cannot confirm a different import",
+        )
+
+
 def _validate_rg07_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -6510,6 +6807,9 @@ def _validate_action_input(
             return
         elif action in _RG07_ACTIONS:
             _validate_rejected_rg07_attempt(operation, operation_path, baseline)
+            return
+        elif action in _RG09_REJECTED_ACTIONS:
+            _validate_rejected_rg09_attempt(operation, operation_path, baseline)
             return
         elif action in _RG10_REJECTED_ACTIONS:
             _validate_rejected_rg10_attempt(
@@ -7191,6 +7491,164 @@ def _validate_action_input(
             )
         for field in ("actual_occurred_at", "target_observed_at", "confirmed_at"):
             _timestamp(input_value[field], input_path + f".{field}", timezone)
+    elif action == "save_zero_delta_observation":
+        account = accounts.get(input_value["account_id"])
+        if account is None:
+            _fail(input_path + ".account_id", "dangling account reference")
+        if account["currency"] != input_value["currency"]:
+            _fail(input_path + ".currency", "must match the observed account")
+        _amount(
+            input_value["target_amount"],
+            input_value["currency"],
+            input_path + ".target_amount",
+            precisions,
+        )
+        _timestamp(
+            input_value["target_observed_at"],
+            input_path + ".target_observed_at",
+            timezone,
+        )
+    elif action == "receive_import_candidate":
+        source_ids = {item["id"] for item in baseline["sources"]}
+        if operation["outcome"]["status"] == "accepted" and input_value["source_id"] in source_ids:
+            _fail(input_path + ".source_id", "must be a new intake source")
+        _decimal(input_value["confidence"], input_path + ".confidence")
+    elif action == "confirm_imported_real_transfer":
+        _validate_imported_source_binding(baseline, operation_path, input_value)
+        for field in ("target_account_id", "counter_account_id"):
+            if input_value[field] not in accounts:
+                _fail(input_path + f".{field}", "dangling account reference")
+            if accounts[input_value[field]]["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match both transfer accounts")
+        _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        _amount(
+            input_value["explanation_allocation"],
+            input_value["currency"],
+            input_path + ".explanation_allocation",
+            precisions,
+        )
+        for field in ("actual_occurred_at", "confirmed_at"):
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+        for field, expected in (
+            ("confirms_target_account", True),
+            ("confirms_counter_account", True),
+            ("confirms_actual_occurred_at", True),
+            ("confirms_currency", True),
+            ("confirms_amount", True),
+            ("confirms_explanation_allocation", False),
+        ):
+            if input_value[field] is not expected:
+                _fail(input_path + f".{field}", f"must be {expected} under the frozen v1 contract")
+    elif action == "confirm_imported_explanation_allocation":
+        _validate_imported_source_binding(baseline, operation_path, input_value)
+        transaction = transactions.get(input_value["transaction_id"])
+        if transaction is None or transaction["type"] != "account_transfer":
+            _fail(input_path + ".transaction_id", "dangling or mistyped transfer reference")
+        for field in ("target_account_id", "counter_account_id"):
+            if input_value[field] not in accounts:
+                _fail(input_path + f".{field}", "dangling account reference")
+            if accounts[input_value[field]]["currency"] != input_value["currency"]:
+                _fail(input_path + ".currency", "must match both transfer accounts")
+        _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+        _amount(
+            input_value["explanation_allocation"],
+            input_value["currency"],
+            input_path + ".explanation_allocation",
+            precisions,
+        )
+        for field in ("actual_occurred_at", "confirmed_at"):
+            _timestamp(input_value[field], input_path + f".{field}", timezone)
+        for field, expected in (
+            ("confirms_target_account", True),
+            ("confirms_counter_account", True),
+            ("confirms_actual_occurred_at", True),
+            ("confirms_currency", True),
+            ("confirms_amount", True),
+            ("confirms_explanation_allocation", True),
+        ):
+            if input_value[field] is not expected:
+                _fail(input_path + f".{field}", f"must be {expected} under the frozen v1 contract")
+    elif action == "link_real_posting_evidence":
+        source_ids = {item["id"] for item in baseline["sources"]}
+        if operation["outcome"]["status"] == "accepted" and input_value["source_id"] in source_ids:
+            _fail(input_path + ".source_id", "must be a new evidence source")
+        if operation["outcome"]["status"] == "accepted" and input_value["evidence_id"] in {
+            item["id"] for item in baseline["evidence"]
+        }:
+            _fail(input_path + ".evidence_id", "must be a new evidence identity")
+        posting = next(
+            (item for item in baseline["postings"] if item["id"] == input_value["target_posting_id"]),
+            None,
+        )
+        if posting is None or not posting["reconciliation_eligible"]:
+            _fail(input_path + ".target_posting_id", "must reference an eligible posting")
+        if input_value["account_id"] != posting["account_id"]:
+            _fail(input_path + ".account_id", "must match the target posting account")
+        if input_value["currency"] != posting["currency"]:
+            _fail(input_path + ".currency", "must match the target posting currency")
+        if input_value["amount"] != posting["amount"]:
+            _fail(input_path + ".amount", "must exactly match the target posting amount")
+        if input_value["posting_side"] != (
+            "increase" if Decimal(posting["amount"]) > 0 else "decrease"
+        ):
+            _fail(input_path + ".posting_side", "must match the target posting amount sign")
+        if input_value["explicit_confirmation"] is not True:
+            _fail(input_path + ".explicit_confirmation", "must be true")
+        _timestamp(input_value["observed_at"], input_path + ".observed_at", timezone)
+    elif action in {"confirm_second_real_transfer", "confirm_second_explanation_allocation"}:
+        if action == "confirm_second_real_transfer":
+            for field in ("target_account_id", "counter_account_id"):
+                if input_value[field] not in accounts:
+                    _fail(input_path + f".{field}", "dangling account reference")
+                if accounts[input_value[field]]["currency"] != input_value["currency"]:
+                    _fail(input_path + ".currency", "must match both transfer accounts")
+            _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+            _amount(
+                input_value["explanation_allocation"],
+                input_value["currency"],
+                input_path + ".explanation_allocation",
+                precisions,
+            )
+            for field in ("actual_occurred_at", "confirmed_at"):
+                _timestamp(input_value[field], input_path + f".{field}", timezone)
+            for field, expected in (
+                ("confirms_target_account", True),
+                ("confirms_counter_account", True),
+                ("confirms_actual_occurred_at", True),
+                ("confirms_currency", True),
+                ("confirms_amount", True),
+                ("confirms_explanation_allocation", False),
+            ):
+                if input_value[field] is not expected:
+                    _fail(input_path + f".{field}", f"must be {expected} under the frozen v1 contract")
+        else:
+            transaction = transactions.get(input_value["transaction_id"])
+            if transaction is None or transaction["type"] != "account_transfer":
+                _fail(input_path + ".transaction_id", "dangling or mistyped transfer reference")
+            for field in ("target_account_id", "counter_account_id"):
+                if input_value[field] not in accounts:
+                    _fail(input_path + f".{field}", "dangling account reference")
+                if accounts[input_value[field]]["currency"] != input_value["currency"]:
+                    _fail(input_path + ".currency", "must match both transfer accounts")
+            _amount(input_value["amount"], input_value["currency"], input_path + ".amount", precisions)
+            _amount(
+                input_value["explanation_allocation"],
+                input_value["currency"],
+                input_path + ".explanation_allocation",
+                precisions,
+            )
+            for field in ("actual_occurred_at", "confirmed_at"):
+                _timestamp(input_value[field], input_path + f".{field}", timezone)
+            for field, expected in (
+                ("confirms_target_account", True),
+                ("confirms_counter_account", True),
+                ("confirms_actual_occurred_at", True),
+                ("confirms_currency", True),
+                ("confirms_amount", True),
+                ("confirms_explanation_allocation", True),
+            ):
+                if input_value[field] is not expected:
+                    _fail(input_path + f".{field}", f"must be {expected} under the frozen v1 contract")
     elif action in _RG10_STRUCTURAL_ACTIONS:
         _validate_rg10_structural_input(
             input_value,
@@ -7467,6 +7925,11 @@ def _validate_append_only_transition(
                                 "attach_original_payment_evidence",
                                 "attach_refund_destination_evidence",
                             }
+                        )
+                        or (
+                            case_id == "RG-09"
+                            and action_type == "link_real_posting_evidence"
+                            and outcome_status in {None, "accepted"}
                         )
                     )
                 ):
@@ -7915,6 +8378,240 @@ def _validate_rg07_input_bindings(
             require(candidate["id"] == value["candidate_id"] and candidate["status_history"][-1]["status"] == "confirmed", "candidate_id", "must confirm the exact candidate")
 
 
+def _validate_rg09_action_effects(
+    operation: dict[str, Any],
+    operation_path: str,
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    """Validate the RG-09 accepted families' entity ownership and bindings."""
+    action = operation["action_type"]
+    by_collection = {
+        name: {item["id"]: item for item in _collection(result, parts)}
+        for name, parts in _ENTITY_COLLECTIONS.items()
+    }
+
+    def changed(collection: str) -> list[dict[str, Any]]:
+        ids = (
+            expected_entities[collection]["added_ids"]
+            + expected_entities[collection]["changed_ids"]
+        )
+        return [by_collection[collection][item_id] for item_id in ids]
+
+    if action == "save_zero_delta_observation":
+        source = changed("sources")[0]
+        evidence = changed("evidence")[0]
+        link = changed("evidence_links")[0]
+        observation = changed("domain_entities")[0]
+        if (
+            source["type"] != "explicit_balance_observation"
+            or evidence["type"] != "user_balance_observation"
+            or evidence["source_ids"] != [source["id"]]
+            or link["evidence_id"] != evidence["id"]
+            or link["target_kind"] != "observation"
+            or link["target_id"] != observation["id"]
+            or link["role"] != "target_balance_observation"
+            or observation["type"] != "target_balance_observation"
+            or observation["payload"].get("source_id") != source["id"]
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes",
+                "zero-delta observation must own exactly one source, evidence, observation, and link",
+            )
+        return
+
+    if action == "receive_import_candidate":
+        source = changed("sources")[0]
+        evidence = changed("evidence")[0]
+        candidate = changed("candidates")[0]
+        if (
+            source["type"] != "imported_transfer_candidate"
+            or evidence["type"] != "imported_real_transaction_candidate"
+            or evidence["source_ids"] != [source["id"]]
+            or candidate["source_ids"] != [source["id"]]
+            or [item["status"] for item in candidate["status_history"]]
+            != ["pending_confirmation"]
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes",
+                "import intake must create one pending imported-transfer candidate bound to its source",
+            )
+        return
+
+    if action == "link_real_posting_evidence":
+        source = changed("sources")[0]
+        evidence = changed("evidence")[0]
+        link = changed("evidence_links")[0]
+        reconciliation_changes = expected_entities["posting_reconciliations"]
+        if (
+            source["type"] != "account_statement"
+            or evidence["type"] != "real_account_posting"
+            or evidence["source_ids"] != [source["id"]]
+            or link["evidence_id"] != evidence["id"]
+            or link["target_kind"] != "posting"
+            or link["role"] != "real_account_posting"
+            or reconciliation_changes["added_ids"]
+            or reconciliation_changes["removed_ids"]
+            or len(reconciliation_changes["changed_ids"]) != 1
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes",
+                "real-posting evidence must bind one source, evidence, posting link, and exactly one reconciliation",
+            )
+        reconciliation = by_collection["posting_reconciliations"][
+            reconciliation_changes["changed_ids"][0]
+        ]
+        if (
+            reconciliation["posting_id"] != link["target_id"]
+            or reconciliation["status"] != "matched"
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes.posting_reconciliations",
+                "linked posting reconciliation must become matched",
+            )
+        return
+
+    result_transactions = {
+        item["id"]: item for item in result["transactions"]
+    }
+    result_versions = {
+        item["id"]: item for item in result["transaction_versions"]
+    }
+    result_sets = {item["id"]: item for item in result["posting_sets"]}
+    result_postings = {item["id"]: item for item in result["postings"]}
+    result_confirmations = {
+        item["id"]: item for item in result["confirmations"]
+    }
+
+    def added_item(collection_name: str, items: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        item_id = expected_entities[collection_name]["added_ids"][0]
+        return items[item_id]
+
+    added_transactions = expected_entities["transactions"]["added_ids"]
+    if len(added_transactions) != 1:
+        _fail(
+            operation_path + ".deltas.entity_changes.transactions",
+            "RG-09 confirmation must add exactly one transaction",
+        )
+    transaction = result_transactions[added_transactions[0]]
+    version = result_versions[expected_entities["transaction_versions"]["added_ids"][0]]
+    posting_set = added_item("posting_sets", result_sets)
+    added_posting_ids = expected_entities["postings"]["added_ids"]
+    added_postings = [result_postings[item_id] for item_id in added_posting_ids]
+    if (
+        version["transaction_id"] != transaction["id"]
+        or version["version_number"] != 1
+        or transaction["current_version_id"] != version["id"]
+        or version["posting_set_id"] != posting_set["id"]
+        or set(posting_set["posting_ids"]) != set(added_posting_ids)
+        or any(item["posting_set_id"] != posting_set["id"] for item in added_postings)
+    ):
+        _fail(
+            operation_path + ".deltas.entity_changes",
+            f"{action} must add a v1 transaction with exactly its own posting set and postings",
+        )
+    if action in {"confirm_imported_real_transfer", "confirm_second_real_transfer"}:
+        expected_type = "account_transfer"
+        expected_roles = {"transfer_principal_in", "transfer_principal_out"}
+    else:
+        expected_type = "balance_adjustment_reversal"
+        expected_roles = {
+            "balance_adjustment_reversal_target",
+            "balance_adjustment_reversal_counterpart",
+        }
+    if transaction["type"] != expected_type or {
+        item.get("role") for item in added_postings
+    } != expected_roles:
+        _fail(
+            operation_path + ".deltas.entity_changes.postings",
+            f"{action} must create transaction type {expected_type} with exact roles",
+        )
+    confirmation = added_item("confirmations", result_confirmations)
+    if (
+        confirmation["type"] != "explicit_operation_confirmation"
+        or confirmation["operation_id"] != operation["id"]
+        or confirmation["subject"] != {"kind": "operation", "id": operation["id"]}
+        or confirmation.get("confirmed_at") != operation["input"]["confirmed_at"]
+        or version.get("confirmation_id") != confirmation["id"]
+    ):
+        _fail(
+            operation_path + ".deltas.entity_changes.confirmations",
+            "RG-09 confirmation must own the created transaction version",
+        )
+    if action in {"confirm_imported_real_transfer", "confirm_imported_explanation_allocation"}:
+        candidate_changes = expected_entities["candidates"]
+        if (
+            candidate_changes["added_ids"]
+            or candidate_changes["removed_ids"]
+            or candidate_changes["changed_ids"]
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes.candidates",
+                "imported candidate must stay pending_confirmation under the frozen v1 contract",
+            )
+    if action in {"confirm_imported_explanation_allocation", "confirm_second_explanation_allocation"}:
+        allocation = added_item("domain_entities", {
+            item["id"]: item for item in result["domain_entities"]
+        })
+        if allocation["type"] != "explanation_allocation":
+            _fail(
+                operation_path + ".deltas.entity_changes.domain_entities",
+                "explanation confirmation must add one allocation entity",
+            )
+        audit_links = [
+            item for item in result["audit_links"]
+            if item["id"] in expected_entities["audit_links"]["added_ids"]
+        ]
+        expected_link_types = {
+            "adjustment_transaction", "explanation_transaction", "allocation_reversal"
+        }
+        if {item["type"] for item in audit_links} != expected_link_types:
+            _fail(
+                operation_path + ".deltas.entity_changes.audit_links",
+                f"{action} must add exactly the registered audit link types",
+            )
+        for link in audit_links:
+            if link["type"] == "adjustment_transaction":
+                adjustment = next(
+                    (
+                        item
+                        for item in result["domain_entities"]
+                        if item.get("type") == "balance_adjustment"
+                    ),
+                    None,
+                )
+                if adjustment is None or (
+                    link["from"] != {"kind": "domain_entity", "id": adjustment["id"]}
+                    or link["to"] != {"kind": "transaction", "id": "transaction-adjustment-rg09"}
+                ):
+                    _fail(
+                        operation_path + ".deltas.entity_changes.audit_links",
+                        "adjustment_transaction audit link must join the adjustment to its transaction",
+                    )
+            elif link["from"] != {"kind": "domain_entity", "id": allocation["id"]}:
+                _fail(
+                    operation_path + ".deltas.entity_changes.audit_links",
+                    f"{action} allocation audit links must originate from the added allocation",
+                )
+    if action == "confirm_second_real_transfer":
+        source = added_item("sources", by_collection["sources"])
+        input_value = operation["input"]
+        if (
+            source["type"] != "manual_transaction_confirmation"
+            or source["payload"].get("account_id") != input_value["target_account_id"]
+            or source["payload"].get("counter_account_id") != input_value["counter_account_id"]
+            or source["payload"].get("amount") != input_value["amount"]
+            or source["payload"].get("currency") != input_value["currency"]
+            or source["payload"].get("actual_at") != input_value["actual_occurred_at"]
+            or not isinstance(source["payload"].get("immutable_payload_digest"), str)
+            or not source["payload"]["immutable_payload_digest"].startswith("sha256:")
+        ):
+            _fail(
+                operation_path + ".deltas.entity_changes.sources",
+                "second real transfer must add one manual_transaction_confirmation source bound to the action input",
+            )
+
+
 def _validate_registered_action_effects(
     operation: dict[str, Any],
     operation_path: str,
@@ -7933,6 +8630,8 @@ def _validate_registered_action_effects(
     else:
         registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
         if not accepted and action in _RG07_ACTIONS:
+            registered_counts = {}
+        if not accepted and action in _RG09_REJECTED_ACTIONS:
             registered_counts = {}
     if registered_counts is None:
         _fail(operation_path + ".action_type", "unregistered action type")
@@ -7976,6 +8675,12 @@ def _validate_registered_action_effects(
         )
         _validate_rg07_input_bindings(
             operation, operation_path, {}, result, expected_entities
+        )
+        return
+
+    if action in _RG09_ACCEPTED_ACTIONS:
+        _validate_rg09_action_effects(
+            operation, operation_path, result, expected_entities
         )
         return
 
@@ -10133,7 +10838,7 @@ def _validate_action_semantics(
         adjustment_payload = added_adjustments[0]["payload"]
         if adjustment_payload["transaction_id"] != added[0] or adjustment_payload["original_delta"] != input_value["delta"]:
             _fail(operation_path + ".result_state_id", "adjustment domain entity does not match the formal transaction")
-    elif action == "confirm_real_transfer":
+    elif action in {"confirm_real_transfer", "confirm_second_real_transfer"}:
         for field in ("target_account_id", "counter_account_id"):
             if input_value[field] not in baseline_accounts:
                 _fail(operation_path + f".input.{field}", "dangling account reference")
@@ -10159,22 +10864,41 @@ def _validate_action_semantics(
             _fail(operation_path + ".input.amount", "does not match the transfer-in posting")
         if outgoing["account_id"] != input_value["counter_account_id"] or Decimal(outgoing["amount"]) != -Decimal(input_value["amount"]):
             _fail(operation_path + ".input.amount", "does not match the transfer-out posting")
-    elif action == "confirm_explanation_allocation":
-        adjustment = baseline_entities.get(input_value["adjustment_id"])
-        if adjustment is None or adjustment["type"] != "balance_adjustment":
-            _fail(operation_path + ".input.adjustment_id", "dangling or mistyped adjustment reference")
+    elif action in {"confirm_explanation_allocation", "confirm_second_explanation_allocation"}:
+        if action == "confirm_explanation_allocation":
+            adjustment = baseline_entities.get(input_value["adjustment_id"])
+            if adjustment is None or adjustment["type"] != "balance_adjustment":
+                _fail(operation_path + ".input.adjustment_id", "dangling or mistyped adjustment reference")
+        else:
+            adjustments = [
+                item
+                for item in baseline["domain_entities"]
+                if item.get("type") == "balance_adjustment"
+            ]
+            if len(adjustments) != 1:
+                _fail(operation_path + ".input.transaction_id", "baseline must own exactly one balance adjustment")
+            adjustment = adjustments[0]
         explanation = baseline_transactions.get(input_value["transaction_id"])
         if explanation is None or explanation["type"] != "account_transfer":
             _fail(operation_path + ".input.transaction_id", "dangling or mistyped transfer reference")
         observation = baseline_entities[adjustment["payload"]["observation_id"]]
         observation_payload = observation["payload"]
-        for input_key, expected_value in (
-            ("target_account_id", observation_payload["account_id"]),
-            ("currency", observation_payload["currency"]),
-            ("target_observed_at", observation_payload["observed_at"]),
-        ):
-            if input_value[input_key] != expected_value:
-                _fail(operation_path + f".input.{input_key}", "does not match the target observation")
+        if action == "confirm_explanation_allocation":
+            for input_key, expected_value in (
+                ("target_account_id", observation_payload["account_id"]),
+                ("currency", observation_payload["currency"]),
+                ("target_observed_at", observation_payload["observed_at"]),
+            ):
+                if input_value[input_key] != expected_value:
+                    _fail(operation_path + f".input.{input_key}", "does not match the target observation")
+        else:
+            for input_key, expected_value in (
+                ("target_account_id", observation_payload["account_id"]),
+                ("currency", observation_payload["currency"]),
+            ):
+                if input_value[input_key] != expected_value:
+                    _fail(operation_path + f".input.{input_key}", "does not match the target observation")
+            target_observed_at = observation_payload["observed_at"]
         baseline_versions = {item["id"]: item for item in baseline["transaction_versions"]}
         baseline_sets = {item["id"]: item for item in baseline["posting_sets"]}
         baseline_postings = {item["id"]: item for item in baseline["postings"]}
@@ -10191,10 +10915,197 @@ def _validate_action_semantics(
             if item["account_id"] == input_value["target_account_id"]
             and item.get("role") == "transfer_principal_in"
         ]
-        if len(target_legs) != 1 or target_legs[0]["amount"] != input_value["real_transaction_amount"]:
-            _fail(operation_path + ".input.real_transaction_amount", "does not match the transfer target posting")
-        if Decimal(input_value["explanation_amount"]) <= 0 or Decimal(input_value["explanation_amount"]) > Decimal(input_value["real_transaction_amount"]):
-            _fail(operation_path + ".input.explanation_amount", "must be positive and no greater than the real transaction amount")
+        if action == "confirm_explanation_allocation":
+            if len(target_legs) != 1 or target_legs[0]["amount"] != input_value["real_transaction_amount"]:
+                _fail(operation_path + ".input.real_transaction_amount", "does not match the transfer target posting")
+            if Decimal(input_value["explanation_amount"]) <= 0 or Decimal(input_value["explanation_amount"]) > Decimal(input_value["real_transaction_amount"]):
+                _fail(operation_path + ".input.explanation_amount", "must be positive and no greater than the real transaction amount")
+        else:
+            if len(target_legs) != 1 or target_legs[0]["amount"] != input_value["amount"]:
+                _fail(operation_path + ".input.amount", "does not match the transfer target posting")
+        added_transactions = expected_entities["transactions"]["added_ids"]
+        added_entities = expected_entities["domain_entities"]["added_ids"]
+        if len(added_transactions) != 1 or result_transactions[added_transactions[0]]["type"] != "balance_adjustment_reversal":
+            _fail(operation_path + ".result_state_id", "must add one adjustment reversal")
+        allocations = [
+            item for item in result["domain_entities"] if item["id"] in added_entities and item["type"] == "explanation_allocation"
+        ]
+        if len(allocations) != 1:
+            _fail(operation_path + ".result_state_id", "must add one explanation allocation")
+        allocation = allocations[0]["payload"]
+        allocation_amount = (
+            input_value["explanation_amount"]
+            if action == "confirm_explanation_allocation"
+            else input_value["explanation_allocation"]
+        )
+        if (
+            allocation["adjustment_id"] != adjustment["id"]
+            or allocation["explanation_transaction_id"] != input_value["transaction_id"]
+            or allocation["amount"] != allocation_amount
+            or allocation["currency"] != input_value["currency"]
+            or allocation["confirmed_at"] != input_value["confirmed_at"]
+        ):
+            _fail(operation_path + ".input.explanation_amount", "does not match the allocation")
+        reversal_version, reversal_postings = transaction_parts(added_transactions[0])
+        reversal_observed_at = (
+            input_value["target_observed_at"]
+            if action == "confirm_explanation_allocation"
+            else target_observed_at
+        )
+        if any(reversal_version[field] != reversal_observed_at for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.target_observed_at", "must be preserved in reversal time roles")
+        if reversal_version.get("created_at") != input_value["confirmed_at"]:
+            _fail(operation_path + ".input.confirmed_at", "must be preserved as reversal creation time")
+        by_role = {posting.get("role"): posting for posting in reversal_postings}
+        if set(by_role) != {"balance_adjustment_reversal_target", "balance_adjustment_reversal_counterpart"}:
+            _fail(operation_path + ".result_state_id", "reversal must contain exact target and counterpart roles")
+        reversal_target = by_role["balance_adjustment_reversal_target"]
+        reversal_counterpart = by_role["balance_adjustment_reversal_counterpart"]
+        if reversal_target["account_id"] != input_value["target_account_id"] or Decimal(reversal_target["amount"]) != -Decimal(allocation_amount):
+            _fail(operation_path + ".input.explanation_amount", "does not match the reversal target posting")
+        if Decimal(reversal_counterpart["amount"]) != Decimal(allocation_amount):
+            _fail(operation_path + ".input.explanation_amount", "does not match the reversal counterpart posting")
+    elif action == "save_zero_delta_observation":
+        added_observations = [
+            item
+            for item in result["domain_entities"]
+            if item["id"] in expected_entities["domain_entities"]["added_ids"]
+            and item["type"] == "target_balance_observation"
+        ]
+        if len(added_observations) != 1:
+            _fail(operation_path + ".result_state_id", "must add one target balance observation")
+        observation = added_observations[0]
+        expected_payload = {
+            "account_id": input_value["account_id"],
+            "target_amount": input_value["target_amount"],
+            "currency": input_value["currency"],
+            "observed_at": input_value["target_observed_at"],
+            "source_id": expected_entities["sources"]["added_ids"][0],
+        }
+        if observation["payload"] != expected_payload:
+            _fail(operation_path + ".input.target_amount", "does not match the saved observation")
+        source = next(
+            item for item in result["sources"]
+            if item["id"] == expected_entities["sources"]["added_ids"][0]
+        )
+        expected_source_payload = {
+            "account_id": input_value["account_id"],
+            "target_amount": input_value["target_amount"],
+            "currency": input_value["currency"],
+            "target_observed_at": input_value["target_observed_at"],
+        }
+        if source["type"] != "explicit_balance_observation" or source["payload"] != expected_source_payload:
+            _fail(operation_path + ".input.target_amount", "does not match the saved source")
+        evidence = next(
+            item for item in result["evidence"]
+            if item["id"] == expected_entities["evidence"]["added_ids"][0]
+        )
+        if (
+            evidence["type"] != "user_balance_observation"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"] != {"observed_at": input_value["target_observed_at"]}
+        ):
+            _fail(operation_path + ".input.target_observed_at", "does not match the saved evidence")
+    elif action == "receive_import_candidate":
+        source = next(
+            item for item in result["sources"]
+            if item["id"] == expected_entities["sources"]["added_ids"][0]
+        )
+        candidate = next(
+            item for item in result["candidates"]
+            if item["id"] == expected_entities["candidates"]["added_ids"][0]
+        )
+        if source["id"] != input_value["source_id"] or source["type"] != "imported_transfer_candidate":
+            _fail(operation_path + ".input.source_id", "does not match the imported candidate source")
+        if candidate["confidence"] != input_value["confidence"]:
+            _fail(operation_path + ".input.confidence", "does not match the imported candidate confidence")
+        source_payload = source["payload"]
+        digest = source_payload.get("immutable_payload_digest")
+        if (
+            not isinstance(digest, str)
+            or not digest.startswith("sha256:")
+            or {key for key in source_payload if key != "immutable_payload_digest"}
+            != {
+                "observed_at", "actual_at", "account_id", "counter_account_id",
+                "amount", "currency",
+            }
+        ):
+            _fail(operation_path + ".input.source_id", "imported source payload must carry the frozen v1 intake facts")
+        expected_candidate_payload = {
+            "proposed_transaction_id": None,
+            "proposed_target_account_id": source_payload["account_id"],
+            "proposed_counter_account_id": source_payload["counter_account_id"],
+            "proposed_actual_at": source_payload["actual_at"],
+            "proposed_currency": source_payload["currency"],
+            "proposed_allocation_amount": source_payload["amount"],
+            "requires_confirmation": [
+                "transaction_id", "target_account_id", "actual_time", "currency", "explanation_allocation"
+            ],
+        }
+        if (
+            candidate["source_ids"] != [source["id"]]
+            or candidate["payload"] != expected_candidate_payload
+            or [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]
+        ):
+            _fail(operation_path + ".input.source_id", "import candidate must stay pending under the frozen v1 contract")
+        evidence = next(
+            item for item in result["evidence"]
+            if item["id"] == expected_entities["evidence"]["added_ids"][0]
+        )
+        if (
+            evidence["type"] != "imported_real_transaction_candidate"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"] != {"observed_at": source_payload["observed_at"]}
+        ):
+            _fail(operation_path + ".input.source_id", "does not match the imported candidate evidence")
+    elif action == "confirm_imported_real_transfer":
+        if Decimal(input_value["amount"]) <= 0:
+            _fail(operation_path + ".input.amount", "must be positive")
+        added = expected_entities["transactions"]["added_ids"]
+        if len(added) != 1 or result_transactions[added[0]]["type"] != "account_transfer":
+            _fail(operation_path + ".result_state_id", "must add one account_transfer transaction")
+        transaction = result_transactions[added[0]]
+        version, postings = transaction_parts(transaction["id"])
+        if any(version[field] != input_value["actual_occurred_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+            _fail(operation_path + ".input.actual_occurred_at", "must be preserved as the transfer time")
+        if version.get("created_at") != input_value["confirmed_at"]:
+            _fail(operation_path + ".input.confirmed_at", "must be preserved as transfer creation time")
+        by_role = {posting.get("role"): posting for posting in postings}
+        if set(by_role) != {"transfer_principal_in", "transfer_principal_out"}:
+            _fail(operation_path + ".result_state_id", "imported transfer must contain exact principal roles")
+        incoming = by_role["transfer_principal_in"]
+        outgoing = by_role["transfer_principal_out"]
+        if incoming["account_id"] != input_value["target_account_id"] or incoming["amount"] != input_value["amount"]:
+            _fail(operation_path + ".input.amount", "does not match the transfer-in posting")
+        if outgoing["account_id"] != input_value["counter_account_id"] or Decimal(outgoing["amount"]) != -Decimal(input_value["amount"]):
+            _fail(operation_path + ".input.amount", "does not match the transfer-out posting")
+    elif action == "confirm_imported_explanation_allocation":
+        adjustments = [
+            item
+            for item in baseline["domain_entities"]
+            if item.get("type") == "balance_adjustment"
+        ]
+        if len(adjustments) != 1:
+            _fail(operation_path + ".input.transaction_id", "baseline must own exactly one balance adjustment")
+        adjustment = adjustments[0]
+        observation = baseline_entities[adjustment["payload"]["observation_id"]]
+        observation_payload = observation["payload"]
+        for input_key, expected_value in (
+            ("target_account_id", observation_payload["account_id"]),
+            ("currency", observation_payload["currency"]),
+        ):
+            if input_value[input_key] != expected_value:
+                _fail(operation_path + f".input.{input_key}", "does not match the target observation")
+        target_observed_at = observation_payload["observed_at"]
+        explanation = baseline_transactions.get(input_value["transaction_id"])
+        if explanation is None or explanation["type"] != "account_transfer":
+            _fail(operation_path + ".input.transaction_id", "dangling or mistyped transfer reference")
+        explanation_version = next(
+            item for item in baseline["transaction_versions"]
+            if item["id"] == explanation["current_version_id"]
+        )
+        if explanation_version["occurred_at"] != input_value["actual_occurred_at"]:
+            _fail(operation_path + ".input.actual_occurred_at", "does not match the explanation transaction")
         added_transactions = expected_entities["transactions"]["added_ids"]
         added_entities = expected_entities["domain_entities"]["added_ids"]
         if len(added_transactions) != 1 or result_transactions[added_transactions[0]]["type"] != "balance_adjustment_reversal":
@@ -10206,15 +11117,15 @@ def _validate_action_semantics(
             _fail(operation_path + ".result_state_id", "must add one explanation allocation")
         allocation = allocations[0]["payload"]
         if (
-            allocation["adjustment_id"] != input_value["adjustment_id"]
+            allocation["adjustment_id"] != adjustment["id"]
             or allocation["explanation_transaction_id"] != input_value["transaction_id"]
-            or allocation["amount"] != input_value["explanation_amount"]
+            or allocation["amount"] != input_value["explanation_allocation"]
             or allocation["currency"] != input_value["currency"]
             or allocation["confirmed_at"] != input_value["confirmed_at"]
         ):
-            _fail(operation_path + ".input.explanation_amount", "does not match the allocation")
+            _fail(operation_path + ".input.explanation_allocation", "does not match the allocation")
         reversal_version, reversal_postings = transaction_parts(added_transactions[0])
-        if any(reversal_version[field] != input_value["target_observed_at"] for field in ("occurred_at", "statistics_at", "effective_at")):
+        if any(reversal_version[field] != target_observed_at for field in ("occurred_at", "statistics_at", "effective_at")):
             _fail(operation_path + ".input.target_observed_at", "must be preserved in reversal time roles")
         if reversal_version.get("created_at") != input_value["confirmed_at"]:
             _fail(operation_path + ".input.confirmed_at", "must be preserved as reversal creation time")
@@ -10223,10 +11134,40 @@ def _validate_action_semantics(
             _fail(operation_path + ".result_state_id", "reversal must contain exact target and counterpart roles")
         reversal_target = by_role["balance_adjustment_reversal_target"]
         reversal_counterpart = by_role["balance_adjustment_reversal_counterpart"]
-        if reversal_target["account_id"] != input_value["target_account_id"] or Decimal(reversal_target["amount"]) != -Decimal(input_value["explanation_amount"]):
-            _fail(operation_path + ".input.explanation_amount", "does not match the reversal target posting")
-        if Decimal(reversal_counterpart["amount"]) != Decimal(input_value["explanation_amount"]):
-            _fail(operation_path + ".input.explanation_amount", "does not match the reversal counterpart posting")
+        if reversal_target["account_id"] != input_value["target_account_id"] or Decimal(reversal_target["amount"]) != -Decimal(input_value["explanation_allocation"]):
+            _fail(operation_path + ".input.explanation_allocation", "does not match the reversal target posting")
+        if Decimal(reversal_counterpart["amount"]) != Decimal(input_value["explanation_allocation"]):
+            _fail(operation_path + ".input.explanation_allocation", "does not match the reversal counterpart posting")
+    elif action == "link_real_posting_evidence":
+        source = next(
+            item for item in result["sources"]
+            if item["id"] == expected_entities["sources"]["added_ids"][0]
+        )
+        evidence = next(
+            item for item in result["evidence"]
+            if item["id"] == expected_entities["evidence"]["added_ids"][0]
+        )
+        link = next(
+            item for item in result["evidence_links"]
+            if item["id"] == expected_entities["evidence_links"]["added_ids"][0]
+        )
+        if source["id"] != input_value["source_id"] or source["type"] != "account_statement":
+            _fail(operation_path + ".input.source_id", "does not match the account statement source")
+        if source["payload"].get("observed_at") != input_value["observed_at"]:
+            _fail(operation_path + ".input.observed_at", "does not match the account statement source")
+        if (
+            evidence["type"] != "real_account_posting"
+            or evidence["source_ids"] != [source["id"]]
+            or evidence["payload"] != {"observed_at": input_value["observed_at"]}
+        ):
+            _fail(operation_path + ".input.evidence_id", "does not match the real posting evidence")
+        if (
+            link["evidence_id"] != evidence["id"]
+            or link["target_kind"] != "posting"
+            or link["target_id"] != input_value["target_posting_id"]
+            or link["role"] != "real_account_posting"
+        ):
+            _fail(operation_path + ".input.target_posting_id", "does not match the linked posting")
 
 
 def _validate_operations(

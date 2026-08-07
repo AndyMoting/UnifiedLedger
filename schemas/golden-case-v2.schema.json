@@ -336,7 +336,10 @@
         {"$ref": "#/$defs/mergedPaymentItemFactSource"},
         {"$ref": "#/$defs/stagedPaymentBankFactSource"},
         {"$ref": "#/$defs/reconciliationEvidenceSource"},
-        {"$ref": "#/$defs/rg07RefundSource"}
+        {"$ref": "#/$defs/rg07RefundSource"},
+        {"$ref": "#/$defs/importedTransferCandidateSource"},
+        {"$ref": "#/$defs/accountStatementSource"},
+        {"$ref": "#/$defs/manualTransactionConfirmationSource"}
       ]
     },
     "mixedPaymentFundingComponent": {
@@ -591,6 +594,86 @@
         "evidence_id": {"$ref": "#/$defs/id"}
       }
     },
+    "importedTransferCandidateSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "imported_transfer_candidate"},
+        "payload": {"$ref": "#/$defs/importedTransferCandidateSourcePayload"}
+      }
+    },
+    "importedTransferCandidateSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at", "actual_at", "account_id", "counter_account_id",
+        "amount", "currency", "immutable_payload_digest"
+      ],
+      "properties": {
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "actual_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "immutable_payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}
+      }
+    },
+    "accountStatementSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "account_statement"},
+        "payload": {"$ref": "#/$defs/accountStatementSourcePayload"}
+      }
+    },
+    "manualTransactionConfirmationSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "manual_transaction_confirmation"},
+        "payload": {"$ref": "#/$defs/manualTransactionConfirmationSourcePayload"}
+      }
+    },
+    "manualTransactionConfirmationSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at", "actual_at", "account_id", "counter_account_id",
+        "amount", "currency", "immutable_payload_digest"
+      ],
+      "properties": {
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "actual_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "immutable_payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}
+      }
+    },
+    "accountStatementSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at", "booking_at", "account_id", "amount", "currency",
+        "immutable_payload_digest"
+      ],
+      "properties": {
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "booking_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "immutable_payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}
+      }
+    },
     "candidate": {
       "oneOf": [
         {"$ref": "#/$defs/balanceAdjustmentCandidate"},
@@ -599,8 +682,40 @@
         {"$ref": "#/$defs/mixedPaymentCandidate"},
         {"$ref": "#/$defs/mergedPaymentCandidate"},
         {"$ref": "#/$defs/stagedPaymentCandidate"},
-        {"$ref": "#/$defs/refundCreditCandidate"}
+        {"$ref": "#/$defs/refundCreditCandidate"},
+        {"$ref": "#/$defs/importedTransferCandidate"}
       ]
+    },
+    "importedTransferCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "omitted_real_transaction_and_adjustment_explanation"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/importedTransferCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "importedTransferCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposed_transaction_id", "proposed_target_account_id", "proposed_counter_account_id",
+        "proposed_actual_at", "proposed_currency", "proposed_allocation_amount",
+        "requires_confirmation"
+      ],
+      "properties": {
+        "proposed_transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "proposed_target_account_id": {"$ref": "#/$defs/id"},
+        "proposed_counter_account_id": {"$ref": "#/$defs/id"},
+        "proposed_actual_at": {"$ref": "#/$defs/timestamp"},
+        "proposed_currency": {"type": "string", "minLength": 1},
+        "proposed_allocation_amount": {"$ref": "#/$defs/decimal"},
+        "requires_confirmation": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
     },
     "mergedPaymentCandidate": {
       "type": "object", "additionalProperties": false,
@@ -1005,7 +1120,9 @@
         {"$ref": "#/$defs/bankPaymentEvidence"},
         {"$ref": "#/$defs/stagedPaymentBankPaymentEvidence"},
         {"$ref": "#/$defs/itemSummaryEvidence"},
-        {"$ref": "#/$defs/rg07RefundEvidence"}
+        {"$ref": "#/$defs/rg07RefundEvidence"},
+        {"$ref": "#/$defs/importedRealTransactionCandidateEvidence"},
+        {"$ref": "#/$defs/realAccountPostingEvidence"}
       ]
     },
     "userBalanceObservationEvidence": {
@@ -1279,6 +1396,34 @@
       "type": "object", "additionalProperties": false,
       "required": ["id", "sequence", "status", "occurred_at", "formal_effect_count"],
       "properties": {"id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "status": {"enum": ["pending_confirmation", "confirmed"]}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "formal_effect_count": {"type": "integer", "minimum": 0, "maximum": 1}}
+    },
+    "importedRealTransactionCandidateEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "imported_real_transaction_candidate"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {
+          "type": "object", "additionalProperties": false, "required": ["observed_at"],
+          "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      }
+    },
+    "realAccountPostingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "real_account_posting"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "payload": {
+          "type": "object", "additionalProperties": false, "required": ["observed_at"],
+          "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      }
     },
     "refundCreditCandidate": {
       "type": "object", "additionalProperties": false,
@@ -2853,6 +2998,259 @@
         "confirmed_at": {"$ref": "#/$defs/timestamp"}
       }
     },
+    "confirmSecondRealTransferInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "target_account_id", "counter_account_id", "amount", "currency",
+        "actual_occurred_at", "explanation_allocation", "explicit_confirmation",
+        "confirms_target_account", "confirms_counter_account", "confirms_actual_occurred_at",
+        "confirms_currency", "confirms_amount", "confirms_explanation_allocation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "explanation_allocation": {"$ref": "#/$defs/decimal"},
+        "explicit_confirmation": {"const": true},
+        "confirms_target_account": {"const": true},
+        "confirms_counter_account": {"const": true},
+        "confirms_actual_occurred_at": {"const": true},
+        "confirms_currency": {"const": true},
+        "confirms_amount": {"const": true},
+        "confirms_explanation_allocation": {"const": false},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmSecondExplanationAllocationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "transaction_id", "target_account_id", "counter_account_id",
+        "amount", "currency", "actual_occurred_at", "explanation_allocation",
+        "explicit_confirmation", "confirms_target_account", "confirms_counter_account",
+        "confirms_actual_occurred_at", "confirms_currency", "confirms_amount",
+        "confirms_explanation_allocation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "transaction_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "explanation_allocation": {"$ref": "#/$defs/decimal"},
+        "explicit_confirmation": {"const": true},
+        "confirms_target_account": {"const": true},
+        "confirms_counter_account": {"const": true},
+        "confirms_actual_occurred_at": {"const": true},
+        "confirms_currency": {"const": true},
+        "confirms_amount": {"const": true},
+        "confirms_explanation_allocation": {"const": true},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "saveZeroDeltaObservationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "account_id", "target_amount", "currency", "target_observed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "target_amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "target_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "receiveImportCandidateInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id", "confidence"
+      ],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "confidence": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "confirmImportedRealTransferInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "source_id", "target_account_id", "counter_account_id", "amount",
+        "currency", "actual_occurred_at", "explanation_allocation", "explicit_confirmation",
+        "confirms_target_account", "confirms_counter_account", "confirms_actual_occurred_at",
+        "confirms_currency", "confirms_amount", "confirms_explanation_allocation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "source_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "explanation_allocation": {"$ref": "#/$defs/decimal"},
+        "explicit_confirmation": {"const": true},
+        "confirms_target_account": {"const": true},
+        "confirms_counter_account": {"const": true},
+        "confirms_actual_occurred_at": {"const": true},
+        "confirms_currency": {"const": true},
+        "confirms_amount": {"const": true},
+        "confirms_explanation_allocation": {"const": false},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "confirmImportedExplanationAllocationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "source_id", "transaction_id", "target_account_id", "counter_account_id",
+        "amount", "currency", "actual_occurred_at", "explanation_allocation",
+        "explicit_confirmation", "confirms_target_account", "confirms_counter_account",
+        "confirms_actual_occurred_at", "confirms_currency", "confirms_amount",
+        "confirms_explanation_allocation", "confirmed_at"
+      ],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "source_id": {"$ref": "#/$defs/id"},
+        "transaction_id": {"$ref": "#/$defs/id"},
+        "target_account_id": {"$ref": "#/$defs/id"},
+        "counter_account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "actual_occurred_at": {"$ref": "#/$defs/timestamp"},
+        "explanation_allocation": {"$ref": "#/$defs/decimal"},
+        "explicit_confirmation": {"const": true},
+        "confirms_target_account": {"const": true},
+        "confirms_counter_account": {"const": true},
+        "confirms_actual_occurred_at": {"const": true},
+        "confirms_currency": {"const": true},
+        "confirms_amount": {"const": true},
+        "confirms_explanation_allocation": {"const": true},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "linkRealPostingEvidenceInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id", "evidence_id", "target_posting_id", "account_id", "currency",
+        "amount", "posting_side", "observed_at", "explicit_confirmation"
+      ],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "evidence_id": {"$ref": "#/$defs/id"},
+        "target_posting_id": {"$ref": "#/$defs/id"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "currency": {"type": "string", "minLength": 1},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "posting_side": {"enum": ["increase", "decrease"]},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "explicit_confirmation": {"const": true}
+      }
+    },
+    "rejectIncompleteImportConfirmationAttemptedInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "target_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "actual_at": {"anyOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "currency": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "allocation_amount": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]}
+      }
+    },
+    "invalidRg09AttemptedInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "target_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}, {"type": "null"}]},
+        "target_observed_at": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "currency": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "equity_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "direction": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "actual_at": {"anyOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "requested_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "remaining_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "matcher_confidence": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "explicit_confirmation": {"type": "boolean"}
+      }
+    },
+    "stalePreviewRejectedInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preview_id", "preview_ledger_fingerprint", "current_ledger_fingerprint",
+        "explicit_confirmation", "preview_changed_at"
+      ],
+      "properties": {
+        "preview_id": {"$ref": "#/$defs/id"},
+        "preview_ledger_fingerprint": {"$ref": "#/$defs/sha256Fingerprint"},
+        "current_ledger_fingerprint": {"$ref": "#/$defs/sha256Fingerprint"},
+        "explicit_confirmation": {"const": true},
+        "preview_changed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "rg09InvalidInputRejectedOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"enum": [
+          "exact_decimal_string_required", "timezone_aware_target_time_required",
+          "ledger_timezone_required", "unknown_account", "owned_real_asset_required",
+          "same_currency_required", "dedicated_adjustment_equity_required",
+          "explanation_direction_mismatch", "same_target_account_required",
+          "explanation_must_not_follow_target_time", "allocation_exceeds_remaining_adjustment",
+          "explicit_link_confirmation_required", "idempotency_key_conflict"
+        ]},
+        "field_path": {"enum": [
+          "$.attempted_input.target_amount", "$.attempted_input.target_observed_at",
+          "$.attempted_input.account_id", "$.attempted_input.currency",
+          "$.attempted_input.equity_account_id", "$.attempted_input.direction",
+          "$.attempted_input.actual_at", "$.attempted_input.requested_amount",
+          "$.attempted_input.explicit_confirmation", "$.attempted_input.request_id"
+        ]}
+      }
+    },
+    "rg09IncompleteImportRejectedOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"enum": [
+          "exact_transaction_required", "exact_target_account_required",
+          "actual_time_required", "exact_currency_required",
+          "explicit_explanation_allocation_required"
+        ]},
+        "field_path": {"enum": [
+          "$.attempted_input.transaction_id", "$.attempted_input.target_account_id",
+          "$.attempted_input.actual_at", "$.attempted_input.currency",
+          "$.attempted_input.allocation_amount"
+        ]}
+      }
+    },
+    "rg09StalePreviewRejectedOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"const": "ledger_changed_since_preview"},
+        "field_path": {"const": "$.attempted_input.current_ledger_fingerprint"}
+      }
+    },
     "rg10LotAllocationInputItem": {
       "type": "object", "additionalProperties": false,
       "required": ["lot_id", "amount"],
@@ -3447,6 +3845,11 @@
             "manual_expense", "manual_income", "category_rename",
             "transaction_note_update", "preview_target_balance",
             "confirm_balance_adjustment", "confirm_real_transfer", "confirm_explanation_allocation",
+            "confirm_second_real_transfer", "confirm_second_explanation_allocation",
+            "save_zero_delta_observation", "receive_import_candidate",
+            "confirm_imported_real_transfer", "confirm_imported_explanation_allocation",
+            "link_real_posting_evidence", "reject_invalid_rg09_input",
+            "reject_incomplete_import_confirmation", "reject_stale_preview",
             "confirm_stored_value_recharge", "confirm_stored_value_spend",
             "ingest_stored_value_recharge_candidate", "ingest_stored_value_spend_candidate",
             "confirm_imported_stored_value_recharge", "confirm_imported_stored_value_spend",
@@ -3732,6 +4135,86 @@
             },
             {
               "properties": {
+                "action_type": {"const": "confirm_second_real_transfer"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmSecondRealTransferInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_second_explanation_allocation"},
+                "operation_class": {"const": "reversal"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmSecondExplanationAllocationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "save_zero_delta_observation"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/saveZeroDeltaObservationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "receive_import_candidate"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/receiveImportCandidateInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_imported_real_transfer"},
+                "operation_class": {"const": "creation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmImportedRealTransferInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "confirm_imported_explanation_allocation"},
+                "operation_class": {"const": "reversal"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/confirmImportedExplanationAllocationInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "link_real_posting_evidence"},
+                "operation_class": {"const": "reconciliation"},
+                "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
+                "input": {"$ref": "#/$defs/linkRealPostingEvidenceInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "reject_invalid_rg09_input"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/rg09InvalidInputRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/invalidRg09AttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "reject_incomplete_import_confirmation"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/rg09IncompleteImportRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/rejectIncompleteImportConfirmationAttemptedInput"}
+              }
+            },
+            {
+              "properties": {
+                "action_type": {"const": "reject_stale_preview"},
+                "operation_class": {"const": "rejection"},
+                "outcome": {"$ref": "#/$defs/rg09StalePreviewRejectedOutcome"},
+                "attempted_input": {"$ref": "#/$defs/stalePreviewRejectedInput"}
+              }
+            },
+            {
+              "properties": {
                 "action_type": {"const": "confirm_stored_value_recharge"},
                 "operation_class": {"const": "creation"},
                 "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]},
@@ -3994,6 +4477,34 @@
         {
           "if": {"properties": {"action_type": {"const": "confirm_explanation_allocation"}}, "required": ["action_type"]},
           "then": {"properties": {"input": {"$ref": "#/$defs/confirmExplanationAllocationInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_second_real_transfer"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmSecondRealTransferInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_second_explanation_allocation"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmSecondExplanationAllocationInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "save_zero_delta_observation"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/saveZeroDeltaObservationInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "receive_import_candidate"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/receiveImportCandidateInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_imported_real_transfer"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmImportedRealTransferInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "confirm_imported_explanation_allocation"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/confirmImportedExplanationAllocationInput"}}}
+        },
+        {
+          "if": {"properties": {"action_type": {"const": "link_real_posting_evidence"}}, "required": ["action_type"]},
+          "then": {"properties": {"input": {"$ref": "#/$defs/linkRealPostingEvidenceInput"}}}
         }
       ]
     }
