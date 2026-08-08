@@ -115,6 +115,85 @@ class Rg06PublicationTests(unittest.TestCase):
             self.assertEqual(original_manifest, manifest.read_bytes())
             self.assertFalse((Path(name) / ".rg-06-publication.journal.json").exists())
 
+    def test_output_backup_failure_keeps_original_files_and_allows_retry(self):
+        with tempfile.TemporaryDirectory() as name:
+            source, expected, manifest = self._copy_inputs(Path(name))
+            output = Path(name) / "rg-06.json"
+            original_output = b"old RG-06 output\n"
+            output.write_bytes(original_output)
+            original_manifest = manifest.read_bytes()
+
+            # The failure is injected between the two os.replace calls: the
+            # original output has already moved to .bak but the manifest has
+            # not moved yet. The rollback must restore the original instead of
+            # deleting the backup.
+            with self.assertRaisesRegex(RuntimeError, "output backup failure"):
+                publish_rg06(
+                    source,
+                    expected,
+                    output,
+                    manifest,
+                    fail_after_output_backup=True,
+                )
+
+            self.assertEqual(original_output, output.read_bytes())
+            self.assertEqual(original_manifest, manifest.read_bytes())
+            self.assertEqual([], list(Path(name).glob(".*.tmp")))
+            self.assertEqual([], list(Path(name).glob(".*.bak")))
+            self.assertFalse((Path(name) / ".rg-06-publication.journal.json").exists())
+
+            # The rollback leaves a clean state: the publication can be retried.
+            retried = publish_rg06(source, expected, output, manifest)
+            self.assertTrue(retried.changed)
+            self.assertEqual(expected.read_bytes(), output.read_bytes())
+
+    def test_output_backup_moved_journal_recovery_restores_missing_original(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            source, expected, manifest = self._copy_inputs(directory)
+            output = directory / "rg-06.json"
+            original_output = b"old RG-06 output\n"
+            output.write_bytes(original_output)
+            original_manifest = manifest.read_bytes()
+            token = "output-backup-recovery"
+            output_temp = directory / f".rg-06.json.{token}.tmp"
+            manifest_temp = directory / f".manifest.json.{token}.tmp"
+            output_backup = directory / f".rg-06.json.{token}.bak"
+            manifest_backup = directory / f".manifest.json.{token}.bak"
+            output_temp.write_bytes(b"incomplete output")
+            manifest_temp.write_bytes(b"incomplete manifest")
+            # Simulate a crash between the two replaces: the original output is
+            # missing from its path but survives in .bak, and the manifest was
+            # never moved. Recovery must detect the missing target with a
+            # present backup and restore the original from it.
+            output_backup.write_bytes(original_output)
+            journal = directory / ".rg-06-publication.journal.json"
+            journal.write_text(
+                json.dumps(
+                    {
+                        "phase": "backup_output_moved",
+                        "output_path": str(output.resolve()),
+                        "manifest_path": str(manifest.resolve()),
+                        "output_temp": str(output_temp.resolve()),
+                        "manifest_temp": str(manifest_temp.resolve()),
+                        "output_backup": str(output_backup.resolve()),
+                        "manifest_backup": str(manifest_backup.resolve()),
+                        "output_had_original": True,
+                        "manifest_had_original": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(recover_rg06_publication(manifest))
+            self.assertEqual(original_output, output.read_bytes())
+            self.assertEqual(original_manifest, manifest.read_bytes())
+            self.assertFalse(journal.exists())
+            self.assertFalse(output_temp.exists())
+            self.assertFalse(manifest_temp.exists())
+            self.assertFalse(output_backup.exists())
+            self.assertFalse(manifest_backup.exists())
+
     def test_prepared_journal_recovery_keeps_original_files(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)

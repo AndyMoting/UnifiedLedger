@@ -142,6 +142,20 @@ def _restore_path(path: Path, backup: Path, had_original: bool) -> None:
         os.replace(backup, path)
 
 
+def _restore_published_target(path: Path, backup: Path, had_original: bool) -> None:
+    """Restore one publication target from its backup when that backup exists.
+
+    The journal phase is advanced before each ``os.replace`` so an interrupted
+    transaction can never leave a moved original only in ``.bak`` while the
+    journal still claims ``prepared``. This guard additionally recovers the
+    legacy crash window: if the target path is missing but its backup exists,
+    the original is restored from the backup instead of being deleted.
+    """
+    if not backup.is_file():
+        return
+    _restore_path(path, backup, had_original)
+
+
 def recover_rg06_publication(manifest_path: Path) -> bool:
     """Recover an interrupted publication transaction, if its journal exists."""
     journal_path = _journal_path(manifest_path)
@@ -157,28 +171,25 @@ def recover_rg06_publication(manifest_path: Path) -> bool:
     manifest_temp = Path(journal["manifest_temp"])
     output_backup = Path(journal["output_backup"])
     manifest_backup = Path(journal["manifest_backup"])
-    phase = journal["phase"]
-    if phase == "prepared":
-        _remove(output_temp)
-        _remove(manifest_temp)
-    elif phase == "manifest_installed":
-        _remove(output_temp)
-        _remove(manifest_temp)
-        _remove(output_backup)
-        _remove(manifest_backup)
-    else:
-        _restore_path(
-            output_path,
-            output_backup,
-            bool(journal["output_had_original"]),
-        )
-        _restore_path(
-            manifest_path,
-            manifest_backup,
-            bool(journal["manifest_had_original"]),
-        )
-        _remove(output_temp)
-        _remove(manifest_temp)
+    # The transaction commits only when the journal is removed. Any surviving
+    # journal restores every original from its backup when that backup exists;
+    # a missing backup means that target was never moved. A crash after both
+    # swaps but before cleanup is also rolled back safely: with no backups the
+    # restore is a no-op and the already-installed new files remain.
+    _restore_published_target(
+        output_path,
+        output_backup,
+        bool(journal["output_had_original"]),
+    )
+    _restore_published_target(
+        manifest_path,
+        manifest_backup,
+        bool(journal["manifest_had_original"]),
+    )
+    _remove(output_temp)
+    _remove(manifest_temp)
+    _remove(output_backup)
+    _remove(manifest_backup)
     _remove(journal_path)
     return True
 
@@ -189,6 +200,7 @@ def publish_rg06(
     output_path: Path,
     manifest_path: Path,
     *,
+    fail_after_output_backup: bool = False,
     fail_after_output_swap: bool = False,
     fail_after_manifest_swap: bool = False,
 ) -> PublicationResult:
@@ -277,43 +289,46 @@ def publish_rg06(
         "manifest_had_original": manifest_path.exists(),
     }
     _write_json_fsync(journal_path, journal)
-    output_installed = False
-    manifest_installed = False
     try:
         _write_fsync(output_temp, expected_bytes)
         _write_json_fsync(manifest_temp, updated_manifest)
+        # Advance the journal phase before every os.replace so an interrupted
+        # run can always distinguish "originals still in place" from "originals
+        # moved to backups" and restore them instead of deleting them.
+        journal["phase"] = "backup_output_moved"
+        _write_json_fsync(journal_path, journal)
         if output_path.exists():
             os.replace(output_path, output_backup)
+        journal["phase"] = "backup_manifest_moved"
+        _write_json_fsync(journal_path, journal)
+        if fail_after_output_backup:
+            raise RuntimeError("injected RG-06 output backup failure")
         if manifest_path.exists():
             os.replace(manifest_path, manifest_backup)
-        journal["phase"] = "backups_moved"
-        _write_json_fsync(journal_path, journal)
-        os.replace(output_temp, output_path)
-        output_installed = True
         journal["phase"] = "output_installed"
         _write_json_fsync(journal_path, journal)
+        os.replace(output_temp, output_path)
         if fail_after_output_swap:
             raise RuntimeError("injected RG-06 output swap failure")
-        os.replace(manifest_temp, manifest_path)
-        manifest_installed = True
         journal["phase"] = "manifest_installed"
         _write_json_fsync(journal_path, journal)
+        os.replace(manifest_temp, manifest_path)
         if fail_after_manifest_swap:
             raise RuntimeError("injected RG-06 manifest swap failure")
         _remove(output_backup)
         _remove(manifest_backup)
         _remove(journal_path)
     except Exception:
-        if journal["phase"] in {
-            "backups_moved",
-            "output_installed",
-            "manifest_installed",
-        }:
-            _restore_path(output_path, output_backup, bool(journal["output_had_original"]))
-            _restore_path(manifest_path, manifest_backup, bool(journal["manifest_had_original"]))
-        else:
-            _remove(output_temp)
-            _remove(manifest_temp)
+        _restore_published_target(
+            output_path,
+            output_backup,
+            bool(journal["output_had_original"]),
+        )
+        _restore_published_target(
+            manifest_path,
+            manifest_backup,
+            bool(journal["manifest_had_original"]),
+        )
         _remove(output_temp)
         _remove(manifest_temp)
         _remove(output_backup)
