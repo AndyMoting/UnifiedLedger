@@ -50,6 +50,8 @@ enum class TransactionKind {
     STORED_VALUE_SPEND,
     STORED_VALUE_EXPIRY_LOSS,
     STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT,
+    LEND,
+    COLLECT,
 }
 
 data class Transaction(

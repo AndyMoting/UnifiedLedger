@@ -1,0 +1,462 @@
+-- RG-08 additive owner: v14 -> v15. Existing formal rows and all prior
+-- RG owners remain untouched (D-084, aligned with the RG-10 additive pattern).
+CREATE TABLE rg08_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED')),
+  reason_code TEXT,
+  field_path TEXT,
+  PRIMARY KEY (ledger_id, identity_value)
+);
+CREATE TABLE rg08_returned_id (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  id_kind TEXT NOT NULL, id_value TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value, sequence),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg08_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg08_position (
+  ledger_id TEXT NOT NULL, position_id TEXT NOT NULL PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  receivable_account_id TEXT NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  principal_balance_minor INTEGER NOT NULL CHECK (principal_balance_minor >= 0),
+  allocation_scope TEXT NOT NULL CHECK (allocation_scope IN ('PERSON_LEVEL_NET_POSITION')),
+  contract_allocation_enabled INTEGER NOT NULL CHECK (contract_allocation_enabled = 0),
+  UNIQUE (ledger_id, position_id)
+);
+CREATE TABLE rg08_position_history (
+  ledger_id TEXT NOT NULL, position_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE,
+  behavior_code TEXT NOT NULL CHECK (behavior_code IN ('LEND', 'COLLECT')),
+  amount_minor INTEGER NOT NULL,
+  principal_balance_after_minor INTEGER NOT NULL CHECK (principal_balance_after_minor >= 0),
+  transaction_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, position_id, history_sequence),
+  FOREIGN KEY (ledger_id, position_id) REFERENCES rg08_position(ledger_id, position_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg08_settlement (
+  ledger_id TEXT NOT NULL, settlement_id TEXT NOT NULL PRIMARY KEY,
+  behavior_code TEXT NOT NULL CHECK (behavior_code IN ('COLLECT')),
+  counterparty_id TEXT NOT NULL,
+  linked_position_id TEXT NOT NULL,
+  allocated_lend_transaction_id TEXT CHECK (allocated_lend_transaction_id IS NULL),
+  transaction_id TEXT NOT NULL,
+  destination_account_id TEXT NOT NULL,
+  interest_category_id TEXT NOT NULL,
+  total_received_minor INTEGER NOT NULL CHECK (total_received_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  actual_receipt_at TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  UNIQUE (ledger_id, settlement_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, linked_position_id) REFERENCES rg08_position(ledger_id, position_id)
+);
+CREATE TABLE rg08_settlement_component (
+  ledger_id TEXT NOT NULL, settlement_id TEXT NOT NULL, component_index INTEGER NOT NULL CHECK (component_index >= 0),
+  component_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('PRINCIPAL', 'INTEREST', 'FEE')),
+  amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),
+  posting_id TEXT,
+  PRIMARY KEY (ledger_id, settlement_id, component_index),
+  UNIQUE (ledger_id, component_id),
+  UNIQUE (ledger_id, settlement_id, kind),
+  FOREIGN KEY (ledger_id, settlement_id) REFERENCES rg08_settlement(ledger_id, settlement_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg08_settlement_history (
+  ledger_id TEXT NOT NULL, settlement_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('CONFIRMED')),
+  occurred_at TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  formal_effect_count INTEGER NOT NULL CHECK (formal_effect_count >= 0),
+  PRIMARY KEY (ledger_id, settlement_id, history_sequence),
+  FOREIGN KEY (ledger_id, settlement_id) REFERENCES rg08_settlement(ledger_id, settlement_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg08_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL PRIMARY KEY,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED')),
+  proposed_total_received_minor INTEGER NOT NULL CHECK (proposed_total_received_minor > 0),
+  proposed_principal_amount_minor INTEGER CHECK (proposed_principal_amount_minor IS NULL OR proposed_principal_amount_minor >= 0),
+  proposed_interest_amount_minor INTEGER CHECK (proposed_interest_amount_minor IS NULL OR proposed_interest_amount_minor >= 0),
+  proposed_fee_amount_minor INTEGER CHECK (proposed_fee_amount_minor IS NULL OR proposed_fee_amount_minor >= 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  proposed_destination_account_id TEXT,
+  proposed_actual_receipt_at TEXT,
+  proposed_behavior_code TEXT,
+  proposed_counterparty_id TEXT,
+  bank_evidence_proves_component_split INTEGER NOT NULL CHECK (bank_evidence_proves_component_split = 0),
+  expected_interest_may_confirm_split INTEGER NOT NULL CHECK (expected_interest_may_confirm_split = 0),
+  name_match_may_confirm_counterparty INTEGER NOT NULL CHECK (name_match_may_confirm_counterparty = 0),
+  rule_version INTEGER NOT NULL,
+  confidence TEXT NOT NULL,
+  UNIQUE (ledger_id, candidate_id)
+);
+CREATE TABLE rg08_candidate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED')),
+  occurred_at TEXT NOT NULL,
+  formal_effect_count INTEGER NOT NULL CHECK (formal_effect_count >= 0),
+  PRIMARY KEY (ledger_id, candidate_id, status_sequence),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg08_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE rg08_source_record (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL PRIMARY KEY,
+  source_record_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('BANK_DEBIT', 'BANK_CREDIT', 'BANK_CREDIT_MIRROR', 'LENDING_AGREEMENT', 'EXPLICIT_MANUAL_LENDING_CONFIRMATION')),
+  observed_at TEXT NOT NULL,
+  booking_at TEXT, value_at TEXT,
+  account_id TEXT,
+  counterparty_id TEXT,
+  amount_minor INTEGER,
+  currency_code TEXT, currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  original_source_payload_hash TEXT,
+  immutable_payload_hash TEXT NOT NULL,
+  mirror_of_source_id TEXT,
+  UNIQUE (ledger_id, source_id),
+  CHECK (kind NOT IN ('BANK_DEBIT', 'BANK_CREDIT') OR (booking_at IS NOT NULL AND value_at IS NOT NULL AND amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_precision IS NOT NULL)),
+  CHECK (amount_minor IS NULL OR currency_code IS NOT NULL),
+  CHECK (original_source_payload_hash IS NULL OR original_source_payload_hash = immutable_payload_hash),
+  CHECK (kind != 'LENDING_AGREEMENT' OR counterparty_id IS NOT NULL)
+);
+CREATE TABLE rg08_candidate_source (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, source_index INTEGER NOT NULL CHECK (source_index >= 0),
+  source_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, candidate_id, source_index),
+  UNIQUE (ledger_id, candidate_id, source_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg08_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg08_source_record(ledger_id, source_id)
+);
+CREATE TABLE rg08_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY, confirmation_request_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('LENDING_EVENT_CONFIRMATION', 'LENDING_SETTLEMENT_CONFIRMATION')),
+  transaction_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  candidate_id TEXT,
+  settlement_id TEXT,
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, confirmation_request_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES rg08_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, settlement_id) REFERENCES rg08_settlement(ledger_id, settlement_id)
+);
+CREATE TABLE rg08_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL,
+  evidence_type TEXT NOT NULL CHECK (evidence_type IN ('ASSET_DEBIT', 'ASSET_CREDIT', 'ASSET_CREDIT_MIRROR', 'LENDING_AGREEMENT')),
+  observed_at TEXT NOT NULL,
+  UNIQUE (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg08_source_record(ledger_id, source_id)
+);
+CREATE TABLE rg08_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('POSTING', 'POSITION')),
+  target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('DESTINATION_ASSET_POSTING', 'FUNDING_ASSET_POSTING', 'COUNTERPARTY_LENDING_RELATIONSHIP')),
+  status TEXT NOT NULL CHECK (status IN ('MATCHED', 'SUPPORTED', 'MERGED')),
+  UNIQUE (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg08_source_record(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg08_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg08_audit_link (
+  ledger_id TEXT NOT NULL, audit_link_id TEXT NOT NULL PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('MIRROR_OF_EVIDENCE', 'MERGED_INTO_EVIDENCE_LINK')),
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  UNIQUE (ledger_id, audit_link_id)
+);
+CREATE TABLE rg08_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('RECEIVABLE', 'FUNDING_OUT', 'DESTINATION_IN', 'PRINCIPAL_OUT', 'INTEREST_OUT')),
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg08_posting_reconciliation (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')), latest_sequence INTEGER NOT NULL CHECK (latest_sequence > 0),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg08_posting_semantic(ledger_id, posting_id)
+);
+CREATE TABLE rg08_reconciliation_history (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')), evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, posting_id, status_sequence),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg08_posting_reconciliation(ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES rg08_evidence_link(ledger_id, link_id)
+);
+CREATE TABLE rg08_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL, source_record_id TEXT, created_at TEXT NOT NULL, effective_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id) REFERENCES rg08_source_record(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg08_name_history (
+  ledger_id TEXT NOT NULL, counterparty_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  name_history_id TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, counterparty_id, history_sequence)
+);
+CREATE TRIGGER rg08_source_record_guard_update BEFORE UPDATE ON rg08_source_record BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_source_record_guard_delete BEFORE DELETE ON rg08_source_record BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_evidence_guard_update BEFORE UPDATE ON rg08_evidence BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_evidence_guard_delete BEFORE DELETE ON rg08_evidence BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+-- Evidence links are typed edges with their final status at creation; RG-08
+-- never transitions a link (unlike RG-10) so the row is fully immutable.
+CREATE TRIGGER rg08_evidence_link_guard_update BEFORE UPDATE ON rg08_evidence_link BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_evidence_link_guard_delete BEFORE DELETE ON rg08_evidence_link BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_audit_guard_update BEFORE UPDATE ON rg08_audit_link BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_audit_guard_delete BEFORE DELETE ON rg08_audit_link BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_guard_update BEFORE UPDATE ON rg08_settlement BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_guard_delete BEFORE DELETE ON rg08_settlement BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_component_guard_update BEFORE UPDATE ON rg08_settlement_component BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_component_guard_delete BEFORE DELETE ON rg08_settlement_component BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_history_guard_update BEFORE UPDATE ON rg08_settlement_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_settlement_history_guard_delete BEFORE DELETE ON rg08_settlement_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_candidate_status_history_guard_update BEFORE UPDATE ON rg08_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_candidate_status_history_guard_delete BEFORE DELETE ON rg08_candidate_status_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_candidate_source_guard_update BEFORE UPDATE ON rg08_candidate_source BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_candidate_source_guard_delete BEFORE DELETE ON rg08_candidate_source BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_confirmation_guard_update BEFORE UPDATE ON rg08_confirmation BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_confirmation_guard_delete BEFORE DELETE ON rg08_confirmation BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_name_history_guard_update BEFORE UPDATE ON rg08_name_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_name_history_guard_delete BEFORE DELETE ON rg08_name_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_operation_guard_delete BEFORE DELETE ON rg08_operation BEGIN SELECT RAISE(ABORT, 'rg08 operation immutable'); END;
+CREATE TRIGGER rg08_operation_guard_update BEFORE UPDATE ON rg08_operation BEGIN
+  SELECT CASE WHEN old.outcome = 'PENDING' AND new.outcome IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED')
+    AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value
+    AND new.action = old.action AND new.operation_class = old.operation_class
+    AND new.input_fingerprint = old.input_fingerprint
+    THEN NULL ELSE RAISE(ABORT, 'rg08 operation immutable') END;
+END;
+CREATE TRIGGER rg08_returned_id_guard_update BEFORE UPDATE ON rg08_returned_id BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_returned_id_guard_delete BEFORE DELETE ON rg08_returned_id BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_semantic_guard_update BEFORE UPDATE ON rg08_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_semantic_guard_delete BEFORE DELETE ON rg08_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_formal_metadata_guard_update BEFORE UPDATE ON rg08_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_formal_metadata_guard_delete BEFORE DELETE ON rg08_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+-- Position facts are append-only; the principal balance is a guarded current
+-- projection that must agree with the newest history row exactly once.
+CREATE TRIGGER rg08_position_guard_update BEFORE UPDATE ON rg08_position BEGIN
+  SELECT CASE WHEN (
+    old.ledger_id = new.ledger_id AND old.position_id = new.position_id
+    AND old.counterparty_id = new.counterparty_id
+    AND old.receivable_account_id = new.receivable_account_id
+    AND old.currency_code = new.currency_code AND old.currency_precision = new.currency_precision
+    AND old.allocation_scope = new.allocation_scope
+    AND old.contract_allocation_enabled = new.contract_allocation_enabled
+    AND new.principal_balance_minor <= old.principal_balance_minor
+    AND EXISTS (
+      SELECT 1 FROM rg08_position_history AS history
+      WHERE history.ledger_id = new.ledger_id AND history.position_id = new.position_id
+        AND history.history_sequence = (SELECT MAX(latest.history_sequence) FROM rg08_position_history AS latest
+          WHERE latest.ledger_id = new.ledger_id AND latest.position_id = new.position_id)
+        AND history.principal_balance_after_minor = new.principal_balance_minor
+        AND history.behavior_code = 'COLLECT'
+    )
+  ) THEN NULL ELSE RAISE(ABORT, 'rg08 position current projection') END;
+END;
+CREATE TRIGGER rg08_position_guard_delete BEFORE DELETE ON rg08_position BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_position_history_guard_update BEFORE UPDATE ON rg08_position_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_position_history_guard_delete BEFORE DELETE ON rg08_position_history BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_position_history_sequence BEFORE INSERT ON rg08_position_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg08_position_history WHERE ledger_id = new.ledger_id AND position_id = new.position_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg08_position_history WHERE ledger_id = new.ledger_id AND position_id = new.position_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg08 position history sequence') END; END;
+CREATE TRIGGER rg08_position_history_direction BEFORE INSERT ON rg08_position_history BEGIN
+  SELECT CASE WHEN (new.behavior_code = 'LEND' AND new.amount_minor <= 0) OR (new.behavior_code = 'COLLECT' AND new.amount_minor >= 0)
+    THEN RAISE(ABORT, 'rg08 position history direction') END;
+END;
+CREATE TRIGGER rg08_settlement_history_sequence BEFORE INSERT ON rg08_settlement_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg08_settlement_history WHERE ledger_id = new.ledger_id AND settlement_id = new.settlement_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg08_settlement_history WHERE ledger_id = new.ledger_id AND settlement_id = new.settlement_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg08 settlement history sequence') END; END;
+CREATE TRIGGER rg08_candidate_status_history_sequence BEFORE INSERT ON rg08_candidate_status_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg08_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg08_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg08 candidate status history sequence') END; END;
+CREATE TRIGGER rg08_name_history_sequence BEFORE INSERT ON rg08_name_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg08_name_history WHERE ledger_id = new.ledger_id AND counterparty_id = new.counterparty_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg08_name_history WHERE ledger_id = new.ledger_id AND counterparty_id = new.counterparty_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg08 name history sequence') END; END;
+CREATE TRIGGER rg08_reconciliation_history_sequence BEFORE INSERT ON rg08_reconciliation_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg08_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg08_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg08 reconciliation history sequence') END; END;
+-- A settlement is a typed edge onto a collect transaction; the allocation
+-- link stays null in v1 (D-084 RG08-GAP-02).
+CREATE TRIGGER rg08_settlement_formal_owner_guard_insert BEFORE INSERT ON rg08_settlement BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'COLLECT'
+  ) THEN RAISE(ABORT, 'rg08 settlement formal ownership') END;
+END;
+-- Principal and interest components own their postings; the fee is fixed to
+-- zero with no posting in RG-08 v1 (D-084 RG08-GAP-02).
+CREATE TRIGGER rg08_settlement_component_guard_insert BEFORE INSERT ON rg08_settlement_component BEGIN
+  SELECT CASE WHEN (new.kind IN ('PRINCIPAL', 'INTEREST') AND new.posting_id IS NULL)
+    OR (new.kind = 'FEE' AND new.posting_id IS NOT NULL)
+    THEN RAISE(ABORT, 'rg08 component posting ownership') END;
+END;
+-- The candidate lifecycle is append-only: only the pending -> confirmed
+-- transition may update a row, and only to set the confirmed proposed facts.
+CREATE TRIGGER rg08_candidate_guard_update BEFORE UPDATE ON rg08_candidate BEGIN
+  SELECT CASE WHEN old.status = 'PENDING_CONFIRMATION' AND new.status = 'CONFIRMED'
+    AND new.ledger_id = old.ledger_id AND new.candidate_id = old.candidate_id
+    AND new.type = old.type
+    AND new.proposed_total_received_minor = old.proposed_total_received_minor
+    AND new.currency_code = old.currency_code AND new.currency_precision = old.currency_precision
+    AND new.bank_evidence_proves_component_split = old.bank_evidence_proves_component_split
+    AND new.expected_interest_may_confirm_split = old.expected_interest_may_confirm_split
+    AND new.name_match_may_confirm_counterparty = old.name_match_may_confirm_counterparty
+    AND new.rule_version = old.rule_version AND new.confidence = old.confidence
+    AND (old.proposed_principal_amount_minor IS NULL OR new.proposed_principal_amount_minor = old.proposed_principal_amount_minor)
+    AND (old.proposed_interest_amount_minor IS NULL OR new.proposed_interest_amount_minor = old.proposed_interest_amount_minor)
+    AND (old.proposed_fee_amount_minor IS NULL OR new.proposed_fee_amount_minor = old.proposed_fee_amount_minor)
+    AND (old.proposed_actual_receipt_at IS NULL OR new.proposed_actual_receipt_at = old.proposed_actual_receipt_at)
+    AND (old.proposed_behavior_code IS NULL OR new.proposed_behavior_code = old.proposed_behavior_code)
+    AND (old.proposed_counterparty_id IS NULL OR new.proposed_counterparty_id = old.proposed_counterparty_id)
+    THEN NULL ELSE RAISE(ABORT, 'rg08 candidate immutable') END;
+END;
+CREATE TRIGGER rg08_candidate_guard_delete BEFORE DELETE ON rg08_candidate BEGIN SELECT RAISE(ABORT, 'rg08 candidate immutable'); END;
+CREATE TRIGGER rg08_confirmation_target_guard_insert BEFORE INSERT ON rg08_confirmation BEGIN
+  SELECT CASE
+    WHEN new.role = 'LENDING_EVENT_CONFIRMATION' AND new.candidate_id IS NULL AND new.settlement_id IS NULL AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'LEND'
+    ) THEN NULL
+    WHEN new.role = 'LENDING_SETTLEMENT_CONFIRMATION' AND new.settlement_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'COLLECT'
+    ) THEN NULL
+    ELSE RAISE(ABORT, 'rg08 confirmation target ownership')
+  END;
+END;
+-- Audit links are typed from/to references: evidence ids never mix with
+-- evidence-link ids (RG08-GAP-03 mirror/merge).
+CREATE TRIGGER rg08_audit_link_target_guard_insert BEFORE INSERT ON rg08_audit_link BEGIN
+  SELECT CASE
+    WHEN new.kind = 'MIRROR_OF_EVIDENCE' AND EXISTS (
+      SELECT 1 FROM rg08_evidence AS from_evidence
+      WHERE from_evidence.ledger_id = new.ledger_id AND from_evidence.evidence_id = new.from_id
+    ) AND EXISTS (
+      SELECT 1 FROM rg08_evidence AS to_evidence
+      WHERE to_evidence.ledger_id = new.ledger_id AND to_evidence.evidence_id = new.to_id
+    ) THEN NULL
+    WHEN new.kind = 'MERGED_INTO_EVIDENCE_LINK' AND EXISTS (
+      SELECT 1 FROM rg08_evidence_link AS from_link
+      WHERE from_link.ledger_id = new.ledger_id AND from_link.link_id = new.from_id
+    ) AND EXISTS (
+      SELECT 1 FROM rg08_evidence_link AS to_link
+      WHERE to_link.ledger_id = new.ledger_id AND to_link.link_id = new.to_id
+    ) THEN NULL
+    ELSE RAISE(ABORT, 'rg08 audit link target mismatch')
+  END;
+END;
+CREATE TRIGGER rg08_posting_semantic_formal_owner_guard_insert BEFORE INSERT ON rg08_posting_semantic BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM posting AS posting_row
+    JOIN transaction_version AS version_row
+      ON version_row.ledger_id = posting_row.ledger_id AND version_row.posting_set_id = posting_row.posting_set_id
+    JOIN ledger_transaction_current_version AS current_row
+      ON current_row.ledger_id = version_row.ledger_id AND current_row.transaction_id = version_row.transaction_id
+     AND current_row.current_version_id = version_row.version_id
+    JOIN ledger_transaction AS transaction_row
+      ON transaction_row.ledger_id = current_row.ledger_id AND transaction_row.transaction_id = current_row.transaction_id
+    WHERE posting_row.ledger_id = new.ledger_id AND posting_row.posting_id = new.posting_id
+      AND (
+        (new.role = 'RECEIVABLE' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'LEND')
+        OR (new.role = 'FUNDING_OUT' AND new.reconciliation_eligible = 1
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'LEND')
+        OR (new.role = 'DESTINATION_IN' AND new.reconciliation_eligible = 1
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'COLLECT')
+        OR (new.role = 'PRINCIPAL_OUT' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'COLLECT')
+        OR (new.role = 'INTEREST_OUT' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'COLLECT')
+      )
+  ) THEN RAISE(ABORT, 'rg08 posting formal ownership') END;
+END;
+CREATE TRIGGER rg08_reconciliation_current_guard_insert BEFORE INSERT ON rg08_posting_reconciliation BEGIN
+  SELECT CASE WHEN new.status != 'PENDING' OR new.latest_sequence != 1 OR NOT EXISTS (
+    SELECT 1 FROM rg08_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.role IN ('FUNDING_OUT', 'DESTINATION_IN')
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg08 reconciliation current ownership') END;
+END;
+CREATE TRIGGER rg08_reconciliation_current_guard_update BEFORE UPDATE ON rg08_posting_reconciliation BEGIN
+  SELECT CASE WHEN new.ledger_id = old.ledger_id AND new.posting_id = old.posting_id
+    AND old.status = 'PENDING' AND new.status = 'MATCHED'
+    AND new.latest_sequence = old.latest_sequence + 1
+    AND EXISTS (
+      SELECT 1 FROM rg08_reconciliation_history AS history
+      WHERE history.ledger_id = new.ledger_id AND history.posting_id = new.posting_id
+        AND history.status_sequence = new.latest_sequence
+        AND history.status = new.status
+        AND history.evidence_link_id IS NOT NULL
+    ) THEN NULL ELSE RAISE(ABORT, 'rg08 reconciliation current transition') END;
+END;
+CREATE TRIGGER rg08_reconciliation_current_guard_delete BEFORE DELETE ON rg08_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg08 reconciliation current immutable'); END;
+-- Evidence links are typed edges, not free-form labels. Keep the target, role,
+-- source lineage, and status consistent even when callers bypass the adapter.
+CREATE TRIGGER rg08_evidence_link_target_guard_insert BEFORE INSERT ON rg08_evidence_link BEGIN
+  SELECT CASE
+    WHEN new.target_kind = 'POSTING' AND new.role = 'FUNDING_ASSET_POSTING' AND new.status = 'MATCHED'
+      AND EXISTS (
+        SELECT 1 FROM rg08_posting_semantic AS semantic
+        WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.target_id
+          AND semantic.role = 'FUNDING_OUT' AND semantic.reconciliation_eligible = 1
+      ) THEN NULL
+    WHEN new.target_kind = 'POSTING' AND new.role = 'DESTINATION_ASSET_POSTING' AND new.status IN ('MATCHED', 'MERGED')
+      AND EXISTS (
+        SELECT 1 FROM rg08_posting_semantic AS semantic
+        WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.target_id
+          AND semantic.role = 'DESTINATION_IN' AND semantic.reconciliation_eligible = 1
+      ) THEN NULL
+    WHEN new.target_kind = 'POSITION' AND new.role = 'COUNTERPARTY_LENDING_RELATIONSHIP' AND new.status = 'SUPPORTED'
+      AND EXISTS (
+        SELECT 1 FROM rg08_position AS position_row
+        WHERE position_row.ledger_id = new.ledger_id AND position_row.position_id = new.target_id
+      ) THEN NULL
+    ELSE RAISE(ABORT, 'rg08 evidence link target mismatch')
+  END;
+END;
+CREATE TRIGGER rg08_evidence_link_lineage_guard_insert BEFORE INSERT ON rg08_evidence_link BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg08_evidence AS evidence
+    WHERE evidence.ledger_id = new.ledger_id AND evidence.evidence_id = new.evidence_id
+      AND evidence.source_id = new.source_id
+  ) THEN RAISE(ABORT, 'rg08 evidence link lineage mismatch') END;
+END;
+CREATE TRIGGER rg08_reconciliation_history_evidence_guard_insert BEFORE INSERT ON rg08_reconciliation_history WHEN new.evidence_link_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg08_evidence_link AS link
+    WHERE link.ledger_id = new.ledger_id AND link.link_id = new.evidence_link_id
+      AND link.target_kind = 'POSTING' AND link.target_id = new.posting_id
+      AND link.role IN ('FUNDING_ASSET_POSTING', 'DESTINATION_ASSET_POSTING')
+      AND link.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg08 reconciliation evidence target mismatch') END;
+END;
+-- Evidence subtypes are typed derivations of their source record kind and can
+-- never disagree with the persisted source.
+CREATE TRIGGER rg08_evidence_type_guard_insert BEFORE INSERT ON rg08_evidence BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg08_source_record AS source
+    WHERE source.ledger_id = new.ledger_id AND source.source_id = new.source_id
+      AND (
+        (source.kind = 'BANK_DEBIT' AND new.evidence_type = 'ASSET_DEBIT')
+        OR (source.kind = 'BANK_CREDIT' AND new.evidence_type = 'ASSET_CREDIT')
+        OR (source.kind = 'BANK_CREDIT_MIRROR' AND new.evidence_type = 'ASSET_CREDIT_MIRROR')
+        OR (source.kind = 'LENDING_AGREEMENT' AND new.evidence_type = 'LENDING_AGREEMENT')
+      )
+  ) THEN RAISE(ABORT, 'rg08 evidence type mismatch') END;
+END;
+-- A mirror source always references a different origin source (RG08-GAP-03).
+CREATE TRIGGER rg08_source_record_mirror_guard_insert BEFORE INSERT ON rg08_source_record WHEN new.kind = 'BANK_CREDIT_MIRROR' BEGIN
+  SELECT CASE WHEN new.mirror_of_source_id IS NULL OR new.mirror_of_source_id = new.source_id
+    THEN RAISE(ABORT, 'rg08 source mirror ownership') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg08_source_record AS origin
+    WHERE origin.ledger_id = new.ledger_id AND origin.source_id = new.mirror_of_source_id
+  ) THEN RAISE(ABORT, 'rg08 source mirror ownership') END;
+END;
+CREATE TRIGGER rg08_source_record_mirror_kind_guard_insert BEFORE INSERT ON rg08_source_record WHEN new.mirror_of_source_id IS NOT NULL BEGIN
+  SELECT CASE WHEN new.kind != 'BANK_CREDIT_MIRROR' THEN RAISE(ABORT, 'rg08 source mirror ownership') END;
+END;
