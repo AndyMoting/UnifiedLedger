@@ -15,11 +15,12 @@ Authorities
   projection helpers (Step 1 extension, read-only).  It is the validation gate.
 - ``schemas/golden-case-v2.schema.json``: contract 2.0.0 (read-only).
 
-Semantics (A1)
---------------
-- Imported candidates stay ``pending_confirmation``; confirmation is expressed
-  by the added confirmation entities and formal transactions, never by
-  flipping the imported candidate to confirmed.
+Canonical semantics
+-------------------
+- Imported candidates stay ``pending_confirmation`` until the separate real
+  transfer and explanation confirmations are both complete.  The explanation
+  confirmation then appends ``confirmed`` and preserves the adjustment plus
+  confirmation-request provenance on the candidate.
 - Money is exact decimal strings; timestamps preserve the v1 ``+08:00`` zone.
 - Root/state/derived-status/candidate-status IDs are deterministic v2
   identities (uuid5 via ``deterministic_v2_root_id`` /
@@ -40,36 +41,13 @@ Semantics (A1)
   bug that hard-coded ``asset-a`` and the first transfer's booking time into
   every account-statement source payload.
 
-RG09-S1-QA2-002 resolution (documented handling)
-------------------------------------------------
-Frozen v1 is internally inconsistent for the second-transfer postings: the
-v1 operation ``main_path.second_transfer_confirmation`` declares
-``formal_deltas.reconciliation_change_count: 0`` and creates no
-reconciliation entries, yet the v1 canonical state projections
-(``state-rg09-second-transfer-confirmed`` and all later states) carry
-``posting-transfer-a-rg09-remaining`` / ``posting-transfer-b-rg09-remaining``
-with ``pending_evidence``.  The v2 expected resolves this per root, matching
-each root's own v1 projection:
-
-- Main root (``rg09_main_path``): the second-transfer postings are
-  ``reconciliation_eligible: false`` and carry no reconciliation entries.
-  This follows the v1 operation-level delta (0 changes) and never invents
-  entries; the second-transfer transaction therefore has no
-  ``reconciliation_summary`` derived status.
-- Evidence root (``rg09_evidence_path``): the v1 ``evidence_path`` baseline
-  state data marks the remaining postings ``pending_evidence`` and the four
-  link operations change them to ``matched``, so this root models the
-  second-transfer postings as eligible and hand-seeds the two pending
-  reconciliation entries into the snapshot baseline (no RG-09 operation
-  creates them under the frozen v2 contract).  The four
-  ``link_real_posting_evidence`` operations then change exactly those seeded
-  entries to ``matched``; the final state matches the frozen
-  ``fully_explained`` reconciliation (all four postings matched,
-  ``target-observation-rg09: fully_reconciled``).
-
-Nothing is silently dropped or invented: each root carries exactly the
-reconciliation data its own frozen v1 projection shows, and the divergence
-is asserted by ``test_rg09_s1_qa2_002_resolution``.
+Second-transfer reconciliation closure
+--------------------------------------
+Every real posting of either ``account_transfer`` is reconciliation eligible,
+independent of execution root.  Confirmation creates the two pending posting
+reconciliations and later evidence changes them to matched.  The frozen v1
+operation-level zero count is a legacy delta undercount, not authority to
+change eligibility for the same economic posting across roots.
 """
 
 from __future__ import annotations
@@ -204,6 +182,7 @@ EXPECTED_ACCEPTED_COUNTS: dict[str, dict[str, tuple[int, int, int]]] = {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
         "posting_sets": (1, 0, 0), "postings": (2, 0, 0),
         "confirmations": (1, 0, 0), "sources": (1, 0, 0),
+        "posting_reconciliations": (2, 0, 0),
     },
     "confirm_second_explanation_allocation": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
@@ -226,7 +205,8 @@ EXPECTED_ACCEPTED_COUNTS: dict[str, dict[str, tuple[int, int, int]]] = {
     "confirm_imported_explanation_allocation": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
         "posting_sets": (1, 0, 0), "postings": (2, 0, 0),
-        "confirmations": (1, 0, 0), "domain_entities": (1, 0, 0),
+        "confirmations": (1, 0, 0), "candidates": (0, 1, 0),
+        "domain_entities": (1, 0, 0),
         "audit_links": (3, 0, 0),
     },
     "link_real_posting_evidence": {
@@ -617,16 +597,16 @@ def confirm_transfer_state(state: dict, root_id: str, v1: dict, runtime: dict, *
              if reconciliation_eligible is None else reconciliation_eligible},
         ],
     )
-    # RG09-S1-QA2-002: pending reconciliations are created only for the first
-    # real transfer.  v1 second-transfer-confirmation-rg09 declares
-    # reconciliation_change_count 0 and no new reconciliation entries, so the
-    # main root models the second-transfer postings as ineligible with no
-    # entries; the evidence root snapshot seeds them (see build_rg09_expected).
-    if not import_path and not second:
+    # Every real-account posting is reconciliation eligible in every root.
+    # The frozen v1 second-transfer operation-level zero count is a legacy
+    # delta undercount; its complete states and evidence path require these
+    # pending facts.
+    if not import_path:
+        suffix = "-remaining" if second else ""
         state["posting_reconciliations"].extend([
-            {"id": "reconciliation-transfer-a-rg09",
+            {"id": f"reconciliation-transfer-a-rg09{suffix}",
              "posting_id": destination_posting_id, "status": "pending"},
-            {"id": "reconciliation-transfer-b-rg09",
+            {"id": f"reconciliation-transfer-b-rg09{suffix}",
              "posting_id": source_posting_id, "status": "pending"},
         ])
     # v1 second-transfer-confirmation-rg09 intake creates one source record:
@@ -713,6 +693,18 @@ def confirm_explanation_state(state: dict, root_id: str, v1: dict, runtime: dict
             "from": {"kind": "domain_entity", "id": "adjustment-rg09"},
             "to": {"kind": "transaction", "id": "transaction-adjustment-rg09"},
             "payload": {},
+        })
+    if import_path:
+        candidate = next(
+            item for item in state["candidates"]
+            if item["source_ids"] == [input_value["source_id"]]
+        )
+        candidate["status_history"].append({
+            "id": mid(root_id, "candidate_status", "$.import_explanation", "2"),
+            "sequence": 2,
+            "status": "confirmed",
+            "adjustment_id": "adjustment-rg09",
+            "confirmation_request_id": input_value["request_id"],
         })
 
 
@@ -1057,11 +1049,15 @@ def build_rg09_expected() -> dict:
     second_transfer = clone(current, "second-transfer-confirmation-rg09",
                             "$.main_path.second_transfer_confirmation",
                             "second-transfer")
-    # RG09-S1-QA2-002 (main root): the frozen v1 op declares
-    # reconciliation_change_count 0, so the second-transfer postings stay
-    # reconciliation-ineligible and no reconciliation entries are created.
+    # The frozen v1 op declares reconciliation_change_count 0, but that is a
+    # legacy delta undercount (rg-09-mapping.md), not a statement about
+    # eligibility: both real-account postings of the second transfer are
+    # reconciliation eligible and receive pending posting reconciliations at
+    # transfer creation in every root. The strict v2 runtime oracle and the
+    # published artifact keep the canonical state; only the frozen v1
+    # operation-level zero count differs.
     confirm_transfer_state(second_transfer, main_root["id"], v1, runtime,
-                           second=True, reconciliation_eligible=False)
+                           second=True, reconciliation_eligible=True)
     refresh(second_transfer)
     refresh_statuses(second_transfer)
     accepted(op(main_root["id"], 0, "second-transfer-confirmation-rg09",
@@ -1195,13 +1191,8 @@ def build_rg09_expected() -> dict:
 
     # ---- Evidence path root: v1 baseline is the fully explained state with
     # all four transfer postings pending reconciliation, then four links and
-    # their retries.
-    #
-    # RG09-S1-QA2-002 (evidence root): v1 evidence_path baseline state data
-    # marks the second-transfer postings pending_evidence and the four link
-    # operations change them to matched.  The second-transfer reconciliation
-    # entries therefore exist only in this snapshot baseline; no RG-09
-    # operation creates them under the frozen v2 contract.
+    # their retries. The same transfer builders create the pending facts in
+    # every root; no evidence-root-only seed is permitted.
     evidence_root_id = deterministic_v2_root_id("RG-09", "$.evidence_path", "evidence")
     evidence_initial = empty_state(v1, evidence_root_id)
     preview_state(evidence_initial, evidence_root_id, runtime)
@@ -1212,12 +1203,6 @@ def build_rg09_expected() -> dict:
                            second=True, reconciliation_eligible=True)
     confirm_explanation_state(evidence_initial, evidence_root_id, v1, runtime,
                               second=True)
-    evidence_initial["posting_reconciliations"].extend([
-        {"id": "reconciliation-transfer-a-rg09-remaining",
-         "posting_id": "posting-transfer-a-rg09-remaining", "status": "pending"},
-        {"id": "reconciliation-transfer-b-rg09-remaining",
-         "posting_id": "posting-transfer-b-rg09-remaining", "status": "pending"},
-    ])
     refresh(evidence_initial)
     refresh_statuses(evidence_initial)
     evidence_root, current = root("rg09_evidence_path", "$.evidence_path",
@@ -1488,13 +1473,14 @@ class RG09GoldenV2ExpectedTests(unittest.TestCase):
             self.assertEqual(operation["operation_class"], cls,
                              f"{operation_id} ({source_path})")
 
-    def test_a1_semantics_imported_candidate_and_remaining_reconciliation(self):
+    def test_canonical_imported_candidate_and_remaining_reconciliation(self):
         v1 = json.loads(V1_PATH.read_text(encoding="utf-8"))
         states = {item["id"]: item for item in self.expected["states"]}
         by_id = {operation["id"]: operation for operation in self.expected["operations"]}
 
-        # A1: the imported candidate stays pending_confirmation across both
-        # import confirmations and in the final import state.
+        # The separate transfer confirmation does not complete the combined
+        # candidate. The explanation confirmation does, and records both
+        # provenance owners.
         explanation = by_id["import-explanation-confirmation-rg09"]
         final_import_state = states[explanation["result_state_id"]]
         candidate = next(
@@ -1502,10 +1488,15 @@ class RG09GoldenV2ExpectedTests(unittest.TestCase):
             if item["id"] == "candidate-import-transfer-rg09"
         )
         self.assertEqual([event["status"] for event in candidate["status_history"]],
-                         ["pending_confirmation"])
-        for operation_id in ("import-transfer-confirmation-rg09",
-                             "import-explanation-confirmation-rg09"):
-            self.assertEqual(counts(by_id[operation_id], "candidates"), (0, 0, 0))
+                         ["pending_confirmation", "confirmed"])
+        confirmed = candidate["status_history"][-1]
+        self.assertEqual(confirmed["adjustment_id"], "adjustment-rg09")
+        self.assertEqual(
+            confirmed["confirmation_request_id"],
+            "request-import-allocation-confirm-rg09",
+        )
+        self.assertEqual(counts(by_id["import-transfer-confirmation-rg09"], "candidates"), (0, 0, 0))
+        self.assertEqual(counts(explanation, "candidates"), (0, 1, 0))
 
         # Remaining-adjustment reconciliation matches v1 where applicable:
         # explanation_status is derived from original_delta minus the
@@ -1569,39 +1560,34 @@ class RG09GoldenV2ExpectedTests(unittest.TestCase):
             if operation["outcome"]["status"] == "rejected":
                 self.assertEqual(operation["returned_ids"], [])
 
-    def test_rg09_s1_qa2_002_resolution(self):
+    def test_second_transfer_reconciliation_policy_is_root_invariant(self):
         v1 = json.loads(V1_PATH.read_text(encoding="utf-8"))
         states = {item["id"]: item for item in self.expected["states"]}
         by_id = {operation["id"]: operation for operation in self.expected["operations"]}
         main_root = by_id["second-transfer-confirmation-rg09"]["root_id"]
 
-        # v1 anchor: the second-transfer confirmation op declares zero
-        # reconciliation changes and no new reconciliation entries.
+        # The v1 operation-level zero is retained as evidence of a legacy
+        # undercount, while canonical state follows the real-posting rule.
         v1_second_transfer = v1["main_path"]["second_transfer_confirmation"]
         self.assertEqual(
             v1_second_transfer["expected"]["formal_deltas"]["reconciliation_change_count"],
             0,
         )
-        self.assertEqual(
-            counts(by_id["second-transfer-confirmation-rg09"], "posting_reconciliations"),
-            (0, 0, 0),
-        )
-        # Main root: the second-transfer postings are reconciliation-ineligible
-        # and carry no entries anywhere in the root.
+        self.assertEqual(counts(by_id["second-transfer-confirmation-rg09"], "posting_reconciliations"), (2, 0, 0))
+        # Main root: second-transfer postings are eligible and pending from
+        # their creation onward.
         for state in self.expected["states"]:
             if state["root_id"] != main_root:
                 continue
             for posting in state["postings"]:
                 if posting["id"] in {"posting-transfer-a-rg09-remaining",
                                      "posting-transfer-b-rg09-remaining"}:
-                    self.assertFalse(posting["reconciliation_eligible"])
-            self.assertNotIn("posting-transfer-a-rg09-remaining",
-                             {item["posting_id"] for item in state["posting_reconciliations"]})
-            self.assertNotIn("posting-transfer-b-rg09-remaining",
-                             {item["posting_id"] for item in state["posting_reconciliations"]})
+                    self.assertTrue(posting["reconciliation_eligible"])
+            if any(item["id"] == "posting-transfer-a-rg09-remaining" for item in state["postings"]):
+                self.assertTrue({"posting-transfer-a-rg09-remaining", "posting-transfer-b-rg09-remaining"} <=
+                                {item["posting_id"] for item in state["posting_reconciliations"]})
 
-        # Evidence root: the baseline snapshot carries the seeded pending
-        # reconciliations for the second-transfer postings, and the link
+        # Evidence root carries the same pending reconciliations, and the link
         # operations change exactly them (plus the first-transfer entries) to
         # matched.  Final state matches the frozen fully_explained
         # reconciliation: all four postings matched, observation

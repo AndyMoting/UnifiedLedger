@@ -146,7 +146,7 @@
 - 证据角色：`target_balance_observation`、`real_account_posting`。
 - 审计角色：`adjustment_transaction`、`explanation_transaction`、`allocation_reversal`。
 - 业务 reconciliation 字段描述目标余额解释进度，不是 posting reconciliation 记录。
-- 风险：解释操作应归类为 reversal 还是 adjustment，尚未决定。
+- 解释确认在 v2 operation graph 中固定为 `operation_class=reversal`；它创建独立 `balance_adjustment_reversal`，不改写原调整。历史 924 个 amendment paths 由 `rg-09-closure-overlay.json` 关闭，acceptance 仍待独立 closure review。
 
 ### RG-10 储值充值与赠送
 

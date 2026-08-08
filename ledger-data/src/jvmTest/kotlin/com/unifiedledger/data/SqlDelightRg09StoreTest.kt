@@ -383,13 +383,12 @@ class SqlDelightRg09StoreTest {
                           ledger_id, adjustment_id, transaction_id, observation_id,
                           target_account_id, equity_account_id, currency_code, currency_precision,
                           target_observed_at, target_observed_at_text, replayed_amount_minor,
-                          target_amount_minor, original_delta_minor, explained_amount_minor,
-                          remaining_amount_minor, state
+                          target_amount_minor, original_delta_minor
                         ) VALUES (
                           'ledger-rg09', 'adjustment-invalid-owner-rg09', 'transaction-transfer-rg09',
                           'observation-target-rg09', 'asset-a', 'equity-balance-adjustments', 'CNY', 2,
                           '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00', 10000,
-                          13000, 3000, 0, 3000, 'OPEN'
+                          13000, 3000
                         )
                     """.trimIndent(),
                     0,

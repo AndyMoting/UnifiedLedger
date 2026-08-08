@@ -4455,9 +4455,6 @@ CREATE TABLE rg09_balance_adjustment (
   replayed_amount_minor INTEGER NOT NULL,
   target_amount_minor INTEGER NOT NULL,
   original_delta_minor INTEGER NOT NULL CHECK (original_delta_minor != 0),
-  explained_amount_minor INTEGER NOT NULL CHECK (explained_amount_minor >= 0),
-  remaining_amount_minor INTEGER NOT NULL CHECK (remaining_amount_minor >= 0),
-  state TEXT NOT NULL CHECK (state IN ('OPEN', 'PARTIALLY_EXPLAINED', 'FULLY_EXPLAINED')),
   UNIQUE (ledger_id, adjustment_id),
   FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -4977,8 +4974,8 @@ INSERT INTO rg09_balance_adjustment(
   ledger_id, adjustment_id, transaction_id, observation_id, target_account_id,
   equity_account_id, currency_code, currency_precision, target_observed_at,
   target_observed_at_text, replayed_amount_minor, target_amount_minor,
-  original_delta_minor, explained_amount_minor, remaining_amount_minor, state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  original_delta_minor
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 insertRg09AdjustmentHistory:
 INSERT INTO rg09_adjustment_history(

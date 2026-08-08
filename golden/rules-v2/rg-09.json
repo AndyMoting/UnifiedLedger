@@ -458,6 +458,13 @@
               "id": "e7dd71b8-6369-5694-a41c-44b386c7a168",
               "sequence": 1,
               "status": "pending_confirmation"
+            },
+            {
+              "id": "d4c30c44-4be0-5646-934a-1a67d8909d05",
+              "sequence": 2,
+              "status": "confirmed",
+              "adjustment_id": "adjustment-rg09",
+              "confirmation_request_id": "request-import-allocation-confirm-rg09"
             }
           ]
         }
@@ -726,7 +733,7 @@
           "target_kind": "candidate",
           "target_id": "candidate-import-transfer-rg09",
           "status_name": "confirmation_status",
-          "value": "pending_confirmation"
+          "value": "confirmed"
         },
         {
           "id": "f469cd8e-6ed2-5038-a58c-e4ee87e35981",
@@ -1828,7 +1835,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -1837,7 +1844,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -2129,6 +2136,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -2251,6 +2268,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -2554,7 +2578,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -2563,7 +2587,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -2855,6 +2879,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -2977,6 +3011,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -9698,6 +9739,13 @@
               "id": "e7dd71b8-6369-5694-a41c-44b386c7a168",
               "sequence": 1,
               "status": "pending_confirmation"
+            },
+            {
+              "id": "d4c30c44-4be0-5646-934a-1a67d8909d05",
+              "sequence": 2,
+              "status": "confirmed",
+              "adjustment_id": "adjustment-rg09",
+              "confirmation_request_id": "request-import-allocation-confirm-rg09"
             }
           ]
         }
@@ -9966,7 +10014,7 @@
           "target_kind": "candidate",
           "target_id": "candidate-import-transfer-rg09",
           "status_name": "confirmation_status",
-          "value": "pending_confirmation"
+          "value": "confirmed"
         },
         {
           "id": "f469cd8e-6ed2-5038-a58c-e4ee87e35981",
@@ -10282,7 +10330,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -10291,7 +10339,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -10583,6 +10631,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -10705,6 +10763,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -17964,7 +18029,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -17973,7 +18038,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -18265,6 +18330,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -18387,6 +18462,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -22547,7 +22629,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -22556,7 +22638,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -22848,6 +22930,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -22970,6 +23062,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -23860,6 +23959,13 @@
               "id": "e7dd71b8-6369-5694-a41c-44b386c7a168",
               "sequence": 1,
               "status": "pending_confirmation"
+            },
+            {
+              "id": "d4c30c44-4be0-5646-934a-1a67d8909d05",
+              "sequence": 2,
+              "status": "confirmed",
+              "adjustment_id": "adjustment-rg09",
+              "confirmation_request_id": "request-import-allocation-confirm-rg09"
             }
           ]
         }
@@ -24128,7 +24234,7 @@
           "target_kind": "candidate",
           "target_id": "candidate-import-transfer-rg09",
           "status_name": "confirmation_status",
-          "value": "pending_confirmation"
+          "value": "confirmed"
         },
         {
           "id": "f469cd8e-6ed2-5038-a58c-e4ee87e35981",
@@ -24444,7 +24550,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -24453,7 +24559,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -24745,6 +24851,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -24867,6 +24983,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -25628,7 +25751,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -25637,7 +25760,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -25929,6 +26052,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -26051,6 +26184,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -26383,6 +26523,13 @@
               "id": "e7dd71b8-6369-5694-a41c-44b386c7a168",
               "sequence": 1,
               "status": "pending_confirmation"
+            },
+            {
+              "id": "d4c30c44-4be0-5646-934a-1a67d8909d05",
+              "sequence": 2,
+              "status": "confirmed",
+              "adjustment_id": "adjustment-rg09",
+              "confirmation_request_id": "request-import-allocation-confirm-rg09"
             }
           ]
         }
@@ -26651,7 +26798,7 @@
           "target_kind": "candidate",
           "target_id": "candidate-import-transfer-rg09",
           "status_name": "confirmation_status",
-          "value": "pending_confirmation"
+          "value": "confirmed"
         },
         {
           "id": "f469cd8e-6ed2-5038-a58c-e4ee87e35981",
@@ -26967,7 +27114,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -26976,7 +27123,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-reversal-a-rg09-remaining",
@@ -27268,6 +27415,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -27390,6 +27547,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -30059,7 +30223,7 @@
           "amount": "10.00",
           "currency": "CNY",
           "role": "transfer_principal_in",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         },
         {
           "id": "posting-transfer-b-rg09-remaining",
@@ -30068,7 +30232,7 @@
           "amount": "-10.00",
           "currency": "CNY",
           "role": "transfer_principal_out",
-          "reconciliation_eligible": false
+          "reconciliation_eligible": true
         }
       ],
       "sources": [
@@ -30280,6 +30444,16 @@
           "id": "reconciliation-transfer-b-rg09",
           "posting_id": "posting-transfer-b-rg09",
           "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-a-rg09-remaining",
+          "posting_id": "posting-transfer-a-rg09-remaining",
+          "status": "pending"
+        },
+        {
+          "id": "reconciliation-transfer-b-rg09-remaining",
+          "posting_id": "posting-transfer-b-rg09-remaining",
+          "status": "pending"
         }
       ],
       "balances": [
@@ -30402,6 +30576,13 @@
           "id": "371c3a9e-c46a-528f-9e7c-a1e2024e6621",
           "target_kind": "transaction",
           "target_id": "transaction-transfer-rg09",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "12719a04-58d8-51cb-8607-c37b40292435",
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
           "status_name": "reconciliation_summary",
           "value": "pending"
         }
@@ -31276,6 +31457,13 @@
           "status_name": "verification_status",
           "before": "balanced_with_unexplained_adjustment",
           "after": "difference_pending_explanation_confirmation"
+        },
+        {
+          "target_kind": "transaction",
+          "target_id": "transaction-transfer-rg09-remaining",
+          "status_name": "reconciliation_summary",
+          "before": null,
+          "after": "pending"
         }
       ],
       "deltas": {
@@ -31364,7 +31552,10 @@
             "removed_ids": []
           },
           "posting_reconciliations": {
-            "added_ids": [],
+            "added_ids": [
+              "reconciliation-transfer-a-rg09-remaining",
+              "reconciliation-transfer-b-rg09-remaining"
+            ],
             "changed_ids": [],
             "removed_ids": []
           }
@@ -31417,6 +31608,15 @@
               },
               "before": "balanced_with_unexplained_adjustment",
               "after": "difference_pending_explanation_confirmation"
+            },
+            {
+              "key": {
+                "kind": "transaction",
+                "target_id": "transaction-transfer-rg09-remaining",
+                "status_name": "reconciliation_summary"
+              },
+              "before": null,
+              "after": "pending"
             }
           ]
         }
@@ -36111,6 +36311,13 @@
       },
       "status_changes": [
         {
+          "target_kind": "candidate",
+          "target_id": "candidate-import-transfer-rg09",
+          "status_name": "confirmation_status",
+          "before": "pending_confirmation",
+          "after": "confirmed"
+        },
+        {
           "target_kind": "domain_entity",
           "target_id": "adjustment-rg09",
           "status_name": "explanation_status",
@@ -36173,7 +36380,9 @@
           },
           "candidates": {
             "added_ids": [],
-            "changed_ids": [],
+            "changed_ids": [
+              "candidate-import-transfer-rg09"
+            ],
             "removed_ids": []
           },
           "confirmations": {
@@ -36278,6 +36487,15 @@
             }
           ],
           "derived_statuses": [
+            {
+              "key": {
+                "kind": "candidate",
+                "target_id": "candidate-import-transfer-rg09",
+                "status_name": "confirmation_status"
+              },
+              "before": "pending_confirmation",
+              "after": "confirmed"
+            },
             {
               "key": {
                 "kind": "domain_entity",

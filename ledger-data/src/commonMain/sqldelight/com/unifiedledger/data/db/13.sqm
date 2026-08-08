@@ -1,0 +1,50 @@
+-- Schema v13 -> v14: remove duplicate RG-09 adjustment projections.
+-- Before changing the table, fail atomically if the append-only allocation
+-- and history owners cannot reproduce the stored v13 projection.
+CREATE TABLE rg09_v14_migration_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+
+INSERT INTO rg09_v14_migration_guard(value)
+SELECT 1
+WHERE EXISTS (
+  SELECT 1
+  FROM rg09_balance_adjustment AS adjustment
+  WHERE adjustment.explained_amount_minor != (
+      SELECT COALESCE(SUM(allocation.amount_minor), 0)
+      FROM rg09_allocation AS allocation
+      WHERE allocation.ledger_id = adjustment.ledger_id
+        AND allocation.adjustment_id = adjustment.adjustment_id
+    )
+    OR adjustment.remaining_amount_minor !=
+      CASE
+        WHEN adjustment.original_delta_minor < 0 THEN -adjustment.original_delta_minor
+        ELSE adjustment.original_delta_minor
+      END - adjustment.explained_amount_minor
+    OR adjustment.remaining_amount_minor < 0
+    OR adjustment.state != CASE
+      WHEN adjustment.explained_amount_minor = 0 THEN 'OPEN'
+      WHEN adjustment.remaining_amount_minor = 0 THEN 'FULLY_EXPLAINED'
+      ELSE 'PARTIALLY_EXPLAINED'
+    END
+    OR NOT EXISTS (
+      SELECT 1
+      FROM rg09_adjustment_history AS history
+      WHERE history.ledger_id = adjustment.ledger_id
+        AND history.adjustment_id = adjustment.adjustment_id
+        AND history.history_sequence = (
+          SELECT MAX(latest.history_sequence)
+          FROM rg09_adjustment_history AS latest
+          WHERE latest.ledger_id = adjustment.ledger_id
+            AND latest.adjustment_id = adjustment.adjustment_id
+        )
+        AND history.remaining_amount_minor = adjustment.remaining_amount_minor
+        AND history.state = adjustment.state
+    )
+);
+
+DROP TABLE rg09_v14_migration_guard;
+
+ALTER TABLE rg09_balance_adjustment DROP COLUMN explained_amount_minor;
+ALTER TABLE rg09_balance_adjustment DROP COLUMN remaining_amount_minor;
+ALTER TABLE rg09_balance_adjustment DROP COLUMN state;

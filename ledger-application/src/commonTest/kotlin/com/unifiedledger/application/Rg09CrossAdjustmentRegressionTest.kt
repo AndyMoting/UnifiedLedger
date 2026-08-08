@@ -89,11 +89,14 @@ class Rg09CrossAdjustmentRegressionTest {
         )
         assertAdjustment(snapshot, "adjustment-rg09", "open", 0L, 3_000L)
 
-        // transfer_confirmation -> balanced_with_unexplained_adjustment (state-rg09-transfer-confirmed)
+        // transfer_confirmation -> difference_pending_explanation_confirmation: the confirmed
+        // real transfer is eligible for posting reconciliation immediately, before allocation.
         assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(main[2].operation))
         snapshot = runtime.snapshot()
-        assertEquals("balanced_with_unexplained_adjustment", observationState(snapshot))
+        assertEquals("difference_pending_explanation_confirmation", observationState(snapshot))
         assertEquals("30.00", snapshot.reconciliation.getValue("remaining_adjustment"))
+        assertEquals("pending_evidence", snapshot.reconciliation.getValue("posting-transfer-a-rg09"))
+        assertEquals("pending_evidence", snapshot.reconciliation.getValue("posting-transfer-b-rg09"))
 
         // explanation_confirmation -> balanced_with_unexplained_adjustment with the first
         // transfer's postings pending evidence (state-rg09-partially-explained)
@@ -172,9 +175,10 @@ class Rg09CrossAdjustmentRegressionTest {
         scenario.assertObservationState(b, "balanced_with_unexplained_adjustment")
         scenario.assertObservationState(a, "balanced_with_unexplained_adjustment")
 
-        // Real transfer T_A (20.00 into asset-a): unallocated, so no adjustment flips state.
+        // Real transfer T_A (20.00 into asset-a): A immediately awaits explicit allocation;
+        // B is unaffected because its target posting direction is wrong.
         val transferA = scenario.transfer("reg-transfer-a", AccountId("asset-a"), AccountId("asset-b"), 2_000L)
-        scenario.assertObservationState(a, "balanced_with_unexplained_adjustment")
+        scenario.assertObservationState(a, "difference_pending_explanation_confirmation")
         scenario.assertObservationState(b, "balanced_with_unexplained_adjustment")
 
         // Allocate T_A to adjustment A only; T_A's postings become pending_evidence.
@@ -214,7 +218,7 @@ class Rg09CrossAdjustmentRegressionTest {
         // fully_reconciled even though T_B is unallocated.
         val transferB = scenario.transfer("reg-transfer-b", AccountId("asset-b"), AccountId("asset-a"), 8_000L)
         scenario.assertObservationState(a, "fully_reconciled")
-        scenario.assertObservationState(b, "balanced_with_unexplained_adjustment")
+        scenario.assertObservationState(b, "difference_pending_explanation_confirmation")
 
         // Allocate T_B to B: B is fully explained with its own required postings pending.
         // A's already-matched postings must not satisfy B (IQR-006), and B's pending postings
@@ -255,12 +259,11 @@ class Rg09CrossAdjustmentRegressionTest {
         scenario.assertAdjustment(a, "partially_explained", 2_000L, 1_000L)
         scenario.assertObservationState(a, "balanced_with_unexplained_adjustment")
 
-        // Unallocated transfer on asset-b: outside A's target-account scope (and its asset-a
-        // posting has the wrong direction). A must stay balanced; B is unexplained so it
-        // stays balanced too (explainedAmount == 0 guard).
+        // Unallocated transfer into asset-b is outside A's target-account scope (and its
+        // asset-a posting has the wrong direction), while B immediately awaits allocation.
         scenario.transfer("reg-scope-b", AccountId("asset-b"), AccountId("asset-a"), 1_000L)
         scenario.assertObservationState(a, "balanced_with_unexplained_adjustment")
-        scenario.assertObservationState(b, "balanced_with_unexplained_adjustment")
+        scenario.assertObservationState(b, "difference_pending_explanation_confirmation")
 
         // External ACCOUNT_TRANSFER into asset-a that is effective AFTER A's target observed
         // time: inside A's account/currency/direction but outside its effective-at range.
@@ -288,7 +291,7 @@ class Rg09CrossAdjustmentRegressionTest {
         // and effective-at scope flips A to difference_pending_explanation_confirmation.
         scenario.transfer("reg-scope-in", AccountId("asset-a"), AccountId("asset-b"), 1_000L)
         scenario.assertObservationState(a, "difference_pending_explanation_confirmation")
-        scenario.assertObservationState(b, "balanced_with_unexplained_adjustment")
+        scenario.assertObservationState(b, "difference_pending_explanation_confirmation")
         scenario.assertAdjustment(a, "partially_explained", 2_000L, 1_000L)
         scenario.assertAdjustment(b, "open", 0L, 8_000L)
     }

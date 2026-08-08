@@ -1144,7 +1144,7 @@ class Rg09Runtime(
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_AMOUNT)
         }
         formalTransactions += transferRecord
-        if (adjustments.any { it.explainedAmount.minorUnits > 0L }) {
+        if (importedSource == null) {
             postingReconciliation[operation.ids.sourcePostingId.value] = "pending_evidence"
             postingReconciliation[operation.ids.destinationPostingId.value] = "pending_evidence"
         }
@@ -1671,7 +1671,7 @@ class Rg09Runtime(
                     candidate?.status == "pending_confirmation" && replayed != candidate.replayedAmount -> "stale_preview"
                     candidate?.status == "pending_confirmation" -> "difference_pending_confirmation"
                     adjustment == null -> "difference_pending_confirmation"
-                    adjustment.explainedAmount.minorUnits != 0L && hasUnallocatedRealTransfer ->
+                    hasUnallocatedRealTransfer ->
                         "difference_pending_explanation_confirmation"
                     adjustment.remainingAmount.minorUnits != 0L -> "balanced_with_unexplained_adjustment"
                     fullyReconciled -> "fully_reconciled"

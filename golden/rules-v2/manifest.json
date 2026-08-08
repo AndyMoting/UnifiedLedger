@@ -133,13 +133,13 @@
         "full_state_comparison": true,
         "status": "approved expected output independently reviewed and explicitly approved"
       },
-      "canonical_sha256": "301446dbab5909a6c0ca0e879ff866339fd1ef18bfdb69f8a3234bcb567da0c4",
-      "expected_byte_sha256": "0e164ff7adf9fe9f84aa223f9e8f87184d8e13f97b91b7e61a5899b5397c2902",
+      "canonical_sha256": "6950831a88a4dc2698c57823522fc2cb4e16eb61a7df1612b61fe16580442164",
+      "expected_byte_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
       "expected_path": "docs/migrations/golden-v2/rg-09-expected.json",
       "hashes": {
-        "canonical_sha256": "301446dbab5909a6c0ca0e879ff866339fd1ef18bfdb69f8a3234bcb567da0c4",
-        "expected_sha256": "0e164ff7adf9fe9f84aa223f9e8f87184d8e13f97b91b7e61a5899b5397c2902",
-        "output_sha256": "0e164ff7adf9fe9f84aa223f9e8f87184d8e13f97b91b7e61a5899b5397c2902",
+        "canonical_sha256": "6950831a88a4dc2698c57823522fc2cb4e16eb61a7df1612b61fe16580442164",
+        "expected_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
+        "output_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
         "source_sha256": "0fb9e57cd3e4fc74a8ca26ef4ca993ce09c44dfa42620d05d7898d5735cea519"
       },
       "object_counts": {
