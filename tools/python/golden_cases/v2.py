@@ -213,6 +213,7 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "postings": (2, 0, 0),
         "confirmations": (1, 0, 0),
         "sources": (1, 0, 0),
+        "posting_reconciliations": (2, 0, 0),
     },
     "confirm_second_explanation_allocation": {
         "transactions": (1, 0, 0),
@@ -247,6 +248,7 @@ _ACCEPTED_ACTION_ENTITY_COUNTS = {
         "posting_sets": (1, 0, 0),
         "postings": (2, 0, 0),
         "confirmations": (1, 0, 0),
+        "candidates": (0, 1, 0),
         "domain_entities": (1, 0, 0),
         "audit_links": (3, 0, 0),
     },
@@ -3207,10 +3209,10 @@ def _validate_references(
             continue
         if candidate["type"] == "omitted_real_transaction_and_adjustment_explanation":
             statuses = [event["status"] for event in history]
-            if statuses != ["pending_confirmation"]:
+            if statuses not in (["pending_confirmation"], ["pending_confirmation", "confirmed"]):
                 _fail(
                     candidate_path + ".status_history",
-                    "imported transfer candidate must remain pending under the frozen v1 contract",
+                    "imported transfer candidate must be pending or append one confirmed status",
                 )
             if len(candidate["source_ids"]) != 1:
                 _fail(
@@ -3224,11 +3226,16 @@ def _validate_references(
                     "must reference an imported_transfer_candidate source",
                 )
             source_payload = source["payload"]
-            if payload["proposed_transaction_id"] is not None:
-                _fail(
-                    candidate_path + ".payload.proposed_transaction_id",
-                    "pending imported candidate cannot bind a transaction",
-                )
+            confirmed = statuses[-1] == "confirmed"
+            if confirmed:
+                event = history[-1]
+                adjustment = domain_entities.get(event.get("adjustment_id"))
+                if adjustment is None or adjustment["type"] != "balance_adjustment":
+                    _fail(candidate_path + ".status_history", "confirmed imported candidate must retain its adjustment provenance")
+                if not isinstance(event.get("confirmation_request_id"), str):
+                    _fail(candidate_path + ".status_history", "confirmed imported candidate must retain its confirmation request")
+            elif payload["proposed_transaction_id"] is not None:
+                _fail(candidate_path + ".payload.proposed_transaction_id", "pending imported candidate cannot bind a transaction")
             for field in ("proposed_target_account_id", "proposed_counter_account_id"):
                 if payload[field] not in accounts:
                     _fail(candidate_path + f".payload.{field}", "dangling account reference")
@@ -8538,7 +8545,7 @@ def _validate_rg09_action_effects(
             operation_path + ".deltas.entity_changes.confirmations",
             "RG-09 confirmation must own the created transaction version",
         )
-    if action in {"confirm_imported_real_transfer", "confirm_imported_explanation_allocation"}:
+    if action == "confirm_imported_real_transfer":
         candidate_changes = expected_entities["candidates"]
         if (
             candidate_changes["added_ids"]
@@ -8547,8 +8554,20 @@ def _validate_rg09_action_effects(
         ):
             _fail(
                 operation_path + ".deltas.entity_changes.candidates",
-                "imported candidate must stay pending_confirmation under the frozen v1 contract",
+                "real-transfer confirmation alone must leave the imported candidate pending",
             )
+    if action == "confirm_imported_explanation_allocation":
+        candidates = changed("candidates")
+        if len(candidates) != 1:
+            _fail(operation_path + ".deltas.entity_changes.candidates", "complete imported explanation must confirm exactly one candidate")
+        candidate = candidates[0]
+        event = candidate["status_history"][-1]
+        if (
+            [item["status"] for item in candidate["status_history"]] != ["pending_confirmation", "confirmed"]
+            or event.get("adjustment_id") != operation["input"].get("adjustment_id", "adjustment-rg09")
+            or event.get("confirmation_request_id") != operation["input"]["request_id"]
+        ):
+            _fail(operation_path + ".deltas.entity_changes.candidates", "complete imported explanation must own adjustment and request provenance")
     if action in {"confirm_imported_explanation_allocation", "confirm_second_explanation_allocation"}:
         allocation = added_item("domain_entities", {
             item["id"]: item for item in result["domain_entities"]

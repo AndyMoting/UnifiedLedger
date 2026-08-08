@@ -115,12 +115,13 @@ EXPECTED_ACCEPTED_COUNTS: dict[str, dict[str, tuple[int, int, int]]] = {
         "confirmations": (1, 0, 0), "domain_entities": (1, 0, 0),
         "audit_links": (2, 0, 0),
     },
-    # v1 second-transfer-confirmation-rg09: transactions/versions/sets/postings
-    # (1/1/1/2), confirmations (1), sources (1), NO posting_reconciliations.
+    # v1 undercounts the second transfer's reconciliation delta as zero, but
+    # its complete states contain both pending real-posting facts.
     "confirm_second_real_transfer": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
         "posting_sets": (1, 0, 0), "postings": (2, 0, 0),
         "confirmations": (1, 0, 0), "sources": (1, 0, 0),
+        "posting_reconciliations": (2, 0, 0),
     },
     # v1 second-explanation-confirmation-rg09: audit_links (3, 0, 0),
     # allocations (1), reversal (1), NO posting_reconciliations.
@@ -145,7 +146,8 @@ EXPECTED_ACCEPTED_COUNTS: dict[str, dict[str, tuple[int, int, int]]] = {
     "confirm_imported_explanation_allocation": {
         "transactions": (1, 0, 0), "transaction_versions": (1, 0, 0),
         "posting_sets": (1, 0, 0), "postings": (2, 0, 0),
-        "confirmations": (1, 0, 0), "domain_entities": (1, 0, 0),
+        "confirmations": (1, 0, 0), "candidates": (0, 1, 0),
+        "domain_entities": (1, 0, 0),
         "audit_links": (3, 0, 0),
     },
     "link_real_posting_evidence": {
@@ -522,10 +524,7 @@ def confirm_transfer_state(state: dict, root_id: str, *, second: bool = False,
              if reconciliation_eligible is None else reconciliation_eligible},
         ],
     )
-    # The frozen v2 projection creates pending reconciliations only for the
-    # first real transfer (v1 second-transfer-confirmation-rg09 declares
-    # reconciliation_change_count 0 and no new reconciliation entries).
-    if not import_path and not second:
+    if not import_path:
         state["posting_reconciliations"].extend([
             {"id": f"reconciliation-transfer-a-rg09{suffix}",
              "posting_id": f"posting-transfer-a-rg09{suffix}", "status": "pending"},
@@ -610,6 +609,18 @@ def confirm_explanation_state(state: dict, root_id: str, *, second: bool = False
             "from": {"kind": "domain_entity", "id": "adjustment-rg09"},
             "to": {"kind": "transaction", "id": "transaction-adjustment-rg09"},
             "payload": {},
+        })
+    if import_path:
+        candidate = next(
+            item for item in state["candidates"]
+            if item["source_ids"] == ["source-import-transfer-rg09"]
+        )
+        candidate["status_history"].append({
+            "id": mid(root_id, "candidate_status", "$.import_explanation", "2"),
+            "sequence": 2,
+            "status": "confirmed",
+            "adjustment_id": "adjustment-rg09",
+            "confirmation_request_id": "request-import-allocation-confirm-rg09",
         })
 
 
@@ -943,7 +954,7 @@ def build_case() -> dict:
                             "second-transfer")
     second_transfer["as_of_operation_id"] = "second-transfer-confirmation-rg09"
     confirm_transfer_state(second_transfer, main_root["id"], second=True,
-                           reconciliation_eligible=False)
+                           reconciliation_eligible=True)
     refresh(second_transfer)
     refresh_statuses(second_transfer)
     accepted(op(main_root["id"], 0, "second-transfer-confirmation-rg09",
@@ -1079,9 +1090,7 @@ def build_case() -> dict:
 
     # ---- Evidence path root: v1 baseline is the fully explained state with all
     # four transfer postings pending reconciliation, then four links and their
-    # retries.  The second-transfer reconciliation entries exist only in this
-    # snapshot baseline (v1 evidence_path changes them to matched); no RG-09
-    # operation creates them under the frozen v2 contract.
+    # retries. The same transfer builder creates those facts in every root.
     evidence_root_id = deterministic_v2_root_id("RG-09", "$.evidence_path", "evidence")
     evidence_initial = empty_state(evidence_root_id, None)
     preview_state(evidence_initial, evidence_root_id)
@@ -1091,12 +1100,6 @@ def build_case() -> dict:
     confirm_transfer_state(evidence_initial, evidence_root_id, second=True,
                            reconciliation_eligible=True)
     confirm_explanation_state(evidence_initial, evidence_root_id, second=True)
-    evidence_initial["posting_reconciliations"].extend([
-        {"id": "reconciliation-transfer-a-rg09-remaining",
-         "posting_id": "posting-transfer-a-rg09-remaining", "status": "pending"},
-        {"id": "reconciliation-transfer-b-rg09-remaining",
-         "posting_id": "posting-transfer-b-rg09-remaining", "status": "pending"},
-    ])
     refresh(evidence_initial)
     refresh_statuses(evidence_initial)
     evidence_root, current = root("rg09_evidence_path", "$.evidence_path",
@@ -1350,13 +1353,13 @@ class RG09FiftyOperationTests(unittest.TestCase):
                     self.assertEqual(counts(operation, collection), (0, 0, 0),
                                      f"{operation['id']} {collection}")
 
-    def test_second_transfer_requires_source_and_no_reconciliations(self):
+    def test_second_transfer_requires_source_and_pending_reconciliations(self):
         operation = next(
             item for item in self.case["operations"]
             if item["id"] == "second-transfer-confirmation-rg09"
         )
         self.assertEqual(counts(operation, "sources"), (1, 0, 0))
-        self.assertEqual(counts(operation, "posting_reconciliations"), (0, 0, 0))
+        self.assertEqual(counts(operation, "posting_reconciliations"), (2, 0, 0))
         self.assertEqual(counts(operation, "transactions"), (1, 0, 0))
         self.assertEqual(counts(operation, "postings"), (2, 0, 0))
         self.assertEqual(counts(operation, "confirmations"), (1, 0, 0))
@@ -1402,7 +1405,7 @@ class RG09FiftyOperationTests(unittest.TestCase):
             self.assertEqual(by_id[operation_id]["input"], node["input"],
                              f"{operation_id} must carry the exact v1 input fields")
 
-    def test_imported_candidate_stays_pending_confirmation(self):
+    def test_imported_candidate_becomes_confirmed_with_provenance(self):
         states = {item["id"]: item for item in self.case["states"]}
         explanation_operation = next(
             operation for operation in self.case["operations"]
@@ -1415,13 +1418,15 @@ class RG09FiftyOperationTests(unittest.TestCase):
             if item["id"] == "candidate-import-transfer-rg09"
         )
         self.assertEqual([event["status"] for event in candidate["status_history"]],
-                         ["pending_confirmation"])
-        for operation in self.case["operations"]:
-            if operation["action_type"] in {
-                "confirm_imported_real_transfer",
-                "confirm_imported_explanation_allocation",
-            }:
-                self.assertEqual(counts(operation, "candidates"), (0, 0, 0))
+                         ["pending_confirmation", "confirmed"])
+        confirmed = candidate["status_history"][-1]
+        self.assertEqual(confirmed["adjustment_id"], "adjustment-rg09")
+        self.assertEqual(confirmed["confirmation_request_id"],
+                         "request-import-allocation-confirm-rg09")
+        transfer = next(operation for operation in self.case["operations"]
+                        if operation["id"] == "import-transfer-confirmation-rg09")
+        self.assertEqual(counts(transfer, "candidates"), (0, 0, 0))
+        self.assertEqual(counts(explanation_operation, "candidates"), (0, 1, 0))
 
     def test_rejections_are_atomic_zero_delta(self):
         states = {item["id"]: item for item in self.case["states"]}

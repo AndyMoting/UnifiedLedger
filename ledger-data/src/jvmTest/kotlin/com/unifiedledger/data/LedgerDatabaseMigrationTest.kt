@@ -141,14 +141,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionThirteen() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionFourteen() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(13, LedgerDatabase.Schema.version)
+            assertEquals(14, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -333,7 +333,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(13, LedgerDatabase.Schema.version)
+                assertEquals(14, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -403,13 +403,222 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(13, LedgerDatabase.Schema.version)
+                assertEquals(14, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg09Operations("ledger-a").executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg10Operations("ledger-a").executeAsOne())
                 assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun populatedVersionThirteenRemovesOnlyDerivedAdjustmentColumnsAtVersionFourteen() {
+        val path = Files.createTempFile("ledger-data-v13-v14-rg09-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
+                insertVersionThirteenAdjustment(driver, explainedAmountMinor = 1_000)
+                LedgerDatabase(driver).transaction {
+                    LedgerDatabase.Schema.migrate(driver, oldVersion = 13, newVersion = 14)
+                }
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(
+                    0L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        """.trimIndent(),
+                    ),
+                )
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_balance_adjustment"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_allocation"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_adjustment_history"))
+                assertEquals(
+                    1L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*)
+                            FROM rg09_balance_adjustment AS adjustment
+                            JOIN rg09_adjustment_history AS history
+                              ON history.ledger_id = adjustment.ledger_id
+                             AND history.adjustment_id = adjustment.adjustment_id
+                            WHERE adjustment.adjustment_id = 'adjustment-v13'
+                              AND adjustment.transaction_id = 'transaction-adjustment-v13'
+                              AND adjustment.observation_id = 'observation-v13'
+                              AND adjustment.original_delta_minor = 3000
+                              AND history.history_id = 'history-v13'
+                              AND history.remaining_amount_minor = 2000
+                              AND history.state = 'PARTIALLY_EXPLAINED'
+                              AND 1000 = (
+                                SELECT SUM(allocation.amount_minor)
+                                FROM rg09_allocation AS allocation
+                                WHERE allocation.ledger_id = adjustment.ledger_id
+                                  AND allocation.adjustment_id = adjustment.adjustment_id
+                              )
+                        """.trimIndent(),
+                    ),
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+                assertEquals("1", LedgerDatabase(driver).ledgerQueries.foreignKeysEnabled().executeAsOne())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionThirteenProjectionMismatchRejectsMigrationAndRollsBackAtomically() {
+        val path = Files.createTempFile("ledger-data-v13-v14-rg09-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
+                insertVersionThirteenAdjustment(driver, explainedAmountMinor = 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 13, newVersion = 14)
+                    }
+                }
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(
+                    3L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        """.trimIndent(),
+                    ),
+                )
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_balance_adjustment"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_allocation"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_adjustment_history"))
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg09_v14_migration_guard'"),
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionThirteenLatestHistoryMismatchRejectsMigrationAndRollsBackAtomically() {
+        val path = Files.createTempFile("ledger-data-v13-v14-rg09-history-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
+                // The stored adjustment projections derive cleanly from the
+                // allocations (explained 1000 / remaining 2000 /
+                // PARTIALLY_EXPLAINED), but the latest history row disagrees
+                // with the stored remaining amount, so the guard's latest
+                // history matching branch must reject the migration.
+                insertVersionThirteenAdjustment(
+                    driver,
+                    explainedAmountMinor = 1_000,
+                    historyRemainingAmountMinor = 1_500,
+                )
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 13, newVersion = 14)
+                    }
+                }
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(
+                    3L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        """.trimIndent(),
+                    ),
+                )
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_balance_adjustment"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_allocation"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_adjustment_history"))
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg09_v14_migration_guard'"),
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionThirteenMissingHistoryRejectsMigrationAndRollsBackAtomically() {
+        val path = Files.createTempFile("ledger-data-v13-v14-rg09-nohistory-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
+                // The stored adjustment projections derive cleanly, but the
+                // adjustment has no history row at all, so the guard's
+                // NOT EXISTS latest-history branch must reject the migration.
+                insertVersionThirteenAdjustment(
+                    driver,
+                    explainedAmountMinor = 1_000,
+                    includeHistory = false,
+                )
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 13, newVersion = 14)
+                    }
+                }
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(
+                    3L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        """.trimIndent(),
+                    ),
+                )
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_balance_adjustment"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg09_allocation"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM rg09_adjustment_history"))
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg09_v14_migration_guard'"),
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
         } finally {
             Files.deleteIfExists(path)
@@ -509,7 +718,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionThirteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionFourteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -524,7 +733,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 14)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -605,6 +814,107 @@ class LedgerDatabaseMigrationTest {
             Files.deleteIfExists(path)
         }
     }
+}
+
+private fun insertVersionThirteenAdjustment(
+    driver: JdbcSqliteDriver,
+    explainedAmountMinor: Long,
+    includeHistory: Boolean = true,
+    historyRemainingAmountMinor: Long = 3_000 - explainedAmountMinor,
+    historyState: String = if (explainedAmountMinor == 0L) "OPEN" else "PARTIALLY_EXPLAINED",
+) {
+    driver.execute(
+        null,
+        """
+            INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES
+              ('transaction-adjustment-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT'),
+              ('transaction-real-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'ACCOUNT_TRANSFER'),
+              ('transaction-reversal-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT_REVERSAL')
+        """.trimIndent(),
+        0,
+    )
+    driver.execute(
+        null,
+        """
+            INSERT INTO rg09_source(
+              ledger_id, source_id, source_type, observed_at, observed_at_text, account_id,
+              amount_minor, currency_code, currency_precision, immutable_payload_digest
+            ) VALUES (
+              'ledger-v13', 'source-v13', 'BALANCE_OBSERVATION', '2026-01-31T15:59:59Z',
+              '2026-01-31T23:59:59+08:00', 'asset-v13', 13000, 'CNY', 2, 'digest-v13'
+            )
+        """.trimIndent(),
+        0,
+    )
+    driver.execute(
+        null,
+        """
+            INSERT INTO rg09_observation(
+              ledger_id, observation_id, source_id, account_id, target_amount_minor,
+              currency_code, currency_precision, target_observed_at, target_observed_at_text,
+              saved_at, saved_at_text
+            ) VALUES (
+              'ledger-v13', 'observation-v13', 'source-v13', 'asset-v13', 13000, 'CNY', 2,
+              '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00',
+              '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00'
+            )
+        """.trimIndent(),
+        0,
+    )
+    driver.execute(
+        null,
+        """
+            INSERT INTO rg09_balance_adjustment(
+              ledger_id, adjustment_id, transaction_id, observation_id, target_account_id,
+              equity_account_id, currency_code, currency_precision, target_observed_at,
+              target_observed_at_text, replayed_amount_minor, target_amount_minor,
+              original_delta_minor, explained_amount_minor, remaining_amount_minor, state
+            ) VALUES (
+              'ledger-v13', 'adjustment-v13', 'transaction-adjustment-v13', 'observation-v13',
+              'asset-v13', 'equity-v13', 'CNY', 2, '2026-01-31T15:59:59Z',
+              '2026-01-31T23:59:59+08:00', 10000, 13000, 3000, $explainedAmountMinor,
+              ${3_000 - explainedAmountMinor},
+              '${if (explainedAmountMinor == 0L) "OPEN" else "PARTIALLY_EXPLAINED"}'
+            )
+        """.trimIndent(),
+        0,
+    )
+    if (includeHistory) {
+        driver.execute(
+            null,
+            """
+                INSERT INTO rg09_adjustment_history(
+                  ledger_id, adjustment_id, history_sequence, history_id, state, occurred_at,
+                  occurred_at_text, created_at, created_at_text, allocation_id, remaining_amount_minor
+                ) VALUES (
+                  'ledger-v13', 'adjustment-v13', 1, 'history-v13',
+                  '$historyState',
+                  '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
+                  '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
+                  'allocation-v13', $historyRemainingAmountMinor
+                )
+            """.trimIndent(),
+            0,
+        )
+    }
+    driver.execute(
+        null,
+        """
+            INSERT INTO rg09_allocation(
+              ledger_id, allocation_id, adjustment_id, target_account_id, amount_minor,
+              currency_code, currency_precision, real_transaction_id, reversal_transaction_id,
+              confirmed_at, discovered_at, discovered_at_text, confirmed_at_text,
+              created_at, created_at_text
+            ) VALUES (
+              'ledger-v13', 'allocation-v13', 'adjustment-v13', 'asset-v13', 1000, 'CNY', 2,
+              'transaction-real-v13', 'transaction-reversal-v13', '2026-02-01T00:00:00Z',
+              '2026-01-30T00:00:00Z', '2026-01-30T08:00:00+08:00',
+              '2026-02-01T08:00:00+08:00', '2026-02-01T00:00:00Z',
+              '2026-02-01T08:00:00+08:00'
+            )
+        """.trimIndent(),
+        0,
+    )
 }
 
 private fun migrationRepositoryFile(relative: String): Path {

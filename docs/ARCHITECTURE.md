@@ -2,11 +2,11 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-07 及 RG-09 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及既有场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05、RG-06、RG-07 与 RG-09 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
+本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-07、RG-09 与 RG-10 当前实现的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及既有场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。RG-05、RG-06、RG-07、RG-09 与 RG-10 的领域、应用与持久化 runtime 及其 schema/migration 支持已经进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
 
-`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v12；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03 已完成当前冻结 20 operations 的完整状态比较；RG-04 的 26 operations 均有 runtime，但只有 18 个 manual operations 做精确 projection 比较，26 项整体仅比较状态计数和部分 returned IDs。RG-05 已有领域、应用与持久化 runtime，`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected。RG-07 已有领域、应用与持久化 runtime，49 个 operation 比较 outcome、returned IDs、完整 state、deltas 和 status changes，并已发布 v2 工件。RG-09 已有 D-082 批准的 domain、application、SQLDelight owner、migration 和 focused persistence boundary。共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较 outcome、returned IDs、完整 state、deltas 和 status changes。
+`ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v14；迁移链、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。v14 从 RG-09 current adjustment owner 移除可由 immutable original delta、allocations 和 latest history 推导的重复金额/状态列，并以 guarded v13→v14 migration 保留 populated child foreign keys、原子拒绝不一致旧投影。v13→v14 迁移使用 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。RG-01 的 `note_update` 已实现 replacement、replay、request identity conflict 与 stale CAS 零写入；RG-03、RG-04、RG-05、RG-06、RG-07、RG-09 与 RG-10 均有各自声明范围的完整 oracle。RG-09 的严格 v2 oracle 以 runtime 独立投影比较已发布的 9 roots、50 operations 与 59 states；RG-10 runtime/persistence 使用 schema v13 owners 并由 v14 migration 链继续保留。
 
-上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01、RG-02 和 RG-04 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-08、RG-10 至 RG-12 尚无 Kotlin runtime，RG-09 mapping gate 仍需独立高风险审查。RG-06 恢复边界由领域层验证 snapshot 并通过既有 `FormalTransaction` factory 重建正式链，不查询当前 catalog，也不允许 adapter replay command、解码 opaque aggregate 或重写领域不变量；恢复后的新命令仍按当前 catalog 准入。`D-075` 不授权 RG-05 fixture 迁移，RG-09 的 `D-082` 也不授权 fixture rewrite 或 publication；publication 仍需单独授权，且当前没有 `golden/rules-v2` RG-05 或 RG-09 工件。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
+上述范围仍不代表全部黄金契约或正式账务核心已经完成。RG-01 和 RG-02 仍缺各自声明的完整 state/report/reconciliation/delta 比较；RG-08、RG-11 与 RG-12 尚无 Kotlin runtime，RG-09 mapping acceptance 仍需独立高风险 closure review。RG-06 恢复边界由领域层验证 snapshot 并通过既有 `FormalTransaction` factory 重建正式链，不查询当前 catalog，也不允许 adapter replay command、解码 opaque aggregate 或重写领域不变量；恢复后的新命令仍按当前 catalog 准入。`D-075` 不授权 RG-05 fixture 迁移；RG-09 v2 已由独立 publication gate 发布，冻结 v1 未改写。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 
@@ -115,7 +115,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | 平台边界 | 已确定 | 业务核心共享，系统能力和 UI 平台独立 |
 | Python | 已确定 | 仅用于迁移、规则原型和黄金结果基线 |
 | 运行方式 | 已确定 | 本地优先；同步与 AI 默认关闭且不影响核心验收 |
-| 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；当前 schema v12 及其迁移链均经过验证。该选择不预先决定报表、同步或更广泛查询的存储方案 |
+| 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；当前 schema v14 及其迁移链均经过验证。v13→v14 迁移使用 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。该选择不预先决定报表、同步或更广泛查询的存储方案 |
 | UI 与导航库 | 暂缓决定 | Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |

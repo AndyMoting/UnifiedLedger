@@ -4696,6 +4696,59 @@ class GoldenV2MappingTests(unittest.TestCase):
         )
         self.assertEqual(len(remaining), 68)
 
+    def test_rg09_closure_overlay_closes_historical_inventory_without_rewriting_it(self):
+        directory = ROOT / "docs" / "migrations" / "golden-v2"
+        path_map = json.loads(
+            (directory / "rg-09-path-map.json").read_text(encoding="utf-8")
+        )
+        overlay = json.loads(
+            (directory / "rg-09-closure-overlay.json").read_text(encoding="utf-8")
+        )
+        gated = [
+            entry
+            for entry in path_map["entries"]
+            if entry["disposition"] == "requires_contract_amendment"
+        ]
+        references = defaultdict(int)
+        for entry in gated:
+            for gap_id in entry["contract_gap_ids"]:
+                references[gap_id] += 1
+        overlap = sum(
+            set(entry["contract_gap_ids"])
+            == {"RG09-GAP-01", "RG09-GAP-02"}
+            for entry in gated
+        )
+
+        inventory = overlay["historical_inventory"]
+        self.assertEqual(overlay["status"], "closed")
+        self.assertEqual(
+            overlay["acceptance_status"],
+            "pending_independent_closure_review",
+        )
+        self.assertEqual(inventory["requires_contract_amendment_unique_paths"], len(gated))
+        self.assertEqual(inventory["contract_gap_reference_count"], sum(references.values()))
+        self.assertEqual(inventory["gap_reference_counts"], dict(references))
+        self.assertEqual(inventory["overlap"]["unique_path_count"], overlap)
+        self.assertEqual((len(gated), sum(references.values()), overlap), (924, 934, 10))
+        self.assertEqual(
+            {item["id"]: item["status"] for item in overlay["gap_closures"]},
+            {"RG09-GAP-01": "closed", "RG09-GAP-02": "closed", "RG09-GAP-03": "closed"},
+        )
+        self.assertEqual(len(overlay["v1_projection_dispositions"]), 10)
+        self.assertEqual(
+            next(
+                item["disposition"]
+                for item in overlay["v1_projection_dispositions"]
+                if item["id"] == "RG09-V1-PROJECTION-10"
+            ),
+            "project_pre_allocation_transfer_state_to_legacy_balanced_shape",
+        )
+        equivalence = overlay["v2_semantic_equivalence_dispositions"]
+        self.assertEqual(equivalence["source_omission"]["status"], "accepted")
+        self.assertEqual(len(equivalence["delta_reattributions"]), 4)
+        self.assertEqual(equivalence["second_transfer_root_divergence"]["status"], "eliminated")
+        self.assertFalse(overlay["external_reference_numbering"]["canonical_alias_created"])
+
     def test_rg10_absence_dispatch_and_evidence_role_boundaries(self):
         source = json.loads(
             (ROOT / "golden" / "rules" / "rg-10.json").read_text(

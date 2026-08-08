@@ -2,7 +2,7 @@
 
 ## Authority
 
-This mapping is governed by `golden/rules/rg-09.json`, `docs/specs/2026-07-16-rg-09-balance-adjustment-design.md`, `docs/GOLDEN_TESTS.md`, `docs/ACCOUNTING_RULES.md`, `docs/GOLDEN_SCHEMA.md`, Golden Schema v2, D-063, D-065, and D-082. D-082 closes the three historical contract gaps and authorizes the runtime, complete oracle, and formal SQLDelight owner. It does not authorize rewriting the frozen v1 fixture or publishing a v2 artifact.
+This mapping is governed by `golden/rules/rg-09.json`, `docs/specs/2026-07-16-rg-09-balance-adjustment-design.md`, `docs/GOLDEN_TESTS.md`, `docs/ACCOUNTING_RULES.md`, `docs/GOLDEN_SCHEMA.md`, Golden Schema v2, D-063, D-065, and D-082. D-082 closes the three historical contract gaps and authorizes the runtime, complete oracle, and formal SQLDelight owner. The frozen v1 fixture remains unchanged. The separately authorized v2 publication is recorded in `golden/rules-v2/rg-09.json` and its manifest entry.
 
 ## Inventory
 
@@ -60,8 +60,9 @@ The frozen v1 state shape is compared through explicit projections in `Rg09FullS
 - After `import-explanation-confirmation-rg09`, the frozen resulting state and its retry snapshots update the adjustment remainder to `10.00` but leave `reconciliation.remaining_adjustment` at the pre-allocation `30.00`. The runtime and persistence derive the current reconciliation remainder as `10.00`; only those comparisons project the stale frozen value.
 - After `import-explanation-confirmation-rg09`, the frozen resulting state and its retry snapshots leave the imported candidate at `pending_confirmation` even though every mandatory transaction and explanation fact has been explicitly confirmed. The runtime persists `confirmed` with the owning adjustment and confirmation request; only those comparisons project the approved lifecycle.
 - The v2 expected artifact (Golden Schema v2 owner model) does not carry the v1 first real-transfer intake `source_record` (`confirm_real_transfer` registers no `sources` delta; v1 `transfer_confirmation.intake_deltas.new_source_record_count` is 1 and the v1 canonical states carry `source-real-transfer-confirmation-rg09`). This is a v2 owner-model projection, not a runtime drop; the Kotlin runtime and persistence still own the source. It must be explicitly accepted in the semantic-equivalence gate record.
+- The v2 expected artifact also marks both postings of the imported transfer `transaction-transfer-rg09-import` as `reconciliation_eligible=false`, although the frozen v1 fixture publishes them as `reconciliation_eligible=true` and the v1 comparison layer preserves that frozen value. This is an explicit v2 owner-model projection: the strict v2 runtime oracle excludes the import transaction from posting reconciliation eligibility (`Rg09V2RuntimeOracleTest.kt:425`), so the import transfer creates no owned posting-reconciliation records in the v2 owner model. It is recorded alongside the source omission in the semantic-equivalence gate record and never changes the v1 comparison shape.
 - The v2 expected artifact reattributes four v1 op-level delta counts without changing state-level data (balances, reports, timestamps match v1 canonical states byte-for-byte): (a) audit-link attribution v1 0+3 vs v2 1+2 across the first explanation allocation (total 3 preserved in `partially_explained.audit_links`); (b) first-transfer source v1 1 vs v2 0 (previous bullet); (c) explanation `report_change_count` v1 1 vs v2 2 (v1 undercounts its own state projection; both `balance_adjustment_net_worth_change` and `net_worth_change` move 30.00→10.00); (d) v1 `reconciliation_change_count` semantics split in v2 across `posting_reconciliations` entity changes plus derived `verification_status` value changes. These reattributions must be recorded in the semantic-equivalence gate record.
-- The v2 expected artifact models second-transfer postings as `reconciliation_eligible: false` with zero reconciliation entries in the main root (v1 op-level `reconciliation_change_count` is 0), while the evidence root's fully-explained baseline carries those postings eligible with the two pending entries that the four `link_real_posting_evidence` operations change to `matched` (matching v1 `evidence_path` state data, where no operation creates them). This per-root projection divergence is documented and asserted by `test_rg09_s1_qa2_002_resolution`; it must be accepted in the mapping/expected-output gate.
+- The legacy per-root second-transfer divergence is eliminated. Both owned real-account postings are reconciliation eligible and receive pending posting-reconciliation records at transfer creation in every root. The frozen main-path operation-level zero is retained only as evidence of a legacy undercount; it does not suppress canonical state ownership.
 
 All other state, operation, returned-ID, formal/intake delta, and status fields compare directly after canonical collection ordering. No compatibility projection changes formal accounting, provenance ownership, derived reconciliation, or append-only history.
 
@@ -73,21 +74,22 @@ Accepted and no-change operations use closed `input`. Rejected operations use cl
 
 ## Closure Disposition
 
-The path map records the pre-D-082 inventory and therefore retains its historical `requires_contract_amendment` classifications. D-082 closes those classifications as follows:
+The path map records the pre-D-082 inventory and therefore retains its historical `requires_contract_amendment` classifications. `rg-09-closure-overlay.json` closes the immutable inventory without rewriting it: 924 unique paths carry 934 gap references (`RG09-GAP-01` 403, `RG09-GAP-02` 68, `RG09-GAP-03` 463), including 10 paths shared by GAP-01 and GAP-02. D-082 closes those classifications as follows:
 
 1. `RG09-GAP-01` is implemented by the registered operation classes, typed outcomes, full baseline/result oracle, action-preserving retries, and zero-effect rejection/no-change assertions.
 2. `RG09-GAP-02` is implemented by mandatory D-065 digest generation, exact decimal/time validation, stale diagnostics, and the JVM provider proof.
 3. `RG09-GAP-03` is implemented by immutable source/candidate/evidence owners, explicit imported confirmation fields, typed evidence targets, and separate audit links.
 
-The former audit-link gap remains closed because the current typed audit contract is sufficient. The gate is proof-complete and remains pending the independent high-risk specification and quality review required by D-082.
+The former audit-link gap remains closed because the current typed audit contract is sufficient. Old external RG numbering remains historical evidence only and creates no canonical alias. The gate is proof-complete and remains pending the independent high-risk specification and quality review required by D-082.
 
 ## Gate
 
-- status: `proofs_passed_pending_independent_review`
-- expected output gate: `closed`
+- status: `pending_independent_closure_review`
+- expected output gate: `published`
 - unresolved gap count: `0`
 - frozen operations: `50`
-- complete oracle: `Rg09FullStateOracleTest.every frozen operation is independently replayed and compared`
+- complete v1 oracle: `Rg09FullStateOracleTest.every frozen operation is independently replayed and compared`
+- strict v2 runtime oracle: `Rg09V2RuntimeOracleTest` compares 9 roots, 50 operations and 59 states against the published artifact
 - D-065 provider proof: `Rg09FingerprintJvmTest.D-065 JCS bytes and runtime digest match JVM SHA-256`
 - formal persistence proof: `SqlDelightRg09StoreTest` reopen/retry/rollback/guard coverage
-- migration proof: `LedgerDatabaseMigrationTest` v11 to v12 preserve/reopen/rollback coverage plus SQLDelight migration verifier
+- migration proof: `LedgerDatabaseMigrationTest` v13 to v14 populated preserve/reopen/atomic rollback coverage plus fresh-v14 and v1-to-v14 schema equality and the SQLDelight migration verifier

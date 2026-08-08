@@ -17,6 +17,9 @@ kotlin {
 
     android {
         namespace = "com.unifiedledger.data"
+        // v13→v14 uses ALTER TABLE DROP COLUMN (SQLite >= 3.35.0); Android
+        // system SQLite satisfies it only from API 34 (Android 14).
+        minSdk = 34
         compileSdk = 36
     }
 

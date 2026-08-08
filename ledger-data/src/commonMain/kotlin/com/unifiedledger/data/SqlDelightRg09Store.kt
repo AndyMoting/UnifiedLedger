@@ -411,12 +411,29 @@ class SqlDelightRg09Store private constructor(
         }
         val adjustmentHistory = q.selectRg09AllAdjustmentHistory(ledger)
             .executeAsList().groupBy { it.adjustment_id }
+        val allocationRows = q.selectRg09AllAllocations(ledger).executeAsList()
+        val allocationsByAdjustment = allocationRows.groupBy { it.adjustment_id }
         val adjustments = q.selectRg09AllAdjustments(ledger).executeAsList().map { row ->
             val currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt())
             val historyRows = adjustmentHistory[row.adjustment_id].orEmpty().sortedBy { it.history_sequence }
-            val latest = historyRows.lastOrNull()
-            val remaining = latest?.remaining_amount_minor ?: row.remaining_amount_minor
+            check(historyRows.isNotEmpty()) { "persisted RG-09 adjustment has no history: ${row.adjustment_id}" }
+            val latest = historyRows.last()
+            val allocated = allocationsByAdjustment[row.adjustment_id].orEmpty()
+                .fold(0L) { total, allocation -> addExact(total, allocation.amount_minor) }
+            val remaining = safeSubtract(absMinor(row.original_delta_minor), allocated)
+            check(remaining >= 0L) { "persisted RG-09 allocations exceed original delta: ${row.adjustment_id}" }
+            check(latest.remaining_amount_minor == remaining) {
+                "persisted RG-09 history disagrees with original delta and allocations: ${row.adjustment_id}"
+            }
             val explained = safeSubtract(absMinor(row.original_delta_minor), remaining)
+            val derivedState = when {
+                explained == 0L -> "OPEN"
+                remaining == 0L -> "FULLY_EXPLAINED"
+                else -> "PARTIALLY_EXPLAINED"
+            }
+            check(latest.state == derivedState) {
+                "persisted RG-09 history state disagrees with original delta and allocations: ${row.adjustment_id}"
+            }
             Rg09Adjustment(
                 id = Rg09AdjustmentId(row.adjustment_id),
                 transactionId = TransactionId(row.transaction_id),
@@ -430,7 +447,7 @@ class SqlDelightRg09Store private constructor(
                 originalDelta = Money.ofMinor(row.original_delta_minor, currency),
                 explainedAmount = Money.ofMinor(explained, currency),
                 remainingAmount = Money.ofMinor(remaining, currency),
-                state = (latest?.state ?: row.state).lowercase(),
+                state = derivedState.lowercase(),
                 history = historyRows.map { historyRow ->
                     Rg09AdjustmentHistory(
                         id = historyRow.history_id,
@@ -446,7 +463,7 @@ class SqlDelightRg09Store private constructor(
                 targetObservedAtText = row.target_observed_at_text,
             )
         }
-        val allocations = q.selectRg09AllAllocations(ledger).executeAsList().map { row ->
+        val allocations = allocationRows.map { row ->
             val currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt())
             Rg09Allocation(
                 id = Rg09AllocationId(row.allocation_id),
@@ -562,6 +579,9 @@ class SqlDelightRg09Store private constructor(
         check(!(right < 0L && left > Long.MAX_VALUE + right)) { "persisted RG-09 amount overflow" }
         return left - right
     }
+
+    private fun addExact(left: Long, right: Long): Long =
+        Math.addExact(left, right)
 
     private fun persistDelta(
         operation: Rg09Operation,
@@ -785,9 +805,6 @@ class SqlDelightRg09Store private constructor(
                     adjustment.replayedAmountAtConfirmation.minorUnits,
                     adjustment.targetAmount.minorUnits,
                     adjustment.originalDelta.minorUnits,
-                    adjustment.explainedAmount.minorUnits,
-                    adjustment.remainingAmount.minorUnits,
-                    adjustment.state.uppercase(),
                 )
             }
             val oldHistoryIds = old?.history.orEmpty().mapTo(mutableSetOf()) { it.id }

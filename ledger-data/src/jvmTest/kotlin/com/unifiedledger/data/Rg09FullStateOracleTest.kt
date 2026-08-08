@@ -925,10 +925,28 @@ class Rg09FullStateOracleTest {
                 snapshot.reconciliation["remaining_adjustment"] ?: "0.00"
             },
         )
+        val noAllocationYet = snapshot.allocations.isEmpty()
         snapshot.reconciliation.forEach { (key, value) ->
             if (!key.startsWith("observation-") && key != "remaining_adjustment") {
-                put(key, value)
+                // v1 compatibility: frozen v1 published no per-posting
+                // reconciliation entries before the first explanation
+                // allocation existed. The v2 runtime publishes them
+                // immediately at transfer confirmation; this projection keeps
+                // the frozen v1 shape only for this legacy oracle.
+                if (!(noAllocationYet && key.startsWith("posting-"))) {
+                    put(key, value)
+                }
             }
+        }
+        if (noAllocationYet &&
+            this["target-observation-rg09"] == "difference_pending_explanation_confirmation"
+        ) {
+            // v1 compatibility: while the balance adjustment is still fully
+            // unexplained, frozen v1 reported the (unallocated) real transfer
+            // as balanced_with_unexplained_adjustment. The v2 runtime reports
+            // difference_pending_explanation_confirmation at transfer
+            // confirmation; the strict v2 oracle keeps the runtime value.
+            put("target-observation-rg09", "balanced_with_unexplained_adjustment")
         }
     }
 

@@ -1,0 +1,134 @@
+{
+  "artifact_type": "golden_v2_path_map_closure_overlay",
+  "artifact_version": 1,
+  "case_id": "RG-09",
+  "authority": "D-082",
+  "base_path_map": "docs/migrations/golden-v2/rg-09-path-map.json",
+  "status": "closed",
+  "acceptance_status": "pending_independent_closure_review",
+  "historical_inventory": {
+    "requires_contract_amendment_unique_paths": 924,
+    "contract_gap_reference_count": 934,
+    "gap_reference_counts": {
+      "RG09-GAP-01": 403,
+      "RG09-GAP-02": 68,
+      "RG09-GAP-03": 463
+    },
+    "overlap": {
+      "gap_ids": [
+        "RG09-GAP-01",
+        "RG09-GAP-02"
+      ],
+      "unique_path_count": 10
+    }
+  },
+  "gap_closures": [
+    {
+      "id": "RG09-GAP-01",
+      "status": "closed",
+      "disposition": "closed_action_registry",
+      "owner": "50-operation typed runtime and strict complete-state oracle"
+    },
+    {
+      "id": "RG09-GAP-02",
+      "status": "closed",
+      "disposition": "closed_d065_fingerprint_contract",
+      "owner": "mandatory target-time JCS SHA-256 fingerprint and atomic stale rejection"
+    },
+    {
+      "id": "RG09-GAP-03",
+      "status": "closed",
+      "disposition": "closed_provenance_contract",
+      "owner": "immutable source/candidate/evidence owners and explicit confirmation"
+    }
+  ],
+  "v1_projection_dispositions": [
+    {
+      "id": "RG09-V1-PROJECTION-01",
+      "disposition": "recompute_symbolic_fingerprint",
+      "scope": "symbolic v1 fingerprint tokens become mandatory D-065 digests"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-02",
+      "disposition": "project_typed_observation_status_to_legacy_key",
+      "scope": "target-observation reconciliation key"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-03",
+      "disposition": "repeat_intake_source_count_for_legacy_formal_delta",
+      "scope": "import confirmation formal delta"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-04",
+      "disposition": "project_imported_history_to_reused_manual_fact",
+      "scope": "imported partial adjustment history allocation and timestamps"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-05",
+      "disposition": "project_imported_discovery_time_to_legacy_manual_time",
+      "scope": "imported allocation discovery time"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-06",
+      "disposition": "omit_consumed_transfer_confirmation_from_legacy_state",
+      "scope": "legacy state comparison only"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-07",
+      "disposition": "omit_candidate_id_from_legacy_retry_receipt",
+      "scope": "retry-target-source-rg09 v1 comparison only"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-08",
+      "disposition": "retain_legacy_stale_import_remaining_amount",
+      "scope": "import explanation v1 comparison only"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-09",
+      "disposition": "retain_legacy_pending_import_candidate_status",
+      "scope": "import explanation v1 comparison only"
+    },
+    {
+      "id": "RG09-V1-PROJECTION-10",
+      "disposition": "project_pre_allocation_transfer_state_to_legacy_balanced_shape",
+      "scope": "pre-allocation transfer state publishes balanced_with_unexplained_adjustment with no posting-* keys; v1 comparison layer only"
+    }
+  ],
+  "v2_semantic_equivalence_dispositions": {
+    "source_omission": {
+      "status": "accepted",
+      "source_id": "source-real-transfer-confirmation-rg09",
+      "reason": "v2 confirmation owns the explicit operation; runtime and persistence retain the legacy intake source"
+    },
+    "delta_reattributions": [
+      {
+        "id": "RG09-DELTA-01",
+        "status": "accepted",
+        "scope": "adjustment audit link attribution"
+      },
+      {
+        "id": "RG09-DELTA-02",
+        "status": "accepted",
+        "scope": "first-transfer source attribution"
+      },
+      {
+        "id": "RG09-DELTA-03",
+        "status": "accepted",
+        "scope": "two changed report metrics replace the legacy undercount of one"
+      },
+      {
+        "id": "RG09-DELTA-04",
+        "status": "accepted",
+        "scope": "posting reconciliation entities and derived verification status replace the legacy aggregate count"
+      }
+    ],
+    "second_transfer_root_divergence": {
+      "status": "eliminated",
+      "rule": "both owned real-account postings are reconciliation eligible and receive pending reconciliation records at transfer creation in every root"
+    }
+  },
+  "external_reference_numbering": {
+    "status": "historical_evidence_only",
+    "canonical_alias_created": false
+  }
+}
