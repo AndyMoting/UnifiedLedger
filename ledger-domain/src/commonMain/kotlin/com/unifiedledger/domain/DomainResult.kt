@@ -153,6 +153,88 @@ enum class StoredValueField {
     CATEGORY,
 }
 
+sealed interface LendingViolation : DomainViolation {
+    data object UnsupportedAllocationScope : LendingViolation
+
+    data object ContractAllocationNotSupported : LendingViolation
+
+    data object PrincipalBalanceMustNotBeNegative : LendingViolation
+
+    data object HistoryMustBeAppendOnly : LendingViolation
+
+    data object InvalidPositionHistoryDirection : LendingViolation
+
+    data object InvalidLendingBehavior : LendingViolation
+
+    data object AllocatedLendNotSupportedInV1 : LendingViolation
+
+    data object UnknownAccount : LendingViolation
+
+    data object OwnedAccountRequired : LendingViolation
+
+    data object FinancialAssetAccountRequired : LendingViolation
+
+    data object ActiveExactInterestCategoryRequired : LendingViolation
+
+    data object SameCurrencyRequired : LendingViolation
+
+    data object TotalMustBePositive : LendingViolation
+
+    data object InvalidComponentSet : LendingViolation
+
+    data object ComponentMustBeNonnegative : LendingViolation
+
+    data object FeeMustBeZeroInRg08V1 : LendingViolation
+
+    data object NonzeroFeeAccountingOutOfScope : LendingViolation
+
+    data object ComponentPostingIdInvalid : LendingViolation
+
+    data object ComponentsMustEqualTotal : LendingViolation
+
+    data object PrincipalExceedsOutstandingPosition : LendingViolation
+
+    data object InvalidSettlementLifecycle : LendingViolation
+
+    data object InvalidFormalEffectCount : LendingViolation
+
+    data object AutoConfirmationNotPermitted : LendingViolation
+
+    data object ExplicitComponentSplitRequired : LendingViolation
+
+    data object CandidateSourceRequired : LendingViolation
+
+    data class ConfirmationRequired(val field: LendingConfirmationGateField) : LendingViolation
+
+    data object InvalidCandidateLifecycle : LendingViolation
+
+    data object InvalidSourceRecord : LendingViolation
+
+    data object PayloadHashRequired : LendingViolation
+
+    data object PayloadHashMismatch : LendingViolation
+
+    data object BankEconomicTimesRequired : LendingViolation
+
+    data object BankAmountRequired : LendingViolation
+
+    data object CurrencyRequiredWithAmount : LendingViolation
+
+    data object AgreementCounterpartyRequired : LendingViolation
+
+    data object InvalidMirrorReference : LendingViolation
+
+    data object InvalidEvidenceSourceType : LendingViolation
+
+    data object InvalidEvidenceLink : LendingViolation
+
+    data object InvalidAuditLink : LendingViolation
+
+    data object ConfirmationRoleMismatch : LendingViolation
+
+    data object InvalidConfirmationProvenance : LendingViolation
+}
+
 sealed interface StoredValueViolation : DomainViolation {
     data class KnownAccountRequired(val field: StoredValueField) : StoredValueViolation
 

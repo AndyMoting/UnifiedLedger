@@ -1,0 +1,171 @@
+{
+  "ids": {
+    "request-rg08-lend": {
+      "transaction_id": "transaction-lend-rg08",
+      "version_id": "version-lend-rg08-v1",
+      "posting_set_id": "posting-set-lend-rg08",
+      "receivable_posting_id": "posting-lend-receivable-rg08",
+      "funding_posting_id": "posting-lend-asset-rg08",
+      "position_id": "lending-position-rg08",
+      "position_history_id": "history-position-rg08-lend",
+      "confirmation_id": "confirmation-rg08-lend",
+      "source_id": "source-rg08-lend-debit",
+      "source_record_id": "source-record-rg08-lend-debit",
+      "source_amount_minor": "-10000",
+      "evidence_id": "evidence-rg08-lend-debit",
+      "evidence_link_id": "evidence-link-rg08-lend-debit"
+    },
+    "request-rg08-manual-collection": {
+      "transaction_id": "transaction-collect-rg08-manual",
+      "version_id": "version-collect-rg08-manual-v1",
+      "posting_set_id": "posting-set-collect-rg08-manual",
+      "destination_posting_id": "posting-collect-asset-rg08-manual",
+      "principal_posting_id": "posting-collect-principal-rg08-manual",
+      "interest_posting_id": "posting-collect-interest-rg08-manual",
+      "settlement_id": "settlement-rg08-manual",
+      "settlement_history_id": "history-settlement-rg08-manual-confirmed",
+      "position_history_id": "history-position-rg08-collect-manual",
+      "confirmation_id": "confirmation-rg08-manual-collection",
+      "principal_component_id": "component-rg08-manual-principal",
+      "interest_component_id": "component-rg08-manual-interest",
+      "fee_component_id": "component-rg08-manual-fee",
+      "confirmation_source_id": "source-rg08-manual-confirmation",
+      "confirmation_source_record_id": "source-record-rg08-manual-confirmation",
+      "credit_source_id": "source-rg08-manual-credit",
+      "credit_source_record_id": "source-record-rg08-manual-credit",
+      "credit_evidence_id": "evidence-rg08-manual-credit",
+      "credit_evidence_link_id": "evidence-link-rg08-manual-credit"
+    },
+    "request-rg08-cap-maximum": {
+      "transaction_id": "transaction-collect-rg08-cap-maximum",
+      "version_id": "version-collect-rg08-cap-maximum-v1",
+      "posting_set_id": "posting-set-collect-rg08-cap-maximum",
+      "destination_posting_id": "posting-collect-asset-rg08-cap",
+      "principal_posting_id": "posting-collect-principal-rg08-cap",
+      "interest_posting_id": "posting-collect-interest-rg08-cap",
+      "settlement_id": "settlement-rg08-cap-maximum",
+      "settlement_history_id": "history-settlement-rg08-cap-maximum-confirmed",
+      "position_history_id": "history-position-rg08-collect-cap",
+      "confirmation_id": "confirmation-rg08-cap-maximum",
+      "principal_component_id": "component-rg08-cap-principal",
+      "interest_component_id": "component-rg08-cap-interest",
+      "fee_component_id": "component-rg08-cap-fee"
+    },
+    "source-rg08-import-credit": {
+      "candidate_id": "candidate-rg08-import-collection",
+      "candidate_type": "lending_collection_credit",
+      "candidate_history_id": "history-rg08-import-pending",
+      "credit_evidence_id": "evidence-rg08-import-credit",
+      "agreement_source_id": "source-rg08-agreement",
+      "agreement_source_record_id": "source-record-rg08-agreement",
+      "agreement_evidence_id": "evidence-rg08-agreement",
+      "agreement_evidence_link_id": "evidence-link-rg08-agreement",
+      "rule_version": "1",
+      "confidence": "0.94"
+    },
+    "request-rg08-confirm-import": {
+      "transaction_id": "transaction-collect-rg08-import",
+      "version_id": "version-collect-rg08-import-v1",
+      "posting_set_id": "posting-set-collect-rg08-import",
+      "destination_posting_id": "posting-collect-asset-rg08-import",
+      "principal_posting_id": "posting-collect-principal-rg08-import",
+      "interest_posting_id": "posting-collect-interest-rg08-import",
+      "settlement_id": "settlement-rg08-import",
+      "settlement_history_id": "history-settlement-rg08-import-confirmed",
+      "position_history_id": "history-position-rg08-collect-import",
+      "confirmation_id": "confirmation-rg08-import",
+      "principal_component_id": "component-rg08-import-principal",
+      "interest_component_id": "component-rg08-import-interest",
+      "fee_component_id": "component-rg08-import-fee",
+      "candidate_confirmed_history_id": "history-rg08-import-confirmed",
+      "destination_evidence_link_id": "evidence-link-rg08-import-posting"
+    },
+    "request-rg08-merge-import-mirror": {
+      "source_record_id": "source-record-rg08-import-mirror",
+      "evidence_id": "evidence-rg08-import-mirror",
+      "evidence_link_id": "evidence-link-rg08-import-mirror",
+      "target_posting_id": "posting-collect-asset-rg08-import",
+      "mirror_of_evidence_id": "evidence-rg08-import-credit",
+      "merged_into_evidence_link_id": "evidence-link-rg08-import-posting"
+    },
+    "request-rg08-rename-counterparty": {
+      "name_history_id": "history-counterparty-rg08-rename"
+    }
+  },
+  "sources": [
+    {
+      "id": "source-rg08-lend-debit",
+      "source_record_id": "source-record-rg08-lend-debit",
+      "kind": "bank_debit",
+      "observed_at": "2026-01-10T09:01:00+08:00",
+      "booking_at": "2026-01-10T09:00:00+08:00",
+      "value_at": "2026-01-10T09:00:00+08:00",
+      "amount": "-100.00",
+      "currency": "CNY",
+      "immutable_payload_hash": "sha256:rg08-synthetic-lend-debit"
+    },
+    {
+      "id": "source-rg08-manual-confirmation",
+      "source_record_id": "source-record-rg08-manual-confirmation",
+      "kind": "explicit_manual_lending_confirmation",
+      "observed_at": "2026-02-15T18:00:00+08:00",
+      "amount": "45.00",
+      "currency": "CNY",
+      "immutable_payload_hash": "sha256:rg08-synthetic-manual-confirmation"
+    },
+    {
+      "id": "source-rg08-manual-credit",
+      "source_record_id": "source-record-rg08-manual-credit",
+      "kind": "bank_credit",
+      "observed_at": "2026-02-15T14:31:00+08:00",
+      "booking_at": "2026-02-15T14:30:00+08:00",
+      "value_at": "2026-02-15T14:30:00+08:00",
+      "account_id": "asset-wallet-b",
+      "amount": "45.00",
+      "currency": "CNY",
+      "immutable_payload_hash": "sha256:rg08-synthetic-manual-credit"
+    },
+    {
+      "id": "source-rg08-import-credit",
+      "source_record_id": "source-record-rg08-import-credit",
+      "kind": "bank_credit",
+      "observed_at": "2026-02-15T14:32:00+08:00",
+      "booking_at": "2026-02-15T14:30:00+08:00",
+      "value_at": "2026-02-15T14:30:00+08:00",
+      "account_id": "asset-wallet-b",
+      "amount": "45.00",
+      "currency": "CNY",
+      "original_source_payload_hash": "sha256:rg08-synthetic-credit",
+      "immutable_payload_hash": "sha256:rg08-synthetic-credit"
+    },
+    {
+      "id": "source-rg08-agreement",
+      "source_record_id": "source-record-rg08-agreement",
+      "kind": "lending_agreement",
+      "observed_at": "2026-02-15T14:33:00+08:00",
+      "counterparty_id": "counterparty-rg08",
+      "currency": "CNY",
+      "immutable_payload_hash": "sha256:rg08-synthetic-agreement"
+    },
+    {
+      "id": "source-rg08-import-mirror",
+      "source_record_id": "source-record-rg08-import-mirror",
+      "kind": "bank_credit_mirror",
+      "observed_at": "2026-02-15T14:34:00+08:00",
+      "amount": "45.00",
+      "currency": "CNY",
+      "mirror_of_source_id": "source-rg08-import-credit",
+      "immutable_payload_hash": "sha256:rg08-synthetic-import-mirror"
+    }
+  ],
+  "times": {
+    "request-rg08-lend": {
+      "confirmed_at": "2026-01-10T09:00:30+08:00"
+    }
+  },
+  "counterparties": {
+    "counterparty-rg08": {
+      "display_name": "Synthetic Contact"
+    }
+  }
+}
