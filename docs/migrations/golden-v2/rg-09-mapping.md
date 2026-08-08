@@ -80,11 +80,11 @@ The path map records the pre-D-082 inventory and therefore retains its historica
 2. `RG09-GAP-02` is implemented by mandatory D-065 digest generation, exact decimal/time validation, stale diagnostics, and the JVM provider proof.
 3. `RG09-GAP-03` is implemented by immutable source/candidate/evidence owners, explicit imported confirmation fields, typed evidence targets, and separate audit links.
 
-The former audit-link gap remains closed because the current typed audit contract is sufficient. Old external RG numbering remains historical evidence only and creates no canonical alias. The gate is proof-complete and remains pending the independent high-risk specification and quality review required by D-082.
+The former audit-link gap remains closed because the current typed audit contract is sufficient. Old external RG numbering remains historical evidence only and creates no canonical alias. The gate is proof-complete; the independent high-risk specification and quality review required by D-082 has concluded with all dispositions closed, and the gate status is `approved` (evidence recorded in the Gate section).
 
 ## Gate
 
-- status: `pending_independent_closure_review`
+- status: `approved`
 - expected output gate: `published`
 - unresolved gap count: `0`
 - frozen operations: `50`
@@ -93,3 +93,8 @@ The former audit-link gap remains closed because the current typed audit contrac
 - D-065 provider proof: `Rg09FingerprintJvmTest.D-065 JCS bytes and runtime digest match JVM SHA-256`
 - formal persistence proof: `SqlDelightRg09StoreTest` reopen/retry/rollback/guard coverage
 - migration proof: `LedgerDatabaseMigrationTest` v13 to v14 populated preserve/reopen/atomic rollback coverage plus fresh-v14 and v1-to-v14 schema equality and the SQLDelight migration verifier
+- independent spec review: `RG09-SPEC2-001..006` CONDITIONAL PASS with no Critical/High; dispositions resolved, `RG09-SPEC2-001/002` closed
+- independent quality review: `RG09-QA2-001..008` CONDITIONAL PASS; dispositions resolved, `RG09-QA2-001..005` closed (minSdk=34 decision, publication journal window fix, guard/comment/mapping notes and N+1 query grouping)
+- distinct verifier: 14/14 PASS, including publication hash recompute matching the manifest
+- full suite: Kotlin 425 tests (data 208 / application 148 / domain 69) and Python 542 all PASS; `verifyCommonMainLedgerDatabaseMigration` PASS
+- merge: `07986b0` (feat `710c544`) integrates the closure candidate into main

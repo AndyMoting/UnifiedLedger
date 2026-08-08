@@ -49,6 +49,10 @@ The v2 closure accepts one source omission and four delta reattributions without
 
 The frozen `golden/rules/rg-09.json` and `.external/` were not modified. Publication copied the reviewed expected bytes transactionally to `golden/rules-v2/rg-09.json`; the manifest records source, expected, canonical, and output hashes and the 9/50/59 object counts.
 
+## Publication Authorization
+
+`RG09-SPEC2-003` is closed. Regeneration and republication of the RG-09 v2 artifacts were explicitly approved by the user on 2026-08-08 (user approval instruction at 07:44Z, recorded in the external session archive outside the repository); the closure candidate is merged into main as `07986b0` (feat `710c544`). The published artifact hashes match the manifest: output/expected `54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d`, canonical `6950831a88a4dc2698c57823522fc2cb4e16eb61a7df1612b61fe16580442164`, source `0fb9e57cd3e4fc74a8ca26ef4ca993ce09c44dfa42620d05d7898d5735cea519`.
+
 ## Acceptance
 
-The D-082 owner table, closure overlay, complete v1 and strict v2 oracles, D-065 proof, schema v14 persistence boundary, migration/reopen/rollback evidence, and publication hashes are now present. The three historical gaps are closed; acceptance remains `pending_independent_closure_review` until the independent high-risk specification review, independent quality review, distinct verifier disposition, and main-agent final rerun are recorded. Push remains a separate main-agent gate.
+The D-082 owner table, closure overlay, complete v1 and strict v2 oracles, D-065 proof, schema v14 persistence boundary, migration/reopen/rollback evidence, and publication hashes are now present. The three historical gaps are closed. The independent high-risk specification review (`RG09-SPEC2-001..006`, CONDITIONAL PASS, dispositions closed), independent quality review (`RG09-QA2-001..008`, CONDITIONAL PASS, dispositions closed), distinct verifier (14/14 PASS), and main-agent final rerun are recorded, and the mapping gate is `approved` at merge `07986b0`. Push remains a separate main-agent gate.
