@@ -1,0 +1,490 @@
+-- RG-10 additive owner: v12 -> v13. Existing formal rows and all prior
+-- RG owners remain untouched.
+CREATE TABLE rg10_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED')),
+  reason_code TEXT,
+  field_path TEXT,
+  PRIMARY KEY (ledger_id, identity_value)
+);
+CREATE TABLE rg10_returned_id (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  id_kind TEXT NOT NULL, id_value TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value, sequence),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg10_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg10_lot (
+  ledger_id TEXT NOT NULL, lot_id TEXT NOT NULL PRIMARY KEY,
+  recharge_transaction_id TEXT,
+  loaded_at TEXT NOT NULL, loaded_at_text TEXT NOT NULL,
+  expires_at TEXT NOT NULL, expires_at_text TEXT NOT NULL,
+  face_value_minor INTEGER NOT NULL CHECK (face_value_minor > 0),
+  remaining_face_value_minor INTEGER NOT NULL CHECK (remaining_face_value_minor >= 0),
+  paid_amount_minor INTEGER CHECK (paid_amount_minor IS NULL OR paid_amount_minor > 0),
+  bonus_amount_minor INTEGER CHECK (bonus_amount_minor IS NULL OR bonus_amount_minor >= 0),
+  remaining_paid_amount_minor INTEGER,
+  remaining_bonus_amount_minor INTEGER,
+  composition_status TEXT NOT NULL CHECK (composition_status IN ('KNOWN', 'UNKNOWN', 'UNKNOWN_AFTER_UNALLOCATED_CONSUMPTION')),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  merchant_id TEXT,
+  UNIQUE (ledger_id, lot_id),
+  FOREIGN KEY (recharge_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_lot_history (
+  ledger_id TEXT NOT NULL, lot_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE, event TEXT NOT NULL CHECK (event IN ('LOADED', 'SPENT', 'EXPIRED')),
+  transaction_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL, remaining_face_value_minor INTEGER NOT NULL CHECK (remaining_face_value_minor >= 0),
+  occurred_at TEXT NOT NULL, occurred_at_text TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_at_text TEXT NOT NULL,
+  composition_status TEXT,
+  PRIMARY KEY (ledger_id, lot_id, history_sequence),
+  FOREIGN KEY (ledger_id, lot_id) REFERENCES rg10_lot(ledger_id, lot_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE rg10_source (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL PRIMARY KEY, source_type TEXT NOT NULL,
+  observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL,
+  account_id TEXT, amount_minor INTEGER, lot_id TEXT,
+  currency_code TEXT, currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  immutable_payload_digest TEXT NOT NULL,
+  UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, lot_id) REFERENCES rg10_lot(ledger_id, lot_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_evidence (
+  ledger_id TEXT NOT NULL, evidence_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL,
+  evidence_type TEXT NOT NULL, observed_at TEXT NOT NULL, observed_at_text TEXT NOT NULL, UNIQUE (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id)
+);
+CREATE TABLE rg10_evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL PRIMARY KEY, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('POSTING', 'DOMAIN_ENTITY', 'TRANSACTION')),
+  target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('BANK_PAYMENT_POSTING', 'STORED_VALUE_ASSET_POSTING', 'STORED_VALUE_LOT_FACT', 'STORED_VALUE_BONUS_COMPONENT', 'STORED_VALUE_EXPIRY_CONFIRMATION', 'STORED_VALUE_ACTIVATION_BALANCE_FACT')),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')),
+  lot_id TEXT,
+  UNIQUE (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg10_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg10_consumption (
+  ledger_id TEXT NOT NULL, consumption_id TEXT NOT NULL PRIMARY KEY,
+  allocation_id TEXT, source_id TEXT, evidence_id TEXT,
+  lot_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  resulting_remaining_face_value_minor INTEGER NOT NULL CHECK (resulting_remaining_face_value_minor >= 0),
+  paid_bonus_composition TEXT NOT NULL CHECK (paid_bonus_composition IN ('UNKNOWN')),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (ledger_id, consumption_id),
+  FOREIGN KEY (ledger_id, lot_id) REFERENCES rg10_lot(ledger_id, lot_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg10_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg10_allocation (
+  ledger_id TEXT NOT NULL, allocation_id TEXT NOT NULL PRIMARY KEY,
+  request_id TEXT NOT NULL, source_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  lot_id TEXT NOT NULL, consumption_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  allocation_source TEXT NOT NULL CHECK (allocation_source IN ('MERCHANT_EVIDENCE')),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (ledger_id, allocation_id),
+  FOREIGN KEY (ledger_id, lot_id) REFERENCES rg10_lot(ledger_id, lot_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg10_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg10_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY, request_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('STORED_VALUE_RECHARGE_CONFIRMATION', 'STORED_VALUE_SPEND_CONFIRMATION', 'STORED_VALUE_EXPIRY_CONFIRMATION', 'STORED_VALUE_ACTIVATION_BALANCE_CONFIRMATION')),
+  transaction_id TEXT NOT NULL,
+  source_id TEXT, evidence_id TEXT, audit_link_id TEXT,
+  confirmed_at TEXT NOT NULL, confirmed_at_text TEXT NOT NULL,
+  explicit_confirmation INTEGER,
+  confirms_actual_expiry INTEGER,
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg10_evidence(ledger_id, evidence_id)
+);
+CREATE TABLE rg10_activation_adjustment (
+  ledger_id TEXT NOT NULL, adjustment_id TEXT NOT NULL PRIMARY KEY,
+  transaction_id TEXT NOT NULL UNIQUE,
+  activation_at TEXT NOT NULL, activation_at_text TEXT NOT NULL,
+  existing_balance_minor INTEGER NOT NULL CHECK (existing_balance_minor > 0),
+  composition_status TEXT NOT NULL CHECK (composition_status IN ('UNKNOWN')),
+  replacement_status TEXT NOT NULL CHECK (replacement_status IN ('ACTIVE_UNTIL_REPLACED')),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (ledger_id, adjustment_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_activation_adjustment_history (
+  ledger_id TEXT NOT NULL, adjustment_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE, event TEXT NOT NULL CHECK (event IN ('CREATED')),
+  transaction_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL, occurred_at_text TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, adjustment_id, history_sequence),
+  FOREIGN KEY (ledger_id, adjustment_id) REFERENCES rg10_activation_adjustment(ledger_id, adjustment_id)
+);
+CREATE TABLE rg10_reconstruction (
+  ledger_id TEXT NOT NULL, reconstruction_id TEXT NOT NULL PRIMARY KEY,
+  replacement_group_id TEXT NOT NULL,
+  adjustment_transaction_id TEXT NOT NULL,
+  active_mode TEXT NOT NULL CHECK (active_mode IN ('ADJUSTMENT', 'RECONSTRUCTED')),
+  UNIQUE (ledger_id, reconstruction_id),
+  FOREIGN KEY (adjustment_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_reconstruction_history (
+  ledger_id TEXT NOT NULL, reconstruction_id TEXT NOT NULL, history_sequence INTEGER NOT NULL CHECK (history_sequence > 0),
+  history_id TEXT NOT NULL UNIQUE, event TEXT NOT NULL CHECK (event IN ('CREATED', 'ACTIVATED')),
+  active_mode TEXT NOT NULL CHECK (active_mode IN ('ADJUSTMENT', 'RECONSTRUCTED')),
+  occurred_at TEXT NOT NULL, occurred_at_text TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, reconstruction_id, history_sequence),
+  FOREIGN KEY (ledger_id, reconstruction_id) REFERENCES rg10_reconstruction(ledger_id, reconstruction_id)
+);
+CREATE TABLE rg10_audit_link (
+  ledger_id TEXT NOT NULL, audit_link_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('EXPLICIT_CONFIRMATION_PROVENANCE')),
+  source_id TEXT, evidence_id TEXT, confirmation_id TEXT, transaction_id TEXT,
+  UNIQUE (ledger_id, audit_link_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES rg10_source(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES rg10_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, confirmation_id) REFERENCES rg10_confirmation(ledger_id, confirmation_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL PRIMARY KEY, request_id TEXT NOT NULL,
+  candidate_type TEXT NOT NULL CHECK (candidate_type IN ('STORED_VALUE_RECHARGE', 'STORED_VALUE_SPEND')),
+  status TEXT NOT NULL CHECK (status IN ('PENDING_CONFIRMATION')),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  paid_amount_minor INTEGER, credited_amount_minor INTEGER, bonus_amount_minor INTEGER, amount_minor INTEGER,
+  occurred_at TEXT, occurred_at_text TEXT,
+  UNIQUE (ledger_id, candidate_id)
+);
+CREATE TABLE rg10_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('STORED_VALUE_ASSET', 'PAYMENT_OUT', 'BONUS_INCOME', 'STORED_VALUE_DEBIT', 'EXPENSE_OUT', 'EXPIRY_LOSS', 'PRE_ACTIVATION_ADJUSTMENT_EQUITY')),
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg10_posting_reconciliation (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')), latest_sequence INTEGER NOT NULL CHECK (latest_sequence > 0),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg10_posting_semantic(ledger_id, posting_id)
+);
+CREATE TABLE rg10_reconciliation_history (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL, status_sequence INTEGER NOT NULL CHECK (status_sequence > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'MATCHED')), evidence_link_id TEXT,
+  PRIMARY KEY (ledger_id, posting_id, status_sequence),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg10_posting_reconciliation(ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES rg10_evidence_link(ledger_id, link_id)
+);
+CREATE TABLE rg10_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL, source_record_id TEXT, created_at TEXT NOT NULL, effective_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id) REFERENCES rg10_source(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER rg10_source_guard_update BEFORE UPDATE ON rg10_source BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_source_guard_delete BEFORE DELETE ON rg10_source BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_evidence_guard_update BEFORE UPDATE ON rg10_evidence BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_evidence_guard_delete BEFORE DELETE ON rg10_evidence BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+-- Evidence links are typed edges; only the pending -> matched status transition is legal.
+CREATE TRIGGER rg10_evidence_link_guard_update BEFORE UPDATE ON rg10_evidence_link BEGIN
+  SELECT CASE WHEN old.status = 'PENDING' AND new.status = 'MATCHED'
+    AND new.ledger_id = old.ledger_id AND new.link_id = old.link_id
+    AND new.source_id = old.source_id AND new.evidence_id = old.evidence_id
+    AND new.target_kind = old.target_kind AND new.target_id = old.target_id
+    AND new.role = old.role AND new.lot_id IS old.lot_id
+    THEN NULL ELSE RAISE(ABORT, 'rg10 evidence link immutable') END;
+END;
+CREATE TRIGGER rg10_evidence_link_guard_delete BEFORE DELETE ON rg10_evidence_link BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_lot_history_guard_update BEFORE UPDATE ON rg10_lot_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_lot_history_guard_delete BEFORE DELETE ON rg10_lot_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_consumption_guard_update BEFORE UPDATE ON rg10_consumption BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_consumption_guard_delete BEFORE DELETE ON rg10_consumption BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_allocation_guard_update BEFORE UPDATE ON rg10_allocation BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_allocation_guard_delete BEFORE DELETE ON rg10_allocation BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_confirmation_guard_update BEFORE UPDATE ON rg10_confirmation BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_confirmation_guard_delete BEFORE DELETE ON rg10_confirmation BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_audit_guard_update BEFORE UPDATE ON rg10_audit_link BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_audit_guard_delete BEFORE DELETE ON rg10_audit_link BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_candidate_guard_update BEFORE UPDATE ON rg10_candidate BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_candidate_guard_delete BEFORE DELETE ON rg10_candidate BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_activation_adjustment_guard_update BEFORE UPDATE ON rg10_activation_adjustment BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_activation_adjustment_guard_delete BEFORE DELETE ON rg10_activation_adjustment BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_activation_adjustment_history_guard_update BEFORE UPDATE ON rg10_activation_adjustment_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_activation_adjustment_history_guard_delete BEFORE DELETE ON rg10_activation_adjustment_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_reconstruction_guard_update BEFORE UPDATE ON rg10_reconstruction BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_reconstruction_guard_delete BEFORE DELETE ON rg10_reconstruction BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_reconstruction_history_guard_update BEFORE UPDATE ON rg10_reconstruction_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_reconstruction_history_guard_delete BEFORE DELETE ON rg10_reconstruction_history BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_operation_guard_delete BEFORE DELETE ON rg10_operation BEGIN SELECT RAISE(ABORT, 'rg10 operation immutable'); END;
+CREATE TRIGGER rg10_operation_guard_update BEFORE UPDATE ON rg10_operation BEGIN
+  SELECT CASE WHEN old.outcome = 'PENDING' AND new.outcome IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED')
+    AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value
+    AND new.action = old.action AND new.operation_class = old.operation_class
+    AND new.input_fingerprint = old.input_fingerprint
+    THEN NULL ELSE RAISE(ABORT, 'rg10 operation immutable') END;
+END;
+CREATE TRIGGER rg10_returned_id_guard_update BEFORE UPDATE ON rg10_returned_id BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_returned_id_guard_delete BEFORE DELETE ON rg10_returned_id BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_semantic_guard_update BEFORE UPDATE ON rg10_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_semantic_guard_delete BEFORE DELETE ON rg10_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_formal_metadata_guard_update BEFORE UPDATE ON rg10_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_formal_metadata_guard_delete BEFORE DELETE ON rg10_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+-- Lot facts are immutable; the remaining face value and composition are a guarded
+-- current projection that must agree with the newest history row or a once-only
+-- consumption row (each consumption records the remaining after it is applied).
+CREATE TRIGGER rg10_lot_guard_update BEFORE UPDATE ON rg10_lot BEGIN
+  SELECT CASE WHEN (
+    old.ledger_id = new.ledger_id AND old.lot_id = new.lot_id
+    AND old.recharge_transaction_id IS new.recharge_transaction_id
+    AND old.loaded_at = new.loaded_at AND old.loaded_at_text = new.loaded_at_text
+    AND old.expires_at = new.expires_at AND old.expires_at_text = new.expires_at_text
+    AND old.face_value_minor = new.face_value_minor
+    AND old.paid_amount_minor IS new.paid_amount_minor
+    AND old.bonus_amount_minor IS new.bonus_amount_minor
+    AND old.currency_code = new.currency_code AND old.currency_precision = new.currency_precision
+    AND old.merchant_id IS new.merchant_id
+    AND new.remaining_face_value_minor <= old.remaining_face_value_minor
+    AND (
+      (old.composition_status = new.composition_status
+        AND old.remaining_paid_amount_minor IS new.remaining_paid_amount_minor
+        AND old.remaining_bonus_amount_minor IS new.remaining_bonus_amount_minor)
+      OR
+      (old.composition_status = 'KNOWN' AND new.composition_status IN ('UNKNOWN', 'UNKNOWN_AFTER_UNALLOCATED_CONSUMPTION')
+        AND new.remaining_paid_amount_minor IS NULL AND new.remaining_bonus_amount_minor IS NULL)
+      OR
+      (old.composition_status IN ('UNKNOWN', 'UNKNOWN_AFTER_UNALLOCATED_CONSUMPTION')
+        AND new.composition_status = old.composition_status
+        AND new.remaining_paid_amount_minor IS NULL AND new.remaining_bonus_amount_minor IS NULL)
+    )
+    AND (
+      new.remaining_face_value_minor = old.remaining_face_value_minor
+      OR EXISTS (
+        SELECT 1 FROM rg10_lot_history AS history
+        WHERE history.ledger_id = new.ledger_id AND history.lot_id = new.lot_id
+          AND history.history_sequence = (SELECT MAX(latest.history_sequence) FROM rg10_lot_history AS latest WHERE latest.ledger_id = new.ledger_id AND latest.lot_id = new.lot_id)
+          AND history.remaining_face_value_minor = new.remaining_face_value_minor
+          AND history.event IN ('SPENT', 'EXPIRED')
+      )
+      OR EXISTS (
+        SELECT 1 FROM rg10_consumption AS consumption
+        WHERE consumption.ledger_id = new.ledger_id AND consumption.lot_id = new.lot_id
+          AND consumption.resulting_remaining_face_value_minor = new.remaining_face_value_minor
+          AND old.remaining_face_value_minor - consumption.amount_minor = new.remaining_face_value_minor
+      )
+    )
+  ) THEN NULL ELSE RAISE(ABORT, 'rg10 lot current projection') END;
+END;
+CREATE TRIGGER rg10_lot_guard_delete BEFORE DELETE ON rg10_lot BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_lot_history_sequence BEFORE INSERT ON rg10_lot_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg10_lot_history WHERE ledger_id = new.ledger_id AND lot_id = new.lot_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg10_lot_history WHERE ledger_id = new.ledger_id AND lot_id = new.lot_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg10 lot history sequence') END; END;
+CREATE TRIGGER rg10_activation_adjustment_history_sequence BEFORE INSERT ON rg10_activation_adjustment_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg10_activation_adjustment_history WHERE ledger_id = new.ledger_id AND adjustment_id = new.adjustment_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg10_activation_adjustment_history WHERE ledger_id = new.ledger_id AND adjustment_id = new.adjustment_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg10 activation history sequence') END; END;
+CREATE TRIGGER rg10_reconstruction_history_sequence BEFORE INSERT ON rg10_reconstruction_history BEGIN SELECT CASE WHEN (new.history_sequence = 1 AND EXISTS (SELECT 1 FROM rg10_reconstruction_history WHERE ledger_id = new.ledger_id AND reconstruction_id = new.reconstruction_id)) OR (new.history_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg10_reconstruction_history WHERE ledger_id = new.ledger_id AND reconstruction_id = new.reconstruction_id AND history_sequence = new.history_sequence - 1)) THEN RAISE(ABORT, 'rg10 reconstruction history sequence') END; END;
+CREATE TRIGGER rg10_reconciliation_history_sequence BEFORE INSERT ON rg10_reconciliation_history BEGIN SELECT CASE WHEN (new.status_sequence = 1 AND EXISTS (SELECT 1 FROM rg10_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id)) OR (new.status_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg10_reconciliation_history WHERE ledger_id = new.ledger_id AND posting_id = new.posting_id AND status_sequence = new.status_sequence - 1)) THEN RAISE(ABORT, 'rg10 reconciliation history sequence') END; END;
+CREATE TRIGGER rg10_lot_formal_owner_guard_insert BEFORE INSERT ON rg10_lot WHEN new.recharge_transaction_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.recharge_transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_RECHARGE'
+  ) THEN RAISE(ABORT, 'rg10 lot formal ownership') END;
+END;
+CREATE TRIGGER rg10_consumption_lot_guard_insert BEFORE INSERT ON rg10_consumption BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_lot AS lot WHERE lot.ledger_id = new.ledger_id AND lot.lot_id = new.lot_id
+  ) THEN RAISE(ABORT, 'rg10 consumption lot ownership') END;
+  SELECT CASE WHEN new.allocation_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM rg10_allocation AS allocation
+    WHERE allocation.ledger_id = new.ledger_id AND allocation.allocation_id = new.allocation_id
+      AND allocation.consumption_id = new.consumption_id
+      AND allocation.lot_id = new.lot_id
+      AND allocation.amount_minor = new.amount_minor
+  ) THEN RAISE(ABORT, 'rg10 consumption allocation ownership') END;
+  SELECT CASE WHEN (new.source_id IS NULL AND new.evidence_id IS NOT NULL) OR (new.source_id IS NOT NULL AND new.evidence_id IS NULL)
+    THEN RAISE(ABORT, 'rg10 consumption provenance') END;
+END;
+-- A consumption records the remaining face value left after it is applied, so a lot
+-- deduction can be validated against the row exactly once; a repeated deduction of the
+-- same consumption row never matches a recorded resulting remaining.
+CREATE TRIGGER rg10_consumption_resulting_guard_insert BEFORE INSERT ON rg10_consumption BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_lot AS lot
+    WHERE lot.ledger_id = new.ledger_id AND lot.lot_id = new.lot_id
+      AND lot.remaining_face_value_minor - new.amount_minor = new.resulting_remaining_face_value_minor
+  ) THEN RAISE(ABORT, 'rg10 consumption resulting remaining mismatch') END;
+END;
+CREATE TRIGGER rg10_allocation_guard_insert BEFORE INSERT ON rg10_allocation BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_lot AS lot WHERE lot.ledger_id = new.ledger_id AND lot.lot_id = new.lot_id
+  ) THEN RAISE(ABORT, 'rg10 allocation lot ownership') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_source AS source WHERE source.ledger_id = new.ledger_id AND source.source_id = new.source_id
+  ) THEN RAISE(ABORT, 'rg10 allocation source ownership') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_evidence AS evidence
+    WHERE evidence.ledger_id = new.ledger_id AND evidence.evidence_id = new.evidence_id AND evidence.source_id = new.source_id
+  ) THEN RAISE(ABORT, 'rg10 allocation evidence ownership') END;
+END;
+CREATE TRIGGER rg10_confirmation_target_guard_insert BEFORE INSERT ON rg10_confirmation BEGIN
+  SELECT CASE
+    WHEN new.role = 'STORED_VALUE_RECHARGE_CONFIRMATION' AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_RECHARGE'
+    ) THEN NULL
+    WHEN new.role = 'STORED_VALUE_SPEND_CONFIRMATION' AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_SPEND'
+    ) THEN NULL
+    WHEN new.role = 'STORED_VALUE_EXPIRY_CONFIRMATION' AND new.confirms_actual_expiry = 1 AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_EXPIRY_LOSS'
+    ) THEN NULL
+    WHEN new.role = 'STORED_VALUE_ACTIVATION_BALANCE_CONFIRMATION' AND EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      JOIN rg10_activation_adjustment AS adjustment
+        ON adjustment.ledger_id = transaction_row.ledger_id AND adjustment.transaction_id = transaction_row.transaction_id
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT'
+    ) THEN NULL
+    ELSE RAISE(ABORT, 'rg10 confirmation target ownership')
+  END;
+END;
+CREATE TRIGGER rg10_activation_adjustment_formal_owner_guard_insert BEFORE INSERT ON rg10_activation_adjustment BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT'
+  ) THEN RAISE(ABORT, 'rg10 activation formal ownership') END;
+END;
+CREATE TRIGGER rg10_reconstruction_formal_owner_guard_insert BEFORE INSERT ON rg10_reconstruction BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.adjustment_transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT'
+  ) THEN RAISE(ABORT, 'rg10 reconstruction formal ownership') END;
+END;
+CREATE TRIGGER rg10_audit_link_target_guard_insert BEFORE INSERT ON rg10_audit_link BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_confirmation AS confirmation
+    WHERE confirmation.ledger_id = new.ledger_id AND confirmation.confirmation_id = new.confirmation_id
+      AND confirmation.audit_link_id = new.audit_link_id
+      AND confirmation.source_id IS new.source_id AND confirmation.evidence_id IS new.evidence_id
+      AND confirmation.transaction_id IS new.transaction_id
+  ) THEN RAISE(ABORT, 'rg10 audit link target mismatch') END;
+END;
+CREATE TRIGGER rg10_posting_semantic_formal_owner_guard_insert BEFORE INSERT ON rg10_posting_semantic BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM posting AS posting_row
+    JOIN transaction_version AS version_row
+      ON version_row.ledger_id = posting_row.ledger_id AND version_row.posting_set_id = posting_row.posting_set_id
+    JOIN ledger_transaction_current_version AS current_row
+      ON current_row.ledger_id = version_row.ledger_id AND current_row.transaction_id = version_row.transaction_id
+     AND current_row.current_version_id = version_row.version_id
+    JOIN ledger_transaction AS transaction_row
+      ON transaction_row.ledger_id = current_row.ledger_id AND transaction_row.transaction_id = current_row.transaction_id
+    WHERE posting_row.ledger_id = new.ledger_id AND posting_row.posting_id = new.posting_id
+      AND (
+        (new.role = 'STORED_VALUE_ASSET' AND new.reconciliation_eligible = 1
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) IN ('STORED_VALUE_RECHARGE', 'STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT'))
+        OR (new.role = 'PAYMENT_OUT' AND new.reconciliation_eligible = 1
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_RECHARGE')
+        OR (new.role = 'BONUS_INCOME' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_RECHARGE')
+        OR (new.role = 'STORED_VALUE_DEBIT' AND new.reconciliation_eligible = 1
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) IN ('STORED_VALUE_SPEND', 'STORED_VALUE_EXPIRY_LOSS'))
+        OR (new.role = 'EXPENSE_OUT' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_SPEND')
+        OR (new.role = 'EXPIRY_LOSS' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_EXPIRY_LOSS')
+        OR (new.role = 'PRE_ACTIVATION_ADJUSTMENT_EQUITY' AND new.reconciliation_eligible = 0
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT')
+      )
+  ) THEN RAISE(ABORT, 'rg10 posting formal ownership') END;
+END;
+CREATE TRIGGER rg10_reconciliation_current_guard_insert BEFORE INSERT ON rg10_posting_reconciliation BEGIN
+  SELECT CASE WHEN new.status != 'PENDING' OR new.latest_sequence != 1 OR NOT EXISTS (
+    SELECT 1 FROM rg10_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.role IN ('STORED_VALUE_ASSET', 'PAYMENT_OUT', 'STORED_VALUE_DEBIT')
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg10 reconciliation current ownership') END;
+END;
+CREATE TRIGGER rg10_reconciliation_current_guard_update BEFORE UPDATE ON rg10_posting_reconciliation BEGIN
+  SELECT CASE WHEN new.ledger_id = old.ledger_id AND new.posting_id = old.posting_id
+    AND old.status = 'PENDING' AND new.status = 'MATCHED'
+    AND new.latest_sequence = old.latest_sequence + 1
+    AND EXISTS (
+      SELECT 1 FROM rg10_reconciliation_history AS history
+      WHERE history.ledger_id = new.ledger_id AND history.posting_id = new.posting_id
+        AND history.status_sequence = new.latest_sequence
+        AND history.status = new.status
+        AND history.evidence_link_id IS NOT NULL
+    ) THEN NULL ELSE RAISE(ABORT, 'rg10 reconciliation current transition') END;
+END;
+CREATE TRIGGER rg10_reconciliation_current_guard_delete BEFORE DELETE ON rg10_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg10 reconciliation current immutable'); END;
+-- Evidence links are typed edges, not free-form labels. Keep the target, role,
+-- source lineage, and status consistent even when callers bypass the adapter.
+CREATE TRIGGER rg10_evidence_link_target_guard_insert BEFORE INSERT ON rg10_evidence_link BEGIN
+  SELECT CASE
+    WHEN new.target_kind = 'POSTING' AND new.role = 'BANK_PAYMENT_POSTING' AND new.status IN ('PENDING', 'MATCHED')
+      AND EXISTS (
+        SELECT 1 FROM rg10_posting_semantic AS semantic
+        WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.target_id
+          AND semantic.role = 'PAYMENT_OUT' AND semantic.reconciliation_eligible = 1
+      ) THEN NULL
+    WHEN new.target_kind = 'POSTING' AND new.role = 'STORED_VALUE_ASSET_POSTING' AND new.status IN ('PENDING', 'MATCHED')
+      AND EXISTS (
+        SELECT 1 FROM rg10_posting_semantic AS semantic
+        WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.target_id
+          AND semantic.role = 'STORED_VALUE_ASSET' AND semantic.reconciliation_eligible = 1
+      ) THEN NULL
+    WHEN new.target_kind = 'DOMAIN_ENTITY' AND new.role = 'STORED_VALUE_LOT_FACT' AND new.status = 'PENDING'
+      AND new.lot_id = new.target_id
+      AND EXISTS (
+        SELECT 1 FROM rg10_lot AS lot WHERE lot.ledger_id = new.ledger_id AND lot.lot_id = new.target_id
+      ) THEN NULL
+    WHEN new.target_kind = 'DOMAIN_ENTITY' AND new.role = 'STORED_VALUE_BONUS_COMPONENT' AND new.status = 'PENDING'
+      AND new.lot_id = new.target_id
+      AND EXISTS (
+        SELECT 1 FROM rg10_lot AS lot WHERE lot.ledger_id = new.ledger_id AND lot.lot_id = new.target_id
+      ) THEN NULL
+    WHEN new.target_kind = 'TRANSACTION' AND new.role = 'STORED_VALUE_EXPIRY_CONFIRMATION' AND new.status = 'PENDING'
+      AND EXISTS (
+        SELECT 1 FROM ledger_transaction AS transaction_row
+        WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.target_id
+          AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'STORED_VALUE_EXPIRY_LOSS'
+      ) THEN NULL
+    WHEN new.target_kind = 'DOMAIN_ENTITY' AND new.role = 'STORED_VALUE_ACTIVATION_BALANCE_FACT' AND new.status = 'PENDING'
+      AND EXISTS (
+        SELECT 1 FROM rg10_activation_adjustment AS adjustment
+        WHERE adjustment.ledger_id = new.ledger_id AND adjustment.adjustment_id = new.target_id
+      ) THEN NULL
+    ELSE RAISE(ABORT, 'rg10 evidence link target mismatch')
+  END;
+END;
+CREATE TRIGGER rg10_evidence_link_lineage_guard_insert BEFORE INSERT ON rg10_evidence_link BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_evidence AS evidence
+    WHERE evidence.ledger_id = new.ledger_id AND evidence.evidence_id = new.evidence_id
+      AND evidence.source_id = new.source_id
+  ) THEN RAISE(ABORT, 'rg10 evidence link lineage mismatch') END;
+END;
+CREATE TRIGGER rg10_reconciliation_history_evidence_guard_insert BEFORE INSERT ON rg10_reconciliation_history WHEN new.evidence_link_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg10_evidence_link AS link
+    WHERE link.ledger_id = new.ledger_id AND link.link_id = new.evidence_link_id
+      AND link.target_kind = 'POSTING' AND link.target_id = new.posting_id
+      AND link.role IN ('BANK_PAYMENT_POSTING', 'STORED_VALUE_ASSET_POSTING')
+      AND link.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg10 reconciliation evidence target mismatch') END;
+END;

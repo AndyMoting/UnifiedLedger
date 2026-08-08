@@ -16,6 +16,8 @@ data class PostingSetId(val value: String)
 
 data class PostingId(val value: String)
 
+data class StoredValueLotId(val value: String)
+
 data class CurrencyUnit(
     val code: String,
     val precision: Int,

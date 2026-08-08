@@ -63,7 +63,9 @@ The schema has no generic retry action or `input.kind` dispatch. Rejected/no-cha
 
 ## Gate
 
-- status: needs_contract_amendment
+- status: approved
 - expected output gate: closed
 - unresolved gap count: 6
 Expected output remains closed. No adapter, expected output, or fixture rewrite is implemented.
+
+Mapping gate approved on 2026-08-08 under D-083: the closure proposal (`docs/migrations/golden-v2/rg-10-closure-proposal.md`), the complete 44-operation oracle (`Rg10FullStateOracleTest`: accepted 12 / no_change 10 / rejected 22), the focused persistence/migration tests (`SqlDelightRg10StoreTest`, `Rg10SchemaV13Test`, `LedgerDatabaseMigrationTest` including the new v12 to v13 migration test), and the independent specification (RG10-SPEC-001..010) and quality (RG10-QA-01..11) review dispositions are all present. The six GAP records above remain the historical mapping state; their D-083 dispositions are recorded in the closure proposal. Publication and push remain separate gates.

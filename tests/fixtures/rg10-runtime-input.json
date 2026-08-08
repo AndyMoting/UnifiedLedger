@@ -1,0 +1,151 @@
+{
+  "ids": {
+    "request-recharge-rg10": {
+      "transaction_id": "transaction-recharge-rg10",
+      "version_id": "version-recharge-rg10-v1",
+      "posting_set_id": "posting-set-recharge-rg10",
+      "stored_value_posting_id": "posting-stored-recharge-rg10",
+      "payment_posting_id": "posting-bank-recharge-rg10",
+      "bonus_income_posting_id": "posting-bonus-income-rg10",
+      "lot_id": "lot-rg10-20260110-a",
+      "lot_history_id": "lot-history-loaded-rg10",
+      "confirmation_id": "confirmation-recharge-rg10",
+      "bank_source_id": "source-bank-payment-rg10",
+      "merchant_source_id": "source-merchant-credit-rg10",
+      "bank_evidence_id": "evidence-bank-payment-rg10",
+      "merchant_evidence_id": "evidence-merchant-credit-rg10",
+      "bank_link_id": "evidence-link-bank-recharge-rg10",
+      "merchant_posting_link_id": "evidence-link-merchant-recharge-rg10",
+      "merchant_lot_link_id": "evidence-link-merchant-lot-rg10",
+      "bonus_link_id": "evidence-link-bonus-recharge-rg10"
+    },
+    "request-spend-rg10": {
+      "transaction_id": "transaction-spend-rg10",
+      "version_id": "version-spend-rg10-v1",
+      "posting_set_id": "posting-set-spend-rg10",
+      "expense_posting_id": "posting-expense-spend-rg10",
+      "stored_value_posting_id": "posting-stored-spend-rg10",
+      "confirmation_id": "confirmation-spend-rg10",
+      "consumption_id": "consumption-spend-rg10",
+      "lot_history_id": "lot-history-spend-rg10"
+    },
+    "request-expiry-rg10": {
+      "transaction_id": "transaction-expiry-rg10",
+      "version_id": "version-expiry-rg10-v1",
+      "posting_set_id": "posting-set-expiry-rg10",
+      "expiry_loss_posting_id": "posting-expiry-loss-rg10",
+      "stored_value_posting_id": "posting-stored-expiry-rg10",
+      "confirmation_id": "confirmation-expiry-rg10",
+      "source_id": "source-expiry-confirmation-rg10",
+      "evidence_id": "evidence-expiry-confirmation-rg10",
+      "link_id": "evidence-link-expiry-rg10",
+      "lot_history_id": "lot-history-expiry-rg10"
+    },
+    "request-import-recharge-rg10": {
+      "candidate_id": "candidate-import-recharge-rg10",
+      "source_id": "source-import-recharge-rg10",
+      "evidence_id": "evidence-import-recharge-rg10"
+    },
+    "request-import-spend-rg10": {
+      "candidate_id": "candidate-import-spend-rg10",
+      "source_id": "source-import-spend-rg10",
+      "evidence_id": "evidence-import-spend-rg10"
+    },
+    "request-merchant-allocation-rg10": {
+      "allocation_id": "allocation-merchant-rg10",
+      "consumption_id": "consumption-merchant-rg10"
+    },
+    "request-activation-rg10": {
+      "transaction_id": "transaction-activation-adjustment-rg10",
+      "version_id": "version-activation-adjustment-rg10-v1",
+      "posting_set_id": "posting-set-activation-adjustment-rg10",
+      "stored_value_posting_id": "posting-stored-activation-adjustment-rg10",
+      "equity_posting_id": "posting-equity-activation-adjustment-rg10",
+      "confirmation_id": "confirmation-activation-rg10",
+      "adjustment_id": "adjustment-pre-activation-rg10",
+      "adjustment_history_id": "adjustment-history-created-rg10",
+      "reconstruction_id": "reconstruction-pre-activation-rg10",
+      "replacement_group_id": "replacement-group-pre-activation-rg10",
+      "source_id": "source-activation-balance-rg10",
+      "evidence_id": "evidence-activation-balance-rg10",
+      "link_id": "evidence-link-activation-balance-rg10",
+      "audit_link_id": "audit-link-activation-confirmation-rg10"
+    }
+  },
+  "sources": [
+    {
+      "id": "source-bank-payment-rg10",
+      "source_type": "bank_payment",
+      "observed_at": "2026-01-10T10:00:00+08:00",
+      "account_id": "asset-bank-a",
+      "amount": "1000.00",
+      "immutable_payload_digest": "sha256:rg10-bank-payment"
+    },
+    {
+      "id": "source-merchant-credit-rg10",
+      "source_type": "merchant_stored_value_credit",
+      "observed_at": "2026-01-10T10:01:00+08:00",
+      "account_id": "asset-stored-value-x",
+      "amount": "1200.00",
+      "lot_id": "lot-rg10-20260110-a",
+      "immutable_payload_digest": "sha256:rg10-merchant-credit"
+    },
+    {
+      "id": "source-merchant-allocation-rg10",
+      "source_type": "merchant_lot_allocation",
+      "observed_at": "2026-01-20T12:01:00+08:00",
+      "account_id": "asset-stored-value-x",
+      "amount": "100.00",
+      "immutable_payload_digest": "sha256:rg10-merchant-allocation"
+    },
+    {
+      "id": "source-import-recharge-rg10",
+      "source_type": "imported_stored_value_recharge",
+      "observed_at": "2026-01-10T10:00:00+08:00",
+      "amount": "1200.00",
+      "immutable_payload_digest": "sha256:rg10-import-recharge"
+    },
+    {
+      "id": "source-import-spend-rg10",
+      "source_type": "imported_stored_value_spend",
+      "observed_at": "2026-01-20T12:00:00+08:00",
+      "amount": "300.00",
+      "immutable_payload_digest": "sha256:rg10-import-spend"
+    },
+    {
+      "id": "source-expiry-confirmation-rg10",
+      "source_type": "user_expiry_confirmation",
+      "observed_at": "2026-02-01T09:05:00+08:00",
+      "lot_id": "lot-rg10-20260110-a",
+      "amount": "100.00",
+      "immutable_payload_digest": "sha256:rg10-expiry"
+    },
+    {
+      "id": "source-activation-balance-rg10",
+      "source_type": "user_confirmed_merchant_balance",
+      "observed_at": "2026-02-01T00:00:00+08:00",
+      "account_id": "asset-stored-value-x",
+      "amount": "600.00",
+      "immutable_payload_digest": "sha256:rg10-activation-balance"
+    }
+  ],
+  "times": {
+    "request-recharge-rg10": {
+      "merchant_credit_observed_at": "2026-01-10T10:01:00+08:00"
+    },
+    "request-expiry-rg10": {
+      "confirmed_at": "2026-02-01T09:05:00+08:00"
+    }
+  },
+  "categories": {
+    "expense-category-meal-rg10": {
+      "parent_id": "category-meal-parent-rg10"
+    }
+  },
+  "lot_facts": {
+    "lot-rg10-20260110-a": {
+      "expires_at": "2026-03-31T23:59:59+08:00",
+      "merchant_id": "merchant-x"
+    }
+  }
+}

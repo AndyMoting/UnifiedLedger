@@ -784,7 +784,8 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected = whe
     is MixedPaymentViolation,
     is MergedPaymentViolation,
     is BalanceAdjustmentViolation,
-    is PrincipalTransferViolation -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
+    is PrincipalTransferViolation,
+    is StoredValueViolation -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
 }
 
 private fun AccountTransferField.inputField(): String = when (this) {

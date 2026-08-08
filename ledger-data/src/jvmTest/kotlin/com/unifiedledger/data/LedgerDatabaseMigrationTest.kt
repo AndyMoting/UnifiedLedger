@@ -141,14 +141,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionTwelve() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionThirteen() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(12, LedgerDatabase.Schema.version)
+            assertEquals(13, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -333,7 +333,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(12, LedgerDatabase.Schema.version)
+                assertEquals(13, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -371,6 +371,45 @@ class LedgerDatabaseMigrationTest {
                         assertEquals(listOf("rg09_candidate"), names)
                     }
                 }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionTwelveToThirteenPreservesFormalRowsAndCreatesEmptyRg10OwnersAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v12-v13-rg10-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 12)
+                val database = LedgerDatabase(driver)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg10_%'"),
+                )
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 12, newVersion = 13)
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(13, LedgerDatabase.Schema.version)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(0L, database.ledgerQueries.countRg09Operations("ledger-a").executeAsOne())
+                assertEquals(0L, database.ledgerQueries.countRg10Operations("ledger-a").executeAsOne())
+                assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -470,7 +509,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionTwelveAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionThirteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -485,7 +524,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 12)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 13)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

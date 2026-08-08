@@ -9,23 +9,27 @@ import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class Rg09SchemaV12Test {
+class Rg10SchemaV13Test {
     @Test
-    fun canonicalRg09TransactionKindsSurviveWriteAndReopen() {
-        val path = Files.createTempFile("ledger-data-rg09-kind-", ".db")
+    fun canonicalRg10TransactionKindsSurviveWriteAndReopen() {
+        val path = Files.createTempFile("ledger-data-rg10-kind-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 assertEquals(13, LedgerDatabase.Schema.version)
                 val database = LedgerDatabase(driver)
-                seedFormal(database, "adjustment", "BALANCE_ADJUSTMENT", 3_000L)
-                seedFormal(database, "reversal", "BALANCE_ADJUSTMENT_REVERSAL", -2_000L)
+                seedFormal(database, "recharge", "STORED_VALUE_RECHARGE", 120_000L)
+                seedFormal(database, "spend", "STORED_VALUE_SPEND", -30_000L)
+                seedFormal(database, "expiry", "STORED_VALUE_EXPIRY_LOSS", -10_000L)
+                seedFormal(database, "activation", "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT", 60_000L)
 
                 assertEquals(
                     listOf(
-                        StoredKind("adjustment-tx", "EXPENSE", "BALANCE_ADJUSTMENT"),
-                        StoredKind("reversal-tx", "EXPENSE", "BALANCE_ADJUSTMENT_REVERSAL"),
+                        StoredKind("activation-tx", "EXPENSE", "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT"),
+                        StoredKind("expiry-tx", "EXPENSE", "STORED_VALUE_EXPIRY_LOSS"),
+                        StoredKind("recharge-tx", "EXPENSE", "STORED_VALUE_RECHARGE"),
+                        StoredKind("spend-tx", "EXPENSE", "STORED_VALUE_SPEND"),
                     ),
                     storedKinds(driver),
                 )
@@ -35,8 +39,10 @@ class Rg09SchemaV12Test {
                 val database = LedgerDatabase(driver)
                 assertEquals(
                     listOf(
-                        "BALANCE_ADJUSTMENT",
-                        "BALANCE_ADJUSTMENT_REVERSAL",
+                        "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT",
+                        "STORED_VALUE_EXPIRY_LOSS",
+                        "STORED_VALUE_RECHARGE",
+                        "STORED_VALUE_SPEND",
                     ),
                     database.ledgerQueries.selectPersistedTransaction().executeAsList().map { it.kind },
                 )
@@ -46,8 +52,24 @@ class Rg09SchemaV12Test {
         }
     }
 
+    @Test
+    fun rg10OwnersAreCreatedEmptyOnFreshSchema() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            assertEquals(13, LedgerDatabase.Schema.version)
+            assertEquals(0L, database.ledgerQueries.selectRg10AllOperations("ledger-a").executeAsList().size.toLong())
+            assertEquals(0L, database.ledgerQueries.selectRg10AllLots("ledger-a").executeAsList().size.toLong())
+            assertEquals(0L, database.ledgerQueries.selectRg10AllCandidates("ledger-a").executeAsList().size.toLong())
+            assertEquals(0L, database.ledgerQueries.selectRg10AllReconstructions("ledger-a").executeAsList().size.toLong())
+        } finally {
+            driver.close()
+        }
+    }
+
     private fun seedFormal(database: LedgerDatabase, prefix: String, kind: String, amountMinor: Long) {
-        val ledgerId = "ledger-rg09"
+        val ledgerId = "ledger-rg10"
         val transactionId = "$prefix-tx"
         val postingSetId = "$prefix-posting-set"
         val versionId = "$prefix-version"
@@ -59,28 +81,28 @@ class Rg09SchemaV12Test {
             ledgerId,
             1,
             postingSetId,
-            "2026-01-31T15:59:59Z",
-            "2026-01-31T15:59:59Z",
-            "2026-01-31T15:59:59Z",
+            "2026-01-10T02:00:00Z",
+            "2026-01-10T02:00:00Z",
+            "2026-01-10T02:00:00Z",
             null,
         )
         database.ledgerQueries.insertTransactionCurrentVersion(transactionId, ledgerId, versionId)
         database.ledgerQueries.insertPosting(
-            "$prefix-target-posting",
+            "$prefix-stored-posting",
             postingSetId,
             ledgerId,
             0,
-            "asset-a",
+            "asset-stored-value-x",
             amountMinor,
             "CNY",
             2,
         )
         database.ledgerQueries.insertPosting(
-            "$prefix-equity-posting",
+            "$prefix-counter-posting",
             postingSetId,
             ledgerId,
             1,
-            "equity-balance-adjustments",
+            if (prefix == "recharge" || prefix == "activation") "equity-balance-adjustments" else "expense-consumption-rg10",
             -amountMinor,
             "CNY",
             2,
