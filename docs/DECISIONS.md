@@ -1065,3 +1065,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** RG-10 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
 
 **关联决定：** `D-034`、`D-035`、`D-036`、`D-037`、`D-043`、`D-044`、`D-045`、`D-047`、`D-050`、`D-063`、`D-064`、`D-066`、`D-067`、`D-068`
+
+---
+
+## D-084 RG-08 lending settlement contract amendment and implementation approval
+
+**状态：** 已确认
+
+**决定：** 在 `D-062` 与 RG-08 v2 mapping（`docs/migrations/golden-v2/rg-08-mapping.md`，4969 条规范化 source path、2964 条 `requires_contract_amendment`、4 个 unresolved gap）的基础上，批准 RG-08 四项 mapping gap 的 contract amendment、完整 Kotlin runtime、44-operation fixture oracle 与正式 SQLDelight persistence。fixture oracle 规模以冻结 fixture 独立清点为准，参照 RG-10 对 D-083 "50-operation" 字面数的处置先例：`golden/rules/rg-08.json` 冻结 fixture 实为 32 个 v1 操作案例加 12 个 retry，共 44 个操作，分布为 accepted 6（5 formal + 1 intake）、rejected 25、no_change 13（1 + 12）。
+
+`RG08-GAP-01` 关闭为完整 lending action registry：`validate_lending_event`、`validate_lending_settlement`、`confirm_imported_lending_collection`、`allocate_lending_collection` 与 `retry_idempotent_input` 五个 operation class 都必须有闭合的 operation class、严格 input、typed outcome、完整 baseline/result snapshot、returned IDs、formal/intake/reconciliation deltas 和 status changes。冻结 fixture 的 12 个 retry 以 generic `retry_idempotent_input` 表达，显式偏离 D-083 的 "retry 保留原 action" 规则；本决定以 RG-08 冻结 fixture 语义为准并记录该差异理由。所有 rejected、incomplete 和 no-change 路径保持零正式账务效果并逐字段保留操作前状态；本金上限拒绝（`principal_exceeds_outstanding_position`）原子完成，`pending_explicit_reallocation` 不自动截断。
+
+`RG08-GAP-02` 关闭为 lending domain payload/lifecycle owner：position（`person_level_net_position`、`contract_allocation_enabled=false`、`receivable_account_id`、只追加 history）与 settlement（`linked_position_id`、`allocated_lend_transaction_id` 首版恒为 null、components 为 principal/interest/fee 且 fee 固定 `0.00`、`confirmed_at`、只追加 history）完整 payload；relation 实例承载 `counterparty_lending_relationship` 与稳定身份；behavior_codes 4 条登记 `principal_effect` 与 settlement 布尔。
+
+`RG08-GAP-03` 关闭为 lending intake/provenance owner：source_record（`booking_at`、`value_at`、`immutable_payload_hash`、`original_source_payload_hash`、kind）、candidate（`pending_confirmation` 生命周期与 status_history、六字段 requires_confirmation、不自动确认标志）、confirmation_provenance、typed evidence-link 角色 3 个（`destination_asset_posting`、`funding_asset_posting`、`counterparty_lending_relationship`）与 typed audit-link from/to（`mirror_of_evidence_id`、`merged_into_evidence_link_id`，不作为 evidence-link 字段）；imported 不自动确认，mirror/merge 只追加 source/evidence/link 且零 formal 效果。
+
+`RG08-GAP-04` 关闭为 economic receipt/effective time owner：`actual_receipt_at`、`proposed_actual_receipt_at` 与 `lend.request.actual_at` 是独立精确经济时间字段；fail-closed，绝不从 `created_at` 或 `confirmed_at` 推导；`occurred_at` 与 `statistics_at` 保持经济/报表语义；实际到账时间未确认的候选不得入账。
+
+新增 `TransactionKind`：`LEND`、`COLLECT`。
+
+正式 persistence 由 `ledger-data` 的 `SqlDelightRg08Store` 独占；formal transaction chain 继续使用共享 `ledger_transaction`、`posting_set`、`posting` owner；RG-08 专用表、immutable/sequence/target-type guards 与 additive v14→v15 migration 保存其 intake、candidate、position、settlement、evidence、audit 与 reconciliation facts。成功操作在一个 transaction 内完成；失败回滚后 reopen/readback 保持完整 baseline。
+
+完整 oracle 必须逐 operation 比较 outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality 和 retry equality；独立 verifier 用冻结 v1 输入驱动执行，不反向读取 expected 生成 runtime input。`.external/`、冻结 `golden/rules/rg-08.json` 和 publication target 不在本决定中被修改或发布。
+
+**理由：** 现有 `D-062` 只定义现金口径、本金上限、身份与证据职责；runtime、经济效果、oracle、persistence 与 import/replay owners 缺失。RG-10 的 D-083 提供同构的 gap disposition 结构与以冻结 fixture 独立清点为准的 oracle 规模先例；把这些边界一次性登记为 closed contract，使 mapping closure、runtime、migration 和 review 使用同一套可审计事实，同时保留确认才产生正式账务、证据与确认分离的边界。与 D-083 的 generic retry 规则差异在本决定中显式声明。
+
+**影响：** RG-08 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定影响 schema v14→v15、`TransactionKind` 枚举、共享 formal chain（`ledger_transaction`、`posting_set`、`posting`）与 RG-08 独占表。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
+
+**关联决定：** `D-062`、`D-083`
