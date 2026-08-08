@@ -1093,3 +1093,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** RG-08 mapping gate 可在 closure proposal、完整 oracle、focused persistence/migration tests 和独立 review 证据齐全后标记 `approved`。本决定影响 schema v14→v15、`TransactionKind` 枚举、共享 formal chain（`ledger_transaction`、`posting_set`、`posting`）与 RG-08 独占表。本决定不授权修改 v1 fixture、`golden/rules-v2` publication、remote push 或任何真实用户数据库；publication 仍需单独授权并在 clean worktree 上执行 release verification。
 
 **关联决定：** `D-062`、`D-083`
+
+---
+
+## D-085 RG-11 periodic allocation and RG-12 reconciliation correction runtime approval（direct-v2）
+
+**状态：** 已确认
+
+**决定：** RG-11 与 RG-12 为 direct-v2 场景：冻结契约 `golden/rules/rg-11.json` 与 `golden/rules/rg-12.json`（contract_version 2.0.0，批准于提交 `efbb13a`）无 v1 mapping、无 adapter——direct-v2 设计使然。基于设计文档 `docs/specs/2026-07-18-rg-11-periodic-allocation-design.md` 与 `docs/specs/2026-07-18-rg-12-reconciliation-correction-design.md` 及冻结 Python 语义测试（`test_rg11_golden_v2.py` 11 测试 / `test_rg12_golden_v2.py` 5 测试），批准两场景完整 Kotlin runtime、oracle 与 SQLDelight persistence。实现顺序为 RG-11 先行、RG-12 串行：RG-11 将 `correct_transaction_version` 以 `statistics_time` 语义落地共享内核，完整闭合合并后再开 RG-12（`posting_facts` 扩展）；WORK_PLAN 串行瓶颈约束（`TransactionKind` enum / `DomainResult` / schema migration）要求每个主线 RG 完成自身全流程并合并至 main 后方可开始下一个。
+
+**RG-11 runtime**：domain 三类实体（`periodic_allocation_schedule` / `periodic_allocation_revision` / `periodic_allocation_installment`）与 audit link（`periodic_allocation_recognition`）+ application 四类操作（`create_periodic_allocation` 8 / `recognize_periodic_allocation_installment` 10 / `revise_periodic_allocation` 3 / `correct_transaction_version` 1）——**22-operation fixture oracle**，规模以冻结契约独立清点为准（accepted 11 / no_change 1 / rejected 10；root-main 6 + root-revision 6 + root-z-rejections 10；拒绝 root 需 seed opening + purchase + recognition 基线），参照 D-084 先例。
+
+**RG-12 runtime**：domain 新类型（`ReconciliationMatch` 只追加 `status_history` / `PostingReplacement` 三值 `reconciliation_effect` / `PostingReconciliation` / `ExplicitOperationConfirmation` / `CorrectTransactionVersionViolation`）+ application `correct_transaction_version` 的 `posting_facts` 语义（完整替换 postings、`matched_unaffected_posting_must_be_preserved`、`historical_facts_immutable` 等 10 个拒绝 reason）——**12-operation fixture oracle**（accepted 1 / no_change 1 / rejected 10；拒绝链 baseline==result 全等）。
+
+**共享内核**：`correct_transaction_version` 通用实现——`appendVersion` 域原语（generalize RG-01 的 `replaceNote`）；`statistics_time` 为 RG-11 基础语义，共享原 `posting_set`；`posting_facts` 为 RG-12 扩展，新建 `posting_set`；`explicit_operation_confirmation` 与 `idempotent_replay` 规则共享；`correction_kind` 分派。
+
+**TransactionKind**：新增 `PREPAID_PURCHASE`、`PREPAID_RECOGNITION`（对照 D-083 行 1057 / D-084 行 1085 先例）；RG-12 无需新 kind——契约事务类型恒为 `expense`。持久化走 `canonical_kind` 映射（Ledger.sq 的 `kind` CHECK 仅含 5 旧 kind，新 kind 走 CASE 映射，先例 Ledger.sq 1725-1740）。
+
+**persistence**：RG-11 schema v15→v16 additive migration（`SqlDelightRg11Store` 独占；formal chain 共享 `ledger_transaction` / `transaction_version` / `posting_set` / `posting`；专用表保存 schedule / revision / installment / audit_link）；RG-12 schema v16→v17 additive migration（`SqlDelightRg12Store` 独占；`reconciliation_match` / `posting_reconciliation` / `posting_replacement` / confirmation 表）。成功操作单事务完成，失败回滚后 reopen/readback 保持完整 baseline（对齐 D-084 条款）。
+
+**closure gate**（对齐 D-084:1093）：每个 RG 的 closure proposal、完整 oracle、focused persistence/migration tests 与独立 review 证据齐备后置 gate；direct-v2 无 mapping gate，状态记录于 closure proposal。
+
+**不授权**：修改冻结契约（`golden/rules/rg-11.json`、`golden/rules/rg-12.json`）、v2 publication、remote push——push 已由用户单独授权一次，本决定不自动延续，按用户指示执行。
+
+**理由：** D-047/D-048 研究依据（`RG_07_12_RESEARCH.local.md`）+ direct-v2 契约冻结（`efbb13a`）+ 设计文档 + 共享 `correct_transaction_version` 内核（v2.py action registry 已按 `correction_kind` 分支）。
+
+**影响：** schema v15→v16→v17、`TransactionKind` 枚举 +2、共享 `appendVersion` 原语（generalize `replaceNote` 需回归 RG-01 note_update）、`SqlDelightRg11Store` / `SqlDelightRg12Store`。
+
+**关联决定：** `D-047`、`D-048`、`D-083`、`D-084`
