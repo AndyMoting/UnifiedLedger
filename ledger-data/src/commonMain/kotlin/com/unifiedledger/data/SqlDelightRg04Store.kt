@@ -174,5 +174,6 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected = when (thi
     is AccountTransferViolation,
     is MergedPaymentViolation,
     is BalanceAdjustmentViolation,
-    is PrincipalTransferViolation -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
+    is PrincipalTransferViolation,
+    is StoredValueViolation -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
 }

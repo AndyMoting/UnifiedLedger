@@ -145,3 +145,40 @@ sealed interface PrincipalTransferViolation : DomainViolation {
 
     data object SameCurrencyRequired : PrincipalTransferViolation
 }
+
+enum class StoredValueField {
+    STORED_VALUE_ACCOUNT,
+    PAYMENT_ACCOUNT,
+    AMOUNT,
+    CATEGORY,
+}
+
+sealed interface StoredValueViolation : DomainViolation {
+    data class KnownAccountRequired(val field: StoredValueField) : StoredValueViolation
+
+    data class EnabledRestrictedStoredValueAssetRequired(val field: StoredValueField) : StoredValueViolation
+
+    data class OwnedPaymentAssetRequired(val field: StoredValueField) : StoredValueViolation
+
+    data class ActiveSecondaryCategoryRequired(val field: StoredValueField) : StoredValueViolation
+
+    data object BonusIncomeAccountRequired : StoredValueViolation
+
+    data object ExpiryLossAccountRequired : StoredValueViolation
+
+    data object PreActivationAdjustmentEquityRequired : StoredValueViolation
+
+    data object PaidAmountMustBePositive : StoredValueViolation
+
+    data object CreditedAmountMustBePositive : StoredValueViolation
+
+    data object BonusAmountMustBeZeroOrPositive : StoredValueViolation
+
+    data object CreditedMustEqualPaidPlusBonus : StoredValueViolation
+
+    data object SameCurrencyRequired : StoredValueViolation
+
+    data object AmountMustBePositive : StoredValueViolation
+
+    data object NonZeroAmountRequired : StoredValueViolation
+}
