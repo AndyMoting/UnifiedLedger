@@ -115,7 +115,7 @@ Rejected field paths have an authoritative oracle-side mirror (`Rg08FullStateOra
 
 ### Independent review disposition
 
-Per D-084:1093 the mapping gate requires the closure proposal, the complete oracle, focused persistence/migration tests, and independent review evidence. All four are now present and registered. The independent specification/quality review (RG08-SPEC-* / RG08-QA-*) returned CONDITIONAL and every condition has been disposed; a distinct verifier run passed 14/14 checks (446 tests across data/application/domain with 0 failures, migration verification, Python 544, schema-version assertions); the main agent reran the clean full verification with BUILD SUCCESSFUL (12m27s). The mapping gate status line in `docs/migrations/golden-v2/rg-08-mapping.md` is therefore marked `approved` (2026-08-09, before merge); the merge commit hash is registered by the main agent after merge.
+Per D-084:1093 the mapping gate requires the closure proposal, the complete oracle, focused persistence/migration tests, and independent review evidence. All four are now present and registered. The independent specification/quality review (RG08-SPEC-* / RG08-QA-*) returned CONDITIONAL and every condition has been disposed; a distinct verifier run passed 14/14 checks (446 tests across data/application/domain with 0 failures, migration verification, Python 544, schema-version assertions); the main agent reran the clean full verification with BUILD SUCCESSFUL (12m27s). The mapping gate status line in `docs/migrations/golden-v2/rg-08-mapping.md` is therefore marked `approved` (2026-08-09, before merge); the closure candidate is merged into main as `d67ef2a` (feat `5d3bd1e`).
 
 ## Unclosed Items And Next Steps
 
