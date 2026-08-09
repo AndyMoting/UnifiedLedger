@@ -1,6 +1,6 @@
 # Golden Schema v2 阶段 0 盘点（历史快照）
 
-> 本文记录阶段 0 完成时的结构与语义盘点，保留当时的设计门和未决问题，不能作为当前 runtime、publication 或 release 状态的报告。当前仓库事实以 [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)、[`docs/ROADMAP.md`](ROADMAP.md) 和各 RG mapping 为准；例如 RG-04 v2 已发布且全 26 项完整比较已合入，RG-11/12 已有 approved direct-v2 fixtures 但没有 Kotlin runtime。
+> 本文记录阶段 0 完成时的结构与语义盘点，保留当时的设计门和未决问题，不能作为当前 runtime、publication 或 release 状态的报告。当前仓库事实以 [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)、[`docs/ROADMAP.md`](ROADMAP.md) 和各 RG mapping 为准；例如 RG-04 v2 已发布且全 26 项完整比较已合入，RG-11/12 的 direct-v2 工件已发布且 Kotlin runtime 已实现，RG-08 仍无 v2 工件且未发布。
 
 ## 历史状态、范围与权威
 
@@ -337,4 +337,4 @@
 - 每个 RG 还必须完成 normalized JSON-path inventory，并达到 preserve/map/derive/reject 零未分类路径。
 - 上述逐 RG 产物通过独立审查并获明确批准后，才打开对应 adapter/fixture migration 实现门。
 - 迁移安全候选要求也必须进入批准契约并有验证方案，才能发布迁移输出。
-- 在该历史设计门打开前，`RG-11` 继续暂停；当前 `RG-11`/`RG-12` 状态请以 `docs/CURRENT_STATE.md` 和 `docs/ROADMAP.md` 为准。
+- 上述暂停与设计门是阶段 0 快照的历史结论，不代表当前状态：`RG-11`/`RG-12` 现为 direct-v2 已发布场景（runtime、oracle 与 v2 工件均已完成）；当前状态请以 `docs/CURRENT_STATE.md` 和 `docs/ROADMAP.md` 为准。

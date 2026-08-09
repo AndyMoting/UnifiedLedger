@@ -1143,3 +1143,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** RG-03/05/11/12 的 expected 已冻结或已批准，直接进入发布执行；RG-10 先完成 expected 生成与审查再发布。发布后同步 `README.md`、`docs/CURRENT_STATE.md`、`docs/ROADMAP.md` 与 `docs/GOLDEN_V2_INVENTORY.md`。本决定不授权 remote push（push 单独授权，D-085:1117）；`.external/` 与冻结 `golden/rules/rg-XX.json` 一律只读。
 
 **关联决定：** `D-075`、`D-080`、`D-081`、`D-083`、`D-085`
+
+---
+
+## D-087 RG-01/RG-02 完整 state/delta/status 比较执行边界
+
+**状态：** 已确认
+
+**决定：** 根据用户 /goal 授权（RG-01/02 完整比较，2026-08-09），为 RG-01 与 RG-02 建立完整逐 operation oracle——outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality、retry equality（对齐 D-082/D-083 oracle 合同）。本决定 supersede D-069/D-070/D-071 影响段中"完整 state/report/reconciliation/delta comparison 不授权"的表述（supersede 先例：D-081 对 D-077）。expected 工件 `docs/migrations/golden-v2/rg-01-expected.json`（8 roots / 11 ops / 19 states）与 `rg-02-expected.json`（11 roots / 13 ops / 24 states）均已 approved 且自创建未改（D-075 审批标准），直接作为 oracle 批准基线，不重新生成、不修改。
+
+**RG-01 oracle：** 覆盖 create、`transaction_note_update`（appendVersion 共享内核语义；复用现有共享 use case 与 commit port，不改写 commit 语义——note_update 的 deltas 必须与 expected 精确一致：transactions.changed + transaction_versions.added，无 posting 变化，status_changes=[]）、retry（no_change/idempotent_replay、returned_ids 等于前序 accepted）、distinct re-entry、7 个 invalid 拒绝。现有 `Rg01RawJsonEndToEndTest` 保留（raw 端到端覆盖），不改写。
+
+**RG-02 oracle：** 覆盖 manual_income 主创建、同请求重试、两个独立变体、8 条零副作用拒绝；**`category_rename` 授权实现最小闭环**——v1 契约 `golden/rules/rg-02.json` 有完整 rename 期望（name_versions 追加、display_path、catalog change、returned_ids=[]），expected 的 accepted rename op 与 24 个 state 的 `category_name_history` 是 validator 硬性要求；D-071"不实现分类改名/name-version"的表述在本决定明确范围内 supersede。实现中发现未决语义（如 name 版本生命周期细节）时停止并升级，不静默推断。
+
+**投影边界（零运行时改动方案）：** `posting_reconciliations`（pending 条目与 `goldenV2MigrationId` 派生 id）、`derived_statuses.reconciliation_summary`、`postings.role`/`reconciliation_eligible`、`confirmations.operation_id` 由投影器从 DB + 冻结 v1 catalog 确定性派生；runtime **不新增持久化、不改 schema、不改三个 commit port**（`SqlDelightConfirmedManualExpenseCommitPort` / `SqlDelightConfirmedTransactionNoteUpdateCommitPort` / `SqlDelightConfirmedManualIncomeCommitPort`）。金额为两位精确十进制文本、时间保留 v1 原文 `+08:00`（投影器不做时区归一化或金额文本变换）。投影查询在 `Ledger.sq` 新增（`selectRg01All*`/`selectRg02All*`）。
+
+**身份与输入：** root/state/operation/confirmation/reconciliation id 全部沿用 `goldenV2MigrationId`/`goldenV2RootId` 单一生成器（D-074，与 Python 生成器对齐），各场景不得各自实现生成器；oracle 用冻结 v1（`golden/rules/rg-01.json`、`rg-02.json`）驱动执行，不反向读取 expected 生成 runtime input（D-081）。
+
+**验证：** focused oracle 测试 + 受影响全套件（Kotlin + Python）+ 独立 spec/quality review + distinct verifier + 主代理 clean 复跑；补跑 `validate_golden_case_v2` 对两个 expected 工件的证据（D-075 标准）。
+
+**不授权：** remote push（单独授权）、v1 fixture rewrite（`golden/rules/` 冻结）、RG-01/RG-02 publication（发布按 D-086 流程单独授权）、UI、其他字段修正语义、网络序列化选择。
+
+**理由：** C-0 研究（RG_01_02 比较边界）确认 expected 已完整且 approved、runtime 共享 use case 完整、唯一缺口是 oracle 测试与投影层；D-071 的 rename 延期使 expected 的 accepted rename op 与 runtime unsupported 存在既有分歧，完整比较要求闭合该分歧；投影器派生方案保持产品行为零变化。
+
+**影响：** 新增 `Rg01FullStateOracleTest`/`Rg02FullStateOracleTest`（预计 1000-1300 行）+ `Ledger.sq` 投影查询 + RG-02 rename 最小闭环；RG-01/02 oracle 达到与其他 RG 相同的完整比较标准。现有测试与产品构建不受影响。
+
+**关联决定：** `D-047`、`D-048`、`D-069`、`D-070`、`D-071`、`D-074`、`D-081`、`D-082`、`D-086`
