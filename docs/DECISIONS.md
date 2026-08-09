@@ -1168,4 +1168,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **影响：** 新增 `Rg01FullStateOracleTest`/`Rg02FullStateOracleTest`（预计 1000-1300 行）+ `Ledger.sq` 投影查询 + RG-02 rename 最小闭环；RG-01/02 oracle 达到与其他 RG 相同的完整比较标准。现有测试与产品构建不受影响。
 
+**schema 边界补充（2026-08-09 实现确认）：** category_rename 最小闭环需要持久化 name history——新增 schema v17→v18 迁移（`17.sqm`，`rg02_category_name_history` 表，append-only：version 1 由冻结 v1 catalog 在 root 启动时 seed，accepted rename supersede 当前记录并追加下一版本），supersede 本决定"不改 schema"表述（其本意为 RG-01/02 现有行为的投影零运行时改动，不涉及 reconciliation 持久化；rename 的 name-history 持久化是其闭环的必要组成部分）。`SqlDelightRg03TransferStore`/`SqlDelightRg04Store`/`SqlDelightRg05Store` 各 +1 行不可达违规分支补全是 `CategoryRenameViolation` sealed 类型穷尽性的编译必需，语义中性。投影器从该表重建 catalog 分类名与 `category_name_history`，既有 commit port 与 reconciliation 持久化保持零改动。
+
 **关联决定：** `D-047`、`D-048`、`D-069`、`D-070`、`D-071`、`D-074`、`D-081`、`D-082`、`D-086`

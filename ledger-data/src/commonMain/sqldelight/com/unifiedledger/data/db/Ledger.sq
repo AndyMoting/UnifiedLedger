@@ -137,6 +137,20 @@ CREATE TABLE confirmed_income_receipt (
   FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
 );
 
+-- RG-02 D-087 category_rename minimal closed loop: append-only category name
+-- history. Version 1 is seeded from the frozen v1 catalog at root start; an
+-- accepted rename supersedes the current record and appends the next version.
+-- The projector rebuilds catalog category names and `category_name_history`
+-- entirely from this table, so no other schema or commit port changes.
+CREATE TABLE rg02_category_name_history (
+  ledger_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT', 'SUPERSEDED')),
+  PRIMARY KEY (ledger_id, category_id, version_number)
+);
+
 CREATE TABLE rg03_operation_request (
   ledger_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -1894,6 +1908,27 @@ SELECT count(*) FROM manual_income_request;
 countIncomeReceipts:
 SELECT count(*) FROM confirmed_income_receipt;
 
+insertRg02CategoryNameHistory:
+INSERT INTO rg02_category_name_history(ledger_id, category_id, version_number, name, status)
+VALUES (?, ?, ?, ?, ?);
+
+updateRg02CategoryNameStatus:
+UPDATE rg02_category_name_history
+SET status = :status
+WHERE ledger_id = :ledger_id AND category_id = :category_id AND version_number = :version_number;
+
+selectRg02CurrentCategoryNameVersion:
+SELECT category_id, version_number, name, status
+FROM rg02_category_name_history
+WHERE ledger_id = :ledger_id AND category_id = :category_id
+ORDER BY version_number DESC LIMIT 1;
+
+selectRg02CategoryNameHistory:
+SELECT category_id, version_number, name, status
+FROM rg02_category_name_history
+WHERE ledger_id = :ledger_id
+ORDER BY category_id, version_number;
+
 claimRg03OperationRequest:
 INSERT INTO rg03_operation_request(ledger_id, request_id, action_type) VALUES (?, ?, ?)
 ON CONFLICT (ledger_id, request_id) DO NOTHING;
@@ -2232,6 +2267,98 @@ SELECT reconciliation_id, posting_id, status
 FROM rg03_posting_reconciliation
 WHERE ledger_id = :ledger_id
 ORDER BY reconciliation_id;
+
+-- ============================================================
+-- RG-01 oracle projection queries (D-087). Posting roles,
+-- reconciliation eligibility, posting reconciliations and derived
+-- statuses are derived by the projector, never persisted here.
+-- ============================================================
+
+selectRg01AllTransactions:
+SELECT ledger_tx.transaction_id, COALESCE(ledger_tx.canonical_kind, ledger_tx.kind) AS kind, current_row.current_version_id
+FROM ledger_transaction AS ledger_tx
+JOIN ledger_transaction_current_version AS current_row
+  ON current_row.ledger_id = ledger_tx.ledger_id
+ AND current_row.transaction_id = ledger_tx.transaction_id
+WHERE ledger_tx.ledger_id = :ledger_id
+ORDER BY ledger_tx.transaction_id;
+
+selectRg01AllVersions:
+SELECT version_id, transaction_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+FROM transaction_version
+WHERE ledger_id = :ledger_id
+ORDER BY version_id;
+
+selectRg01AllPostingSets:
+SELECT posting_set.posting_set_id, posting.posting_id
+FROM posting_set
+JOIN posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+WHERE posting_set.ledger_id = :ledger_id
+ORDER BY posting_set.posting_set_id, posting.posting_id;
+
+selectRg01AllPostings:
+SELECT posting_id, posting_set_id, account_id,
+  amount_minor, currency_code, currency_precision
+FROM posting
+WHERE ledger_id = :ledger_id
+ORDER BY posting_set_id, posting_id;
+
+selectRg01AllExpenseConfirmations:
+SELECT confirmation_id, request_id, transaction_id
+FROM confirmed_expense_receipt
+WHERE ledger_id = :ledger_id
+ORDER BY confirmation_id;
+
+selectRg01AllNoteUpdateReceipts:
+SELECT confirmation_id, request_id, transaction_id, version_id
+FROM confirmed_transaction_note_update_receipt
+WHERE ledger_id = :ledger_id
+ORDER BY confirmation_id;
+
+-- ============================================================
+-- RG-02 oracle projection queries (D-087)
+-- ============================================================
+
+selectRg02AllTransactions:
+SELECT ledger_tx.transaction_id, COALESCE(ledger_tx.canonical_kind, ledger_tx.kind) AS kind, current_row.current_version_id
+FROM ledger_transaction AS ledger_tx
+JOIN ledger_transaction_current_version AS current_row
+  ON current_row.ledger_id = ledger_tx.ledger_id
+ AND current_row.transaction_id = ledger_tx.transaction_id
+WHERE ledger_tx.ledger_id = :ledger_id
+ORDER BY ledger_tx.transaction_id;
+
+selectRg02AllVersions:
+SELECT version_id, transaction_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+FROM transaction_version
+WHERE ledger_id = :ledger_id
+ORDER BY version_id;
+
+selectRg02AllPostingSets:
+SELECT posting_set.posting_set_id, posting.posting_id
+FROM posting_set
+JOIN posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+WHERE posting_set.ledger_id = :ledger_id
+ORDER BY posting_set.posting_set_id, posting.posting_id;
+
+selectRg02AllPostings:
+SELECT posting_id, posting_set_id, account_id,
+  amount_minor, currency_code, currency_precision
+FROM posting
+WHERE ledger_id = :ledger_id
+ORDER BY posting_set_id, posting_id;
+
+selectRg02AllIncomeConfirmations:
+SELECT confirmation_id, request_id, transaction_id
+FROM confirmed_income_receipt
+WHERE ledger_id = :ledger_id
+ORDER BY confirmation_id;
 
 countTransactions:
 SELECT count(*) FROM ledger_transaction;

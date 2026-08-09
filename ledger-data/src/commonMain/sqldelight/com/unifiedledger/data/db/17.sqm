@@ -1,0 +1,14 @@
+-- RG-02 category_rename minimal closed loop: v17 -> v18 (D-087).
+-- Append-only category name history. Version 1 is seeded from the frozen v1
+-- catalog at root start; an accepted rename supersedes the current record and
+-- appends the next version. The projector rebuilds catalog category names and
+-- `category_name_history` entirely from this table, so no other schema or
+-- commit port changes.
+CREATE TABLE rg02_category_name_history (
+  ledger_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT', 'SUPERSEDED')),
+  PRIMARY KEY (ledger_id, category_id, version_number)
+);

@@ -792,7 +792,8 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected = whe
     is CorrectTransactionVersionViolation,
     is ReconciliationMatchViolation,
     is PostingReplacementViolation,
-    is PostingReconciliationViolation -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
+    is PostingReconciliationViolation,
+    is CategoryRenameViolation -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
 }
 
 private fun AccountTransferField.inputField(): String = when (this) {

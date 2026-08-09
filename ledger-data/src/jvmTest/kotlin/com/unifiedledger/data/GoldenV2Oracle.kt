@@ -24,6 +24,8 @@ internal data class GoldenV2RootSpec(
     val openingVersionId: String,
     val openingPostingSetId: String,
     val operations: List<GoldenV2OperationSpec>,
+    /** RG-02 variant roots start from an empty ledger (no opening chain). */
+    val seedOpening: Boolean = true,
 )
 
 internal data class GoldenV2OperationSpec(
@@ -281,6 +283,7 @@ private fun seedGoldenV2Opening(
     spec: GoldenV2RootSpec,
     v1: JsonObject,
 ) {
+    if (!spec.seedOpening) return
     val opening = v1.getValue("opening").jsonObject.getValue("transactions").jsonArray.single().jsonObject
     database.ledgerQueries.insertPostingSet(spec.openingPostingSetId, ledgerId.value)
     database.ledgerQueries.insertTransaction(opening.goldenV2String("id"), ledgerId.value, "OPENING_BALANCE")
