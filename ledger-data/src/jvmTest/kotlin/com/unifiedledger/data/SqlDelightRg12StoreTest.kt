@@ -598,6 +598,103 @@ class SqlDelightRg12StoreTest {
                         0,
                     )
                 }
+                // RG12-001 closure: the rebuilt guards reject every bypass order that
+                // would end in fact='PENDING' with latest_history='MATCHED'. A fresh
+                // eligible real posting (owned by the current version of an EXPENSE
+                // transaction) provides the counterexample fixture.
+                driver.execute(
+                    null,
+                    "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-guard-extra', '$ledger', 'EXPENSE')",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-guard-extra', '$ledger')",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note
+                        ) VALUES ('version-guard-extra', 'transaction-guard-extra', '$ledger', 1,
+                          'posting-set-guard-extra', '2026-04-20T10:00:00+08:00',
+                          '2026-04-20T10:00:00+08:00', '2026-04-20T10:00:00+08:00', NULL)
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO ledger_transaction_current_version VALUES ('transaction-guard-extra', '$ledger', 'version-guard-extra')",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) VALUES ('posting-guard-expense', 'posting-set-guard-extra', '$ledger', 0, 'expense-guard', 1000, 'CNY', 2)",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) VALUES ('posting-guard-asset', 'posting-set-guard-extra', '$ledger', 1, 'asset-guard', -1000, 'CNY', 2)",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) VALUES ('posting-guard-asset-2', 'posting-set-guard-extra', '$ledger', 2, 'asset-guard-2', -1000, 'CNY', 2)",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO rg12_posting_semantic(ledger_id, posting_id, role, reconciliation_eligible, category_id) VALUES ('$ledger', 'posting-guard-asset', 'mixed_expense_asset_funding', 1, NULL)",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO rg12_posting_semantic(ledger_id, posting_id, role, reconciliation_eligible, category_id) VALUES ('$ledger', 'posting-guard-asset-2', 'mixed_expense_asset_funding', 1, NULL)",
+                    0,
+                )
+                // 1. A posting that already owns a reconciliation fact cannot acquire a
+                // match (the fact-preclusion branch of the rebuilt match guard).
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        "INSERT INTO rg12_reconciliation_match(ledger_id, match_id, posting_id, evidence_id) VALUES ('$ledger', 'match-against-fact', 'root-correction-liability-v2', 'evidence-against-fact')",
+                        0,
+                    )
+                }
+                // 2. An orphan match (no history) cannot own a fact: the match insert is
+                // allowed as the documented residual, the PENDING fact insert is rejected
+                // by the orphan branch of the rebuilt fact guard.
+                driver.execute(
+                    null,
+                    "INSERT INTO rg12_reconciliation_match(ledger_id, match_id, posting_id, evidence_id) VALUES ('$ledger', 'match-orphan', 'posting-guard-asset', 'evidence-orphan')",
+                    0,
+                )
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        "INSERT INTO rg12_posting_reconciliation(ledger_id, reconciliation_id, posting_id, status) VALUES ('$ledger', 'fact-orphan', 'posting-guard-asset', 'PENDING')",
+                        0,
+                    )
+                }
+                // 3. PENDING fact first, then a match, then a MATCHED history entry: the
+                // match insert is rejected first by the rebuilt match guard's
+                // fact-preclusion branch. The rg12_match_history_fact_consistency
+                // backstop (asserted structurally in LedgerDatabaseMigrationTest) would
+                // catch the history insert if a future migration ever relaxed that branch.
+                driver.execute(
+                    null,
+                    "INSERT INTO rg12_posting_reconciliation(ledger_id, reconciliation_id, posting_id, status) VALUES ('$ledger', 'fact-pending-first', 'posting-guard-asset-2', 'PENDING')",
+                    0,
+                )
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        "INSERT INTO rg12_reconciliation_match(ledger_id, match_id, posting_id, evidence_id) VALUES ('$ledger', 'match-after-pending-fact', 'posting-guard-asset-2', 'evidence-after-pending-fact')",
+                        0,
+                    )
+                }
             }
         } finally {
             Files.deleteIfExists(path)

@@ -7148,12 +7148,20 @@ CREATE TRIGGER rg12_consumption_guard_update BEFORE UPDATE ON rg12_consumption_r
 CREATE TRIGGER rg12_consumption_guard_delete BEFORE DELETE ON rg12_consumption_record BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
 CREATE TRIGGER rg12_report_period_guard_update BEFORE UPDATE ON rg12_report_period BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
 CREATE TRIGGER rg12_report_period_guard_delete BEFORE DELETE ON rg12_report_period BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
--- A match owns an eligible real posting (the runtime only matches eligible real legs).
+-- A match owns an eligible real posting (the runtime only matches eligible real legs),
+-- and a posting that already owns a reconciliation fact cannot acquire a match.
 CREATE TRIGGER rg12_match_current_guard_insert BEFORE INSERT ON rg12_reconciliation_match BEGIN
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM rg12_posting_semantic AS semantic
     WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
       AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 match current ownership')
+  WHEN EXISTS (
+    -- a posting that already owns a reconciliation fact cannot acquire a match:
+    -- the runtime always writes match history before the fact, so a pre-existing
+    -- fact means the pair (fact, match-without-history) is not representable
+    SELECT 1 FROM rg12_posting_reconciliation AS fact
+    WHERE fact.ledger_id = new.ledger_id AND fact.posting_id = new.posting_id
   ) THEN RAISE(ABORT, 'rg12 match current ownership') END;
 END;
 -- History is append-only with consecutive sequences and the frozen transition:
@@ -7172,14 +7180,39 @@ CREATE TRIGGER rg12_match_history_transition BEFORE INSERT ON rg12_reconciliatio
     ) THEN RAISE(ABORT, 'rg12 match history transition') END
   END;
 END;
+-- Defense-in-depth (RG12-001): a matched history entry cannot be appended to a
+-- match whose posting already owns a pending reconciliation fact. The contradiction
+-- order is already closed by the current-state guards above and below; this guard
+-- is the backstop in case any of them is relaxed by a future migration.
+CREATE TRIGGER rg12_match_history_fact_consistency BEFORE INSERT ON rg12_reconciliation_match_history BEGIN
+  SELECT CASE WHEN new.status = 'MATCHED' AND EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_posting_reconciliation AS fact
+      ON fact.ledger_id = match_row.ledger_id AND fact.posting_id = match_row.posting_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.match_id = new.match_id
+      AND fact.status = 'PENDING'
+  ) THEN RAISE(ABORT, 'rg12 match history fact consistency') END;
+END;
 -- Reconciliation facts are write-once per posting with the frozen current-state rule:
 -- an eligible real posting owns exactly one fact whose status agrees with its match
--- state (matched facts require an active match, pending facts forbid one).
+-- state (matched facts require an active match, pending facts forbid one); a match
+-- that never received its entry-1 history owns the posting, so no fact may be built
+-- on it either.
 CREATE TRIGGER rg12_reconciliation_current_guard_insert BEFORE INSERT ON rg12_posting_reconciliation BEGIN
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM rg12_posting_semantic AS semantic
     WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
       AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN EXISTS (
+    -- a match that never received its entry-1 history owns the posting: the
+    -- match is not representable in the domain and no fact may be built on it
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND NOT EXISTS (
+        SELECT 1 FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
   ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
   WHEN EXISTS (
     SELECT 1 FROM rg12_reconciliation_match AS match_row
