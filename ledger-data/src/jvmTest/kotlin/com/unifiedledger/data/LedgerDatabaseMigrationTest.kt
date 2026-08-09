@@ -141,14 +141,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionFifteen() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionSixteen() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(15, LedgerDatabase.Schema.version)
+            assertEquals(16, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -333,7 +333,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(15, LedgerDatabase.Schema.version)
+                assertEquals(16, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -403,7 +403,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(15, LedgerDatabase.Schema.version)
+                assertEquals(16, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -442,7 +442,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(15, LedgerDatabase.Schema.version)
+                assertEquals(16, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -485,6 +485,217 @@ class LedgerDatabaseMigrationTest {
             }
         } finally {
             Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionFifteenToSixteenPreservesFormalRowsAndCreatesEmptyRg11OwnersAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v15-v16-rg11-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 15)
+                val database = LedgerDatabase(driver)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg11_%'"),
+                )
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 15, newVersion = 16)
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(0L, database.ledgerQueries.countRg11Operations("ledger-a").executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countRg11FormalTransactions("ledger-a").executeAsOne())
+                assertEquals(0L, database.ledgerQueries.selectRg11AllSchedules("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg11AllRevisions("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg11AllInstallments("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg11AllConfirmations("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg11AllAuditLinks("ledger-a").executeAsList().size.toLong())
+                assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionFifteenToSixteenDdlFailureRollsBackEveryRg11Owner() {
+        val path = Files.createTempFile("ledger-data-v15-v16-rg11-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 15)
+                driver.execute(null, "CREATE TABLE rg11_schedule(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 15, newVersion = 16)
+                    }
+                }
+            }
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg11_%' ORDER BY name",
+                    ).use { rows ->
+                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                        assertEquals(listOf("rg11_schedule"), names)
+                    }
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionSixteenWiresPrepaidCanonicalKindsAndProtectsRg11Guards() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            database.ledgerQueries.insertTransaction("transaction-purchase-v16", "ledger-a", "PREPAID_PURCHASE")
+            database.ledgerQueries.insertTransaction("transaction-recognition-v16", "ledger-a", "PREPAID_RECOGNITION")
+            val stored = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
+                mapper = { cursor ->
+                    val rows = buildList {
+                        while (cursor.next().value) {
+                            add(
+                                listOf(
+                                    requireNotNull(cursor.getString(0)),
+                                    requireNotNull(cursor.getString(1)),
+                                    requireNotNull(cursor.getString(2)),
+                                ),
+                            )
+                        }
+                    }
+                    app.cash.sqldelight.db.QueryResult.Value(rows)
+                },
+                parameters = 0,
+            ).value
+            assertEquals(
+                listOf(
+                    listOf("transaction-purchase-v16", "EXPENSE", "PREPAID_PURCHASE"),
+                    listOf("transaction-recognition-v16", "EXPENSE", "PREPAID_RECOGNITION"),
+                ),
+                stored,
+            )
+            // The shared confirmation_id column is write-once and reserved for later
+            // versions of PREPAID_RECOGNITION transactions.
+            driver.execute(
+                null,
+                """
+                    INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-v16', 'ledger-a')
+                """.trimIndent(),
+                0,
+            )
+            driver.execute(
+                null,
+                """
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note
+                    ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
+                      'posting-set-v16', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL)
+                """.trimIndent(),
+                0,
+            )
+            driver.execute(
+                null,
+                """
+                    INSERT INTO ledger_transaction_current_version
+                    VALUES ('transaction-recognition-v16', 'ledger-a', 'version-recognition-v1')
+                """.trimIndent(),
+                0,
+            )
+            assertFailsWith<SQLException> {
+                driver.execute(
+                    null,
+                    """
+                        UPDATE transaction_version SET confirmation_id = 'confirmation-smoke'
+                        WHERE version_id = 'version-recognition-v1'
+                    """.trimIndent(),
+                    0,
+                )
+            }
+            assertFailsWith<SQLException> {
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note, confirmation_id
+                        ) VALUES ('version-bad-v16', 'transaction-purchase-v16', 'ledger-a', 2,
+                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL, 'confirmation-bad-v16')
+                    """.trimIndent(),
+                    0,
+                )
+            }
+            // A schedule cannot own a transaction that is not PREPAID_PURCHASE.
+            assertFailsWith<SQLException> {
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO rg11_schedule(
+                          ledger_id, schedule_id, payment_transaction_id, prepaid_account_id,
+                          category_id, total_amount_minor, currency_code, currency_precision,
+                          cadence, start_at, anchor_kind, anchor_day
+                        ) VALUES ('ledger-a', 'schedule-bad-v16', 'transaction-recognition-v16',
+                          'prepaid-account', 'category', 10000, 'CNY', 2, 'MONTHLY',
+                          '2026-01-15T00:30:00Z', 'MONTH_END', NULL)
+                    """.trimIndent(),
+                    0,
+                )
+            }
+            // Operation rows are immutable even when callers bypass the store.
+            database.ledgerQueries.insertRg11Operation(
+                "ledger-a",
+                "request-smoke",
+                "create_periodic_allocation",
+                "create_periodic_allocation",
+                "fingerprint-smoke",
+                "PENDING",
+                null,
+                null,
+            )
+            assertFailsWith<SQLException> {
+                driver.execute(
+                    null,
+                    "DELETE FROM rg11_operation WHERE ledger_id = 'ledger-a' AND identity_value = 'request-smoke'",
+                    0,
+                )
+            }
+            database.ledgerQueries.updateRg11OperationResult("ACCEPTED", null, null, "ledger-a", "request-smoke")
+            assertFailsWith<SQLException> {
+                driver.execute(
+                    null,
+                    "DELETE FROM rg11_operation WHERE ledger_id = 'ledger-a' AND identity_value = 'request-smoke'",
+                    0,
+                )
+            }
+        } finally {
+            driver.close()
         }
     }
 
@@ -929,7 +1140,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionFifteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionSixteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -944,7 +1155,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 15)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 16)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

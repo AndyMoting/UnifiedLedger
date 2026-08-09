@@ -29,7 +29,7 @@ class Rg06SchemaV9Test {
                 JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 12) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(15, LedgerDatabase.Schema.version)
+                assertEquals(16, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Operations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Relations().executeAsOne())
@@ -170,7 +170,7 @@ class Rg06SchemaV9Test {
         freshSchema { driver ->
             seedAcceptedRg06Graph(driver)
 
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('version-a-v2','transaction-a','ledger-a',2,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','compatible')", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-a-v2','transaction-a','ledger-a',2,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','compatible')", 0)
             assertAcceptedAggregateRejected(
                 driver,
                 "UPDATE ledger_transaction_current_version SET current_version_id = 'version-a-v2' WHERE transaction_id = 'transaction-a'",
@@ -179,8 +179,8 @@ class Rg06SchemaV9Test {
             driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-unrelated','ledger-a','EXPENSE')", 0)
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-unrelated','ledger-a')", 0)
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-unrelated-v2','ledger-a')", 0)
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('version-unrelated','transaction-unrelated','ledger-a',1,'posting-set-unrelated','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',NULL)", 0)
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('version-unrelated-v2','transaction-unrelated','ledger-a',2,'posting-set-unrelated-v2','2026-06-02T00:00:00Z','2026-06-02T00:00:00Z','2026-06-02T00:00:00Z',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-unrelated','transaction-unrelated','ledger-a',1,'posting-set-unrelated','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-unrelated-v2','transaction-unrelated','ledger-a',2,'posting-set-unrelated-v2','2026-06-02T00:00:00Z','2026-06-02T00:00:00Z','2026-06-02T00:00:00Z',NULL)", 0)
             driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('transaction-unrelated','ledger-a','version-unrelated')", 0)
             driver.execute(null, "UPDATE ledger_transaction_current_version SET current_version_id = 'version-unrelated-v2' WHERE transaction_id = 'transaction-unrelated'", 0)
 
@@ -218,7 +218,7 @@ class Rg06SchemaV9Test {
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-incompatible','ledger-a')", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('posting-incompatible-expense','posting-set-incompatible','ledger-a',0,'expense-service-account',8000,'CNY',2)", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('posting-incompatible-asset','posting-set-incompatible','ledger-a',1,'asset-bank',-8000,'CNY',2)", 0)
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('version-incompatible','transaction-a','ledger-a',2,'posting-set-incompatible','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-incompatible','transaction-a','ledger-a',2,'posting-set-incompatible','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
             assertAcceptedAggregateRejected(driver, "UPDATE ledger_transaction_current_version SET current_version_id = 'version-incompatible' WHERE transaction_id = 'transaction-a'")
         }
         accepted { driver ->
@@ -232,7 +232,7 @@ class Rg06SchemaV9Test {
         }
         accepted { driver ->
             driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-alias','ledger-a','EXPENSE')", 0)
-            assertAcceptedAggregateRejected(driver, "INSERT INTO transaction_version VALUES ('version-alias','transaction-alias','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)")
+            assertAcceptedAggregateRejected(driver, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-alias','transaction-alias','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)")
         }
     }
 
@@ -321,7 +321,7 @@ class Rg06SchemaV9Test {
         driver.execute(null, "INSERT INTO rg06_relation_member VALUES ('ledger-a','relation-a',0,'LIFECYCLE','lifecycle-a')", 0)
         driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('transaction-a','ledger-a','EXPENSE')", 0)
         driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')", 0)
-        driver.execute(null, "INSERT INTO transaction_version VALUES ('version-a','transaction-a','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
+        driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-a','transaction-a','ledger-a',1,'posting-set-a','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
         driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('transaction-a','ledger-a','version-a')", 0)
         driver.execute(null, "INSERT INTO posting VALUES ('posting-a-expense','posting-set-a','ledger-a',0,'expense-service-account',8000,'CNY',2)", 0)
         driver.execute(null, "INSERT INTO posting VALUES ('posting-a-asset','posting-set-a','ledger-a',1,'asset-bank',-8000,'CNY',2)", 0)

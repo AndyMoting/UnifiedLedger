@@ -1,0 +1,98 @@
+{
+  "ids": {
+    "main-create-request": {
+      "transaction_id": "main-purchase",
+      "version_id": "main-purchase-v1",
+      "posting_set_id": "main-purchase-postings",
+      "payment_posting_id": "main-purchase-cash",
+      "prepaid_posting_id": "main-purchase-prepaid",
+      "schedule_id": "schedule-main",
+      "revision_id": "main-revision-01",
+      "installment_ids": ["main-installment-01", "main-installment-02", "main-installment-03"],
+      "reconciliation_id": "main-purchase-cash-reconciliation"
+    },
+    "main-recognize-01-request": {
+      "transaction_id": "main-recognition-01",
+      "version_id": "main-recognition-01-v1",
+      "posting_set_id": "main-recognition-01-postings",
+      "expense_posting_id": "main-recognition-01-expense",
+      "prepaid_posting_id": "main-recognition-01-prepaid",
+      "audit_link_id": "main-recognition-link-01"
+    },
+    "main-recognize-02-request": {
+      "transaction_id": "main-recognition-02",
+      "version_id": "main-recognition-02-v1",
+      "posting_set_id": "main-recognition-02-postings",
+      "expense_posting_id": "main-recognition-02-expense",
+      "prepaid_posting_id": "main-recognition-02-prepaid",
+      "audit_link_id": "main-recognition-link-02"
+    },
+    "main-recognize-03-request": {
+      "transaction_id": "main-recognition-03",
+      "version_id": "main-recognition-03-v1",
+      "posting_set_id": "main-recognition-03-postings",
+      "expense_posting_id": "main-recognition-03-expense",
+      "prepaid_posting_id": "main-recognition-03-prepaid",
+      "audit_link_id": "main-recognition-link-03"
+    },
+    "main-correct-request": {
+      "version_id": "main-recognition-01-v2",
+      "confirmation_id": "main-correct-confirmation",
+      "operation_id": "main-correct"
+    },
+    "revision-create-request": {
+      "transaction_id": "revision-purchase",
+      "version_id": "revision-purchase-v1",
+      "posting_set_id": "revision-purchase-postings",
+      "payment_posting_id": "revision-purchase-cash",
+      "prepaid_posting_id": "revision-purchase-prepaid",
+      "schedule_id": "schedule-revision",
+      "revision_id": "revision-revision-01",
+      "installment_ids": ["revision-installment-01", "revision-installment-02", "revision-installment-03"],
+      "reconciliation_id": "revision-purchase-cash-reconciliation"
+    },
+    "revision-recognize-01-request": {
+      "transaction_id": "revision-recognition-01",
+      "version_id": "revision-recognition-01-v1",
+      "posting_set_id": "revision-recognition-01-postings",
+      "expense_posting_id": "revision-recognition-01-expense",
+      "prepaid_posting_id": "revision-recognition-01-prepaid",
+      "audit_link_id": "revision-recognition-link-01"
+    },
+    "revision-revise-request": {
+      "revision_id": "revision-revision-02",
+      "installment_ids": ["revision-installment-04", "revision-installment-05", "revision-installment-06"]
+    },
+    "revision-recognize-04-request": {
+      "transaction_id": "revision-recognition-04",
+      "version_id": "revision-recognition-04-v1",
+      "posting_set_id": "revision-recognition-04-postings",
+      "expense_posting_id": "revision-recognition-04-expense",
+      "prepaid_posting_id": "revision-recognition-04-prepaid",
+      "audit_link_id": "revision-recognition-link-04"
+    },
+    "revision-recognize-05-request": {
+      "transaction_id": "revision-recognition-05",
+      "version_id": "revision-recognition-05-v1",
+      "posting_set_id": "revision-recognition-05-postings",
+      "expense_posting_id": "revision-recognition-05-expense",
+      "prepaid_posting_id": "revision-recognition-05-prepaid",
+      "audit_link_id": "revision-recognition-link-05"
+    },
+    "revision-recognize-06-request": {
+      "transaction_id": "revision-recognition-06",
+      "version_id": "revision-recognition-06-v1",
+      "posting_set_id": "revision-recognition-06-postings",
+      "expense_posting_id": "revision-recognition-06-expense",
+      "prepaid_posting_id": "revision-recognition-06-prepaid",
+      "audit_link_id": "revision-recognition-link-06"
+    }
+  },
+  "times": {
+    "main-correct-request": {
+      "confirmation_created_at": "2026-02-01T00:01:00+08:00"
+    }
+  },
+  "sources": [],
+  "counterparties": {}
+}

@@ -1,0 +1,224 @@
+-- RG-11 additive owner: v15 -> v16. Existing formal rows and all prior
+-- RG owners remain untouched (D-085, aligned with the RG-08 additive pattern).
+-- The frozen corrected v2 version carries confirmation_id; the column is a
+-- shared formal-chain addition exactly like the v8->v9 canonical_kind column
+-- (9.sqm), NULL for every pre-existing version.
+ALTER TABLE transaction_version ADD COLUMN confirmation_id TEXT;
+
+CREATE TABLE rg11_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED')),
+  reason_code TEXT,
+  field_path TEXT,
+  PRIMARY KEY (ledger_id, identity_value)
+);
+CREATE TABLE rg11_returned_id (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  id_kind TEXT NOT NULL, id_value TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value, sequence),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg11_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg11_schedule (
+  ledger_id TEXT NOT NULL, schedule_id TEXT NOT NULL PRIMARY KEY,
+  payment_transaction_id TEXT NOT NULL,
+  prepaid_account_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  total_amount_minor INTEGER NOT NULL CHECK (total_amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  cadence TEXT NOT NULL CHECK (cadence IN ('MONTHLY')),
+  start_at TEXT NOT NULL,
+  anchor_kind TEXT NOT NULL CHECK (anchor_kind IN ('MONTH_END', 'DAY_OF_MONTH')),
+  anchor_day INTEGER CHECK (anchor_day IS NULL OR (anchor_day >= 1 AND anchor_day <= 28)),
+  UNIQUE (ledger_id, schedule_id),
+  CHECK ((anchor_kind = 'MONTH_END' AND anchor_day IS NULL)
+      OR (anchor_kind = 'DAY_OF_MONTH' AND anchor_day IS NOT NULL)),
+  FOREIGN KEY (payment_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg11_revision (
+  ledger_id TEXT NOT NULL, revision_id TEXT NOT NULL PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL CHECK (revision_number > 0),
+  recognized_through TEXT,
+  remaining_amount_minor INTEGER NOT NULL CHECK (remaining_amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (ledger_id, revision_id),
+  CHECK (revision_number = 1 OR recognized_through IS NOT NULL),
+  FOREIGN KEY (ledger_id, schedule_id) REFERENCES rg11_schedule(ledger_id, schedule_id)
+);
+CREATE TABLE rg11_installment (
+  ledger_id TEXT NOT NULL, installment_id TEXT NOT NULL PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  revision_id TEXT NOT NULL,
+  installment_sequence INTEGER NOT NULL CHECK (installment_sequence > 0),
+  scheduled_at TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  UNIQUE (ledger_id, installment_id),
+  FOREIGN KEY (ledger_id, schedule_id) REFERENCES rg11_schedule(ledger_id, schedule_id),
+  FOREIGN KEY (ledger_id, revision_id) REFERENCES rg11_revision(ledger_id, revision_id)
+);
+CREATE TABLE rg11_revision_installment (
+  ledger_id TEXT NOT NULL, revision_id TEXT NOT NULL, installment_index INTEGER NOT NULL CHECK (installment_index >= 0),
+  installment_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, revision_id, installment_index),
+  UNIQUE (ledger_id, installment_id),
+  FOREIGN KEY (ledger_id, revision_id) REFERENCES rg11_revision(ledger_id, revision_id),
+  FOREIGN KEY (ledger_id, installment_id) REFERENCES rg11_installment(ledger_id, installment_id)
+);
+CREATE TABLE rg11_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind = 'operation'),
+  subject_id TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  payload TEXT NOT NULL CHECK (payload = '{}'),
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, operation_id),
+  CHECK (subject_id = operation_id)
+);
+CREATE TABLE rg11_audit_link (
+  ledger_id TEXT NOT NULL, audit_link_id TEXT NOT NULL PRIMARY KEY,
+  link_type TEXT NOT NULL CHECK (link_type IN ('periodic_allocation_recognition')),
+  from_kind TEXT NOT NULL CHECK (from_kind IN ('domain_entity')),
+  from_id TEXT NOT NULL,
+  to_kind TEXT NOT NULL CHECK (to_kind IN ('transaction')),
+  to_id TEXT NOT NULL,
+  UNIQUE (ledger_id, audit_link_id), UNIQUE (ledger_id, from_id)
+);
+CREATE TABLE rg11_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('payment_asset', 'prepaid_asset', 'expense')),
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)),
+  category_id TEXT,
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((role = 'payment_asset' AND reconciliation_eligible = 1 AND category_id IS NULL)
+      OR (role = 'prepaid_asset' AND reconciliation_eligible = 0 AND category_id IS NULL)
+      OR (role = 'expense' AND reconciliation_eligible = 0 AND category_id IS NOT NULL))
+);
+CREATE TABLE rg11_posting_reconciliation (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('PENDING')),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg11_posting_semantic(ledger_id, posting_id)
+);
+CREATE TABLE rg11_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
+  created_at TEXT NOT NULL, statistics_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+-- The frozen corrected v2 version carries confirmation_id and stays write-once:
+-- only a later version of a PREPAID_RECOGNITION transaction may carry it.
+CREATE TRIGGER rg11_transaction_version_confirmation_guard_insert BEFORE INSERT ON transaction_version WHEN new.confirmation_id IS NOT NULL BEGIN
+  SELECT CASE WHEN new.version_number = 1 OR NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_RECOGNITION'
+  ) THEN RAISE(ABORT, 'rg11 version confirmation ownership') END;
+END;
+CREATE TRIGGER rg11_transaction_version_confirmation_guard_update BEFORE UPDATE OF confirmation_id ON transaction_version BEGIN
+  SELECT CASE WHEN old.confirmation_id IS NOT NULL OR new.confirmation_id IS NULL
+    OR new.version_id != old.version_id OR new.transaction_id != old.transaction_id
+    OR new.ledger_id != old.ledger_id OR new.version_number != old.version_number
+    OR new.posting_set_id != old.posting_set_id
+    OR new.occurred_at != old.occurred_at OR new.statistics_at != old.statistics_at
+    OR new.effective_at != old.effective_at OR new.note IS NOT old.note
+    OR new.version_number = 1
+    OR NOT EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_RECOGNITION'
+    )
+    THEN RAISE(ABORT, 'rg11 version confirmation ownership') END;
+END;
+CREATE TRIGGER rg11_operation_guard_delete BEFORE DELETE ON rg11_operation BEGIN SELECT RAISE(ABORT, 'rg11 operation immutable'); END;
+CREATE TRIGGER rg11_operation_guard_update BEFORE UPDATE ON rg11_operation BEGIN
+  SELECT CASE WHEN old.outcome = 'PENDING' AND new.outcome IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED')
+    AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value
+    AND new.action = old.action AND new.operation_class = old.operation_class
+    AND new.input_fingerprint = old.input_fingerprint
+    THEN NULL ELSE RAISE(ABORT, 'rg11 operation immutable') END;
+END;
+CREATE TRIGGER rg11_returned_id_guard_update BEFORE UPDATE ON rg11_returned_id BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_returned_id_guard_delete BEFORE DELETE ON rg11_returned_id BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_schedule_guard_update BEFORE UPDATE ON rg11_schedule BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_schedule_guard_delete BEFORE DELETE ON rg11_schedule BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_revision_guard_update BEFORE UPDATE ON rg11_revision BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_revision_guard_delete BEFORE DELETE ON rg11_revision BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_installment_guard_update BEFORE UPDATE ON rg11_installment BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_installment_guard_delete BEFORE DELETE ON rg11_installment BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_revision_installment_guard_update BEFORE UPDATE ON rg11_revision_installment BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_revision_installment_guard_delete BEFORE DELETE ON rg11_revision_installment BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_confirmation_guard_update BEFORE UPDATE ON rg11_confirmation BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_confirmation_guard_delete BEFORE DELETE ON rg11_confirmation BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_audit_guard_update BEFORE UPDATE ON rg11_audit_link BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_audit_guard_delete BEFORE DELETE ON rg11_audit_link BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_semantic_guard_update BEFORE UPDATE ON rg11_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_semantic_guard_delete BEFORE DELETE ON rg11_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_reconciliation_guard_update BEFORE UPDATE ON rg11_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_reconciliation_guard_delete BEFORE DELETE ON rg11_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+CREATE TRIGGER rg11_formal_metadata_guard_update BEFORE UPDATE ON rg11_formal_transaction_metadata BEGIN
+  SELECT CASE WHEN old.ledger_id = new.ledger_id AND old.transaction_id = new.transaction_id
+    AND old.created_at = new.created_at
+    AND new.statistics_at_text != old.statistics_at_text
+    THEN NULL ELSE RAISE(ABORT, 'rg11 metadata immutable') END;
+END;
+CREATE TRIGGER rg11_formal_metadata_guard_delete BEFORE DELETE ON rg11_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg11 immutable'); END;
+-- The schedule is a typed edge onto its PREPAID_PURCHASE payment transaction.
+CREATE TRIGGER rg11_schedule_formal_owner_guard_insert BEFORE INSERT ON rg11_schedule BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.payment_transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_PURCHASE'
+  ) THEN RAISE(ABORT, 'rg11 schedule formal ownership') END;
+END;
+-- Revisions are append-only with consecutive revision numbers per schedule.
+CREATE TRIGGER rg11_revision_number_sequence BEFORE INSERT ON rg11_revision BEGIN SELECT CASE WHEN (new.revision_number = 1 AND EXISTS (SELECT 1 FROM rg11_revision WHERE ledger_id = new.ledger_id AND schedule_id = new.schedule_id)) OR (new.revision_number > 1 AND NOT EXISTS (SELECT 1 FROM rg11_revision WHERE ledger_id = new.ledger_id AND schedule_id = new.schedule_id AND revision_number = new.revision_number - 1)) THEN RAISE(ABORT, 'rg11 revision number sequence') END; END;
+-- Installment sequences are continuous per schedule across revisions.
+CREATE TRIGGER rg11_installment_sequence BEFORE INSERT ON rg11_installment BEGIN SELECT CASE WHEN (new.installment_sequence = 1 AND EXISTS (SELECT 1 FROM rg11_installment WHERE ledger_id = new.ledger_id AND schedule_id = new.schedule_id)) OR (new.installment_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg11_installment WHERE ledger_id = new.ledger_id AND schedule_id = new.schedule_id AND installment_sequence = new.installment_sequence - 1)) THEN RAISE(ABORT, 'rg11 installment sequence') END; END;
+-- The recognition audit link is a typed edge from an exact installment onto an
+-- exact PREPAID_RECOGNITION transaction (design doc line 42).
+CREATE TRIGGER rg11_audit_link_target_guard_insert BEFORE INSERT ON rg11_audit_link BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg11_installment AS installment
+    WHERE installment.ledger_id = new.ledger_id AND installment.installment_id = new.from_id
+  ) OR NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.to_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_RECOGNITION'
+  ) THEN RAISE(ABORT, 'rg11 audit link target mismatch') END;
+END;
+-- Posting semantics own postings of the matching formal kind: the payment
+-- posting of a PREPAID_PURCHASE, the expense posting of a PREPAID_RECOGNITION
+-- and the prepaid asset posting of either.
+CREATE TRIGGER rg11_posting_semantic_formal_owner_guard_insert BEFORE INSERT ON rg11_posting_semantic BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM posting AS posting_row
+    JOIN transaction_version AS version_row
+      ON version_row.ledger_id = posting_row.ledger_id AND version_row.posting_set_id = posting_row.posting_set_id
+    JOIN ledger_transaction_current_version AS current_row
+      ON current_row.ledger_id = version_row.ledger_id AND current_row.transaction_id = version_row.transaction_id
+     AND current_row.current_version_id = version_row.version_id
+    JOIN ledger_transaction AS transaction_row
+      ON transaction_row.ledger_id = current_row.ledger_id AND transaction_row.transaction_id = current_row.transaction_id
+    WHERE posting_row.ledger_id = new.ledger_id AND posting_row.posting_id = new.posting_id
+      AND (
+        (new.role = 'payment_asset' AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_PURCHASE')
+        OR (new.role = 'prepaid_asset' AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) IN ('PREPAID_PURCHASE', 'PREPAID_RECOGNITION'))
+        OR (new.role = 'expense' AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'PREPAID_RECOGNITION')
+      )
+  ) THEN RAISE(ABORT, 'rg11 posting formal ownership') END;
+END;
+-- RG-11 has no matching action: every eligible posting starts and stays PENDING.
+CREATE TRIGGER rg11_reconciliation_current_guard_insert BEFORE INSERT ON rg11_posting_reconciliation BEGIN
+  SELECT CASE WHEN new.status != 'PENDING' OR NOT EXISTS (
+    SELECT 1 FROM rg11_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg11 reconciliation current ownership') END;
+END;
