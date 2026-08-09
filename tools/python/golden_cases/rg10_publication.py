@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +17,24 @@ from .v2 import validate_golden_case_v2
 CASE_ID = "RG-10"
 CONTRACT = "unifiedledger.golden-case"
 CONTRACT_VERSION = "2.0.0"
+
+_PHASES = (
+    "prepared",
+    "output_backup",
+    "output_installed",
+    "manifest_backup",
+    "manifest_installed",
+)
+_OUTPUT_INSTALLED_PHASES = ("output_installed", "manifest_backup", "manifest_installed")
+_DOTFILE_PATTERN = re.compile(r"^\.(?P<base>.+)\.(?P<token>[0-9a-f]{32})\.(?P<suffix>tmp|bak)$")
+
+
+class PublicationRecoveryError(RuntimeError):
+    """A publication journal failed validation or recovery could not complete.
+
+    The journal is preserved and no further file actions are taken, so the
+    failure can be inspected and recovery retried.
+    """
 
 
 @dataclass(frozen=True)
@@ -133,65 +151,226 @@ def _remove(path: Path) -> None:
         path.unlink()
     except FileNotFoundError:
         pass
+    except OSError as exc:
+        raise PublicationRecoveryError(
+            f"publication cleanup failed removing {path}: {exc}; "
+            "no further file actions were taken"
+        ) from exc
 
 
-def _restore_path(path: Path, backup: Path, had_original: bool) -> None:
-    if path.exists():
-        _remove(path)
-    if had_original:
-        os.replace(backup, path)
+def _invalid_journal(case_id: str, journal_path: Path, reason: str) -> PublicationRecoveryError:
+    return PublicationRecoveryError(
+        f"{case_id} publication recovery rejected journal {journal_path}: {reason}. "
+        "The journal was preserved and no files were touched. Inspect the journal "
+        "and any sibling .tmp/.bak files, restore the publication directory to its "
+        "pre-transaction state manually if needed, then delete the journal to "
+        "resume publication."
+    )
 
 
-def _restore_published_target(path: Path, backup: Path, had_original: bool) -> None:
-    """Restore one publication target from its backup when that backup exists.
+def _write_journal(journal_path: Path, document: dict[str, Any]) -> None:
+    """Atomically replace the journal with a new phase document.
 
-    The journal phase is advanced before each ``os.replace`` so an interrupted
-    transaction can never leave a moved original only in ``.bak`` while the
-    journal still claims ``prepared``. This guard additionally recovers the
-    legacy crash window: if the target path is missing but its backup exists,
-    the original is restored from the backup instead of being deleted.
+    The new content is written to a sibling ``.tmp`` file, fsynced, then
+    atomically renamed over the journal, so the journal always contains either
+    the old phase or the new phase, never a truncated mix.
     """
-    if not backup.is_file():
-        return
-    _restore_path(path, backup, had_original)
+    tmp = journal_path.with_name(journal_path.name + ".tmp")
+    _write_fsync(
+        tmp,
+        (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+    )
+    os.replace(tmp, journal_path)
+
+
+def _load_journal(
+    journal_path: Path,
+    case_id: str,
+    publish_dir: Path,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    """Validate a publication journal before any recovery action.
+
+    Containment is enforced on resolved physical paths: every recorded path
+    must resolve to a direct child of ``publish_dir`` (itself the resolved
+    manifest parent directory), so a symlink or junction inside the publication
+    directory that points elsewhere resolves to a different parent and is
+    rejected. The check therefore confines recovery to the resolved
+    publication directory rather than to a logical (unresolved) path. The
+    journal's recorded manifest path must also equal the resolved manifest
+    that located the journal, and the two targets must carry this case's
+    derived names (``<case>.json`` and ``manifest.json``), so a crafted
+    journal cannot name an arbitrary sibling file as a target. Any validation
+    failure raises ``PublicationRecoveryError``, preserves the journal, and
+    performs no file actions.
+    """
+    try:
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise _invalid_journal(case_id, journal_path, f"journal is not readable JSON ({exc})") from exc
+    if not isinstance(journal, dict):
+        raise _invalid_journal(case_id, journal_path, "journal root is not an object")
+    if journal.get("format_version") != 2:
+        raise _invalid_journal(case_id, journal_path, "unsupported journal format_version")
+    if journal.get("case") != case_id:
+        raise _invalid_journal(case_id, journal_path, "journal belongs to another case")
+    phase = journal.get("phase")
+    if phase not in _PHASES:
+        raise _invalid_journal(case_id, journal_path, f"unknown journal phase {phase!r}")
+    path_fields = (
+        "output_path",
+        "manifest_path",
+        "output_temp",
+        "manifest_temp",
+        "output_backup",
+        "manifest_backup",
+    )
+    resolved: dict[str, Path] = {}
+    for field in path_fields:
+        raw = journal.get(field)
+        if not isinstance(raw, str) or not raw:
+            raise _invalid_journal(case_id, journal_path, f"{field} is not a path string")
+        try:
+            resolved[field] = Path(raw).resolve()
+        except (OSError, ValueError) as exc:
+            raise _invalid_journal(case_id, journal_path, f"{field} cannot be resolved ({exc})") from exc
+        if os.path.normcase(str(resolved[field].parent)) != os.path.normcase(str(publish_dir)):
+            raise _invalid_journal(case_id, journal_path, f"{field} escapes the publication directory")
+    if len({str(path) for path in resolved.values()}) != len(path_fields):
+        raise _invalid_journal(case_id, journal_path, "recorded paths are not pairwise distinct")
+    if os.path.normcase(str(resolved["manifest_path"])) != os.path.normcase(str(manifest_path)):
+        raise _invalid_journal(
+            case_id,
+            journal_path,
+            "journal manifest path does not match the manifest that located it",
+        )
+    if resolved["output_path"].name != f"{case_id.lower()}.json":
+        raise _invalid_journal(case_id, journal_path, "output path is not this case's target name")
+    if resolved["manifest_path"].name != "manifest.json":
+        raise _invalid_journal(case_id, journal_path, "manifest path is not the shared manifest name")
+    names = {field: resolved[field].name for field in path_fields}
+    for field in ("output_temp", "manifest_temp", "output_backup", "manifest_backup"):
+        match = _DOTFILE_PATTERN.match(names[field])
+        if match is None:
+            raise _invalid_journal(case_id, journal_path, f"{field} does not match the dotfile pattern")
+        expected_base = names["output_path"] if field.startswith("output") else names["manifest_path"]
+        if match.group("base") != expected_base:
+            raise _invalid_journal(case_id, journal_path, f"{field} base does not match its target name")
+    tokens = {
+        _DOTFILE_PATTERN.match(names[field]).group("token")
+        for field in ("output_temp", "manifest_temp", "output_backup", "manifest_backup")
+    }
+    if len(tokens) != 1:
+        raise _invalid_journal(case_id, journal_path, "dotfile tokens are inconsistent")
+    for field in ("output_had_original", "manifest_had_original"):
+        if not isinstance(journal.get(field), bool):
+            raise _invalid_journal(case_id, journal_path, f"{field} is not a boolean")
+    output_backup = resolved["output_backup"]
+    manifest_backup = resolved["manifest_backup"]
+    if not journal["output_had_original"] and output_backup.is_file():
+        raise _invalid_journal(case_id, journal_path, "output backup exists but output_had_original is false")
+    if not journal["manifest_had_original"] and manifest_backup.is_file():
+        raise _invalid_journal(case_id, journal_path, "manifest backup exists but manifest_had_original is false")
+    if (
+        journal["output_had_original"]
+        and not output_backup.is_file()
+        and not resolved["output_path"].is_file()
+    ):
+        raise _invalid_journal(case_id, journal_path, "original output is missing and has no backup")
+    if (
+        journal["manifest_had_original"]
+        and not manifest_backup.is_file()
+        and not resolved["manifest_path"].is_file()
+    ):
+        raise _invalid_journal(case_id, journal_path, "original manifest is missing and has no backup")
+    if output_backup.is_file() and phase == "prepared":
+        raise _invalid_journal(case_id, journal_path, "output backup exists before the output_backup phase")
+    if manifest_backup.is_file() and phase in ("prepared", "output_backup", "output_installed"):
+        raise _invalid_journal(case_id, journal_path, "manifest backup exists before the manifest_backup phase")
+    return journal
+
+
+def _restore_target(target: Path, backup: Path, had_original: bool, installed: bool) -> None:
+    """Restore one publication target per the recovery decision table.
+
+    - backup exists: the original was moved away, so atomically move it back
+      over the target (had_original is guaranteed True by ``_load_journal``).
+    - no backup, original existed: the original was never moved; leave the
+      target in place.
+    - no backup, first publication, phase claims installed: the installed
+      file was created by this transaction, so remove it (PUB-001).
+    - no backup, first publication, not installed: nothing to do.
+    """
+    if backup.is_file():
+        try:
+            os.replace(backup, target)
+        except OSError as exc:
+            raise PublicationRecoveryError(
+                f"recovery failed restoring {target} from {backup}: {exc}; "
+                "the journal is preserved and recovery can be retried"
+            ) from exc
+    elif not had_original and installed:
+        _remove(target)
+
+
+def _recover_transaction(
+    journal_path: Path,
+    case_id: str,
+    publish_dir: Path,
+    manifest_path: Path,
+) -> None:
+    """Roll back one journaled publication transaction and remove its journal.
+
+    The journal is the commit record: while it exists the transaction is not
+    committed and every target is restored to its pre-transaction state; once
+    it is gone the transaction is committed and recovery does nothing. Every
+    action is idempotent, so a crash during recovery converges when rerun.
+    """
+    journal = _load_journal(journal_path, case_id, publish_dir, manifest_path)
+    phase = journal["phase"]
+    _restore_target(
+        Path(journal["output_path"]),
+        Path(journal["output_backup"]),
+        journal["output_had_original"],
+        phase in _OUTPUT_INSTALLED_PHASES,
+    )
+    _restore_target(
+        Path(journal["manifest_path"]),
+        Path(journal["manifest_backup"]),
+        journal["manifest_had_original"],
+        phase == "manifest_installed",
+    )
+    _remove(Path(journal["output_temp"]))
+    _remove(Path(journal["manifest_temp"]))
+    _remove(Path(journal["output_backup"]))
+    _remove(Path(journal["manifest_backup"]))
+    _remove(journal_path.with_name(journal_path.name + ".tmp"))
+    _remove(journal_path)
 
 
 def recover_rg10_publication(manifest_path: Path) -> bool:
-    """Recover an interrupted publication transaction, if its journal exists."""
+    """Recover an interrupted RG-10 publication transaction, if its journal exists."""
+    manifest_path = manifest_path.resolve()
     journal_path = _journal_path(manifest_path)
     if not journal_path.exists():
         return False
-
-    journal = json.loads(journal_path.read_text(encoding="utf-8"))
-    output_path = Path(journal["output_path"])
-    recorded_manifest = Path(journal["manifest_path"])
-    if recorded_manifest != manifest_path:
-        raise ValueError("RG-10 publication journal belongs to another manifest")
-    output_temp = Path(journal["output_temp"])
-    manifest_temp = Path(journal["manifest_temp"])
-    output_backup = Path(journal["output_backup"])
-    manifest_backup = Path(journal["manifest_backup"])
-    # The transaction commits only when the journal is removed. Any surviving
-    # journal restores every original from its backup when that backup exists;
-    # a missing backup means that target was never moved. A crash after both
-    # swaps but before cleanup is also rolled back safely: with no backups the
-    # restore is a no-op and the already-installed new files remain.
-    _restore_published_target(
-        output_path,
-        output_backup,
-        bool(journal["output_had_original"]),
-    )
-    _restore_published_target(
-        manifest_path,
-        manifest_backup,
-        bool(journal["manifest_had_original"]),
-    )
-    _remove(output_temp)
-    _remove(manifest_temp)
-    _remove(output_backup)
-    _remove(manifest_backup)
-    _remove(journal_path)
+    _recover_transaction(journal_path, CASE_ID, manifest_path.parent, manifest_path)
     return True
+
+
+def _sweep_stale_dotfiles(publish_dir: Path, output_name: str, manifest_name: str) -> None:
+    """Remove leftover dotfiles of an already-committed transaction.
+
+    A crash after the journal was deleted (the commit point) can leave stale
+    ``.bak`` files behind. Only dotfiles matching this publisher's exact
+    naming pattern for its two targets are removed; arbitrary files are never
+    touched.
+    """
+    names = "|".join(re.escape(name) for name in (output_name, manifest_name))
+    pattern = re.compile(rf"^\.(?:{names})\.[0-9a-f]{{32}}\.(?:bak|tmp)$")
+    for child in publish_dir.iterdir():
+        if pattern.match(child.name):
+            _remove(child)
 
 
 def publish_rg10(
@@ -202,7 +381,9 @@ def publish_rg10(
     *,
     fail_after_output_backup: bool = False,
     fail_after_output_swap: bool = False,
+    fail_after_manifest_backup: bool = False,
     fail_after_manifest_swap: bool = False,
+    fail_after_commit: bool = False,
 ) -> PublicationResult:
     """Publish one RG-10 candidate with rollback and idempotent replay."""
     source_path = source_path.resolve()
@@ -214,8 +395,10 @@ def publish_rg10(
     if output_path.parent != manifest_path.parent:
         raise ValueError("RG-10 output and manifest must share a publication directory")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    publish_dir = manifest_path.parent
 
-    recover_rg10_publication(manifest_path)
+    if not recover_rg10_publication(manifest_path):
+        _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
     source_bytes, source = _load_json(source_path)
     expected_bytes, expected = _load_json(expected_path)
     if source.get("schema_version") != 1 or source.get("case", {}).get("id") != CASE_ID:
@@ -277,7 +460,11 @@ def publish_rg10(
     output_backup = output_path.with_name(f".{output_path.name}.{token}.bak")
     manifest_backup = manifest_path.with_name(f".{manifest_path.name}.{token}.bak")
     journal_path = _journal_path(manifest_path)
+    output_had_original = output_path.exists()
+    manifest_had_original = manifest_path.exists()
     journal = {
+        "format_version": 2,
+        "case": CASE_ID,
         "phase": "prepared",
         "output_path": str(output_path),
         "manifest_path": str(manifest_path),
@@ -285,55 +472,49 @@ def publish_rg10(
         "manifest_temp": str(manifest_temp),
         "output_backup": str(output_backup),
         "manifest_backup": str(manifest_backup),
-        "output_had_original": output_path.exists(),
-        "manifest_had_original": manifest_path.exists(),
+        "output_had_original": output_had_original,
+        "manifest_had_original": manifest_had_original,
     }
-    _write_json_fsync(journal_path, journal)
+    _write_journal(journal_path, journal)
     try:
         _write_fsync(output_temp, expected_bytes)
         _write_json_fsync(manifest_temp, updated_manifest)
-        # Advance the journal phase before every os.replace so an interrupted
-        # run can always distinguish "originals still in place" from "originals
-        # moved to backups" and restore them instead of deleting them.
-        journal["phase"] = "backup_output_moved"
-        _write_json_fsync(journal_path, journal)
-        if output_path.exists():
+        # Each phase is written before its action, so the journal can only
+        # claim more progress than actually happened; recovery treats claims
+        # about missing files as no-ops.
+        journal["phase"] = "output_backup"
+        _write_journal(journal_path, journal)
+        if output_had_original:
             os.replace(output_path, output_backup)
-        journal["phase"] = "backup_manifest_moved"
-        _write_json_fsync(journal_path, journal)
         if fail_after_output_backup:
             raise RuntimeError("injected RG-10 output backup failure")
-        if manifest_path.exists():
-            os.replace(manifest_path, manifest_backup)
         journal["phase"] = "output_installed"
-        _write_json_fsync(journal_path, journal)
+        _write_journal(journal_path, journal)
         os.replace(output_temp, output_path)
         if fail_after_output_swap:
             raise RuntimeError("injected RG-10 output swap failure")
+        journal["phase"] = "manifest_backup"
+        _write_journal(journal_path, journal)
+        if manifest_had_original:
+            os.replace(manifest_path, manifest_backup)
+        if fail_after_manifest_backup:
+            raise RuntimeError("injected RG-10 manifest backup failure")
         journal["phase"] = "manifest_installed"
-        _write_json_fsync(journal_path, journal)
+        _write_journal(journal_path, journal)
         os.replace(manifest_temp, manifest_path)
         if fail_after_manifest_swap:
             raise RuntimeError("injected RG-10 manifest swap failure")
+        # The commit point is the journal deletion: after this the transaction
+        # is committed and recovery does nothing; the backups are then cleaned
+        # up, and a crash in between leaves only harmless stale dotfiles.
+        _remove(journal_path)
+        if fail_after_commit:
+            raise RuntimeError("injected RG-10 post-commit failure")
         _remove(output_backup)
         _remove(manifest_backup)
-        _remove(journal_path)
     except Exception:
-        _restore_published_target(
-            output_path,
-            output_backup,
-            bool(journal["output_had_original"]),
-        )
-        _restore_published_target(
-            manifest_path,
-            manifest_backup,
-            bool(journal["manifest_had_original"]),
-        )
-        _remove(output_temp)
-        _remove(manifest_temp)
-        _remove(output_backup)
-        _remove(manifest_backup)
-        _remove(journal_path)
+        if journal_path.exists():
+            _recover_transaction(journal_path, CASE_ID, publish_dir, manifest_path)
         raise
 
     return PublicationResult(
