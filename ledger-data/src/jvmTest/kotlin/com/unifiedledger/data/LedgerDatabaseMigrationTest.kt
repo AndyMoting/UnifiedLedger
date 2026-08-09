@@ -141,14 +141,14 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshSchemaCreatesEveryLedgerDataTableAtVersionSixteen() {
+    fun freshSchemaCreatesEveryLedgerDataTableAtVersionSeventeen() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(16, LedgerDatabase.Schema.version)
+            assertEquals(17, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -333,7 +333,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(17, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -403,7 +403,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(17, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -442,7 +442,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(17, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -514,7 +514,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(17, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -557,6 +557,204 @@ class LedgerDatabaseMigrationTest {
                     ).use { rows ->
                         val names = buildList { while (rows.next()) add(rows.getString(1)) }
                         assertEquals(listOf("rg11_schedule"), names)
+                    }
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionSixteenToSeventeenPreservesFormalRowsAndCreatesEmptyRg12OwnersAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v16-v17-rg12-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 16)
+                val database = LedgerDatabase(driver)
+                assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(
+                    0L,
+                    queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg12_%'"),
+                )
+                // The shared confirmation_id column added by RG-11 (v16) is present.
+                assertEquals(
+                    1L,
+                    queryCount(
+                        driver,
+                        "SELECT count(*) FROM pragma_table_info('transaction_version') WHERE name = 'confirmation_id'",
+                    ),
+                )
+                // A corrected PREPAID_RECOGNITION v2 version carrying the write-once
+                // confirmation id (RG-11 ownership) survives the migration untouched.
+                database.ledgerQueries.insertTransaction("transaction-recognition-v16", "ledger-a", "PREPAID_RECOGNITION")
+                driver.execute(null, "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-recognition', 'ledger-a')", 0)
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note
+                        ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
+                          'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL)
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "INSERT INTO ledger_transaction_current_version VALUES ('transaction-recognition-v16', 'ledger-a', 'version-recognition-v1')",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note, confirmation_id
+                        ) VALUES ('version-recognition-v2', 'transaction-recognition-v16', 'ledger-a', 2,
+                          'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL, 'confirmation-recognition-v16')
+                    """.trimIndent(),
+                    0,
+                )
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 16, newVersion = 17)
+            }
+
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                assertEquals(17, LedgerDatabase.Schema.version)
+                // Formal rows of both v1 owners and the v16 RG-11 rows are preserved.
+                assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
+                assertEquals(3L, database.ledgerQueries.countVersions().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countRg11FormalTransactions("ledger-a").executeAsOne())
+                assertEquals(2L, database.ledgerQueries.countRg12FormalTransactions("ledger-a").executeAsOne())
+                // Every rg12 owner exists and starts empty.
+                assertEquals(0L, database.ledgerQueries.countRg12Operations("ledger-a").executeAsOne())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingSemantics("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllMatches("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReconciliations("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllConfirmations("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllConsumptionRecords("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12AllReportPeriods("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12FormalTransactionMetadata("ledger-a").executeAsList().size.toLong())
+                assertEquals(0L, database.ledgerQueries.selectRg12TransactionVersionMetadata("ledger-a").executeAsList().size.toLong())
+                assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+                // The RG-11 write-once confirmation id survives the guard extension.
+                assertEquals(
+                    1L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM transaction_version
+                            WHERE version_id = 'version-recognition-v2'
+                              AND confirmation_id = 'confirmation-recognition-v16'
+                        """.trimIndent(),
+                    ),
+                )
+                // The extended v17 guard owns the RG-12 case: a later EXPENSE version may
+                // carry the write-once confirmation id (frozen root-correction-transaction-v2).
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note, confirmation_id
+                        ) VALUES ('version-existing-v2', 'tx-existing', 'ledger-a', 2,
+                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL, 'confirmation-expense-v17')
+                    """.trimIndent(),
+                    0,
+                )
+                // The write-once rule still holds for the EXPENSE ownership.
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        """
+                            UPDATE transaction_version SET confirmation_id = 'confirmation-expense-v17-again'
+                            WHERE version_id = 'version-existing-v2'
+                        """.trimIndent(),
+                        0,
+                    )
+                }
+                // PREPAID_PURCHASE stays outside the confirmation ownership.
+                database.ledgerQueries.insertTransaction("transaction-purchase-v17", "ledger-a", "PREPAID_PURCHASE")
+                driver.execute(
+                    null,
+                    """
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note
+                        ) VALUES ('version-purchase-v1', 'transaction-purchase-v17', 'ledger-a', 1,
+                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL)
+                    """.trimIndent(),
+                    0,
+                )
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        """
+                            INSERT INTO transaction_version(
+                              version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                              occurred_at, statistics_at, effective_at, note, confirmation_id
+                            ) VALUES ('version-purchase-v2', 'transaction-purchase-v17', 'ledger-a', 2,
+                              'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                              '2026-01-15T00:30:00Z', NULL, 'confirmation-purchase-v17')
+                        """.trimIndent(),
+                        0,
+                    )
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionSixteenToSeventeenDdlFailureRollsBackEveryRg12Owner() {
+        val path = Files.createTempFile("ledger-data-v16-v17-rg12-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 16)
+                driver.execute(null, "CREATE TABLE rg12_operation(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 16, newVersion = 17)
+                    }
+                }
+            }
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg12_%' ORDER BY name",
+                    ).use { rows ->
+                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                        assertEquals(listOf("rg12_operation"), names)
+                    }
+                    // The transaction rollback restored the dropped RG-11 guards: the
+                    // shared confirmation guard is still in place at v16 semantics.
+                    statement.executeQuery(
+                        "SELECT count(*) FROM sqlite_master WHERE name = 'rg11_transaction_version_confirmation_guard_insert'",
+                    ).use { rows ->
+                        check(rows.next())
+                        assertEquals(1L, rows.getLong(1))
                     }
                 }
             }
@@ -1140,7 +1338,7 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshVersionSixteenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
+    fun freshVersionSeventeenAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
         val migratedPath = Files.createTempFile("ledger-data-migrated-", ".db")
         val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
@@ -1155,7 +1353,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 16)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 17)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

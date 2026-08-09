@@ -29,7 +29,7 @@ class Rg06SchemaV9Test {
                 JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 12) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(16, LedgerDatabase.Schema.version)
+                assertEquals(17, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Operations().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg06Relations().executeAsOne())

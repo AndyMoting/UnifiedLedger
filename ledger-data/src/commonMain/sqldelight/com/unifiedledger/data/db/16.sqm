@@ -1,0 +1,244 @@
+-- RG-12 additive owner: v16 -> v17. Existing formal rows and all prior
+-- RG owners remain untouched (D-085, aligned with the RG-08/RG-11 additive pattern).
+-- RG-12 reuses the shared transaction_version.confirmation_id column added by RG-11
+-- (15.sqm): the corrected v2 version of an EXPENSE transaction carries it (frozen
+-- root-correction-transaction-v2). The RG-11 write-once guard is therefore extended
+-- to both PREPAID_RECOGNITION and EXPENSE transactions; the two triggers are dropped
+-- and recreated byte-identically apart from the widened kind predicate.
+DROP TRIGGER rg11_transaction_version_confirmation_guard_insert;
+DROP TRIGGER rg11_transaction_version_confirmation_guard_update;
+CREATE TRIGGER rg11_transaction_version_confirmation_guard_insert BEFORE INSERT ON transaction_version WHEN new.confirmation_id IS NOT NULL BEGIN
+  SELECT CASE WHEN new.version_number = 1 OR NOT EXISTS (
+    SELECT 1 FROM ledger_transaction AS transaction_row
+    WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) IN ('PREPAID_RECOGNITION', 'EXPENSE')
+  ) THEN RAISE(ABORT, 'rg11 version confirmation ownership') END;
+END;
+CREATE TRIGGER rg11_transaction_version_confirmation_guard_update BEFORE UPDATE OF confirmation_id ON transaction_version BEGIN
+  SELECT CASE WHEN old.confirmation_id IS NOT NULL OR new.confirmation_id IS NULL
+    OR new.version_id != old.version_id OR new.transaction_id != old.transaction_id
+    OR new.ledger_id != old.ledger_id OR new.version_number != old.version_number
+    OR new.posting_set_id != old.posting_set_id
+    OR new.occurred_at != old.occurred_at OR new.statistics_at != old.statistics_at
+    OR new.effective_at != old.effective_at OR new.note IS NOT old.note
+    OR new.version_number = 1
+    OR NOT EXISTS (
+      SELECT 1 FROM ledger_transaction AS transaction_row
+      WHERE transaction_row.ledger_id = new.ledger_id AND transaction_row.transaction_id = new.transaction_id
+        AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) IN ('PREPAID_RECOGNITION', 'EXPENSE')
+    )
+    THEN RAISE(ABORT, 'rg11 version confirmation ownership') END;
+END;
+CREATE TABLE rg12_operation (
+  ledger_id TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  action TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED')),
+  reason_code TEXT,
+  field_path TEXT,
+  PRIMARY KEY (ledger_id, identity_value)
+);
+CREATE TABLE rg12_returned_id (
+  ledger_id TEXT NOT NULL, identity_value TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  id_kind TEXT NOT NULL, id_value TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, identity_value, sequence),
+  FOREIGN KEY (ledger_id, identity_value) REFERENCES rg12_operation(ledger_id, identity_value) ON DELETE CASCADE
+);
+CREATE TABLE rg12_confirmation (
+  ledger_id TEXT NOT NULL, confirmation_id TEXT NOT NULL PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind = 'operation'),
+  subject_id TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  payload TEXT NOT NULL CHECK (payload = '{}'),
+  UNIQUE (ledger_id, confirmation_id), UNIQUE (ledger_id, operation_id),
+  CHECK (subject_id = operation_id)
+);
+CREATE TABLE rg12_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
+  created_at TEXT NOT NULL, statistics_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+-- Per-version creation time of the frozen contract (the corrected v2 version is
+-- created at corrected_at while the economic times are preserved).
+CREATE TABLE rg12_transaction_version_metadata (
+  ledger_id TEXT NOT NULL, transaction_id TEXT NOT NULL, version_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, version_id),
+  FOREIGN KEY (transaction_id, version_id, ledger_id) REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg12_posting_semantic (
+  ledger_id TEXT NOT NULL, posting_id TEXT NOT NULL PRIMARY KEY,
+  role TEXT NOT NULL CHECK (role IN ('expense', 'mixed_expense_asset_funding', 'mixed_expense_credit_funding')),
+  reconciliation_eligible INTEGER NOT NULL CHECK (reconciliation_eligible IN (0, 1)),
+  category_id TEXT,
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((role = 'expense' AND reconciliation_eligible = 0 AND category_id IS NOT NULL)
+      OR (role IN ('mixed_expense_asset_funding', 'mixed_expense_credit_funding') AND reconciliation_eligible = 1 AND category_id IS NULL))
+);
+CREATE TABLE rg12_posting_reconciliation (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL PRIMARY KEY,
+  posting_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('MATCHED', 'PENDING')),
+  UNIQUE (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES rg12_posting_semantic(ledger_id, posting_id)
+);
+CREATE TABLE rg12_reconciliation_match (
+  ledger_id TEXT NOT NULL, match_id TEXT NOT NULL PRIMARY KEY,
+  posting_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  UNIQUE (ledger_id, match_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (ledger_id, posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg12_reconciliation_match_history (
+  ledger_id TEXT NOT NULL, match_id TEXT NOT NULL, entry_sequence INTEGER NOT NULL CHECK (entry_sequence > 0),
+  entry_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('MATCHED', 'INVALIDATED')),
+  entry_at TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('EXACT_EVIDENCE', 'POSTING_REPLACED')),
+  PRIMARY KEY (ledger_id, match_id, entry_sequence),
+  UNIQUE (ledger_id, match_id, entry_id),
+  FOREIGN KEY (ledger_id, match_id) REFERENCES rg12_reconciliation_match(ledger_id, match_id)
+);
+CREATE TABLE rg12_posting_replacement (
+  ledger_id TEXT NOT NULL, replacement_id TEXT NOT NULL PRIMARY KEY,
+  from_posting_id TEXT NOT NULL,
+  to_posting_id TEXT NOT NULL,
+  reconciliation_effect TEXT NOT NULL CHECK (reconciliation_effect IN ('PRESERVED', 'INVALIDATED', 'NOT_APPLICABLE')),
+  UNIQUE (ledger_id, replacement_id),
+  CHECK (from_posting_id != to_posting_id),
+  FOREIGN KEY (ledger_id, from_posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, to_posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE rg12_consumption_record (
+  ledger_id TEXT NOT NULL, record_id TEXT NOT NULL PRIMARY KEY,
+  expense_posting_id TEXT NOT NULL,
+  category_id TEXT,
+  amount_text TEXT NOT NULL,
+  currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  statistics_at_text TEXT NOT NULL,
+  UNIQUE (ledger_id, record_id),
+  FOREIGN KEY (ledger_id, expense_posting_id) REFERENCES posting(ledger_id, posting_id) DEFERRABLE INITIALLY DEFERRED
+);
+-- Day-period report registry of the frozen reports collection; values are always
+-- recomputed from the current postings, only the period seed list is stored.
+CREATE TABLE rg12_report_period (
+  ledger_id TEXT NOT NULL, period TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, period)
+);
+CREATE TRIGGER rg12_operation_guard_delete BEFORE DELETE ON rg12_operation BEGIN SELECT RAISE(ABORT, 'rg12 operation immutable'); END;
+CREATE TRIGGER rg12_operation_guard_update BEFORE UPDATE ON rg12_operation BEGIN
+  SELECT CASE WHEN old.outcome = 'PENDING' AND new.outcome IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED')
+    AND new.ledger_id = old.ledger_id AND new.identity_value = old.identity_value
+    AND new.action = old.action AND new.operation_class = old.operation_class
+    AND new.input_fingerprint = old.input_fingerprint
+    THEN NULL ELSE RAISE(ABORT, 'rg12 operation immutable') END;
+END;
+CREATE TRIGGER rg12_returned_id_guard_update BEFORE UPDATE ON rg12_returned_id BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_returned_id_guard_delete BEFORE DELETE ON rg12_returned_id BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_confirmation_guard_update BEFORE UPDATE ON rg12_confirmation BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_confirmation_guard_delete BEFORE DELETE ON rg12_confirmation BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_formal_metadata_guard_update BEFORE UPDATE ON rg12_formal_transaction_metadata BEGIN
+  SELECT CASE WHEN old.ledger_id = new.ledger_id AND old.transaction_id = new.transaction_id
+    AND old.created_at = new.created_at
+    AND new.statistics_at_text != old.statistics_at_text
+    THEN NULL ELSE RAISE(ABORT, 'rg12 metadata immutable') END;
+END;
+CREATE TRIGGER rg12_formal_metadata_guard_delete BEFORE DELETE ON rg12_formal_transaction_metadata BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_version_metadata_guard_update BEFORE UPDATE ON rg12_transaction_version_metadata BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_version_metadata_guard_delete BEFORE DELETE ON rg12_transaction_version_metadata BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_semantic_guard_update BEFORE UPDATE ON rg12_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_semantic_guard_delete BEFORE DELETE ON rg12_posting_semantic BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_reconciliation_guard_update BEFORE UPDATE ON rg12_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_reconciliation_guard_delete BEFORE DELETE ON rg12_posting_reconciliation BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_match_guard_update BEFORE UPDATE ON rg12_reconciliation_match BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_match_guard_delete BEFORE DELETE ON rg12_reconciliation_match BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_match_history_guard_update BEFORE UPDATE ON rg12_reconciliation_match_history BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_match_history_guard_delete BEFORE DELETE ON rg12_reconciliation_match_history BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_replacement_guard_update BEFORE UPDATE ON rg12_posting_replacement BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_replacement_guard_delete BEFORE DELETE ON rg12_posting_replacement BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_consumption_guard_update BEFORE UPDATE ON rg12_consumption_record BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_consumption_guard_delete BEFORE DELETE ON rg12_consumption_record BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_report_period_guard_update BEFORE UPDATE ON rg12_report_period BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+CREATE TRIGGER rg12_report_period_guard_delete BEFORE DELETE ON rg12_report_period BEGIN SELECT RAISE(ABORT, 'rg12 immutable'); END;
+-- A match owns an eligible real posting (the runtime only matches eligible real legs).
+CREATE TRIGGER rg12_match_current_guard_insert BEFORE INSERT ON rg12_reconciliation_match BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg12_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 match current ownership') END;
+END;
+-- History is append-only with consecutive sequences and the frozen transition:
+-- entry 1 is matched/exact_evidence and every later entry is invalidated/posting_replaced
+-- directly after a matched entry (an invalidated match is terminal).
+CREATE TRIGGER rg12_match_history_sequence BEFORE INSERT ON rg12_reconciliation_match_history BEGIN SELECT CASE WHEN (new.entry_sequence = 1 AND EXISTS (SELECT 1 FROM rg12_reconciliation_match_history WHERE ledger_id = new.ledger_id AND match_id = new.match_id)) OR (new.entry_sequence > 1 AND NOT EXISTS (SELECT 1 FROM rg12_reconciliation_match_history WHERE ledger_id = new.ledger_id AND match_id = new.match_id AND entry_sequence = new.entry_sequence - 1)) THEN RAISE(ABORT, 'rg12 match history sequence') END; END;
+CREATE TRIGGER rg12_match_history_transition BEFORE INSERT ON rg12_reconciliation_match_history BEGIN
+  SELECT CASE WHEN new.entry_sequence = 1 THEN
+    CASE WHEN new.status != 'MATCHED' OR new.reason != 'EXACT_EVIDENCE' THEN RAISE(ABORT, 'rg12 match history transition') END
+  ELSE
+    CASE WHEN new.status != 'INVALIDATED' OR new.reason != 'POSTING_REPLACED' OR NOT EXISTS (
+      SELECT 1 FROM rg12_reconciliation_match_history AS previous
+      WHERE previous.ledger_id = new.ledger_id AND previous.match_id = new.match_id
+        AND previous.entry_sequence = new.entry_sequence - 1
+        AND previous.status = 'MATCHED'
+    ) THEN RAISE(ABORT, 'rg12 match history transition') END
+  END;
+END;
+-- Reconciliation facts are write-once per posting with the frozen current-state rule:
+-- an eligible real posting owns exactly one fact whose status agrees with its match
+-- state (matched facts require an active match, pending facts forbid one).
+CREATE TRIGGER rg12_reconciliation_current_guard_insert BEFORE INSERT ON rg12_posting_reconciliation BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg12_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_reconciliation_match_history AS latest
+      ON latest.ledger_id = match_row.ledger_id AND latest.match_id = match_row.match_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND latest.entry_sequence = (
+        SELECT MAX(history_row.entry_sequence)
+        FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
+      AND latest.status = 'MATCHED'
+      AND new.status != 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN new.status = 'MATCHED' AND NOT EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_reconciliation_match_history AS latest
+      ON latest.ledger_id = match_row.ledger_id AND latest.match_id = match_row.match_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND latest.entry_sequence = (
+        SELECT MAX(history_row.entry_sequence)
+        FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
+      AND latest.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  END;
+END;
+-- The frozen contract transactions are always EXPENSE; semantics own postings of
+-- the current version of an EXPENSE transaction.
+CREATE TRIGGER rg12_posting_semantic_formal_owner_guard_insert BEFORE INSERT ON rg12_posting_semantic BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM posting AS posting_row
+    JOIN transaction_version AS version_row
+      ON version_row.ledger_id = posting_row.ledger_id AND version_row.posting_set_id = posting_row.posting_set_id
+    JOIN ledger_transaction_current_version AS current_row
+      ON current_row.ledger_id = version_row.ledger_id AND current_row.transaction_id = version_row.transaction_id
+     AND current_row.current_version_id = version_row.version_id
+    JOIN ledger_transaction AS transaction_row
+      ON transaction_row.ledger_id = current_row.ledger_id AND transaction_row.transaction_id = current_row.transaction_id
+    WHERE posting_row.ledger_id = new.ledger_id AND posting_row.posting_id = new.posting_id
+      AND COALESCE(transaction_row.canonical_kind, transaction_row.kind) = 'EXPENSE'
+  ) THEN RAISE(ABORT, 'rg12 posting formal ownership') END;
+END;
