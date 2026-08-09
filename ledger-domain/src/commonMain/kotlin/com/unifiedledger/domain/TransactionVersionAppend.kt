@@ -13,7 +13,7 @@ import kotlin.time.Instant
  *   with [createExplicitOperationConfirmation] (delivered with shard 1a) for the
  *   `explicit_operation_confirmation` reference of the frozen main-correct fixture.
  * - [TransactionVersionChange.Postings] — RG-12 `correct_transaction_version`
- *   `posting_facts` semantics (reserved): full replacement postings bound through
+ *   `posting_facts` semantics (in use since RG-12): full replacement postings bound through
  *   [FormalTransaction.appendVersion]'s `newPostingSetId`.
  *
  * Every form copies the current version with `version_number + 1`, applies only the

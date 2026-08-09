@@ -1,0 +1,49 @@
+{
+  "ids": {
+    "root-correction-request": {
+      "version_id": "root-correction-transaction-v2",
+      "posting_set_id": "root-correction-set-v2",
+      "posting_ids": [
+        "root-correction-expense-v2",
+        "root-correction-asset-v2",
+        "root-correction-liability-v2"
+      ],
+      "replacement_link_ids": [
+        "root-correction-replacement-expense",
+        "root-correction-replacement-asset",
+        "root-correction-replacement-liability"
+      ],
+      "confirmation_id": "root-correction-confirmation",
+      "operation_id": "root-correction-correct",
+      "invalidation_entry_ids": [
+        null,
+        null,
+        "root-correction-match-liability-v1-history-2"
+      ],
+      "new_match_ids": [
+        null,
+        "root-correction-match-asset-v2",
+        null
+      ],
+      "new_match_entry_ids": [
+        null,
+        "root-correction-match-asset-v2-history-1",
+        null
+      ],
+      "new_match_invalidation_entry_ids": [
+        null,
+        null,
+        null
+      ],
+      "reconciliation_fact_ids": [
+        null,
+        "root-correction-reconciliation-asset-v2",
+        "root-correction-reconciliation-liability-v2"
+      ],
+      "consumption_record_id": "root-correction-consumption-v2"
+    }
+  },
+  "times": {},
+  "sources": [],
+  "counterparties": {}
+}

@@ -440,5 +440,9 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = whe
     is StoredValueViolation,
     is LendingViolation,
     is PeriodicAllocationViolation,
-    is ExplicitOperationConfirmationViolation -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
+    is ExplicitOperationConfirmationViolation,
+    is CorrectTransactionVersionViolation,
+    is ReconciliationMatchViolation,
+    is PostingReplacementViolation,
+    is PostingReconciliationViolation -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
 }
