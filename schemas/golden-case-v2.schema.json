@@ -315,6 +315,7 @@
             "balance_adjustment_counterpart", "balance_adjustment_reversal_target",
             "balance_adjustment_reversal_counterpart", "stored_value_asset",
             "stored_value_bonus_income", "stored_value_expiry_loss",
+            "stored_value_pre_activation_adjustment",
             "mixed_expense_asset_funding", "mixed_expense_credit_funding",
             "credit_repayment_asset_outflow", "credit_repayment_liability_principal",
             "prepaid_asset"
@@ -339,8 +340,37 @@
         {"$ref": "#/$defs/rg07RefundSource"},
         {"$ref": "#/$defs/importedTransferCandidateSource"},
         {"$ref": "#/$defs/accountStatementSource"},
-        {"$ref": "#/$defs/manualTransactionConfirmationSource"}
+        {"$ref": "#/$defs/manualTransactionConfirmationSource"},
+        {"$ref": "#/$defs/storedValueSource"}
       ]
+    },
+    "storedValueSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "stored_value_source"},
+        "payload": {"$ref": "#/$defs/storedValueSourcePayload"}
+      }
+    },
+    "storedValueSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_type", "observed_at", "immutable_payload_digest"],
+      "properties": {
+        "source_type": {
+          "enum": [
+            "bank_payment", "merchant_stored_value_credit", "merchant_lot_allocation",
+            "imported_stored_value_recharge", "imported_stored_value_spend",
+            "user_expiry_confirmation", "user_confirmed_merchant_balance"
+          ]
+        },
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "lot_id": {"$ref": "#/$defs/id"},
+        "immutable_payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-zA-Z._:-]+$"}
+      }
     },
     "mixedPaymentFundingComponent": {
       "type": "object", "additionalProperties": false,
@@ -683,8 +713,33 @@
         {"$ref": "#/$defs/mergedPaymentCandidate"},
         {"$ref": "#/$defs/stagedPaymentCandidate"},
         {"$ref": "#/$defs/refundCreditCandidate"},
-        {"$ref": "#/$defs/importedTransferCandidate"}
+        {"$ref": "#/$defs/importedTransferCandidate"},
+        {"$ref": "#/$defs/storedValueCandidate"}
       ]
+    },
+    "storedValueCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "stored_value_candidate"},
+        "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/storedValueCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/candidateStatus"}}
+      }
+    },
+    "storedValueCandidatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_type", "currency"],
+      "properties": {
+        "candidate_type": {"enum": ["stored_value_recharge", "stored_value_spend"]},
+        "paid_amount": {"$ref": "#/$defs/decimal"},
+        "credited_amount": {"$ref": "#/$defs/decimal"},
+        "bonus_amount": {"$ref": "#/$defs/decimal"},
+        "amount": {"$ref": "#/$defs/decimal"},
+        "currency": {"type": "string", "minLength": 1}
+      }
     },
     "importedTransferCandidate": {
       "type": "object",
@@ -1124,8 +1179,32 @@
         {"$ref": "#/$defs/itemSummaryEvidence"},
         {"$ref": "#/$defs/rg07RefundEvidence"},
         {"$ref": "#/$defs/importedRealTransactionCandidateEvidence"},
-        {"$ref": "#/$defs/realAccountPostingEvidence"}
+        {"$ref": "#/$defs/realAccountPostingEvidence"},
+        {"$ref": "#/$defs/importedStoredValueRechargeCandidateEvidence"},
+        {"$ref": "#/$defs/importedStoredValueSpendCandidateEvidence"},
+        {"$ref": "#/$defs/confirmedActivationBalanceEvidence"},
+        {"$ref": "#/$defs/merchantLotAllocationEvidence"}
       ]
+    },
+    "importedStoredValueRechargeCandidateEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "imported_stored_value_recharge_candidate"}}
+    },
+    "importedStoredValueSpendCandidateEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "imported_stored_value_spend_candidate"}}
+    },
+    "confirmedActivationBalanceEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "confirmed_activation_balance"}}
+    },
+    "merchantLotAllocationEvidence": {
+      "$ref": "#/$defs/observedAtEvidence",
+      "type": "object",
+      "properties": {"type": {"const": "merchant_lot_allocation"}}
     },
     "userBalanceObservationEvidence": {
       "$ref": "#/$defs/observedAtEvidence",
@@ -1255,7 +1334,7 @@
       "required": ["id", "type", "source_ids", "payload"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "type": {"enum": ["user_balance_observation", "item_receipt", "merchant_stored_value_credit", "confirmed_actual_expiry", "transfer_record"]},
+        "type": {"enum": ["user_balance_observation", "item_receipt", "merchant_stored_value_credit", "confirmed_actual_expiry", "transfer_record", "imported_stored_value_recharge_candidate", "imported_stored_value_spend_candidate", "confirmed_activation_balance", "merchant_lot_allocation"]},
         "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
         "payload": {
           "type": "object",
@@ -1657,6 +1736,8 @@
         {"$ref": "#/$defs/storedValueLot"},
         {"$ref": "#/$defs/storedValueBonusComponent"},
         {"$ref": "#/$defs/storedValueExpiryEvent"},
+        {"$ref": "#/$defs/storedValueConsumption"},
+        {"$ref": "#/$defs/merchantLotAllocation"},
         {"$ref": "#/$defs/activationAdjustment"},
         {"$ref": "#/$defs/storedValueReconstruction"},
         {"$ref": "#/$defs/periodicAllocationSchedule"},
@@ -1928,7 +2009,7 @@
           "additionalProperties": false,
           "required": ["recharge_transaction_id", "loaded_at", "face_value", "currency"],
           "properties": {
-            "recharge_transaction_id": {"$ref": "#/$defs/id"},
+            "recharge_transaction_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
             "loaded_at": {"$ref": "#/$defs/timestamp"},
             "face_value": {"$ref": "#/$defs/decimal"},
             "currency": {"type": "string", "minLength": 1}
@@ -2005,6 +2086,54 @@
               "minItems": 1,
               "items": {"$ref": "#/$defs/storedValueExpiryStatus"}
             }
+          }
+        }
+      }
+    },
+    "storedValueConsumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "stored_value_consumption"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lot_id", "amount", "currency", "paid_bonus_composition"],
+          "properties": {
+            "lot_id": {"$ref": "#/$defs/id"},
+            "amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "paid_bonus_composition": {"enum": ["known", "unknown", "mixed"]},
+            "evidence_id": {"$ref": "#/$defs/id"}
+          }
+        }
+      }
+    },
+    "merchantLotAllocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"const": "merchant_lot_allocation"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request_id", "source_id", "evidence_id", "lot_id", "consumption_id",
+            "amount", "currency", "allocation_source"
+          ],
+          "properties": {
+            "request_id": {"$ref": "#/$defs/id"},
+            "source_id": {"$ref": "#/$defs/id"},
+            "evidence_id": {"$ref": "#/$defs/id"},
+            "lot_id": {"$ref": "#/$defs/id"},
+            "consumption_id": {"$ref": "#/$defs/id"},
+            "amount": {"$ref": "#/$defs/decimal"},
+            "currency": {"type": "string", "minLength": 1},
+            "allocation_source": {"const": "merchant_evidence"}
           }
         }
       }
@@ -3551,11 +3680,12 @@
         {"properties": {"reason_code": {"const": "credited_amount_must_be_positive"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
         {"properties": {"reason_code": {"const": "bonus_amount_must_be_zero_or_positive"}, "field_path": {"const": "$.attempted_input.bonus_amount"}}},
         {"properties": {"reason_code": {"const": "credited_must_equal_paid_plus_bonus"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
-        {"properties": {"reason_code": {"const": "component_sum_mismatch"}, "field_path": {"const": "$.attempted_input.bonus_amount"}}},
+        {"properties": {"reason_code": {"const": "component_sum_mismatch"}, "field_path": {"const": "$.attempted_input.credited_amount"}}},
         {"properties": {"reason_code": {"const": "stored_value_account_not_enabled"}, "field_path": {"const": "$.attempted_input.stored_value_account_id"}}},
         {"properties": {"reason_code": {"const": "stored_value_models_must_not_overlap"}, "field_path": {"const": "$.attempted_input.model"}}},
         {"properties": {"reason_code": {"const": "unknown_payment_account"}, "field_path": {"const": "$.attempted_input.payment_account_id"}}},
         {"properties": {"reason_code": {"const": "owned_payment_asset_required"}, "field_path": {"const": "$.attempted_input.payment_account_id"}}},
+        {"properties": {"reason_code": {"const": "enabled_restricted_stored_value_asset_required"}, "field_path": {"const": "$.attempted_input.stored_value_account_id"}}},
         {"properties": {"reason_code": {"const": "same_cny_currency_required"}, "field_path": {"const": "$.attempted_input.currency"}}}
       ]
     },
@@ -3578,7 +3708,7 @@
       "properties": {
         "status": {"const": "rejected"},
         "reason_code": {"const": "bank_payment_model_and_all_recharge_facts_required"},
-        "field_path": {"const": "$.attempted_input.bank_payment_confirmed"}
+        "field_path": {"const": "$.attempted_input.explicit_confirmation"}
       }
     },
     "rg10ImportedSpendRejectedOutcome": {
@@ -3587,7 +3717,7 @@
       "properties": {
         "status": {"const": "rejected"},
         "reason_code": {"const": "spend_category_and_behavior_confirmation_required"},
-        "field_path": {"const": "$.attempted_input.category_confirmed"}
+        "field_path": {"const": "$.attempted_input.explicit_confirmation"}
       }
     },
     "rg10ExpiryRejectedOutcome": {

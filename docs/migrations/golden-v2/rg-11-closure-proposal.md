@@ -126,7 +126,14 @@ Rejected field paths have an authoritative oracle-side mirror (`Rg11FullStateOra
 
 ### Review disposition
 
-Per D-085:1115 the closure gate requires the closure proposal, the complete oracle, focused persistence/migration tests, and independent review evidence. The first three are present and registered above. The independent specification/quality review, the distinct verifier run, and the main-agent clean rerun of the full verification are **pending** and will be registered in this section when completed; the closure gate status line will be updated accordingly. RG-11 is a direct-v2 scenario: there is no mapping file and no mapping gate, and this proposal (this review disposition) is the single status record for the closure gate.
+Per D-085:1115 the closure gate requires the closure proposal, the complete oracle, focused persistence/migration tests, and independent review evidence. The first three are present and registered above; the independent review evidence was completed on 2026-08-09 and is registered here.
+
+- **Independent specification/quality review (2026-08-09).** The frozen candidate was reviewed by an independent specification reviewer and an independent quality reviewer; both returned CONDITIONAL with no FAIL items, and every disposition is closed (zero-amount installment fix, store `correct_transaction_version` round-trip test, rejection-predicate table registration, seed-boundary registration).
+- **Distinct verifier (2026-08-09).** A verifier distinct from the implementing agent reran the full verification on a clean worktree: 14/14 checks PASS (463 tests: data 246 / application 148 / domain 69, `--rerun-tasks`), Python 544.
+- **Main-agent clean rerun (2026-08-09).** The main agent reran the full verification on the clean checkout: 463 tests 0 failures, Python 544, project_docs green.
+- **Publication-batch verification (2026-08-09, D-086, commit `dec854e`).** The released expected artifact `docs/migrations/golden-v2/rg-11-expected.json` passed an independent spec/quality review double PASS and a distinct verifier 9/9 across the registered verification points: expected is a byte copy of the frozen contract (manifest `source_sha256 == expected_byte_sha256 == output_sha256`), `validate_golden_case_v2` passes, counts 22 operations / 3 roots / 25 states, and the canonical hash is computed independently. The release verification (project_docs, the full Python 578 tests, gradle check, 203-commit trace scan) is green.
+
+The closure gate is marked `approved` (2026-08-09). RG-11 is a direct-v2 scenario: there is no mapping file and no mapping gate, and this proposal (this review disposition) is the single status record for the closure gate.
 
 ## Unclosed Items And Next Steps
 

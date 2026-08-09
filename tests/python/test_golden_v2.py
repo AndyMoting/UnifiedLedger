@@ -2764,14 +2764,14 @@ class GoldenV2SchemaTests(unittest.TestCase):
                 "paid_bonus_composition",
             ),
             "confirm_imported_stored_value_recharge": (
-                {"bank_payment_confirmed": False},
+                {"explicit_confirmation": False},
                 "bank_payment_model_and_all_recharge_facts_required",
-                "bank_payment_confirmed",
+                "explicit_confirmation",
             ),
             "confirm_imported_stored_value_spend": (
-                {"category_confirmed": False},
+                {"explicit_confirmation": False},
                 "spend_category_and_behavior_confirmation_required",
-                "category_confirmed",
+                "explicit_confirmation",
             ),
             "confirm_stored_value_expiry_loss": (
                 {"explicit_confirmation": False},
@@ -2871,15 +2871,15 @@ class GoldenV2SchemaTests(unittest.TestCase):
             ),
             (
                 "confirm_imported_stored_value_recharge",
-                {"bank_payment_confirmed": False},
+                {"explicit_confirmation": False},
                 "bank_payment_model_and_all_recharge_facts_required",
-                "bank_payment_confirmed",
+                "explicit_confirmation",
             ),
             (
                 "confirm_imported_stored_value_spend",
-                {"category_confirmed": False},
+                {"explicit_confirmation": False},
                 "spend_category_and_behavior_confirmation_required",
-                "category_confirmed",
+                "explicit_confirmation",
             ),
             (
                 "confirm_stored_value_expiry_loss",
@@ -2928,15 +2928,15 @@ class GoldenV2SchemaTests(unittest.TestCase):
             ),
             (
                 "confirm_imported_stored_value_recharge",
-                {"paid_amount": 1000.0, "bank_payment_confirmed": False},
+                {"paid_amount": 1000.0, "bank_payment_confirmed": False, "explicit_confirmation": False},
                 "bank_payment_model_and_all_recharge_facts_required",
-                "bank_payment_confirmed",
+                "explicit_confirmation",
             ),
             (
                 "confirm_imported_stored_value_spend",
-                {"amount": 5.0, "category_confirmed": False},
+                {"amount": 5.0, "category_confirmed": False, "explicit_confirmation": False},
                 "spend_category_and_behavior_confirmation_required",
-                "category_confirmed",
+                "explicit_confirmation",
             ),
             (
                 "confirm_stored_value_expiry_loss",
@@ -5159,7 +5159,7 @@ class GoldenV2OperationTests(unittest.TestCase):
             "nonpositive-credited-amount": ("confirm_stored_value_recharge", "credited_amount"),
             "negative-bonus-amount": ("confirm_stored_value_recharge", "bonus_amount"),
             "credited-less-than-paid": ("confirm_stored_value_recharge", "credited_amount"),
-            "component-mismatch": ("confirm_stored_value_recharge", "bonus_amount"),
+            "component-mismatch": ("confirm_stored_value_recharge", "credited_amount"),
             "disabled-stored-account": ("confirm_stored_value_recharge", "stored_value_account_id"),
             "model-overlap": ("confirm_stored_value_recharge", "model"),
             "unconfirmed-expiry": ("confirm_stored_value_expiry_loss", "explicit_confirmation"),
@@ -5255,7 +5255,13 @@ class GoldenV2OperationTests(unittest.TestCase):
         ]
         assert_invalid(self, returned, r"returned_ids")
 
-    def test_rg10_unowned_frozen_rejections_fail_closed_end_to_end(self):
+    def test_rg10_frozen_rejections_validate_via_registered_mapping(self):
+        # D-083 closed the RG-10 semantics: every frozen rejection reproduces through
+        # the registered reason->field mapping (mirroring the Kotlin rejectInvalidInput
+        # table and expectedFieldPath), so end-to-end validation must pass instead of
+        # failing fail-closed. This covers the five contract-registered reasons plus
+        # wrong-stored-account-kind (enabled_restricted_stored_value_asset_required,
+        # classified CONFIRM_STORED_VALUE_RECHARGE per the Kotlin oracle).
         frozen = load_golden_case(RG10_V1_PATH)
         invalid = {item["id"]: item for item in frozen["invalid_inputs"]}
         cases = [
@@ -5263,19 +5269,21 @@ class GoldenV2OperationTests(unittest.TestCase):
                 "confirm_stored_value_spend",
                 invalid["spend-over-balance"],
                 "amount",
-                "effective stored-value replay owner",
             ),
             (
                 "apply_merchant_lot_allocation",
                 invalid["invalid-lot-allocation"],
                 "amount",
-                "remaining-face-value effect owner",
             ),
             (
                 "confirm_stored_value_spend",
                 invalid["guessed-composition"],
                 "paid_bonus_composition",
-                "composition provenance owner",
+            ),
+            (
+                "confirm_stored_value_recharge",
+                invalid["wrong-stored-account-kind"],
+                "stored_value_account_id",
             ),
         ]
         incomplete = frozen["import_path"]["incomplete_confirmations"]
@@ -5284,18 +5292,16 @@ class GoldenV2OperationTests(unittest.TestCase):
                 (
                     "confirm_imported_stored_value_recharge",
                     incomplete[0],
-                    "bank_payment_confirmed",
-                    "import candidate/fact owner",
+                    "explicit_confirmation",
                 ),
                 (
                     "confirm_imported_stored_value_spend",
                     incomplete[1],
-                    "category_confirmed",
-                    "import candidate/fact owner",
+                    "explicit_confirmation",
                 ),
             ]
         )
-        for action, source, field, owner in cases:
+        for action, source, field in cases:
             case = rg10_full_rejection_case(
                 action,
                 deepcopy(source["input"]),
@@ -5304,8 +5310,7 @@ class GoldenV2OperationTests(unittest.TestCase):
             )
             with self.subTest(source_id=source["id"], action=action):
                 self.assertEqual(case["operations"][-1]["attempted_input"], source["input"])
-                with self.assertRaisesRegex(GoldenCaseError, owner):
-                    validate_golden_case_v2(case)
+                validate_golden_case_v2(case)
 
     def test_rg10_owned_rejection_predicates_match_frozen_reasons(self):
         cases = [
@@ -5330,7 +5335,7 @@ class GoldenV2OperationTests(unittest.TestCase):
                 "confirm_stored_value_recharge",
                 {"paid_amount": "1000.00", "credited_amount": "1200.00", "bonus_amount": "100.00"},
                 "component_sum_mismatch",
-                "bonus_amount",
+                "credited_amount",
             ),
             (
                 "confirm_stored_value_recharge",
@@ -5440,45 +5445,44 @@ class GoldenV2OperationTests(unittest.TestCase):
                 ZoneInfo("Asia/Shanghai"),
             )
 
-    def test_rg10_unowned_rejection_predicates_remain_fail_closed(self):
+    def test_rg10_unowned_rejection_predicates_validate_via_registered_mapping(self):
+        # D-083: the five predicates are contract-registered through the reason->field
+        # mapping (Kotlin rejectInvalidInput); their v2 failure re-derivation is not
+        # implemented (the predicates live oracle-side), so the registered rejection
+        # must validate as-is.
         cases = [
             (
                 "confirm_stored_value_spend",
                 {"amount": "36.00"},
                 "insufficient_effective_stored_balance",
                 "amount",
-                "effective stored-value replay owner",
             ),
             (
                 "confirm_stored_value_spend",
                 {"paid_bonus_composition": "paid_first"},
                 "paid_bonus_composition_must_be_evidenced",
                 "paid_bonus_composition",
-                "composition provenance owner",
             ),
             (
                 "confirm_imported_stored_value_recharge",
-                {"bank_payment_confirmed": False},
+                {"explicit_confirmation": False},
                 "bank_payment_model_and_all_recharge_facts_required",
-                "bank_payment_confirmed",
-                "import candidate/fact owner",
+                "explicit_confirmation",
             ),
             (
                 "confirm_imported_stored_value_spend",
-                {"category_confirmed": False},
+                {"explicit_confirmation": False},
                 "spend_category_and_behavior_confirmation_required",
-                "category_confirmed",
-                "import candidate/fact owner",
+                "explicit_confirmation",
             ),
             (
                 "apply_merchant_lot_allocation",
                 {"amount": "901.00"},
                 "lot_allocation_exceeds_remaining_face_value",
                 "amount",
-                "remaining-face-value effect owner",
             ),
         ]
-        for action, attempted_input, reason_code, field, owner in cases:
+        for action, attempted_input, reason_code, field in cases:
             operation = {
                 "action_type": action,
                 "attempted_input": attempted_input,
@@ -5489,16 +5493,22 @@ class GoldenV2OperationTests(unittest.TestCase):
                 },
             }
             with self.subTest(action=action, reason_code=reason_code):
-                with self.assertRaisesRegex(GoldenCaseError, owner):
-                    golden_v2._validate_action_input(
-                        operation,
-                        "$.operation",
-                        rg10_rejection_baseline(),
-                        {"CNY": 2},
-                        ZoneInfo("Asia/Shanghai"),
-                    )
+                golden_v2._validate_action_input(
+                    operation,
+                    "$.operation",
+                    rg10_rejection_baseline(),
+                    {"CNY": 2},
+                    ZoneInfo("Asia/Shanghai"),
+                )
 
-    def test_rg10_structural_actions_fail_closed_in_full_effect_validation(self):
+    def test_rg10_structural_actions_flow_through_effect_validation(self):
+        # D-083 closed the RG-10 economic effects, so accepted/no_change operations no
+        # longer hit the obsolete "economically not implemented" gate: they flow into
+        # the standard structural pipeline (input reference validation, state-derived
+        # deltas). These shells run on the RG-01 baseline, whose accounts do not own
+        # the RG-10 references, so the first structural failure is a dangling/mistyped
+        # reference — never the removed fail-closed gate. The full accepted-effect
+        # contract is asserted against the expected artifact (phase 2).
         inputs = rg10_operation_inputs()
         classes = {
             "confirm_stored_value_recharge": "creation",
@@ -5522,11 +5532,12 @@ class GoldenV2OperationTests(unittest.TestCase):
                 with self.subTest(
                     action=action, operation_class=operation_class, status=status
                 ):
-                    with self.assertRaisesRegex(
-                        GoldenCaseError,
-                        r"structurally registered but economic effects are not implemented",
-                    ):
+                    with self.assertRaises(GoldenCaseError) as context:
                         validate_golden_case_v2(case)
+                    self.assertNotIn(
+                        "economically not implemented", str(context.exception)
+                    )
+                    self.assertRegex(str(context.exception), r"dangling or mistyped")
     def test_rg10_structural_inputs_validate_scalars_and_reference_kinds(self):
         case = provenance_contract_case()
         baseline = case["states"][0]
