@@ -38,3 +38,4 @@ desktop.ini
 *.tmp
 *.bak
 *~
+*.journal.json
