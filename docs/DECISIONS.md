@@ -1121,3 +1121,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** schema v15→v16→v17、`TransactionKind` 枚举 +2、共享 `appendVersion` 原语（generalize `replaceNote` 需回归 RG-01 note_update）、`SqlDelightRg11Store` / `SqlDelightRg12Store`。
 
 **关联决定：** `D-047`、`D-048`、`D-083`、`D-084`
+
+---
+
+## D-086 RG-03/05/10/11/12 golden v2 publication target（统一发布 gate）
+
+**状态：** 已确认
+
+**决定：** 根据用户 /goal 授权（2026-08-09 publication 阶段），批准 5 个 RG 的 v2 工件发布 target，均在 clean worktree 上执行 release verification（`verify-project.ps1 -Scope release`），发布工具必须满足原子性、幂等、失败隔离与 journal 恢复（参照 `rg09_publication.py` 先例）：
+
+- **RG-03**：`golden/rules-v2/rg-03.json` ← `docs/migrations/golden-v2/rg-03-expected.json`（approval_status approved；13 roots / 20 ops / 33 states）
+- **RG-05**：`golden/rules-v2/rg-05.json` ← `docs/migrations/golden-v2/rg-05-expected.json`（D-075 已批准；17 roots / 25 ops / 42 states）
+- **RG-10**：`golden/rules-v2/rg-10.json` ← 待生成的 `docs/migrations/golden-v2/rg-10-expected.json`。expected 由冻结 v1 契约 `golden/rules/rg-10.json`（44 ops，accepted 12 / no_change 10 / rejected 22，D-083 清点）+ `tests/fixtures/rg10-runtime-input.json` 确定性生成 v2 形状，扩展 `validate_golden_case_v2` 支持 RG-10 事务类型；生成的 expected 工件与 builder 测试须经独立 spec/quality review 与 distinct verifier 通过后方可发布
+- **RG-11**：`golden/rules-v2/rg-11.json` ← `docs/migrations/golden-v2/rg-11-expected.json`
+- **RG-12**：`golden/rules-v2/rg-12.json` ← `docs/migrations/golden-v2/rg-12-expected.json`
+
+**direct-v2 expected 形态（RG-11/12，仓库无先例，本决定明确）：** expected 工件 = 冻结契约 `golden/rules/rg-11.json` / `golden/rules/rg-12.json` 的逐字节副本——direct-v2 契约即期望基线（oracle 为契约 1:1 镜像，D-085:1101）。manifest 中 `source_sha256 == expected_byte_sha256`，`canonical_sha256` 按 `sort_keys` + `(",",":")` UTF-8 序列化单独计算；direct-v2 发布工具的 source/expected 前置校验使用 `validate_golden_case_v2`（契约 `contract_version 2.0.0` 已批准于 `efbb13a`），不复用 `schema_version == 1` 断言。
+
+**manifest 登记：** 每 RG 发布时在 `golden/rules-v2/manifest.json` 追加条目（`approval_status: approved`、`discovery.comparison` 为 `"NN-operation full comparison"`（RG-11 22 / RG-12 12 / RG-03 20 / RG-05 25 / RG-10 44）、4 组 hash、`object_counts`、`operation_status_counts`），cases 按 case 名排序，`output_sha256 == expected_byte_sha256`。
+
+**影响：** RG-03/05/11/12 的 expected 已冻结或已批准，直接进入发布执行；RG-10 先完成 expected 生成与审查再发布。发布后同步 `README.md`、`docs/CURRENT_STATE.md`、`docs/ROADMAP.md` 与 `docs/GOLDEN_V2_INVENTORY.md`。本决定不授权 remote push（push 单独授权，D-085:1117）；`.external/` 与冻结 `golden/rules/rg-XX.json` 一律只读。
+
+**关联决定：** `D-075`、`D-080`、`D-081`、`D-083`、`D-085`
