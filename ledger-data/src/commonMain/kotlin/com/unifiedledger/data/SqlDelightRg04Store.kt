@@ -176,5 +176,7 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected = when (thi
     is BalanceAdjustmentViolation,
     is PrincipalTransferViolation,
     is StoredValueViolation,
-    is LendingViolation -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
+    is LendingViolation,
+    is PeriodicAllocationViolation,
+    is ExplicitOperationConfirmationViolation -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
 }

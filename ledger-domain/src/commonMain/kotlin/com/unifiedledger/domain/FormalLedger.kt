@@ -52,6 +52,8 @@ enum class TransactionKind {
     STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT,
     LEND,
     COLLECT,
+    PREPAID_PURCHASE,
+    PREPAID_RECOGNITION,
 }
 
 data class Transaction(

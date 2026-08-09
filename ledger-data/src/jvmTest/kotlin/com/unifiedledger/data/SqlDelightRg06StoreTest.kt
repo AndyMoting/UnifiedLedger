@@ -503,7 +503,7 @@ class SqlDelightRg06StoreTest {
             store.commit(createOperation())
             driver.execute(null, "INSERT INTO posting_set VALUES ('shared-set','ledger-a')", 0)
             driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('shared-transaction','ledger-a','EXPENSE')", 0)
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('shared-version','shared-transaction','ledger-a',1,'shared-set','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('shared-version','shared-transaction','ledger-a',1,'shared-set','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',NULL)", 0)
             driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('shared-transaction','ledger-a','shared-version')", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('shared-expense','shared-set','ledger-a',0,'expense-service-account',100,'CNY',2)", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('shared-asset','shared-set','ledger-a',1,'asset-bank',-100,'CNY',2)", 0)
@@ -890,7 +890,7 @@ class SqlDelightRg06StoreTest {
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-corrupt','ledger-a')", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('posting-corrupt-expense','posting-set-corrupt','ledger-a',0,'expense-service-account',8000,'CNY',2)", 0)
             driver.execute(null, "INSERT INTO posting VALUES ('posting-corrupt-asset','posting-set-corrupt','ledger-a',1,'asset-bank',-8000,'CNY',2)", 0)
-            driver.execute(null, "INSERT INTO transaction_version VALUES ('version-corrupt','transaction-deposit','ledger-a',2,'posting-set-corrupt','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-corrupt','transaction-deposit','ledger-a',2,'posting-set-corrupt','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z','2026-04-28T02:00:00Z',NULL)", 0)
             driver.execute(null, "DROP TRIGGER rg06_guard_current_version_update", 0)
             driver.execute(null, "UPDATE ledger_transaction_current_version SET current_version_id = 'version-corrupt' WHERE transaction_id = 'transaction-deposit'", 0)
             val before = storeSnapshot(database)
@@ -1381,7 +1381,7 @@ class SqlDelightRg06StoreTest {
             }
             "note-update" -> {
                 driver.execute(null, "INSERT INTO posting_set VALUES ('legacy-set','ledger-a')", 0)
-                driver.execute(null, "INSERT INTO transaction_version VALUES ('legacy-version','legacy-tx','ledger-a',1,'legacy-set','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',NULL)", 0)
+                driver.execute(null, "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('legacy-version','legacy-tx','ledger-a',1,'legacy-set','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',NULL)", 0)
                 driver.execute(null, "INSERT INTO transaction_note_update_request VALUES ('ledger-a','legacy-request','legacy-tx','','explicit_manual_save')", 0)
                 driver.execute(null, "INSERT INTO confirmed_transaction_note_update_receipt VALUES ('ledger-a','legacy-request','$confirmationId','legacy-tx','legacy-version','legacy-version')", 0)
             }
