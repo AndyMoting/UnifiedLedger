@@ -1171,3 +1171,60 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **schema 边界补充（2026-08-09 实现确认）：** category_rename 最小闭环需要持久化 name history——新增 schema v17→v18 迁移（`17.sqm`，`rg02_category_name_history` 表，append-only：version 1 由冻结 v1 catalog 在 root 启动时 seed，accepted rename supersede 当前记录并追加下一版本），supersede 本决定"不改 schema"表述（其本意为 RG-01/02 现有行为的投影零运行时改动，不涉及 reconciliation 持久化；rename 的 name-history 持久化是其闭环的必要组成部分）。`SqlDelightRg03TransferStore`/`SqlDelightRg04Store`/`SqlDelightRg05Store` 各 +1 行不可达违规分支补全是 `CategoryRenameViolation` sealed 类型穷尽性的编译必需，语义中性。投影器从该表重建 catalog 分类名与 `category_name_history`，既有 commit port 与 reconciliation 持久化保持零改动。
 
 **关联决定：** `D-047`、`D-048`、`D-069`、`D-070`、`D-071`、`D-074`、`D-081`、`D-082`、`D-086`
+---
+
+## D-088 异源审查确认缺陷修复授权（P0/P1/P2 批次）
+
+**状态：** 已确认
+
+**决定：** 根据用户明确授权（2026-08-10），对异源审查核实报告（2026-08-10，10 项确认缺陷 + 1 项部分成立 + 5 项残留）按 P0→P1→P2 三个批次修复，范围如下：
+
+**P0（发布/持久化不变量，完整 high-risk 拓扑）**
+
+- `PUB-001`~`PUB-005`：重构 `tools/python/golden_cases/{rg03,rg05,rg06,rg09,rg10,rg11,rg12}_publication.py` 七个同模板发布工具并补齐对应 `tests/python/test_*_publication.py` 测试。验收语义：提交点固定为 journal 删除（journal 存在 = 未提交可回滚，journal 删除 = 已提交）；恢复按相位动作表执行且相位感知（首发布无旧 output 时区分“删新 output”与“保留”）；journal 中 output/temp/backup/manifest 五路径 resolve 后强制父目录 == 发布目录且匹配文件名模式（containment）；journal 写入改为 temp + fsync + `os.replace` 原子替换；direct-v2（RG-11/12）强制 `source_bytes == expected_bytes`。每 phase 失败注入与崩溃窗口测试（首发布场景、backup 清理窗口）必须覆盖，且保持既有幂等、失败隔离与恢复语义。
+- `RG12-001`：RG-12 持久化 guard 矛盾状态（PENDING fact + MATCHED history）与零 history match 洞闭合。已发布迁移文件（1.sqm~17.sqm）一字不改，修复以**新迁移边 `18.sqm`（v18→v19）**重建/追加 guard trigger，`Ledger.sq` fresh schema 同步，补顺序反例断言与 fresh-v19 vs 链式等价验证。runtime 写入顺序（history 先于 fact）保持不变，全部既有 RG-12 store/oracle 测试必须原样通过——本修复是持久化层防御加深，不改变任何运行时行为。
+
+**P1（验证补齐，normal tracked）**
+
+- `MIG-001`：Rg11/Rg12 store 失败注入/拒绝测试补齐 close→reopen 与完整 snapshot 相等比较（含全部 RG-12 owner 表，如 `rg12_transaction_version_metadata`/`rg12_report_period`/`rg12_consumption_record`/`rg12_returned_id`）。
+- `MIG-002`：`LedgerDatabaseMigrationTest` 补 3→4、5→6 DDL 冲突注入（HIGH stage/rebuild 链）与 17→18、18→19 新边注入。测试补齐若暴露真实缺陷，停止并升级，不在本批内擅自修复。
+
+**P2（契约硬化 + 卫生，分级）**
+
+- `CONTRACT-001`（零迁移部分）：`CurrencyUnit` 增加 `init { require(code.isNotBlank()); require(precision in 0..18) }`、`Money.ofMinor` 同步受检、五处 decoder/replay 构造点统一解码边界校验。**前置 gate：冻结 fixture 全量 currency 值扫描确认无越界值**（含 precision 边界），扫描发现越界即停止升级。SQL CHECK 全量硬化不在本决定授权范围（需单独评估，见影响）。
+- `RG08-001`：按用户确认的方案 (b) 执行——以文档决定明确 RG-08 无 actualReceiptAt 时 statistics 的 fallback 契约，并微调两处 fallback 实现从 effectiveAt 对齐到 statisticsAt（`SqlDelightRg08Store.kt:357`、`Rg08Operations.kt:1972`），与 RG-11/12 的 statisticsAt fallback 语义一致；不新增 `statistics_at_text` 列、不新增迁移边。**强制条款：RG-08 publication（未来另行授权）前必须强制再评估该 fallback 契约。**
+- `TRACE-001a`：`docs/DECISIONS.md:1131` 与 `:1153` 的授权来源工具痕迹表述改为中性表述（如“根据用户明确授权（2026-08-09）”），保留授权事实与日期。
+- `TRACE-001b`：`.gitignore` 增加 `*.journal.json` 忽略模式。
+- `R1`：同步 `README.md`、`docs/CURRENT_STATE.md`、`docs/ROADMAP.md` 至 schema v18（及本决定新增迁移边落地后的实际版本），并登记 RG-01/02 完整比较已实现、category_rename 已实现。
+- `R2`：`rg-11-closure-proposal.md` 与 `rg-12-closure-proposal.md` frontmatter 状态与 closure gate approved disposition 对齐（只回填事实，不改结论）。
+- `R3`：RG-01/02 oracle 验证证据（review disposition、verifier 结果）登记到 tracked 工件（如 D-087 关联决定段落或 closure 登记文件）。
+
+**附带约定：** 根据用户 2026-08-10 授权（修复批次附带约定），修复批次全部 commit 采用英文 Conventional Commits 规范（`feat:`/`fix:`/`docs:`/`test:`/`release:`/`merge:`/`ci:`/`chore:` 类型，正文英文），该约定写入 `docs/CONTRIBUTING.md`（batch-4 范围）。
+
+**supersede 条款：**
+
+- 本决定在**发布工具实现层面 supersede D-086 的发布工具执行条款**（先例：D-081 对 D-077、D-087 对 D-069/070/071）：D-086 批准的 5 个 publication target、manifest 条目与已发布工件保持原样不变；本决定只重构工具实现，使其真正满足 D-086 已要求的原子性、幂等、失败隔离与 journal 恢复，并闭合 PUB-001~005。
+- **不 supersede D-087 的投影零运行时改动表述**：CONTRACT-001 的 `CurrencyUnit` 校验属于共享域代码的契约硬化，是新授权范围，不改变 D-087 的 RG-01/02 投影方案；`SqlDelightRg12Store` 写入顺序不因 RG12-001 改变。
+- 重申 push 条款：push 需用户单独授权（D-085:1117 与 D-086），本决定不延续任何既往 push 授权。
+
+**验证要求：**
+
+- batch-1（H1）/batch-2（H2）：完整 high-risk 拓扑——单 writer 隔离 worktree → 独立 spec reviewer → 独立 quality reviewer → distinct verifier → 主代理复跑 critical diff 与受影响全套件（Python tests 全量 + `project_docs` + `gradlew` 相关模块，最终候选 `verify-project.ps1 -Scope full`）。批内任何 artifact 变更使既有独立证据失效时，按冻结候选 → delta handoff 闭合流程处理。
+- batch-3（N1）：normal tracked 路由——单 writer + 一个 combined reviewer + distinct verifier + 主代理 rerun；新测试暴露真实缺陷时停止并升级。
+- batch-4（N2/N3）：零迁移代码部分（CONTRACT-001、RG08-001 的两处 fallback 微调）走 N2，含冻结 fixture 预扫描 gate；文档/卫生部分（TRACE-001a/b、R1、R2、R3、本决定登记）走 N3（`project_docs` + `-Scope docs`）。
+- 各批次不跑 release verification（本决定不授权任何发布）；下一次真实 publication gate 在 clean worktree 用修复后工具执行 `-Scope release`。
+
+**不授权：**
+
+- 不重发、不修改任何已发布工件：`golden/rules-v2/{rg-03,04,05,06,07,09,10,11,12}.json` 与 `manifest.json` 保持逐字节不变（发布工具不入 manifest，工具修复不影响已发布工件）。
+- 不修改冻结契约 `golden/rules/rg-XX.json`、`GOLDEN_SCHEMA.md` 既有 normative 内容、`docs/ACCOUNTING_RULES.md` 与 `.external/`（保持只读）。
+- 不修改已发布迁移文件 1.sqm~17.sqm 的既有内容；schema 变更只能新增 18.sqm 及以后的边。
+- 不 push：修复批次合入 main 后停在本地，push 与 CI 触发需用户单独授权。
+- 不 scope 扩展：不引入新 RG 功能、不做 RG-08/RG-01/02 publication、不修未列入的缺陷、不实施 `future_draft` 能力、不实现 CONTRACT-001 的 SQL CHECK 全量硬化（除非另行单独授权）。
+- 不将任何修复批次的验证结果表述为“发布”，也不以本决定授权的验证代替发布行为。
+
+**理由：** 核实报告确认 10 项缺陷均针对当前代码有效（涉及文件未变），8 项成功复现；已发布工件无污染，故修复不触及发布产物。发布工具属于 release/publication 高风险域（含 PUB-003 路径遍历安全面），RG-12 guard 属于 migration 域（已发布迁移链不可改），两者必须走完整 high-risk 拓扑；P1 为既有行为的测试补齐，P2 为契约硬化与文档卫生，按风险分级降级处理可避免流程空转，但任何测试暴露真实缺陷或预扫描发现越界值都必须停止升级。RG08-001 两处 fallback 微调的 N2 行为中性分级以冻结 fixture 三时间折叠（occurred/statistics/effective 相同）为前提——当前不可观察且预期零行为差异；该前提不成立时须升级。
+
+**影响：** schema v18→v19（batch-2，新边 18.sqm）；RG08-001 按 (b) 执行，不产生 v19→v20 迁移边；`Ledger.sq` fresh schema 同步并更新 `LedgerDatabaseMigrationTest`（fresh 版本测试、等价测试、新边 DDL 失败注入）。共享域 `Values.kt` 校验影响全部 RG replay/store 的 CurrencyUnit 构造点——以冻结 fixture 预扫描无越界为前提，否则停止。文档同步：本决定登记、R1（schema 版本与 RG-01/02/rename 状态）、R2（frontmatter）、R3（oracle 证据）、TRACE-001a/b。发布工具 7 文件同模板一致性由同一批次统一保证；下一次 publication gate 将使用修复后工具并重新经历 clean release verification。
+
+**关联决定：** `D-080`、`D-081`、`D-083`、`D-084`、`D-085`、`D-086`、`D-087`
