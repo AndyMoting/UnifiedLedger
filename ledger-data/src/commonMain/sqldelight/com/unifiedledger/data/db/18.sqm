@@ -1,0 +1,104 @@
+-- RG-12 guard closure: v18 -> v19 (RG12-001 fix, D-088 scope).
+-- The v16 guard set allowed a manual-SQL order (match without history -> PENDING
+-- fact -> MATCHED history) that ends in fact='PENDING' with latest_history='MATCHED',
+-- contradicting the frozen current-state rule ("pending facts forbid an active
+-- match"). The two current-state guards are dropped and recreated with the
+-- additional closure branches, a defense-in-depth history guard is added, and a
+-- migration-time data guard rejects already-contaminated v18 databases atomically.
+-- Pure DDL plus data validation: no table structure changes and no row movement,
+-- every existing row is preserved.
+DROP TRIGGER rg12_match_current_guard_insert;
+CREATE TRIGGER rg12_match_current_guard_insert BEFORE INSERT ON rg12_reconciliation_match BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg12_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 match current ownership')
+  WHEN EXISTS (
+    -- a posting that already owns a reconciliation fact cannot acquire a match:
+    -- the runtime always writes match history before the fact, so a pre-existing
+    -- fact means the pair (fact, match-without-history) is not representable
+    SELECT 1 FROM rg12_posting_reconciliation AS fact
+    WHERE fact.ledger_id = new.ledger_id AND fact.posting_id = new.posting_id
+  ) THEN RAISE(ABORT, 'rg12 match current ownership') END;
+END;
+DROP TRIGGER rg12_reconciliation_current_guard_insert;
+CREATE TRIGGER rg12_reconciliation_current_guard_insert BEFORE INSERT ON rg12_posting_reconciliation BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM rg12_posting_semantic AS semantic
+    WHERE semantic.ledger_id = new.ledger_id AND semantic.posting_id = new.posting_id
+      AND semantic.reconciliation_eligible = 1
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN EXISTS (
+    -- a match that never received its entry-1 history owns the posting: the
+    -- match is not representable in the domain and no fact may be built on it
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND NOT EXISTS (
+        SELECT 1 FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_reconciliation_match_history AS latest
+      ON latest.ledger_id = match_row.ledger_id AND latest.match_id = match_row.match_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND latest.entry_sequence = (
+        SELECT MAX(history_row.entry_sequence)
+        FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
+      AND latest.status = 'MATCHED'
+      AND new.status != 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  WHEN new.status = 'MATCHED' AND NOT EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_reconciliation_match_history AS latest
+      ON latest.ledger_id = match_row.ledger_id AND latest.match_id = match_row.match_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.posting_id = new.posting_id
+      AND latest.entry_sequence = (
+        SELECT MAX(history_row.entry_sequence)
+        FROM rg12_reconciliation_match_history AS history_row
+        WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+      )
+      AND latest.status = 'MATCHED'
+  ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
+  END;
+END;
+CREATE TRIGGER rg12_match_history_fact_consistency BEFORE INSERT ON rg12_reconciliation_match_history BEGIN
+  SELECT CASE WHEN new.status = 'MATCHED' AND EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match AS match_row
+    JOIN rg12_posting_reconciliation AS fact
+      ON fact.ledger_id = match_row.ledger_id AND fact.posting_id = match_row.posting_id
+    WHERE match_row.ledger_id = new.ledger_id AND match_row.match_id = new.match_id
+      AND fact.status = 'PENDING'
+  ) THEN RAISE(ABORT, 'rg12 match history fact consistency') END;
+END;
+CREATE TABLE rg12_v19_migration_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO rg12_v19_migration_guard(value)
+SELECT 1
+WHERE EXISTS (
+  SELECT 1 FROM rg12_reconciliation_match AS orphan
+  WHERE NOT EXISTS (
+    SELECT 1 FROM rg12_reconciliation_match_history AS history_row
+    WHERE history_row.ledger_id = orphan.ledger_id AND history_row.match_id = orphan.match_id
+  )
+)
+OR EXISTS (
+  SELECT 1 FROM rg12_posting_reconciliation AS fact
+  JOIN rg12_reconciliation_match AS match_row
+    ON match_row.ledger_id = fact.ledger_id AND match_row.posting_id = fact.posting_id
+  JOIN rg12_reconciliation_match_history AS latest
+    ON latest.ledger_id = match_row.ledger_id AND latest.match_id = match_row.match_id
+  WHERE fact.status = 'PENDING'
+    AND latest.entry_sequence = (
+      SELECT MAX(history_row.entry_sequence)
+      FROM rg12_reconciliation_match_history AS history_row
+      WHERE history_row.ledger_id = match_row.ledger_id AND history_row.match_id = match_row.match_id
+    )
+    AND latest.status = 'MATCHED'
+);
+DROP TABLE rg12_v19_migration_guard;
