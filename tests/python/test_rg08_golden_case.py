@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
@@ -136,6 +137,50 @@ class RG08GoldenCaseTests(unittest.TestCase):
 
         for path, amount in self._all_amounts(self.case):
             assert_exact_money(self, amount, path)
+
+    def test_frozen_transaction_time_fallback_premise(self):
+        with RG08_PATH.open(encoding="utf-8") as fixture_file:
+            fixture = json.load(fixture_file)
+
+        field_counts = {"occurred_at": 0, "statistics_at": 0, "effective_at": 0}
+        serialized_snapshots = []
+
+        def visit(value):
+            if isinstance(value, dict):
+                for field in field_counts:
+                    field_counts[field] += int(field in value)
+                if "occurred_at" in value and "statistics_at" in value:
+                    serialized_snapshots.append(value)
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(fixture)
+
+        self.assertEqual(
+            field_counts,
+            {"occurred_at": 364, "statistics_at": 139, "effective_at": 0},
+        )
+        self.assertEqual(len(serialized_snapshots), 139)
+        self.assertTrue(
+            all(
+                isinstance(snapshot["occurred_at"], str)
+                and isinstance(snapshot["statistics_at"], str)
+                and snapshot["occurred_at"] == snapshot["statistics_at"]
+                for snapshot in serialized_snapshots
+            )
+        )
+        self.assertEqual(
+            len(
+                {
+                    (snapshot["id"], snapshot["current_version_id"])
+                    for snapshot in serialized_snapshots
+                }
+            ),
+            5,
+        )
 
     def test_lend_creates_balanced_receivable_and_principal_cash_outflow(self):
         transaction = self.lend["expected"]["transaction"]

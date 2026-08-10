@@ -130,3 +130,11 @@ Per D-084:1093 the mapping gate requires the closure proposal, the complete orac
 ## Acceptance
 
 The D-084 owner table, the 44-operation oracle, the projection and classification registries, the runtime deviation register, the persistence boundary, the v14 to v15 migration evidence, and the independent review disposition are now present. Per D-084 all four gate conditions are met and the mapping gate is marked `approved` (2026-08-09). Publication and push remain separate gates.
+
+## Fallback 再评估记录（D-088 强制条款，2026-08-10）
+
+1. **序列化证据口径。** 对冻结契约 `golden/rules/rg-08.json` 全文件递归复算：139 个同时包含 `occurred_at` 与 `statistics_at` 的序列化交易快照中，139 / 139 两字段相等；这些重复快照对应 5 个唯一的 transaction/current-version 对。全文件字段出现次数为 `occurred_at=364`、`statistics_at=139`、`effective_at=0`。`effective_at` 缺席本身只说明冻结序列化形状未发布该字段，不能单独证明第三时间已折叠。
+2. **第三时间的独立实现证据。** `Rg08FixtureReplay.kt` 对 opening transaction 构造 `TransactionTimes(occurredAt, occurredAt, occurredAt)`；`Rg08Operations.kt` 对 lend 构造 `TransactionTimes(input.actualAt, input.actualAt, input.actualAt)`，对 manual collection、allocated collection 与 confirmed import 共用的 collect 构造则使用 `TransactionTimes(actualReceiptAt, actualReceiptAt, actualReceiptAt)`。因此当前 RG-08 runtime 的 occurred/statistics/effective 三个 instant 由构造路径明确相等，而不是从 `effective_at` 缺席推断相等。
+3. **两处 fallback 边界。** Persistence 路径 `SqlDelightRg08Store.kt` 在 `record.statisticsAtText` 缺失时写入 `formal.versions.last().times.statisticsAt`；report 路径 `Rg08Operations.kt` 则调用 current-version helper，按 `transaction.currentVersionId` 选择该版本的 `times.statisticsAt`。当前 opening、lend 与 collect 构造均为每交易单版本，冻结契约的 139 个快照也只覆盖上述 5 个唯一 transaction/current-version 对，所以两种选取在当前范围内指向同一版本。Opening 的 `statisticsAtText` 为 null，触发 persistence fallback；report 会排除 opening，而 lend/collect（包括 confirm-import collect）均提供显式 `statisticsAtText`，故冻结 report 路径不触发 fallback。
+4. **结论与授权边界。** 上述序列化复算与 runtime 构造证据共同满足 D-088 的 publication 前强制再评估，RG08-001 方案 (b) 的当前前提成立，可继续 D-089 已授权的 RG-08 B 批后续实现与验收。本记录不执行 publication，不授权 push，也不新增或预批准 schema migration。
+5. **前提失效处置。** 若未来出现 `statistics_at != occurred_at`、runtime 的 effective time 与 occurred/statistics time 分离、可报告交易缺失 `statisticsAtText`，或多版本使 `versions.last()` 与 `currentVersionId` 不再等价，必须停止 RG-08 publication，并重新进入产品语义与 migration 决策门后再继续。新增显式 `statisticsAtText` 列只能作为该决策门中的候选方案；本记录不预先批准该列、迁移边或任何数据重写。
