@@ -119,7 +119,8 @@
       "enum": [
         "operation", "transaction", "transaction_version", "posting_set", "posting",
         "source", "candidate", "confirmation", "evidence", "evidence_link",
-        "relation", "domain_entity", "observation"
+        "relation", "domain_entity", "audit_link", "observation",
+        "component", "counterparty", "name_history"
       ]
     },
     "ref": {
@@ -341,8 +342,37 @@
         {"$ref": "#/$defs/importedTransferCandidateSource"},
         {"$ref": "#/$defs/accountStatementSource"},
         {"$ref": "#/$defs/manualTransactionConfirmationSource"},
-        {"$ref": "#/$defs/storedValueSource"}
+        {"$ref": "#/$defs/storedValueSource"},
+        {"$ref": "#/$defs/rg08LendingSource"}
       ]
+    },
+    "rg08LendingSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["bank_debit", "bank_credit", "bank_credit_mirror", "lending_agreement", "explicit_manual_lending_confirmation"]},
+        "payload": {"$ref": "#/$defs/rg08LendingSourcePayload"}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"enum": ["bank_debit", "bank_credit"]}}, "required": ["type"]}, "then": {"properties": {"payload": {"required": ["booking_at", "value_at", "account_id", "amount", "currency"]}}}},
+        {"if": {"properties": {"type": {"const": "bank_credit"}}, "required": ["type"]}, "then": {"properties": {"payload": {"required": ["original_source_payload_hash"]}}}},
+        {"if": {"properties": {"type": {"const": "bank_credit_mirror"}}, "required": ["type"]}, "then": {"properties": {"payload": {"required": ["amount", "currency", "mirror_of_source_id"]}}}},
+        {"if": {"properties": {"type": {"const": "lending_agreement"}}, "required": ["type"]}, "then": {"properties": {"payload": {"required": ["counterparty_id", "currency"]}}}}
+      ]
+    },
+    "rg08LendingSourcePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_record_id", "observed_at", "immutable_payload_hash"],
+      "properties": {
+        "source_record_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"},
+        "booking_at": {"$ref": "#/$defs/timestamp"}, "value_at": {"$ref": "#/$defs/timestamp"},
+        "account_id": {"$ref": "#/$defs/id"}, "counterparty_id": {"$ref": "#/$defs/id"},
+        "amount": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1},
+        "original_source_payload_hash": {"type": "string", "minLength": 1},
+        "immutable_payload_hash": {"type": "string", "minLength": 1},
+        "mirror_of_source_id": {"$ref": "#/$defs/id"}
+      }
     },
     "storedValueSource": {
       "type": "object", "additionalProperties": false,
@@ -714,8 +744,43 @@
         {"$ref": "#/$defs/stagedPaymentCandidate"},
         {"$ref": "#/$defs/refundCreditCandidate"},
         {"$ref": "#/$defs/importedTransferCandidate"},
-        {"$ref": "#/$defs/storedValueCandidate"}
+        {"$ref": "#/$defs/storedValueCandidate"},
+        {"$ref": "#/$defs/rg08LendingCandidate"}
       ]
+    },
+    "rg08LendingCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "confidence", "payload", "status_history"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"const": "lending_collection_credit"},
+        "source_ids": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "confidence": {"$ref": "#/$defs/decimal"},
+        "payload": {"$ref": "#/$defs/rg08LendingCandidatePayload"},
+        "status_history": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"$ref": "#/$defs/rg08CandidateStatus"}}
+      }
+    },
+    "rg08LendingCandidatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proposed_total_received", "proposed_principal_amount", "proposed_interest_amount", "proposed_fee_amount", "currency", "proposed_destination_account_id", "proposed_actual_receipt_at", "proposed_behavior_code", "proposed_counterparty_id", "requires_confirmation", "rule_version", "bank_evidence_proves_component_split", "expected_interest_may_confirm_split", "name_match_may_confirm_counterparty"],
+      "properties": {
+        "proposed_total_received": {"$ref": "#/$defs/positiveDecimal"}, "proposed_principal_amount": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]},
+        "proposed_interest_amount": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]}, "proposed_fee_amount": {"anyOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]},
+        "currency": {"type": "string", "minLength": 1}, "proposed_destination_account_id": {"$ref": "#/$defs/id"},
+        "proposed_actual_receipt_at": {"$ref": "#/$defs/timestamp"}, "proposed_behavior_code": {"anyOf": [{"enum": ["borrow", "lend", "collect", "repay"]}, {"type": "null"}]},
+        "proposed_counterparty_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}, "rule_version": {"type": "integer", "minimum": 1},
+        "bank_evidence_proves_component_split": {"const": false}, "expected_interest_may_confirm_split": {"const": false},
+        "name_match_may_confirm_counterparty": {"const": false},
+        "requires_confirmation": {"$ref": "#/$defs/rg08ConfirmationRequirements"}
+      }
+    },
+    "rg08ConfirmationRequirements": {
+      "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+      "items": {"enum": ["behavior_code", "counterparty_id", "destination_account_id", "principal_amount", "interest_and_fee_amounts", "actual_receipt_time"]}
+    },
+    "rg08CandidateStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status", "occurred_at", "formal_effect_count"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "status": {"enum": ["pending_confirmation", "confirmed"]}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "formal_effect_count": {"type": "integer", "minimum": 0, "maximum": 1}}
     },
     "storedValueCandidate": {
       "type": "object", "additionalProperties": false,
@@ -1104,8 +1169,27 @@
         {"$ref": "#/$defs/explicitManualSaveConfirmation"},
         {"$ref": "#/$defs/candidateConfirmation"},
         {"$ref": "#/$defs/explicitOperationConfirmation"},
-        {"$ref": "#/$defs/rg07RefundConfirmation"}
+        {"$ref": "#/$defs/rg07RefundConfirmation"},
+        {"$ref": "#/$defs/rg08LendingConfirmation"}
       ]
+    },
+    "rg08LendingConfirmation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "operation_id", "subject", "confirmed_at", "payload"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "type": {"enum": ["lending_event_confirmation", "lending_settlement_confirmation"]},
+        "operation_id": {"$ref": "#/$defs/id"}, "subject": {"$ref": "#/$defs/rg08ConfirmationSubject"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"},
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["confirmation_request_id", "transaction_id", "counterparty_id"],
+          "properties": {"confirmation_request_id": {"$ref": "#/$defs/id"}, "transaction_id": {"$ref": "#/$defs/id"}, "counterparty_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "settlement_id": {"$ref": "#/$defs/id"}}
+        }
+      }
+    },
+    "rg08ConfirmationSubject": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "id"],
+      "properties": {"kind": {"enum": ["transaction", "candidate"]}, "id": {"$ref": "#/$defs/id"}}
     },
     "explicitManualSaveConfirmation": {
       "type": "object",
@@ -1183,8 +1267,14 @@
         {"$ref": "#/$defs/importedStoredValueRechargeCandidateEvidence"},
         {"$ref": "#/$defs/importedStoredValueSpendCandidateEvidence"},
         {"$ref": "#/$defs/confirmedActivationBalanceEvidence"},
-        {"$ref": "#/$defs/merchantLotAllocationEvidence"}
+        {"$ref": "#/$defs/merchantLotAllocationEvidence"},
+        {"$ref": "#/$defs/rg08LendingEvidence"}
       ]
+    },
+    "rg08LendingEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "source_ids", "payload"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "lending_agreement"}, "source_ids": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "payload": {"type": "object", "additionalProperties": false, "required": ["observed_at"], "properties": {"observed_at": {"$ref": "#/$defs/timestamp"}}}}
     },
     "importedStoredValueRechargeCandidateEvidence": {
       "$ref": "#/$defs/observedAtEvidence",
@@ -1386,11 +1476,15 @@
         {
           "if": {
             "properties": {
-              "role": {"enum": ["refund_relationship", "counterparty_lending_relationship"]}
+              "role": {"const": "refund_relationship"}
             },
             "required": ["role"]
           },
           "then": {"properties": {"target_kind": {"const": "relation"}}}
+        },
+        {
+          "if": {"properties": {"role": {"const": "counterparty_lending_relationship"}}, "required": ["role"]},
+          "then": {"properties": {"target_kind": {"const": "domain_entity"}}}
         },
         {
           "if": {
@@ -1610,8 +1704,14 @@
         {"$ref": "#/$defs/mixedPaymentRelation"},
         {"$ref": "#/$defs/mergedPaymentRelation"},
         {"$ref": "#/$defs/stagedPaymentRelation"},
-        {"$ref": "#/$defs/rg07RefundRelation"}
+        {"$ref": "#/$defs/rg07RefundRelation"},
+        {"$ref": "#/$defs/rg08LendingRelation"}
       ]
+    },
+    "rg08LendingRelation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "member_refs", "payload"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "counterparty_lending_relationship"}, "member_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": {"kind": {"const": "domain_entity"}, "id": {"$ref": "#/$defs/id"}}}}, "payload": {"type": "object", "additionalProperties": false, "required": ["counterparty_id"], "properties": {"counterparty_id": {"$ref": "#/$defs/id"}}}}
     },
     "mixedPaymentRelation": {
       "type": "object",
@@ -1747,7 +1847,31 @@
         {"$ref": "#/$defs/installmentPayment"},
         {"$ref": "#/$defs/reconciliationMatch"}
         ,{"$ref": "#/$defs/refundRelationship"}
+        ,{"$ref": "#/$defs/rg08LendingPosition"}
+        ,{"$ref": "#/$defs/rg08LendingSettlement"}
       ]
+    },
+    "rg08PositionHistoryEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "behavior_code", "amount", "principal_balance_after", "transaction_id", "occurred_at"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "behavior_code": {"enum": ["lend", "collect"]}, "amount": {"$ref": "#/$defs/decimal"}, "principal_balance_after": {"$ref": "#/$defs/decimal"}, "transaction_id": {"$ref": "#/$defs/id"}, "occurred_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "rg08SettlementHistoryEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sequence", "status", "occurred_at", "transaction_id", "formal_effect_count"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "status": {"const": "confirmed"}, "occurred_at": {"$ref": "#/$defs/timestamp"}, "transaction_id": {"$ref": "#/$defs/id"}, "formal_effect_count": {"const": 1}}
+    },
+    "rg08LendingPosition": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "lending_position"}, "payload": {"type": "object", "additionalProperties": false, "required": ["counterparty_id", "position_scope", "contract_allocation_enabled", "receivable_account_id", "principal_balance", "currency", "history"], "properties": {"counterparty_id": {"$ref": "#/$defs/id"}, "position_scope": {"const": "person_level_net_position"}, "contract_allocation_enabled": {"const": false}, "receivable_account_id": {"$ref": "#/$defs/id"}, "principal_balance": {"$ref": "#/$defs/decimal"}, "currency": {"type": "string", "minLength": 1}, "history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rg08PositionHistoryEvent"}}}}}
+    },
+    "rg08SettlementComponent": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "amount", "posting_id"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["principal", "interest", "fee"]}, "amount": {"$ref": "#/$defs/decimal"}, "posting_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}}
+    },
+    "rg08LendingSettlement": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "payload"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "lending_settlement"}, "payload": {"type": "object", "additionalProperties": false, "required": ["behavior_code", "counterparty_id", "linked_position_id", "allocated_lend_transaction_id", "transaction_id", "destination_account_id", "interest_category_id", "total_received", "currency", "components", "actual_receipt_at", "confirmed_at", "history"], "properties": {"behavior_code": {"const": "collect"}, "counterparty_id": {"$ref": "#/$defs/id"}, "linked_position_id": {"$ref": "#/$defs/id"}, "allocated_lend_transaction_id": {"type": "null"}, "transaction_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"}, "interest_category_id": {"$ref": "#/$defs/id"}, "total_received": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1}, "components": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/rg08SettlementComponent"}}, "actual_receipt_at": {"$ref": "#/$defs/timestamp"}, "confirmed_at": {"$ref": "#/$defs/timestamp"}, "history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rg08SettlementHistoryEvent"}}}}}
     },
     "stagedPaymentLifecycleHistoryEvent": {
       "type": "object", "additionalProperties": false,
@@ -2209,6 +2333,7 @@
                 "adjustment_transaction", "explanation_transaction", "allocation_reversal",
                 "reconstruction_adjustment", "reconstruction_transaction",
                 "periodic_allocation_recognition"
+                ,"mirror_of_evidence_id", "merged_into_evidence_link_id"
               ]
             },
             "from": {"$ref": "#/$defs/ref"},
@@ -2289,7 +2414,7 @@
       "enum": [
         "consumption", "cash_outflow", "cash_inflow", "income", "ordinary_income",
         "ordinary_expense", "expense", "special_income", "expiry_loss", "net_worth_change",
-        "principal_consumption", "principal_external_cash_flow",
+        "principal_consumption", "principal_external_cash_flow", "interest_cash_flow",
         "balance_adjustment_net_worth_change", "internal_transfer_amount", "budget", "category_effect", "category_consumption"
       ]
     },
@@ -3955,6 +4080,141 @@
     "rg07AllocationRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"const": "refund_amount_exceeds_remaining_refundable"}, "field_path": {"const": "$.attempted_input.requested_allocation"}}},
     "rg07ImportRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"enum": ["original_transaction_confirmation_required", "category_allocation_confirmation_required", "destination_confirmation_required", "arrival_confirmation_required"]}, "field_path": {"enum": ["$.attempted_input.original_transaction_id", "$.attempted_input.category_id", "$.attempted_input.destination_account_id", "$.attempted_input.arrival_confirmed"]}}, "oneOf": [{"properties": {"reason_code": {"const": "original_transaction_confirmation_required"}, "field_path": {"const": "$.attempted_input.original_transaction_id"}}}, {"properties": {"reason_code": {"const": "category_allocation_confirmation_required"}, "field_path": {"const": "$.attempted_input.category_id"}}}, {"properties": {"reason_code": {"const": "destination_confirmation_required"}, "field_path": {"const": "$.attempted_input.destination_account_id"}}}, {"properties": {"reason_code": {"const": "arrival_confirmation_required"}, "field_path": {"const": "$.attempted_input.arrival_confirmed"}}}]},
     "rg07ValidationRejectedOutcome": {"type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"], "properties": {"status": {"const": "rejected"}, "reason_code": {"enum": ["must_be_positive", "same_currency_required", "effective_confirmed_original_expense_required", "original_transaction_confirmation_required", "known_destination_account_required", "owned_real_asset_destination_required", "destination_confirmation_required", "exact_original_secondary_category_required", "refund_amount_exceeds_remaining_refundable"]}, "field_path": {"enum": ["$.attempted_input.amount", "$.attempted_input.currency", "$.attempted_input.original_transaction_id", "$.attempted_input.destination_account_id", "$.attempted_input.category_id"]}}},
+    "rg08LendInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "request_id", "behavior_code", "counterparty_id", "funding_account_id", "principal_amount", "currency", "actual_at", "confirmed_at", "explicit_confirmation"],
+      "properties": {
+        "variant": {"const": "lend"}, "request_id": {"$ref": "#/$defs/id"},
+        "behavior_code": {"const": "lend"}, "counterparty_id": {"$ref": "#/$defs/id"},
+        "funding_account_id": {"$ref": "#/$defs/id"}, "principal_amount": {"$ref": "#/$defs/positiveDecimal"},
+        "currency": {"type": "string", "minLength": 1}, "actual_at": {"$ref": "#/$defs/timestamp"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}
+      }
+    },
+    "rg08CollectionInputCommon": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "request_id", "counterparty_id", "destination_account_id", "total_received", "principal_amount", "interest_amount", "fee_amount", "interest_category_id", "currency", "actual_receipt_at", "confirmed_at"],
+      "properties": {
+        "variant": {"enum": ["manual_collection", "maximum_allocation"]}, "request_id": {"$ref": "#/$defs/id"},
+        "behavior_code": {"const": "collect"}, "counterparty_id": {"$ref": "#/$defs/id"},
+        "linked_position_id": {"$ref": "#/$defs/id"}, "allocated_lend_transaction_id": {"type": "null"},
+        "destination_account_id": {"$ref": "#/$defs/id"}, "total_received": {"$ref": "#/$defs/positiveDecimal"},
+        "principal_amount": {"$ref": "#/$defs/decimal"}, "interest_amount": {"$ref": "#/$defs/decimal"},
+        "fee_amount": {"const": "0.00"}, "interest_category_id": {"$ref": "#/$defs/id"},
+        "currency": {"type": "string", "minLength": 1}, "actual_receipt_at": {"$ref": "#/$defs/timestamp"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true}
+      }
+    },
+    "rg08ManualCollectionInput": {
+      "allOf": [{"$ref": "#/$defs/rg08CollectionInputCommon"}, {"properties": {"variant": {"const": "manual_collection"}, "behavior_code": {"const": "collect"}, "linked_position_id": {"$ref": "#/$defs/id"}, "allocated_lend_transaction_id": {"type": "null"}, "explicit_confirmation": {"const": true}}, "required": ["behavior_code", "linked_position_id", "allocated_lend_transaction_id", "explicit_confirmation"]}]
+    },
+    "rg08MaximumAllocationInput": {
+      "allOf": [{"$ref": "#/$defs/rg08CollectionInputCommon"}, {"properties": {"variant": {"const": "maximum_allocation"}}}]
+    },
+    "rg08ImportIntakeInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "credit_source_id", "agreement_source_id", "candidate_id", "candidate_type", "proposed_total_received", "proposed_destination_account_id", "proposed_actual_receipt_at", "currency", "rule_version", "confidence"],
+      "properties": {
+        "variant": {"const": "import_intake"}, "credit_source_id": {"$ref": "#/$defs/id"},
+        "agreement_source_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"},
+        "candidate_type": {"const": "lending_collection_credit"}, "proposed_total_received": {"$ref": "#/$defs/positiveDecimal"},
+        "proposed_destination_account_id": {"$ref": "#/$defs/id"}, "proposed_actual_receipt_at": {"$ref": "#/$defs/timestamp"},
+        "currency": {"type": "string", "minLength": 1}, "rule_version": {"type": "integer", "minimum": 1},
+        "confidence": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "rg08FormalConfirmationInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "request_id", "candidate_id", "behavior_code", "counterparty_id", "destination_account_id", "principal_amount", "interest_amount", "fee_amount", "interest_category_id", "currency", "actual_receipt_at", "confirmed_at", "explicit_confirmation", "explicitly_confirmed_fields"],
+      "properties": {
+        "variant": {"const": "formal_confirmation"}, "request_id": {"$ref": "#/$defs/id"},
+        "candidate_id": {"$ref": "#/$defs/id"}, "behavior_code": {"const": "collect"},
+        "counterparty_id": {"$ref": "#/$defs/id"}, "destination_account_id": {"$ref": "#/$defs/id"},
+        "principal_amount": {"$ref": "#/$defs/decimal"}, "interest_amount": {"$ref": "#/$defs/decimal"},
+        "fee_amount": {"const": "0.00"}, "interest_category_id": {"$ref": "#/$defs/id"},
+        "currency": {"type": "string", "minLength": 1}, "actual_receipt_at": {"$ref": "#/$defs/timestamp"},
+        "confirmed_at": {"$ref": "#/$defs/timestamp"}, "explicit_confirmation": {"const": true},
+        "explicitly_confirmed_fields": {"$ref": "#/$defs/rg08ConfirmationRequirements"}
+      }
+    },
+    "rg08MirrorMergeInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "request_id", "source_id", "observed_at", "amount", "currency", "mirror_of_source_id", "target_posting_id", "mirror_of_evidence_id", "merged_into_evidence_link_id"],
+      "properties": {
+        "variant": {"const": "mirror_merge"}, "request_id": {"$ref": "#/$defs/id"},
+        "source_id": {"$ref": "#/$defs/id"}, "observed_at": {"$ref": "#/$defs/timestamp"},
+        "amount": {"$ref": "#/$defs/positiveDecimal"}, "currency": {"type": "string", "minLength": 1},
+        "mirror_of_source_id": {"$ref": "#/$defs/id"}, "target_posting_id": {"$ref": "#/$defs/id"},
+        "mirror_of_evidence_id": {"$ref": "#/$defs/id"}, "merged_into_evidence_link_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "rg08RenameInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["variant", "request_id", "counterparty_id", "old_display_name", "new_display_name", "name_history_id"],
+      "properties": {"variant": {"const": "rename_counterparty"}, "request_id": {"$ref": "#/$defs/id"}, "counterparty_id": {"$ref": "#/$defs/id"}, "old_display_name": {"type": "string", "minLength": 1}, "new_display_name": {"type": "string", "minLength": 1}, "name_history_id": {"$ref": "#/$defs/id"}}
+    },
+    "rg08RetryInput": {
+      "type": "object", "additionalProperties": false, "required": ["variant", "input_anchor_id"],
+      "properties": {"variant": {"const": "retry"}, "input_anchor_id": {"$ref": "#/$defs/id"}}
+    },
+    "rg08LendingEventAttempt": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "behavior_code": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "total_received": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}, {"type": "null"}]},
+        "funding_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "counterparty_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}
+      }
+    },
+    "rg08SettlementAttempt": {
+      "type": "object", "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "total_received": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "number"}, {"type": "null"}]},
+        "components": {"type": ["array", "object", "string", "null"]},
+        "principal_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "interest_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "fee_amount": {"anyOf": [{"$ref": "#/$defs/attemptedDecimal"}, {"type": "null"}]},
+        "funding_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "destination_account_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "counterparty_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "behavior_code": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "split_source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "currency": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "interest_category_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "interest_and_fee_amounts": {"type": ["array", "object", "string", "null"]},
+        "actual_receipt_time": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+      }
+    },
+    "rg08IncompleteConfirmationAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["confirmation_request_id", "missing_field"],
+      "properties": {
+        "confirmation_request_id": {"$ref": "#/$defs/id"},
+        "missing_field": {"enum": ["behavior_code", "counterparty_id", "destination_account_id", "principal_amount", "interest_and_fee_amounts", "actual_receipt_time"]}
+      }
+    },
+    "rg08AllocationAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total_received", "principal_amount", "interest_amount", "fee_amount", "currency", "counterparty_id", "destination_account_id"],
+      "properties": {
+        "total_received": {"$ref": "#/$defs/attemptedDecimal"},
+        "principal_amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "interest_amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "fee_amount": {"$ref": "#/$defs/attemptedDecimal"},
+        "currency": {"type": "string", "minLength": 1},
+        "counterparty_id": {"$ref": "#/$defs/id"},
+        "destination_account_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "rg08RejectedOutcome": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reason_code", "field_path"],
+      "properties": {
+        "status": {"const": "rejected"},
+        "reason_code": {"enum": ["exact_decimal_string_required", "total_must_be_positive", "components_must_equal_total", "component_must_be_nonnegative", "fee_must_be_zero_in_rg08_v1", "nonzero_fee_accounting_out_of_scope", "principal_exceeds_outstanding_position", "unknown_account", "owned_account_required", "financial_asset_account_required", "unknown_counterparty", "invalid_lending_behavior", "explicit_component_split_required", "same_currency_required", "active_exact_interest_category_required", "behavior_confirmation_required", "counterparty_confirmation_required", "destination_confirmation_required", "principal_confirmation_required", "interest_and_fee_confirmation_required", "actual_receipt_time_confirmation_required"]},
+        "field_path": {"enum": ["$.attempted_input.total_received", "$.attempted_input.components", "$.attempted_input.principal_amount", "$.attempted_input.fee_amount", "$.attempted_input.funding_account_id", "$.attempted_input.destination_account_id", "$.attempted_input.counterparty_id", "$.attempted_input.behavior_code", "$.attempted_input.split_source", "$.attempted_input.currency", "$.attempted_input.interest_category_id", "$.attempted_input.interest_and_fee_amounts", "$.attempted_input.actual_receipt_time"]}
+      }
+    },
     "operationBase": {
       "type": "object",
       "additionalProperties": false,
@@ -4005,7 +4265,9 @@
             "attach_refund_dual_role_evidence", "confirm_refund_receipt",
             "allocate_refund_receipt", "ingest_refund_credit_source",
             "confirm_imported_refund", "merge_refund_mirror_evidence",
-            "validate_refund_receipt"
+            "validate_refund_receipt", "validate_lending_event",
+            "validate_lending_settlement", "confirm_imported_lending_collection",
+            "allocate_lending_collection", "retry_idempotent_input"
           ]
         },
         "baseline_state_id": {"$ref": "#/$defs/id"},
@@ -4494,8 +4756,18 @@
             {"properties": {"action_type": {"const": "confirm_imported_refund"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07ImportConfirmationInput"}}},
             {"properties": {"action_type": {"const": "confirm_imported_refund"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ImportRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ImportAttempt"}}},
             {"properties": {"action_type": {"const": "merge_refund_mirror_evidence"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"enum": ["accepted", "no_change"]}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg07MirrorEvidenceInput"}}},
-            {"properties": {"action_type": {"const": "validate_refund_receipt"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ValidationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ValidationAttempt"}}
-            }
+            {"properties": {"action_type": {"const": "validate_refund_receipt"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg07ValidationRejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg07ValidationAttempt"}}},
+            {"properties": {"action_type": {"const": "validate_lending_event"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"const": "accepted"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08LendInput"}}},
+            {"properties": {"action_type": {"const": "validate_lending_event"}, "operation_class": {"const": "update"}, "outcome": {"properties": {"status": {"const": "no_change"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08RenameInput"}}},
+            {"properties": {"action_type": {"const": "validate_lending_event"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg08RejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg08LendingEventAttempt"}}},
+            {"properties": {"action_type": {"const": "validate_lending_settlement"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"const": "accepted"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08ManualCollectionInput"}}},
+            {"properties": {"action_type": {"const": "validate_lending_settlement"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg08RejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg08SettlementAttempt"}}},
+            {"properties": {"action_type": {"const": "confirm_imported_lending_collection"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"const": "accepted"}}, "required": ["status"]}, "input": {"oneOf": [{"$ref": "#/$defs/rg08ImportIntakeInput"}, {"$ref": "#/$defs/rg08FormalConfirmationInput"}]} }},
+            {"properties": {"action_type": {"const": "confirm_imported_lending_collection"}, "operation_class": {"const": "reconciliation"}, "outcome": {"properties": {"status": {"const": "accepted"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08MirrorMergeInput"}}},
+            {"properties": {"action_type": {"const": "confirm_imported_lending_collection"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg08RejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg08IncompleteConfirmationAttempt"}}},
+            {"properties": {"action_type": {"const": "allocate_lending_collection"}, "operation_class": {"const": "creation"}, "outcome": {"properties": {"status": {"const": "accepted"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08MaximumAllocationInput"}}},
+            {"properties": {"action_type": {"const": "allocate_lending_collection"}, "operation_class": {"const": "rejection"}, "outcome": {"$ref": "#/$defs/rg08RejectedOutcome"}, "attempted_input": {"$ref": "#/$defs/rg08AllocationAttempt"}}},
+            {"properties": {"action_type": {"const": "retry_idempotent_input"}, "operation_class": {"const": "read"}, "outcome": {"properties": {"status": {"const": "no_change"}}, "required": ["status"]}, "input": {"$ref": "#/$defs/rg08RetryInput"}}}
           ]
         },
         {
