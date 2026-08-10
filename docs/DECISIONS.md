@@ -1128,7 +1128,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已确认
 
-**决定：** 根据用户 /goal 授权（2026-08-09 publication 阶段），批准 5 个 RG 的 v2 工件发布 target，均在 clean worktree 上执行 release verification（`verify-project.ps1 -Scope release`），发布工具必须满足原子性、幂等、失败隔离与 journal 恢复（参照 `rg09_publication.py` 先例）：
+**决定：** 根据用户明确授权（2026-08-09 publication 阶段），批准 5 个 RG 的 v2 工件发布 target，均在 clean worktree 上执行 release verification（`verify-project.ps1 -Scope release`），发布工具必须满足原子性、幂等、失败隔离与 journal 恢复（参照 `rg09_publication.py` 先例）：
 
 - **RG-03**：`golden/rules-v2/rg-03.json` ← `docs/migrations/golden-v2/rg-03-expected.json`（approval_status approved；13 roots / 20 ops / 33 states）
 - **RG-05**：`golden/rules-v2/rg-05.json` ← `docs/migrations/golden-v2/rg-05-expected.json`（D-075 已批准；17 roots / 25 ops / 42 states）
@@ -1150,7 +1150,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已确认
 
-**决定：** 根据用户 /goal 授权（RG-01/02 完整比较，2026-08-09），为 RG-01 与 RG-02 建立完整逐 operation oracle——outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality、retry equality（对齐 D-082/D-083 oracle 合同）。本决定 supersede D-069/D-070/D-071 影响段中"完整 state/report/reconciliation/delta comparison 不授权"的表述（supersede 先例：D-081 对 D-077）。expected 工件 `docs/migrations/golden-v2/rg-01-expected.json`（8 roots / 11 ops / 19 states）与 `rg-02-expected.json`（11 roots / 13 ops / 24 states）均已 approved 且自创建未改（D-075 审批标准），直接作为 oracle 批准基线，不重新生成、不修改。
+**决定：** 根据用户明确授权（RG-01/02 完整比较，2026-08-09），为 RG-01 与 RG-02 建立完整逐 operation oracle——outcome、returned IDs、完整 canonical state、formal/intake deltas、status changes、rejected/no-change baseline equality、retry equality（对齐 D-082/D-083 oracle 合同）。本决定 supersede D-069/D-070/D-071 影响段中"完整 state/report/reconciliation/delta comparison 不授权"的表述（supersede 先例：D-081 对 D-077）。expected 工件 `docs/migrations/golden-v2/rg-01-expected.json`（8 roots / 11 ops / 19 states）与 `rg-02-expected.json`（11 roots / 13 ops / 24 states）均已 approved 且自创建未改（D-075 审批标准），直接作为 oracle 批准基线，不重新生成、不修改。
 
 **RG-01 oracle：** 覆盖 create、`transaction_note_update`（appendVersion 共享内核语义；复用现有共享 use case 与 commit port，不改写 commit 语义——note_update 的 deltas 必须与 expected 精确一致：transactions.changed + transaction_versions.added，无 posting 变化，status_changes=[]）、retry（no_change/idempotent_replay、returned_ids 等于前序 accepted）、distinct re-entry、7 个 invalid 拒绝。现有 `Rg01RawJsonEndToEndTest` 保留（raw 端到端覆盖），不改写。
 
@@ -1192,7 +1192,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **P2（契约硬化 + 卫生，分级）**
 
 - `CONTRACT-001`（零迁移部分）：`CurrencyUnit` 增加 `init { require(code.isNotBlank()); require(precision in 0..18) }`、`Money.ofMinor` 同步受检、五处 decoder/replay 构造点统一解码边界校验。**前置 gate：冻结 fixture 全量 currency 值扫描确认无越界值**（含 precision 边界），扫描发现越界即停止升级。SQL CHECK 全量硬化不在本决定授权范围（需单独评估，见影响）。
+  - 解码/构造路径的逐点校验由 `CurrencyUnit` domain 单点闸门吸收（全部构造路径经 init 校验，冻结 fixture 预扫描 GATE PASS），不逐点加码。
 - `RG08-001`：按用户确认的方案 (b) 执行——以文档决定明确 RG-08 无 actualReceiptAt 时 statistics 的 fallback 契约，并微调两处 fallback 实现从 effectiveAt 对齐到 statisticsAt（`SqlDelightRg08Store.kt:357`、`Rg08Operations.kt:1972`），与 RG-11/12 的 statisticsAt fallback 语义一致；不新增 `statistics_at_text` 列、不新增迁移边。**强制条款：RG-08 publication（未来另行授权）前必须强制再评估该 fallback 契约。**
+  - `effective_at_text` 列名承载 statisticsAtText 语义登记为已知设计债（`SqlDelightRg08Store.kt:615` 读取侧）。
 - `TRACE-001a`：`docs/DECISIONS.md:1131` 与 `:1153` 的授权来源工具痕迹表述改为中性表述（如“根据用户明确授权（2026-08-09）”），保留授权事实与日期。
 - `TRACE-001b`：`.gitignore` 增加 `*.journal.json` 忽略模式。
 - `R1`：同步 `README.md`、`docs/CURRENT_STATE.md`、`docs/ROADMAP.md` 至 schema v18（及本决定新增迁移边落地后的实际版本），并登记 RG-01/02 完整比较已实现、category_rename 已实现。

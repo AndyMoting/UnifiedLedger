@@ -1,6 +1,6 @@
 # RG-11 Golden Schema v2 Closure Proposal
 
-状态：active
+状态：approved
 
 ## Authority And Boundary
 
