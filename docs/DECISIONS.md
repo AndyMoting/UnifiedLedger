@@ -1230,3 +1230,43 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** schema v18→v19（batch-2，新边 18.sqm）；RG08-001 按 (b) 执行，不产生 v19→v20 迁移边；`Ledger.sq` fresh schema 同步并更新 `LedgerDatabaseMigrationTest`（fresh 版本测试、等价测试、新边 DDL 失败注入）。共享域 `Values.kt` 校验影响全部 RG replay/store 的 CurrencyUnit 构造点——以冻结 fixture 预扫描无越界为前提，否则停止。文档同步：本决定登记、R1（schema 版本与 RG-01/02/rename 状态）、R2（frontmatter）、R3（oracle 证据）、TRACE-001a/b。发布工具 7 文件同模板一致性由同一批次统一保证；下一次 publication gate 将使用修复后工具并重新经历 clean release verification。
 
 **关联决定：** `D-080`、`D-081`、`D-083`、`D-084`、`D-085`、`D-086`、`D-087`
+
+---
+
+## D-089 RG-01/RG-02 与 RG-08 golden v2 publication 授权
+
+**状态：** 已确认（登记时）
+
+**决定：** 根据用户明确授权（2026-08-10），批准以下 golden v2 publication（此前 D-087/D-088 未授权项），分两批执行：
+
+**A 批（RG-01、RG-02）**：
+- expected 工件已存在且已 approved（docs/migrations/golden-v2/rg-01-expected.json：8 roots/11 ops/19 states；rg-02-expected.json：11 roots/13 ops/24 states；D-087 approved）——**冻结不动，不重新生成、不修改**。
+- 新建发布工具 tools/python/golden_cases/rg01_publication.py 与 rg02_publication.py（以 rg03_publication.py 修复后模板为基底：提交点=journal 删除、相位感知恢复、六路径 containment、原子 journal、v1→v2 迁移类 source 校验 schema_version==1，**无 direct-v2 字节强制**——仅 RG-11/12 适用）。
+- 对应测试 tests/python/test_rg01_publication.py 与 test_rg02_publication.py（模板克隆改写）。
+- 发布产出：golden/rules-v2/rg-01.json、rg-02.json + manifest.json 登记（格式照 D-086:1141：approval_status approved、discovery.comparison "11-operation full comparison"/"13-operation full comparison"、四组 hash、object_counts、operation_status_counts）。
+
+**B 批（RG-08）**：
+- 前置：D-088 强制条款再评估落档——用冻结 fixture 重验三时间折叠（occurred/statistics/effective 相等；已实证 rg-08.json effective_at 零出现），在 D-089 或 closure 登记中落档。
+- tools/python/golden_cases/v2.py 扩展：supported_transaction_types 增加 RG-08（opening_balance/lending_disbursement/lending_collection）、_RG08_ACTIONS 注册表、_ACCEPTED_ACTION_ENTITY_COUNTS 条目、_validate_rg08_action_effects 与 field-path mirror（12 条投影 registry 约束，含 2 个 rejected field_path 改名：negative-interest→principal、guessed-split→components）。
+- schemas/golden-case-v2.schema.json 的 operationBase.action_type enum 增加 RG-08 动作（先例：RG-09 53440c4、RG-10 7cf419a），GOLDEN_SCHEMA.md 同步。
+- 新建 expected builder（test_rg08_v2_expected.py 等价物，44 ops，确定性生成）→ 产出 docs/migrations/golden-v2/rg-08-expected.json（operation_status_counts 6 accepted/13 no_change/25 rejected；object_counts 以 builder 与 oracle 为准）。
+- 新建 tools/python/golden_cases/rg08_publication.py + tests/python/test_rg08_publication.py（模板克隆，44-operation full comparison）。
+- 发布产出：golden/rules-v2/rg-08.json + manifest.json 登记。
+
+**验证要求（两批均 H 级 publication/release 域）**：
+- 完整 high-risk 拓扑：单 writer 隔离 worktree → 独立 spec reviewer（对照 D-086 格式/工件哈希语义与 D-089 范围）→ 独立 quality reviewer → distinct verifier → 主代理复跑 critical diff 与受影响全量套件。
+- 发布执行：clean worktree（不得 -AllowDirty）跑 verify-project.ps1 -Scope release，用修复后工具执行 publish（D-088:1217 先例）；manifest 四组 hash 与工件文件一致性由 verifier 独立核验。
+- 两批均不跑"发布即 push"；push 与 CI 触发需用户单独授权。
+
+**不授权：**
+- 不修改/重发任何已发布工件（golden/rules-v2/{rg-03,04,05,06,07,09,10,11,12}.json 与 manifest 既有条目逐字节不变）。
+- 不修改冻结契约 golden/rules/rg-XX.json（只读输入）。
+- 不修改已发布迁移文件 1.sqm~18.sqm（本决定不涉及 schema 迁移）。
+- 不 push；不 scope 扩展（不引入新 RG 功能、不修改 expected 已批准内容、不做 RG-08 之外的 schema 演进）。
+- RG-08 的 expected 生成后必须经独立审查确认与 Kotlin oracle 双侧重合（expectedFieldPath 12 条投影），不得直接发布未经审查的生成产物。
+
+**理由：** RG-01/02 的 expected 已由 D-087 批准且 validator 实测通过，发布仅需工具与登记；RG-08 mapping gate 已 approved（rg-08-closure-proposal.md）且 D-088 修复完成（含 statisticsAt fallback），剩余为 v2 支持扩展与 expected 构建。已发布工件零污染（manifest 四组 hash 一致），本决定不改动任何既有工件。
+
+**影响：** golden/rules-v2 新增 3 个工件（rg-01/02/08.json）+ manifest 3 条新条目；v2.py 与 golden-case-v2.schema.json 扩展（RG-08 支持）；docs/migrations/golden-v2 新增 rg-08-expected.json；文档同步（README/CURRENT_STATE/ROADMAP/GOLDEN_V2_INVENTORY）；发布集合从 9 case 增至 12 case。
+
+**关联决定：** `D-084`、`D-086`、`D-087`、`D-088`
