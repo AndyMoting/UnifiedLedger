@@ -137,6 +137,66 @@ class Rg08FullStateOracleTest {
     }
 
     @Test
+    fun `runtime transaction times preserve RG08 fallback premise`() {
+        val oracle = loadOracle()
+        val snapshots = buildList {
+            add(
+                Rg08Runtime(
+                    oracle.fixture.catalog,
+                    oracle.fixture.lendingCatalog,
+                    oracle.fixture.openingTransactions,
+                ).snapshot(),
+            )
+            oracle.fixture.allOperations
+                .filter { it.retryOf == null }
+                .forEach { operation ->
+                    val runtime = baselineRuntime(oracle, operation)
+                    add(runtime.snapshot())
+                    runtime.commit(operation.operation)
+                    add(runtime.snapshot())
+                }
+        }
+        val records = snapshots.flatMap { it.formalTransactions }
+        val uniqueRecords = records.distinctBy { it.formalTransaction.transaction.id }
+
+        assertEquals(5, uniqueRecords.size)
+        records.forEach { record ->
+            val formal = record.formalTransaction
+            val transaction = formal.transaction
+            assertEquals(1, formal.versions.size, "${transaction.id.value}: one runtime version")
+            val currentVersion = formal.versions.single { it.id == transaction.currentVersionId }
+            assertEquals(
+                currentVersion.times.occurredAt,
+                currentVersion.times.statisticsAt,
+                "${transaction.id.value}: occurred/statistics time",
+            )
+            assertEquals(
+                currentVersion.times.occurredAt,
+                currentVersion.times.effectiveAt,
+                "${transaction.id.value}: occurred/effective time",
+            )
+            when (transaction.kind) {
+                TransactionKind.OPENING_BALANCE ->
+                    assertEquals(null, record.statisticsAtText, "${transaction.id.value}: opening fallback")
+                TransactionKind.LEND, TransactionKind.COLLECT ->
+                    assertTrue(record.statisticsAtText != null, "${transaction.id.value}: explicit report time")
+                else -> error("unexpected RG-08 formal transaction kind ${transaction.kind}")
+            }
+        }
+        assertEquals(
+            1,
+            uniqueRecords.count { it.formalTransaction.transaction.kind == TransactionKind.OPENING_BALANCE },
+        )
+        assertEquals(
+            uniqueRecords.size - 1,
+            uniqueRecords.count {
+                it.formalTransaction.transaction.kind == TransactionKind.LEND ||
+                    it.formalTransaction.transaction.kind == TransactionKind.COLLECT
+            },
+        )
+    }
+
+    @Test
     fun `main path operations replay against full canonical states`() {
         val oracle = loadOracle()
         oracle.fixture.allOperations
