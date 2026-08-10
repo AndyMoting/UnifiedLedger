@@ -11,6 +11,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
+from .publication_integrity import verify_publication_integrity
 from .v2 import validate_golden_case_v2
 
 
@@ -397,7 +398,9 @@ def publish_rg06(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     publish_dir = manifest_path.parent
 
-    if not recover_rg06_publication(manifest_path):
+    recovered = recover_rg06_publication(manifest_path)
+    verify_publication_integrity(manifest_path)
+    if not recovered:
         _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
     source_bytes, source = _load_json(source_path)
     expected_bytes, expected = _load_json(expected_path)

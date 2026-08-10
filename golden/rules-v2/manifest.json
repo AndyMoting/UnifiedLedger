@@ -24,13 +24,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "266dc88ebc2a7aeac3aa7bb173f23e3a753d829af1a438a59adfa73554d86f7a",
-      "expected_byte_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
+      "expected_byte_sha256": "d7ea72b719cc437d168ac6684ae7ec7045221fe38c40be6ffb0bc67fe5248c88",
       "expected_path": "docs/migrations/golden-v2/rg-01-expected.json",
       "hashes": {
         "canonical_sha256": "266dc88ebc2a7aeac3aa7bb173f23e3a753d829af1a438a59adfa73554d86f7a",
-        "expected_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
-        "output_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
-        "source_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b"
+        "expected_sha256": "d7ea72b719cc437d168ac6684ae7ec7045221fe38c40be6ffb0bc67fe5248c88",
+        "output_sha256": "d7ea72b719cc437d168ac6684ae7ec7045221fe38c40be6ffb0bc67fe5248c88",
+        "source_sha256": "9f1da61f97d88e8f747a1cd06430c80c68c45ea50abd6b49c213015f95931d7b"
       },
       "object_counts": {
         "operations": 11,
@@ -44,9 +44,9 @@
       },
       "output_path": "golden/rules-v2/rg-01.json",
       "publication_status": "published",
-      "source_byte_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b",
+      "source_byte_sha256": "9f1da61f97d88e8f747a1cd06430c80c68c45ea50abd6b49c213015f95931d7b",
       "source_path": "golden/rules/rg-01.json",
-      "source_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b"
+      "source_sha256": "9f1da61f97d88e8f747a1cd06430c80c68c45ea50abd6b49c213015f95931d7b"
     },
     {
       "approval_status": "approved",
@@ -60,13 +60,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "7324ae5aa0345b30dafc58f5afc730b39db07fd323634cea095ae3e63f7a2ce6",
-      "expected_byte_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
+      "expected_byte_sha256": "99aa6f52b10af9565c9b4d941ba9aae91334ff35ce4b2f7758f66976b108b029",
       "expected_path": "docs/migrations/golden-v2/rg-02-expected.json",
       "hashes": {
         "canonical_sha256": "7324ae5aa0345b30dafc58f5afc730b39db07fd323634cea095ae3e63f7a2ce6",
-        "expected_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
-        "output_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
-        "source_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07"
+        "expected_sha256": "99aa6f52b10af9565c9b4d941ba9aae91334ff35ce4b2f7758f66976b108b029",
+        "output_sha256": "99aa6f52b10af9565c9b4d941ba9aae91334ff35ce4b2f7758f66976b108b029",
+        "source_sha256": "3adadc9f212252683cd80f5d34f8e2d29cadb4b9de6bdae5ad989d4246a52d67"
       },
       "object_counts": {
         "operations": 13,
@@ -80,9 +80,9 @@
       },
       "output_path": "golden/rules-v2/rg-02.json",
       "publication_status": "published",
-      "source_byte_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07",
+      "source_byte_sha256": "3adadc9f212252683cd80f5d34f8e2d29cadb4b9de6bdae5ad989d4246a52d67",
       "source_path": "golden/rules/rg-02.json",
-      "source_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07"
+      "source_sha256": "3adadc9f212252683cd80f5d34f8e2d29cadb4b9de6bdae5ad989d4246a52d67"
     },
     {
       "approval_status": "approved",
@@ -96,13 +96,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "918e317e861e35299ed03987369ad8a4ce0d02d704757ef29f0813f22376b3b9",
-      "expected_byte_sha256": "89c01c3fef8bdebe459b5642007b5417b18b188b8a88ec127143739553ee4d78",
+      "expected_byte_sha256": "abd4cc14f716a3e9db581b2b69af5416320d70458ebcfe5d61d05171c442f683",
       "expected_path": "docs/migrations/golden-v2/rg-03-expected.json",
       "hashes": {
         "canonical_sha256": "918e317e861e35299ed03987369ad8a4ce0d02d704757ef29f0813f22376b3b9",
-        "expected_sha256": "89c01c3fef8bdebe459b5642007b5417b18b188b8a88ec127143739553ee4d78",
-        "output_sha256": "89c01c3fef8bdebe459b5642007b5417b18b188b8a88ec127143739553ee4d78",
-        "source_sha256": "7ec0d5bc618ceedd2eb665e1af11acd0811f7c78d8efc3168464c137b01242dd"
+        "expected_sha256": "abd4cc14f716a3e9db581b2b69af5416320d70458ebcfe5d61d05171c442f683",
+        "output_sha256": "abd4cc14f716a3e9db581b2b69af5416320d70458ebcfe5d61d05171c442f683",
+        "source_sha256": "11f889960665167ab959aa935d8ca63fd4f3fe6b63f131d7d668570a410ee185"
       },
       "object_counts": {
         "operations": 20,
@@ -116,9 +116,9 @@
       },
       "output_path": "golden/rules-v2/rg-03.json",
       "publication_status": "published",
-      "source_byte_sha256": "7ec0d5bc618ceedd2eb665e1af11acd0811f7c78d8efc3168464c137b01242dd",
+      "source_byte_sha256": "11f889960665167ab959aa935d8ca63fd4f3fe6b63f131d7d668570a410ee185",
       "source_path": "golden/rules/rg-03.json",
-      "source_sha256": "7ec0d5bc618ceedd2eb665e1af11acd0811f7c78d8efc3168464c137b01242dd"
+      "source_sha256": "11f889960665167ab959aa935d8ca63fd4f3fe6b63f131d7d668570a410ee185"
     },
     {
       "approval_status": "approved",
@@ -134,13 +134,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",
-      "expected_byte_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
+      "expected_byte_sha256": "c380ad0366451f450393a9487362652b6800eb375fe25ba550aa671ce0f49416",
       "expected_path": "docs/migrations/golden-v2/rg-04-expected.json",
       "hashes": {
         "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",
-        "expected_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
-        "output_sha256": "5146b55cd5f8cbc2d7ca265bc5636ed1097550c51dd63e206914481aec58a273",
-        "source_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d"
+        "expected_sha256": "c380ad0366451f450393a9487362652b6800eb375fe25ba550aa671ce0f49416",
+        "output_sha256": "c380ad0366451f450393a9487362652b6800eb375fe25ba550aa671ce0f49416",
+        "source_sha256": "ff329569a15d57ff3f54b0d5ddd7c420a4c00a5fde2d519b7da38f847030a2c6"
       },
       "object_counts": {
         "operations": 26,
@@ -154,9 +154,9 @@
       },
       "output_path": "golden/rules-v2/rg-04.json",
       "publication_status": "published",
-      "source_byte_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d",
+      "source_byte_sha256": "ff329569a15d57ff3f54b0d5ddd7c420a4c00a5fde2d519b7da38f847030a2c6",
       "source_path": "golden/rules/rg-04.json",
-      "source_sha256": "54b61e40b8f6c4990e82746a525fda2088091c7d7a732fb2c754bb918058410d"
+      "source_sha256": "ff329569a15d57ff3f54b0d5ddd7c420a4c00a5fde2d519b7da38f847030a2c6"
     },
     {
       "approval_status": "approved",
@@ -170,13 +170,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "bb0a6319b6a11c3e07e716af739682e99475e4145daad3e115a12581fa92ec3c",
-      "expected_byte_sha256": "8d26a5b4abd4069e099ecea26e9d444e8680a8fa210c35cfebec7bb88396e7c1",
+      "expected_byte_sha256": "c357a3b8766693b05ded7b3f8b320a1dbf7b4bd00bb05ae6d305d4f23a8d8cde",
       "expected_path": "docs/migrations/golden-v2/rg-05-expected.json",
       "hashes": {
         "canonical_sha256": "bb0a6319b6a11c3e07e716af739682e99475e4145daad3e115a12581fa92ec3c",
-        "expected_sha256": "8d26a5b4abd4069e099ecea26e9d444e8680a8fa210c35cfebec7bb88396e7c1",
-        "output_sha256": "8d26a5b4abd4069e099ecea26e9d444e8680a8fa210c35cfebec7bb88396e7c1",
-        "source_sha256": "43c88700314bbc90b6b4c4cfef6f5a004f861a41f776a1053920f0edce62c3cc"
+        "expected_sha256": "c357a3b8766693b05ded7b3f8b320a1dbf7b4bd00bb05ae6d305d4f23a8d8cde",
+        "output_sha256": "c357a3b8766693b05ded7b3f8b320a1dbf7b4bd00bb05ae6d305d4f23a8d8cde",
+        "source_sha256": "a5dd0531fc0cf2dd47ba22480f6a1741b6bdc8f9a5eaf8a8fea37ab5b3271fe9"
       },
       "object_counts": {
         "operations": 25,
@@ -190,9 +190,9 @@
       },
       "output_path": "golden/rules-v2/rg-05.json",
       "publication_status": "published",
-      "source_byte_sha256": "43c88700314bbc90b6b4c4cfef6f5a004f861a41f776a1053920f0edce62c3cc",
+      "source_byte_sha256": "a5dd0531fc0cf2dd47ba22480f6a1741b6bdc8f9a5eaf8a8fea37ab5b3271fe9",
       "source_path": "golden/rules/rg-05.json",
-      "source_sha256": "43c88700314bbc90b6b4c4cfef6f5a004f861a41f776a1053920f0edce62c3cc"
+      "source_sha256": "a5dd0531fc0cf2dd47ba22480f6a1741b6bdc8f9a5eaf8a8fea37ab5b3271fe9"
     },
     {
       "approval_status": "approved",
@@ -206,13 +206,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "b17f1d5ffe5a9cab289efb2059250e729eba3fa006974bddac001c25e86ae0a0",
-      "expected_byte_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
+      "expected_byte_sha256": "83575ff0c6e5dc7b475cf1011faaaa6c9a49fa011e6c0264a38f7410f8334187",
       "expected_path": "docs/migrations/golden-v2/rg-06-expected.json",
       "hashes": {
         "canonical_sha256": "b17f1d5ffe5a9cab289efb2059250e729eba3fa006974bddac001c25e86ae0a0",
-        "expected_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
-        "output_sha256": "103b635f1990a15fba10a3526ea14098973d2c19398654918e3ade29d561e23d",
-        "source_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15"
+        "expected_sha256": "83575ff0c6e5dc7b475cf1011faaaa6c9a49fa011e6c0264a38f7410f8334187",
+        "output_sha256": "83575ff0c6e5dc7b475cf1011faaaa6c9a49fa011e6c0264a38f7410f8334187",
+        "source_sha256": "f361c6ab8bb993928a2386b3d3262331629205ce17e52c9a209edfd0dadc1faf"
       },
       "object_counts": {
         "operations": 41,
@@ -226,9 +226,9 @@
       },
       "output_path": "golden/rules-v2/rg-06.json",
       "publication_status": "published",
-      "source_byte_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15",
+      "source_byte_sha256": "f361c6ab8bb993928a2386b3d3262331629205ce17e52c9a209edfd0dadc1faf",
       "source_path": "golden/rules/rg-06.json",
-      "source_sha256": "15aeb268be2567263ae83ce7ec5ae48284e3659075a27c9dff0089cb7db64e15"
+      "source_sha256": "f361c6ab8bb993928a2386b3d3262331629205ce17e52c9a209edfd0dadc1faf"
     },
     {
       "approval_status": "approved",
@@ -242,13 +242,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "08a3b7391161c7cd512e8383fa9695b3214e5dad7d4c0c22f88abedfe326a912",
-      "expected_byte_sha256": "8e62a841abd41ddca02cdc6eba1931d34e0957c211528a580255541c90000401",
+      "expected_byte_sha256": "342df8c47cdf933210b4247eba238c23fef1cb7b19f8e48bb0a169915b5f2535",
       "expected_path": "docs/migrations/golden-v2/rg-07-expected.json",
       "hashes": {
         "canonical_sha256": "08a3b7391161c7cd512e8383fa9695b3214e5dad7d4c0c22f88abedfe326a912",
-        "expected_sha256": "8e62a841abd41ddca02cdc6eba1931d34e0957c211528a580255541c90000401",
-        "output_sha256": "8e62a841abd41ddca02cdc6eba1931d34e0957c211528a580255541c90000401",
-        "source_sha256": "26de7e6bec62392581613d59cd33c3d1e1accf40216606db840571f68e824270"
+        "expected_sha256": "342df8c47cdf933210b4247eba238c23fef1cb7b19f8e48bb0a169915b5f2535",
+        "output_sha256": "342df8c47cdf933210b4247eba238c23fef1cb7b19f8e48bb0a169915b5f2535",
+        "source_sha256": "2bf34971199fbe49491915e571fef3fb744b3439fffbfaaa30e0e89bedd60b93"
       },
       "object_counts": {
         "operations": 49,
@@ -262,9 +262,9 @@
       },
       "output_path": "golden/rules-v2/rg-07.json",
       "publication_status": "published",
-      "source_byte_sha256": "26de7e6bec62392581613d59cd33c3d1e1accf40216606db840571f68e824270",
+      "source_byte_sha256": "2bf34971199fbe49491915e571fef3fb744b3439fffbfaaa30e0e89bedd60b93",
       "source_path": "golden/rules/rg-07.json",
-      "source_sha256": "26de7e6bec62392581613d59cd33c3d1e1accf40216606db840571f68e824270"
+      "source_sha256": "2bf34971199fbe49491915e571fef3fb744b3439fffbfaaa30e0e89bedd60b93"
     },
     {
       "approval_status": "approved",
@@ -278,13 +278,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "6950831a88a4dc2698c57823522fc2cb4e16eb61a7df1612b61fe16580442164",
-      "expected_byte_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
+      "expected_byte_sha256": "22970646968568397bc4ec614d454948f32551703dcff292463648386a075839",
       "expected_path": "docs/migrations/golden-v2/rg-09-expected.json",
       "hashes": {
         "canonical_sha256": "6950831a88a4dc2698c57823522fc2cb4e16eb61a7df1612b61fe16580442164",
-        "expected_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
-        "output_sha256": "54535317ae04e0bfd8c9f91ed44d19ccf856a71702118cd2fd82e71f48a6221d",
-        "source_sha256": "0fb9e57cd3e4fc74a8ca26ef4ca993ce09c44dfa42620d05d7898d5735cea519"
+        "expected_sha256": "22970646968568397bc4ec614d454948f32551703dcff292463648386a075839",
+        "output_sha256": "22970646968568397bc4ec614d454948f32551703dcff292463648386a075839",
+        "source_sha256": "c1cace0a5fb54f5f9dd4f7a21ad819977f68934384d24261ed019386587428ec"
       },
       "object_counts": {
         "operations": 50,
@@ -298,9 +298,9 @@
       },
       "output_path": "golden/rules-v2/rg-09.json",
       "publication_status": "published",
-      "source_byte_sha256": "0fb9e57cd3e4fc74a8ca26ef4ca993ce09c44dfa42620d05d7898d5735cea519",
+      "source_byte_sha256": "c1cace0a5fb54f5f9dd4f7a21ad819977f68934384d24261ed019386587428ec",
       "source_path": "golden/rules/rg-09.json",
-      "source_sha256": "0fb9e57cd3e4fc74a8ca26ef4ca993ce09c44dfa42620d05d7898d5735cea519"
+      "source_sha256": "c1cace0a5fb54f5f9dd4f7a21ad819977f68934384d24261ed019386587428ec"
     },
     {
       "approval_status": "approved",
@@ -314,13 +314,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "092a52e98f16f1ba32fbb937ea0b79bc839050069e74eaf101f263f3ed03c201",
-      "expected_byte_sha256": "2199eb885b7b1de379d2fa9c010d4e22a234db50e3d21fab28d67ee38bc89f1b",
+      "expected_byte_sha256": "3c80fccc8ceaa2eca7b4e2f8251bc4b039f92a900b14617b6bfd6376dc6e3dde",
       "expected_path": "docs/migrations/golden-v2/rg-10-expected.json",
       "hashes": {
         "canonical_sha256": "092a52e98f16f1ba32fbb937ea0b79bc839050069e74eaf101f263f3ed03c201",
-        "expected_sha256": "2199eb885b7b1de379d2fa9c010d4e22a234db50e3d21fab28d67ee38bc89f1b",
-        "output_sha256": "2199eb885b7b1de379d2fa9c010d4e22a234db50e3d21fab28d67ee38bc89f1b",
-        "source_sha256": "be7e2230497fbd68d0fe23f5c15e0811fbd855412c98531c5f4e82574a5de715"
+        "expected_sha256": "3c80fccc8ceaa2eca7b4e2f8251bc4b039f92a900b14617b6bfd6376dc6e3dde",
+        "output_sha256": "3c80fccc8ceaa2eca7b4e2f8251bc4b039f92a900b14617b6bfd6376dc6e3dde",
+        "source_sha256": "ffcd91f1b5f79a6438ea4955e15a6f71a0b369d5a49cea9cd870943dd79bb215"
       },
       "object_counts": {
         "operations": 44,
@@ -334,9 +334,9 @@
       },
       "output_path": "golden/rules-v2/rg-10.json",
       "publication_status": "published",
-      "source_byte_sha256": "be7e2230497fbd68d0fe23f5c15e0811fbd855412c98531c5f4e82574a5de715",
+      "source_byte_sha256": "ffcd91f1b5f79a6438ea4955e15a6f71a0b369d5a49cea9cd870943dd79bb215",
       "source_path": "golden/rules/rg-10.json",
-      "source_sha256": "be7e2230497fbd68d0fe23f5c15e0811fbd855412c98531c5f4e82574a5de715"
+      "source_sha256": "ffcd91f1b5f79a6438ea4955e15a6f71a0b369d5a49cea9cd870943dd79bb215"
     },
     {
       "approval_status": "approved",
@@ -350,13 +350,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "d354902ad2364d2bddb760f1cd28df8a5be01a9ad3acf5c3a66a70bf31e8802b",
-      "expected_byte_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2",
+      "expected_byte_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad",
       "expected_path": "docs/migrations/golden-v2/rg-11-expected.json",
       "hashes": {
         "canonical_sha256": "d354902ad2364d2bddb760f1cd28df8a5be01a9ad3acf5c3a66a70bf31e8802b",
-        "expected_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2",
-        "output_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2",
-        "source_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2"
+        "expected_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad",
+        "output_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad",
+        "source_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad"
       },
       "object_counts": {
         "operations": 22,
@@ -370,9 +370,9 @@
       },
       "output_path": "golden/rules-v2/rg-11.json",
       "publication_status": "published",
-      "source_byte_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2",
+      "source_byte_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad",
       "source_path": "golden/rules/rg-11.json",
-      "source_sha256": "ef4f8fc74464adb2d32eddf25dc9de80453533e7a81057f9a93812d4892ebcb2"
+      "source_sha256": "d7bc97d42f6e518e51a0e51305e085814f8422fea0272915ec4774a66bb3c2ad"
     },
     {
       "approval_status": "approved",
@@ -386,13 +386,13 @@
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "f8c814a59142f881334eb0ba405d0cb25031e430c1d9b36a0488bb40a2cb1ff0",
-      "expected_byte_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530",
+      "expected_byte_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02",
       "expected_path": "docs/migrations/golden-v2/rg-12-expected.json",
       "hashes": {
         "canonical_sha256": "f8c814a59142f881334eb0ba405d0cb25031e430c1d9b36a0488bb40a2cb1ff0",
-        "expected_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530",
-        "output_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530",
-        "source_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530"
+        "expected_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02",
+        "output_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02",
+        "source_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02"
       },
       "object_counts": {
         "operations": 12,
@@ -406,9 +406,9 @@
       },
       "output_path": "golden/rules-v2/rg-12.json",
       "publication_status": "published",
-      "source_byte_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530",
+      "source_byte_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02",
       "source_path": "golden/rules/rg-12.json",
-      "source_sha256": "a0c76d55df4985b070141a477eb3ed97e88bc66decae5270423c18bc23497530"
+      "source_sha256": "5ef856945ba49e01cf458c5d7200ccccc4b0494f394607ab4ff8a4bc447f7c02"
     }
   ]
 }
