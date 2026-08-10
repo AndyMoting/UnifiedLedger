@@ -20,8 +20,8 @@
 
 - 进入条件：首批黄金场景的输入和完整预期已经冻结。
 - 完成条件：黄金场景全部通过，核心不依赖客户端平台、网络、同步或 AI，并能确定性重放余额。
-- `RG-01`：create、retry、distinct、7 个拒绝和 `note_update` runtime 已完成；完整 state/report/reconciliation/delta 比较与 v2 publication 仍待完成。
-- `RG-02`：`D-071` 批准的 `manual_income` 最小 slice 已完成，包括主创建、重试、2 个变体和 8 个拒绝。`category_rename` unsupported；完整 state runtime 比较、transaction correction/CAS 和 v2 publication 仍待完成。
+- `RG-01`：create、retry、distinct、7 个拒绝和 `note_update` runtime 已完成；完整 state/report/reconciliation/delta 比较已实现（`Rg01FullStateOracleTest`，8 roots/11 ops/19 states，D-087）；v2 publication 仍待单独授权。
+- `RG-02`：`D-071` 批准的 `manual_income` 最小 slice 已完成，包括主创建、重试、2 个变体和 8 个拒绝。`category_rename` 已按 `D-087` 实现最小闭环（append-only name history，schema v18 的 17.sqm）；完整 state runtime 比较已实现（`Rg02FullStateOracleTest`，11 roots/13 ops/24 states）；transaction correction/CAS 和 v2 publication 仍待完成。
 - `RG-03`：当前冻结范围的 13 roots、20 operations 已完成 outcome、returned IDs、完整 state、deltas 和 status changes 比较，mapping gate 已 approved；v2 工件已发布（`golden/rules-v2/rg-03.json`，`dec854e`，D-086；13 roots/20 ops/33 states）。
 - `RG-04`：raw v1 的 26 operations 均有 runtime；全 26 项完整 state/report/reconciliation/delta 比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states）；import lifecycle、ownership 和 reconciliation 已实现，v2 已发布。manifest discovery 元数据仍为发布时点的 partial 记录（工件更新属发布 gate）。
 - `RG-05`：领域、应用与持久化 runtime 及 schema v8 已进入共享库。`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected；共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较完整 state、deltas 和 status changes。这不关闭其他黄金场景或完整产品闸门；`D-075` 也不授权 adapter 实现或 fixture 迁移。v2 工件已按 `D-086` 发布（`golden/rules-v2/rg-05.json`，`dec854e`；17 roots/25 ops/42 states）。
