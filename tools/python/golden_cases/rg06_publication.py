@@ -11,6 +11,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
+from .publication_integrity import verify_publication_integrity
 from .v2 import validate_golden_case_v2
 
 
@@ -399,6 +400,7 @@ def publish_rg06(
 
     if not recover_rg06_publication(manifest_path):
         _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
+    verify_publication_integrity(manifest_path)
     source_bytes, source = _load_json(source_path)
     expected_bytes, expected = _load_json(expected_path)
     if source.get("schema_version") != 1 or source.get("case", {}).get("id") != CASE_ID:
