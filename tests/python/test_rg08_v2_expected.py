@@ -39,10 +39,42 @@ Canonical semantics
   ``mirror_merge`` adds no reconciliation change; the v1 mirror evidence block
   declares no reconciliation delta and the Kotlin store performs no merge
   transition (SqlDelightRg08Store.kt persistReconciliationTransitions).
-- The confirmed import candidate keeps the intake-pending payload verbatim
-  (``requires_confirmation`` retains all six gates); B-1's append-only
-  candidate rule treats non-history fields as immutable, so the frozen v1
-  filled ``proposed_*`` projection is not mirrored into v2.
+- The confirmed import candidate keeps the intake-pending payload verbatim:
+  the validator forces retention of all six ``requires_confirmation`` gates,
+  and the ``proposed_*`` fields stay in their frozen intake form
+  (``proposed_total_received`` / ``proposed_destination_account_id`` /
+  ``proposed_actual_receipt_at`` non-null; ``proposed_principal_amount`` /
+  ``proposed_interest_amount`` / ``proposed_fee_amount`` /
+  ``proposed_behavior_code`` / ``proposed_counterparty_id`` null).  B-1's
+  append-only candidate rule treats non-history fields as immutable, so the
+  frozen v1 filled ``proposed_*`` projection is not mirrored into v2.
+- Source anchor derivations (registered, RG08-DEV-01 precedent): the frozen
+  lend-debit ``bank_debit`` source carries no account anchor, so its v2
+  ``account_id`` is derived from the frozen ``lend.request.funding_account_id``
+  (``asset-bank-a``), isomorphic to the manual credit's destination-derived
+  anchor; the frozen manual ``bank_credit`` source carries no original payload
+  record, so its v2 ``original_source_payload_hash`` equals its
+  ``immutable_payload_hash`` (the import credit precedent has original ==
+  immutable).  Both are the minimal way to satisfy the closed B-1 schema for
+  these source subtypes.
+- Source semantic bindings NOT enforced in this batch (registered for
+  review): after the B-1 reference-layer fix, ``_validate_references``
+  performs only lexical timestamp/amount checks on the four RG-08 source
+  types, and ``_validate_rg08_contract`` validates only evidence<->source
+  subtype pairing and ``observed_at`` byte equality.  Not semantically
+  resolved for RG-08 sources: ``account_id`` -> catalog account, source
+  ``currency`` vs account currency, agreement ``counterparty_id`` -> known
+  counterparty, ``mirror_of_source_id`` lineage -> existing earlier source.
+  The risk is bounded by the frozen fixture copy, the artifact test
+  assertions, and the Kotlin oracle cross-checks; a validator-side resolution
+  check is out of scope for this batch (candidate for a later batch,
+  RG-07 :4786-4808 precedent).
+- Accepted-operation v2 ids are builder-authored readable ids (RG-10
+  precedent): ``operation-rg08-lend``, ``operation-rg08-manual-collection``,
+  ``operation-rg08-cap-maximum``, ``operation-rg08-import-intake``,
+  ``operation-rg08-confirm-import``, ``operation-rg08-merge-import-mirror``,
+  plus the no-change rename ``operation-rg08-rename-counterparty``; rejected
+  operations and retries keep their frozen v1 operation ids.
 - Root/state/derived/reconciliation/audit ids are deterministic v2 identities.
   Retry roots reuse the anchored owner result state payload id for id (the
   B-1 retry contract requires cross-root contract-equivalent baselines), and
@@ -1306,8 +1338,15 @@ class RG08GoldenV2ExpectedTests(unittest.TestCase):
         cls.expected = build_rg08_expected()
 
     def test_expected_artifact_matches_deterministic_builder(self):
-        on_disk = json.loads(EXPECTED_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(on_disk, self.expected)
+        # Raw-byte equality: the committed artifact must be exactly the
+        # deterministic builder output (json.dumps(ensure_ascii=False,
+        # indent=2) + "\n", LF-only), not merely JSON-equal.
+        on_disk = EXPECTED_PATH.read_bytes()
+        expected_bytes = json.dumps(
+            self.expected, ensure_ascii=False, indent=2
+        ).encode("utf-8") + b"\n"
+        self.assertEqual(on_disk, expected_bytes)
+        self.assertEqual(json.loads(on_disk.decode("utf-8")), self.expected)
 
     def test_artifact_bytes_are_lf_only(self):
         raw = EXPECTED_PATH.read_bytes()
@@ -1413,8 +1452,6 @@ class RG08GoldenV2ExpectedTests(unittest.TestCase):
             distinct_paths.add(field_path)
         self.assertEqual(distinct_paths, REGISTERED_ATTEMPTED_PATHS)
         # D-090 canonical mirrors asserted explicitly.
-        by_id["operation-rg08-negative-interest"]["outcome"]["field_path"] == \
-            "$.attempted_input.principal_amount"
         self.assertEqual(
             by_id["operation-rg08-negative-interest"]["outcome"]["field_path"],
             "$.attempted_input.principal_amount",
