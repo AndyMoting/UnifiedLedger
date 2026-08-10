@@ -354,7 +354,7 @@ class SqlDelightRg08Store private constructor(
             formal.transaction.id.value,
             null,
             record.createdAtText ?: record.createdAt.toString(),
-            record.statisticsAtText ?: formal.versions.last().times.effectiveAt.toString(),
+            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
         )
     }
 

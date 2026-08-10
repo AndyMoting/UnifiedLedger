@@ -1969,7 +1969,7 @@ class Rg08Runtime(
                 }
                 else -> Rg08Report()
             }
-            val period = (record.statisticsAtText ?: record.formalTransaction.currentEffectiveAtText())
+            val period = (record.statisticsAtText ?: record.formalTransaction.currentStatisticsAtText())
                 .substring(0, 7)
             val current = periods[period] ?: Rg08Report()
             periods[period] = mergeReports(current, report)
@@ -2064,8 +2064,8 @@ class Rg08Runtime(
             formal.currentPostings().any { it.id in postingIds }
     }
 
-    private fun FormalTransaction.currentEffectiveAtText(): String =
-        versions.first { it.id == transaction.currentVersionId }.times.effectiveAt.toString()
+    private fun FormalTransaction.currentStatisticsAtText(): String =
+        versions.first { it.id == transaction.currentVersionId }.times.statisticsAt.toString()
 
     private fun canonicalInput(operation: Rg08Operation): String = when (operation) {
         is Rg08Operation.ValidateLendingEvent -> canonicalFields(

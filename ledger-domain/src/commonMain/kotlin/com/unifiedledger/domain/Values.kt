@@ -21,7 +21,12 @@ data class StoredValueLotId(val value: String)
 data class CurrencyUnit(
     val code: String,
     val precision: Int,
-)
+) {
+    init {
+        require(code.isNotBlank()) { "currency code must not be blank" }
+        require(precision in 0..18) { "currency precision must be in 0..18" }
+    }
+}
 
 @ConsistentCopyVisibility
 data class Money private constructor(
