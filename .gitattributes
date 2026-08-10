@@ -1,0 +1,3 @@
+golden/rules/*.json text eol=lf
+docs/migrations/golden-v2/*-expected.json text eol=lf
+golden/rules-v2/*.json text eol=lf
