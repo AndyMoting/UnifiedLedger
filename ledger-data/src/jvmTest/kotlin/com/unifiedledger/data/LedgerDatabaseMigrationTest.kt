@@ -63,6 +63,71 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
+    fun versionFiveToSixDdlFailureRollsBackEveryStageAndRg04Owner() {
+        // MIG-002: 5 -> 6 (5.sqm) drops the core chain and the two rg03 receipt owners,
+        // rebuilds them through stage tables and then creates the rg04 owners and their
+        // triggers (93 CREATE statements in total, the report's HIGH-risk edge). A
+        // same-name object occupying the rg04_operation_request slot makes the migration
+        // fail after the whole chain; the wrapped migrate must roll back every staged,
+        // dropped and rebuilt object, leak no rg04 trigger and leave the v5 schema and
+        // rows untouched.
+        val path = Files.createTempFile("ledger-data-v5-v6-rg04-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 5)
+                driver.execute(null, "INSERT INTO rg03_operation_request VALUES ('ledger-a','rg03-existing','MANUAL_ACCOUNT_TRANSFER')", 0)
+                driver.execute(null, "CREATE TABLE rg04_operation_request(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 5, newVersion = 6)
+                    }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // The blocker is the only rg04 object: no rg04 table of the aborted
+                // migration landed and no stage table survives.
+                driver.executeQuery(
+                    null,
+                    "SELECT name FROM sqlite_master WHERE name LIKE 'rg04_%' ORDER BY name",
+                    { cursor ->
+                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                        app.cash.sqldelight.db.QueryResult.Value(names)
+                    },
+                    0,
+                ).value.let { assertEquals(listOf("rg04_operation_request"), it) }
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE '%_stage'"))
+                // No trigger of the aborted migration leaked: the v5 schema has no
+                // triggers at all.
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger'"))
+                // The dropped-and-rebuilt rg03 receipt owners are back at their v5 shape.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg03_confirmation'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg03_operation_receipt'"))
+                // The seeded v5 rg03 row and the v1 core rows are untouched.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg03_operation_request WHERE request_id = 'rg03-existing'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_version"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction_current_version"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
+                // The original v5 ledger_transaction CHECK is restored: CREDIT_REPAYMENT
+                // stays rejected until the migration actually commits.
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-credit', 'ledger-a', 'CREDIT_REPAYMENT')",
+                        0,
+                    )
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun populatedVersionFivePreservesRg03AndFormalOwnersAtVersionSix() {
         val path = Files.createTempFile("ledger-data-v5-v6-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
@@ -133,6 +198,84 @@ class LedgerDatabaseMigrationTest {
                         val names = buildList { while (rows.next()) add(rows.getString(1)) }
                         assertEquals(listOf("rg03_transfer_candidate"), names)
                     }
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionThreeToFourDdlFailureRollsBackEveryStageAndCoreTable() {
+        // MIG-002: 3 -> 4 (3.sqm) is a full stage/drop/rebuild chain: five stage tables
+        // plus the ledger_transaction stage, the core chain dropped and rebuilt, then
+        // the manual_income_request / confirmed_income_receipt owners. A same-name
+        // object occupying the manual_income_request slot makes the migration fail
+        // after the whole chain, so the wrapped migrate must roll back every staged,
+        // dropped and rebuilt object and leave the v3 schema and rows untouched.
+        val path = Files.createTempFile("ledger-data-v3-v4-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        var originalLedgerTransactionSql: String? = null
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 3)
+                // The v3 ledger_transaction DDL text (created by the v1 base schema and
+                // untouched by 2.sqm) is the rollback oracle: the rebuilt v4 table text
+                // differs, so a leaked v4 table would fail the text comparison.
+                originalLedgerTransactionSql = tableSql(driver, "ledger_transaction")
+                driver.execute(null, "CREATE TABLE manual_income_request(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 3, newVersion = 4)
+                    }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // The blocker is the only object of the aborted migration: the second
+                // income owner never landed and no stage table survives.
+                driver.executeQuery(
+                    null,
+                    "SELECT name FROM sqlite_master WHERE name IN ('manual_income_request', 'confirmed_income_receipt') ORDER BY name",
+                    { cursor ->
+                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                        app.cash.sqldelight.db.QueryResult.Value(names)
+                    },
+                    0,
+                ).value.let { assertEquals(listOf("manual_income_request"), it) }
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE '%_stage'"))
+                // Every core table the migration would have dropped is back in its
+                // original v3 shape with the seeded rows untouched: the ledger_transaction
+                // DDL text is byte-equal to the pre-migration v3 text.
+                assertEquals(originalLedgerTransactionSql, tableSql(driver, "ledger_transaction"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_version"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction_current_version"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
+                // The v1/v2 owner tables that 3.sqm would have dropped still exist.
+                assertEquals(
+                    3L,
+                    queryCount(
+                        driver,
+                        """
+                            SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN (
+                              'confirmed_expense_receipt', 'transaction_note_update_request',
+                              'confirmed_transaction_note_update_receipt'
+                            )
+                        """.trimIndent(),
+                    ),
+                )
+                // Discriminating probe: the original v3 ledger_transaction CHECK rejects
+                // INCOME (the v4 rebuilt table would accept it), so a leaked v4 table
+                // state would make this insert succeed and fail the test.
+                assertFailsWith<SQLException> {
+                    driver.execute(
+                        null,
+                        "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-income', 'ledger-a', 'INCOME')",
+                        0,
+                    )
                 }
             }
         } finally {
@@ -757,6 +900,42 @@ class LedgerDatabaseMigrationTest {
                         assertEquals(1L, rows.getLong(1))
                     }
                 }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionSeventeenToEighteenDdlFailureRollsBackEveryCategoryNameOwner() {
+        // MIG-002: 17 -> 18 is the additive category_rename edge (rg02_category_name_history,
+        // D-087). A same-name object makes the single CREATE fail; the wrapped migrate must
+        // leave the v17 schema and rows untouched.
+        val path = Files.createTempFile("ledger-data-v17-v18-rg02-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 17)
+                driver.execute(null, "CREATE TABLE rg02_category_name_history(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, oldVersion = 17, newVersion = 18)
+                    }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // The blocker table is the only rg02 object and stays empty.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg02_category_name_history'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM rg02_category_name_history"))
+                // The v17 owners (rg11 / rg12) and the core rows are untouched.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg11_schedule'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg12_operation'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_version"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
             }
         } finally {
             Files.deleteIfExists(path)
@@ -1848,6 +2027,16 @@ private fun queryCount(driver: JdbcSqliteDriver, sql: String): Long = driver.exe
 private fun triggerSql(driver: JdbcSqliteDriver, name: String): String = driver.executeQuery(
     null,
     "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '$name'",
+    { cursor ->
+        check(cursor.next().value)
+        app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getString(0)))
+    },
+    0,
+).value
+
+private fun tableSql(driver: JdbcSqliteDriver, name: String): String = driver.executeQuery(
+    null,
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '$name'",
     { cursor ->
         check(cursor.next().value)
         app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getString(0)))
