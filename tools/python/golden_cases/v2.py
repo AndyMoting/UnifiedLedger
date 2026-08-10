@@ -148,6 +148,94 @@ _RG10_UNOWNED_REJECTION_REASONS = {
     "bank_payment_model_and_all_recharge_facts_required": "stored-value import candidate/fact owner",
     "spend_category_and_behavior_confirmation_required": "stored-value import candidate/fact owner",
 }
+_RG08_ACTIONS = {
+    "validate_lending_event",
+    "validate_lending_settlement",
+    "confirm_imported_lending_collection",
+    "allocate_lending_collection",
+    "retry_idempotent_input",
+}
+_RG08_REJECTION_FIELDS = {
+    "exact_decimal_string_required": "$.attempted_input.total_received",
+    "total_must_be_positive": "$.attempted_input.total_received",
+    "components_must_equal_total": "$.attempted_input.components",
+    "component_must_be_nonnegative": "$.attempted_input.principal_amount",
+    "fee_must_be_zero_in_rg08_v1": "$.attempted_input.fee_amount",
+    "nonzero_fee_accounting_out_of_scope": "$.attempted_input.fee_amount",
+    "principal_exceeds_outstanding_position": "$.attempted_input.principal_amount",
+    "unknown_account": None,
+    "owned_account_required": "$.attempted_input.destination_account_id",
+    "financial_asset_account_required": "$.attempted_input.destination_account_id",
+    "unknown_counterparty": "$.attempted_input.counterparty_id",
+    "invalid_lending_behavior": "$.attempted_input.behavior_code",
+    "explicit_component_split_required": "$.attempted_input.split_source",
+    "same_currency_required": "$.attempted_input.currency",
+    "active_exact_interest_category_required": "$.attempted_input.interest_category_id",
+    "behavior_confirmation_required": "$.attempted_input.behavior_code",
+    "counterparty_confirmation_required": "$.attempted_input.counterparty_id",
+    "destination_confirmation_required": "$.attempted_input.destination_account_id",
+    "principal_confirmation_required": "$.attempted_input.principal_amount",
+    "interest_and_fee_confirmation_required": "$.attempted_input.interest_and_fee_amounts",
+    "actual_receipt_time_confirmation_required": "$.attempted_input.actual_receipt_time",
+}
+_RG08_INCOMPLETE_FAILURES = {
+    "behavior_code": ("behavior_confirmation_required", "behavior_code"),
+    "counterparty_id": ("counterparty_confirmation_required", "counterparty_id"),
+    "destination_account_id": ("destination_confirmation_required", "destination_account_id"),
+    "principal_amount": ("principal_confirmation_required", "principal_amount"),
+    "interest_and_fee_amounts": (
+        "interest_and_fee_confirmation_required",
+        "interest_and_fee_amounts",
+    ),
+    "actual_receipt_time": (
+        "actual_receipt_time_confirmation_required",
+        "actual_receipt_time",
+    ),
+}
+_RG08_EXPECTED_STATUS_COUNTS = {"accepted": 6, "rejected": 25, "no_change": 13}
+_RG08_EXPECTED_VARIANT_COUNTS = {
+    "lend": 1,
+    "rename_counterparty": 1,
+    "manual_collection": 1,
+    "maximum_allocation": 1,
+    "import_intake": 1,
+    "formal_confirmation": 1,
+    "mirror_merge": 1,
+    "retry": 12,
+}
+
+
+def _validate_rg08_inventory(case: dict[str, Any]) -> None:
+    status_counts: dict[str, int] = defaultdict(int)
+    variant_counts: dict[str, int] = defaultdict(int)
+    rejected_action_counts: dict[str, int] = defaultdict(int)
+    retry_anchors: list[str] = []
+    retry_roots: list[str] = []
+    for operation in case["operations"]:
+        status = operation["outcome"]["status"]
+        status_counts[status] += 1
+        if status == "rejected":
+            rejected_action_counts[operation["action_type"]] += 1
+        else:
+            variant = operation["input"]["variant"]
+            variant_counts[variant] += 1
+            if variant == "retry":
+                retry_anchors.append(operation["input"]["input_anchor_id"])
+                retry_roots.append(operation["root_id"])
+    if dict(status_counts) != _RG08_EXPECTED_STATUS_COUNTS:
+        _fail("$.operations", f"RG-08 requires exact status cardinality {_RG08_EXPECTED_STATUS_COUNTS}")
+    if dict(variant_counts) != _RG08_EXPECTED_VARIANT_COUNTS:
+        _fail("$.operations", f"RG-08 requires exact accepted/no-change variant cardinality {_RG08_EXPECTED_VARIANT_COUNTS}")
+    expected_rejected_actions = {
+        "validate_lending_event": 1,
+        "validate_lending_settlement": 17,
+        "confirm_imported_lending_collection": 6,
+        "allocate_lending_collection": 1,
+    }
+    if dict(rejected_action_counts) != expected_rejected_actions:
+        _fail("$.operations", f"RG-08 requires exact rejected action cardinality {expected_rejected_actions}")
+    if len(set(retry_anchors)) != 12 or len(set(retry_roots)) != 12:
+        _fail("$.operations", "RG-08 requires exactly twelve distinct retry anchors in twelve independent roots")
 _ACCEPTED_ACTION_ENTITY_COUNTS = {
     "manual_expense": {
         "transactions": (1, 0, 0),
@@ -1073,6 +1161,7 @@ def _resolve_ref(
         "evidence_link": "evidence_links",
         "relation": "relations",
         "domain_entity": "domain_entities",
+        "audit_link": "audit_links",
     }
     if kind == "operation":
         target = operations.get(target_id)
@@ -1084,6 +1173,41 @@ def _resolve_ref(
         if target is None or target["type"] != "target_balance_observation":
             _fail(path, f"dangling or mistyped observation reference {target_id!r}")
         return target
+    if kind == "component":
+        matches = [
+            component
+            for entity in state["domain_entities"]
+            if entity.get("type") == "lending_settlement"
+            for component in entity["payload"]["components"]
+            if component["id"] == target_id
+        ]
+        if len(matches) != 1:
+            _fail(path, f"dangling or duplicate component reference {target_id!r}")
+        return matches[0]
+    if kind == "counterparty":
+        # RG-08 counterparties are stable catalog identities projected through every
+        # lending position/settlement and are not a generic v2 entity collection.
+        matches = {
+            entity["payload"]["counterparty_id"]
+            for entity in state["domain_entities"]
+            if entity.get("type") in {"lending_position", "lending_settlement"}
+        }
+        if target_id not in matches:
+            _fail(path, f"dangling counterparty reference {target_id!r}")
+        return {"id": target_id}
+    if kind == "name_history":
+        # The frozen rename is zero-state-effect; its history identity is therefore
+        # owned by the closed rename input instead of a state collection.
+        owners = [
+            item
+            for item in operations.values()
+            if item["root_id"] == state["root_id"]
+            and item.get("input", {}).get("variant") == "rename_counterparty"
+            and item["input"].get("name_history_id") == target_id
+        ]
+        if len(owners) != 1:
+            _fail(path, f"dangling or duplicate name-history reference {target_id!r}")
+        return {"id": target_id}
     collection = mapping[kind]
     target = indexes[collection].get(target_id)
     if target is None:
@@ -1229,6 +1353,42 @@ def _validate_transaction_posting_semantics(
 
     transaction_type = transaction["type"]
     roles = [posting.get("role") for posting in postings]
+    if transaction_type == "lending_disbursement":
+        if len(postings) != 2 or set(roles) != {"lending_receivable", "lending_principal_out"}:
+            _fail(path + ".posting_set", "lending disbursement requires receivable and principal-out postings")
+        by_role = {posting["role"]: posting for posting in postings}
+        receivable, funding = by_role["lending_receivable"], by_role["lending_principal_out"]
+        receivable_account = account_for(receivable, "lending_receivable")
+        funding_account = account_for(funding, "lending_principal_out")
+        if not (receivable_account["kind"] == "asset" and not receivable_account["real_account"] and not receivable_account["owned_by_user"] and receivable["reconciliation_eligible"] is False and _decimal(receivable["amount"], path) > 0):
+            _fail(path + ".posting_set.lending_receivable", "must increase a non-real lending receivable")
+        if not (funding_account["kind"] == "asset" and funding_account["real_account"] and funding_account["owned_by_user"] and funding["reconciliation_eligible"] is True and _decimal(funding["amount"], path) < 0):
+            _fail(path + ".posting_set.lending_principal_out", "must reduce an eligible owned real funding asset")
+        if receivable["currency"] != funding["currency"] or _decimal(receivable["amount"], path) + _decimal(funding["amount"], path) != 0:
+            _fail(path + ".posting_set", "lending disbursement must balance in one currency")
+        return
+    if transaction_type == "lending_collection":
+        expected = {"lending_principal_in", "lending_receivable", "lending_interest"}
+        if len(postings) != 3 or set(roles) != expected or "lending_fee" in roles:
+            _fail(path + ".posting_set", "lending collection requires destination, receivable, and interest postings with no fee posting")
+        by_role = {posting["role"]: posting for posting in postings}
+        destination, receivable, interest = (by_role[name] for name in ("lending_principal_in", "lending_receivable", "lending_interest"))
+        destination_account = account_for(destination, "lending_principal_in")
+        receivable_account = account_for(receivable, "lending_receivable")
+        interest_account = account_for(interest, "lending_interest")
+        if not (destination_account["kind"] == "asset" and destination_account["real_account"] and destination_account["owned_by_user"] and destination["reconciliation_eligible"] is True and _decimal(destination["amount"], path) > 0):
+            _fail(path + ".posting_set.lending_principal_in", "must increase an eligible owned real destination asset")
+        if not (receivable_account["kind"] == "asset" and not receivable_account["real_account"] and receivable["reconciliation_eligible"] is False and _decimal(receivable["amount"], path) <= 0):
+            _fail(path + ".posting_set.lending_receivable", "must reduce the non-real lending receivable")
+        if not (interest_account["kind"] == "income" and not interest_account["real_account"] and interest["reconciliation_eligible"] is False and _decimal(interest["amount"], path) <= 0):
+            _fail(path + ".posting_set.lending_interest", "must credit a non-real interest income account")
+        if categories is not None:
+            category = categories.get(interest.get("category_id"))
+            if category is None or category.get("posting_account_id") != interest["account_id"] or not category.get("active"):
+                _fail(path + ".posting_set.lending_interest.category_id", "must name the active exact interest category")
+        if len({posting["currency"] for posting in postings}) != 1 or sum((_decimal(posting["amount"], path) for posting in postings), Decimal(0)) != 0:
+            _fail(path + ".posting_set", "lending collection must balance in one currency")
+        return
     mixed_roles = {"mixed_expense_asset_funding", "mixed_expense_credit_funding"}
     if transaction_type == "expense" and not mixed_roles.intersection(roles):
         return
@@ -3436,7 +3596,7 @@ def _validate_references(
             "funding_asset_posting": "posting",
             "bank_payment_posting": "posting",
             "refund_relationship": "relation",
-            "counterparty_lending_relationship": "relation",
+            "counterparty_lending_relationship": "domain_entity",
             "stored_value_activation_balance_fact": "domain_entity",
             "item_allocation_fact": "domain_entity",
             "stored_value_asset_posting": "posting",
@@ -3463,8 +3623,9 @@ def _validate_references(
             "destination_asset_posting": {
                 "destination_asset",
                 "transfer_principal_in",
+                "lending_principal_in",
             },
-            "funding_asset_posting": {"funding_asset"},
+            "funding_asset_posting": {"funding_asset", "lending_principal_out"},
             "bank_payment_posting": {"bank_payment"},
             "stored_value_asset_posting": {"stored_value_asset"},
         }
@@ -3490,13 +3651,15 @@ def _validate_references(
                 link_path + ".target_id",
                 f"must target posting role in {sorted(posting_role_targets[link['role']])}",
             )
-        if link["role"] in {"refund_relationship", "counterparty_lending_relationship"}:
-            expected_relation_types = {"refund_relationship": {"refund"}, "counterparty_lending_relationship": {"counterparty_lending"}}
-            if target.get("type") not in expected_relation_types[link["role"]]:
+        if link["role"] == "refund_relationship":
+            if target.get("type") != "refund":
                 _fail(
                     link_path + ".target_id",
-                    f"requires the reserved {link['role']} relation subtype, which is not implemented by this prototype",
+                    "must target the refund relation",
                 )
+        if link["role"] == "counterparty_lending_relationship":
+            if target.get("type") != "lending_position":
+                _fail(link_path + ".target_id", "must target a lending position")
         if link["role"] == "stored_value_activation_balance_fact":
             if target.get("type") != "activation_adjustment":
                 _fail(
@@ -3527,6 +3690,8 @@ def _validate_references(
             "stored_value_expiry_confirmation": {"confirmed_actual_expiry"},
             "refund_relationship": {"refund_notice", "combined_refund_statement"},
             "destination_asset_posting": {"transfer_record", "asset_credit", "combined_refund_statement", "asset_credit_mirror"},
+            "funding_asset_posting": {"asset_debit"},
+            "counterparty_lending_relationship": {"lending_agreement"},
         }
         if (
             link["role"] in evidence_role_types
@@ -4210,6 +4375,17 @@ def _validate_references(
     }
     for index, link in enumerate(state["audit_links"]):
         link_path = f"{path}.audit_links[{index}]"
+        if link["type"] in {"mirror_of_evidence_id", "merged_into_evidence_link_id"}:
+            expected_kind = (
+                "evidence" if link["type"] == "mirror_of_evidence_id" else "evidence_link"
+            )
+            if link["from"]["kind"] != expected_kind or link["to"]["kind"] != expected_kind:
+                _fail(link_path, f"{link['type']} endpoints must both be {expected_kind} references")
+            source = _resolve_ref(state, indexes, operations, expected_kind, link["from"]["id"], link_path + ".from.id")
+            target = _resolve_ref(state, indexes, operations, expected_kind, link["to"]["id"], link_path + ".to.id")
+            if source["id"] == target["id"]:
+                _fail(link_path, "lending mirror/merge audit endpoints must be distinct")
+            continue
         if link["type"] == "posting_replacement":
             if link["from"]["kind"] != "posting" or link["to"]["kind"] != "posting":
                 _fail(link_path, "posting replacement endpoints must both be postings")
@@ -4727,6 +4903,149 @@ def _periodic_allocation_statuses(
     return expected
 
 
+def _validate_rg08_contract(
+    state: dict[str, Any],
+    path: str,
+    indexes: dict[str, dict[str, dict[str, Any]]],
+    operations: dict[str, dict[str, Any]],
+    precisions: dict[str, int],
+) -> None:
+    sources = indexes["sources"]
+    transactions = indexes["transactions"]
+    postings = indexes["postings"]
+    accounts = indexes["catalog_accounts"]
+    categories = indexes["catalog_categories"]
+    entities = indexes["domain_entities"]
+    source_evidence_types = {
+        "bank_debit": "asset_debit",
+        "bank_credit": "asset_credit",
+        "bank_credit_mirror": "asset_credit_mirror",
+        "lending_agreement": "lending_agreement",
+    }
+    for index, evidence in enumerate(state["evidence"]):
+        if evidence["type"] not in set(source_evidence_types.values()):
+            continue
+        evidence_path = f"{path}.evidence[{index}]"
+        source = sources[evidence["source_ids"][0]]
+        if source_evidence_types.get(source["type"]) != evidence["type"]:
+            _fail(evidence_path + ".type", "must match the exact RG-08 source subtype")
+        if evidence["payload"]["observed_at"] != source["payload"]["observed_at"]:
+            _fail(evidence_path + ".payload.observed_at", "must byte-equal its source observed_at")
+
+    positions: dict[str, dict[str, Any]] = {}
+    settlements: dict[str, dict[str, Any]] = {}
+    for index, entity in enumerate(state["domain_entities"]):
+        entity_path = f"{path}.domain_entities[{index}]"
+        if entity["type"] == "lending_position":
+            positions[entity["id"]] = entity
+            payload = entity["payload"]
+            account = accounts.get(payload["receivable_account_id"])
+            if account is None or not (
+                account["kind"] == "asset" and not account["real_account"]
+                and not account["owned_by_user"] and account["currency"] == payload["currency"]
+            ):
+                _fail(entity_path + ".payload.receivable_account_id", "must identify the non-real counterparty receivable asset")
+            running = Decimal(0)
+            for history_index, history in enumerate(payload["history"]):
+                history_path = f"{entity_path}.payload.history[{history_index}]"
+                if history["sequence"] != history_index + 1:
+                    _fail(history_path + ".sequence", "position history must be append-only and contiguous")
+                transaction = transactions.get(history["transaction_id"])
+                expected_type = "lending_disbursement" if history["behavior_code"] == "lend" else "lending_collection"
+                if transaction is None or transaction["type"] != expected_type:
+                    _fail(history_path + ".transaction_id", "must reference the matching lending transaction subtype")
+                amount = _amount(history["amount"], payload["currency"], history_path + ".amount", precisions)
+                if (history["behavior_code"] == "lend" and amount <= 0) or (history["behavior_code"] == "collect" and amount >= 0):
+                    _fail(history_path + ".amount", "lend must increase and collection must reduce principal")
+                running += amount
+                if running < 0 or _decimal(history["principal_balance_after"], history_path) != running:
+                    _fail(history_path + ".principal_balance_after", "must equal the nonnegative running principal")
+            if _decimal(payload["principal_balance"], entity_path) != running:
+                _fail(entity_path + ".payload.principal_balance", "must equal the final history balance")
+        elif entity["type"] == "lending_settlement":
+            settlements[entity["id"]] = entity
+            payload = entity["payload"]
+            transaction = transactions.get(payload["transaction_id"])
+            position = entities.get(payload["linked_position_id"])
+            if transaction is None or transaction["type"] != "lending_collection":
+                _fail(entity_path + ".payload.transaction_id", "must reference a lending collection")
+            if position is None or position["type"] != "lending_position":
+                _fail(entity_path + ".payload.linked_position_id", "must reference a lending position")
+            if payload["counterparty_id"] != position["payload"]["counterparty_id"]:
+                _fail(entity_path + ".payload.counterparty_id", "must match the linked position")
+            components = {item["kind"]: item for item in payload["components"]}
+            if set(components) != {"principal", "interest", "fee"}:
+                _fail(entity_path + ".payload.components", "must contain exactly principal, interest, and fee")
+            amounts = {
+                kind: _amount(item["amount"], payload["currency"], entity_path + ".payload.components", precisions)
+                for kind, item in components.items()
+            }
+            if amounts["principal"] < 0 or amounts["interest"] < 0 or amounts["fee"] != 0:
+                _fail(entity_path + ".payload.components", "principal and interest must be nonnegative and fee zero")
+            if sum(amounts.values(), Decimal(0)) != _decimal(payload["total_received"], entity_path):
+                _fail(entity_path + ".payload.total_received", "must equal the exact component sum")
+            principal_posting = postings.get(components["principal"]["posting_id"])
+            interest_posting = postings.get(components["interest"]["posting_id"])
+            if principal_posting is None or principal_posting.get("role") != "lending_receivable" or _decimal(principal_posting["amount"], entity_path) != -amounts["principal"]:
+                _fail(entity_path + ".payload.components", "principal must bind the exact receivable posting")
+            if interest_posting is None or interest_posting.get("role") != "lending_interest" or _decimal(interest_posting["amount"], entity_path) != -amounts["interest"]:
+                _fail(entity_path + ".payload.components", "interest must bind the exact income posting")
+            if components["fee"]["posting_id"] is not None:
+                _fail(entity_path + ".payload.components", "zero fee must not create a posting")
+            category = categories.get(payload["interest_category_id"])
+            if category is None or not category["active"] or category["posting_account_id"] != interest_posting["account_id"]:
+                _fail(entity_path + ".payload.interest_category_id", "must identify the active exact interest category")
+            if len(payload["history"]) != 1 or payload["history"][0]["transaction_id"] != transaction["id"] or payload["history"][0]["occurred_at"] != payload["confirmed_at"]:
+                _fail(entity_path + ".payload.history", "must contain the confirmed settlement event")
+
+    for index, relation in enumerate(state["relations"]):
+        if relation["type"] != "counterparty_lending_relationship":
+            continue
+        relation_path = f"{path}.relations[{index}]"
+        members = [entities.get(ref["id"]) for ref in relation["member_refs"]]
+        if not members or any(item is None or item["type"] != "lending_position" for item in members):
+            _fail(relation_path + ".member_refs", "must contain only lending positions")
+        if any(item["payload"]["counterparty_id"] != relation["payload"]["counterparty_id"] for item in members):
+            _fail(relation_path + ".payload.counterparty_id", "must own positions for one counterparty")
+
+    required_gates = {"behavior_code", "counterparty_id", "destination_account_id", "principal_amount", "interest_and_fee_amounts", "actual_receipt_time"}
+    for index, candidate in enumerate(state["candidates"]):
+        if candidate["type"] != "lending_collection_credit":
+            continue
+        candidate_path = f"{path}.candidates[{index}]"
+        if {sources[item]["type"] for item in candidate["source_ids"]} != {"bank_credit", "lending_agreement"}:
+            _fail(candidate_path + ".source_ids", "must bind one bank credit and one lending agreement")
+        if set(candidate["payload"]["requires_confirmation"]) != required_gates:
+            _fail(candidate_path + ".payload.requires_confirmation", "must retain all six confirmation gates")
+        statuses = candidate["status_history"]
+        if [item["sequence"] for item in statuses] != list(range(1, len(statuses) + 1)):
+            _fail(candidate_path + ".status_history", "must be append-only and contiguous")
+        if [item["status"] for item in statuses] not in (["pending_confirmation"], ["pending_confirmation", "confirmed"]):
+            _fail(candidate_path + ".status_history", "must start pending and transition at most once")
+        if [item["formal_effect_count"] for item in statuses] != ([0] if len(statuses) == 1 else [0, 1]):
+            _fail(candidate_path + ".status_history", "formal effect is zero until explicit confirmation")
+
+    for index, confirmation in enumerate(state["confirmations"]):
+        if confirmation["type"] not in {"lending_event_confirmation", "lending_settlement_confirmation"}:
+            continue
+        confirmation_path = f"{path}.confirmations[{index}]"
+        transaction = transactions.get(confirmation["payload"]["transaction_id"])
+        expected_type = "lending_disbursement" if confirmation["type"] == "lending_event_confirmation" else "lending_collection"
+        if confirmation["operation_id"] not in operations or transaction is None or transaction["type"] != expected_type:
+            _fail(confirmation_path, "must bind its creating operation and matching transaction")
+        if confirmation["subject"] != {"kind": "transaction", "id": transaction["id"]}:
+            _fail(confirmation_path + ".subject", "must identify the confirmed transaction")
+        settlement_id = confirmation["payload"].get("settlement_id")
+        candidate_id = confirmation["payload"].get("candidate_id")
+        if confirmation["type"] == "lending_event_confirmation" and (settlement_id is not None or candidate_id is not None):
+            _fail(confirmation_path + ".payload", "event confirmation cannot own settlement or candidate")
+        if confirmation["type"] == "lending_settlement_confirmation":
+            if settlement_id not in settlements or settlements[settlement_id]["payload"]["transaction_id"] != transaction["id"]:
+                _fail(confirmation_path + ".payload.settlement_id", "must identify the transaction settlement")
+            if candidate_id is not None and candidate_id not in indexes["candidates"]:
+                _fail(confirmation_path + ".payload.candidate_id", "must identify the confirmed candidate")
+
+
 def _validate_periodic_allocations(
     state: dict[str, Any],
     path: str,
@@ -5035,6 +5354,28 @@ def _report_values(
                 ),
                 Decimal(0),
             )
+        elif transaction_type == "lending_disbursement":
+            principal = sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "lending_principal_out"),
+                Decimal(0),
+            )
+            values["cash_outflow"] += principal
+            values["principal_external_cash_flow"] -= principal
+        elif transaction_type == "lending_collection":
+            principal = sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "lending_receivable"),
+                Decimal(0),
+            )
+            interest = sum(
+                (-_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "lending_interest"),
+                Decimal(0),
+            )
+            values["principal_external_cash_flow"] += principal
+            values["interest_cash_flow"] += interest
+            values["cash_inflow"] += principal + interest
+            values["ordinary_income"] += interest
+            values["income"] += interest
+            values["net_worth_change"] += interest
         elif transaction_type == "prepaid_purchase":
             values["cash_outflow"] += sum(
                 (-_decimal(item["amount"], "$.postings.amount") for item in selected if item.get("role") == "payment_asset"),
@@ -5595,6 +5936,13 @@ def _validate_returned_ids(
     operations: dict[str, dict[str, Any]],
 ) -> None:
     seen: set[tuple[str, str]] = set()
+    ordered_operations = list(operations.values())
+    operation_index = next(
+        (index for index, item in enumerate(ordered_operations) if item["id"] == operation["id"]),
+        -1,
+    )
+    if operation_index < 0:
+        _fail(operation_path + ".id", "operation is absent from the case inventory")
     for index, reference in enumerate(operation["returned_ids"]):
         returned_path = f"{operation_path}.returned_ids[{index}]"
         key = (reference["kind"], reference["id"])
@@ -5605,6 +5953,17 @@ def _validate_returned_ids(
             target = operations.get(reference["id"])
             if target is None or target["root_id"] != operation["root_id"] or target["sequence"] > operation["sequence"]:
                 _fail(returned_path + ".id", "must reference this or a prior same-root operation")
+        elif reference["kind"] == "name_history" and operation.get("input", {}).get("variant") == "retry":
+            anchor = operation["input"]["input_anchor_id"]
+            owners = [
+                item
+                for item in ordered_operations[:operation_index]
+                if item.get("input", {}).get("variant") == "rename_counterparty"
+                and item["input"].get("request_id") == anchor
+                and item["input"].get("name_history_id") == reference["id"]
+            ]
+            if len(owners) != 1:
+                _fail(returned_path + ".id", "retry name-history identity must have one unique earlier rename anchor owner")
         else:
             _resolve_ref(
                 result,
@@ -6962,6 +7321,128 @@ def _validate_rg07_action_input(
             _fail(input_path + ".destination_account_id", "must exactly match the candidate source account")
 
 
+def _rg08_rejection_failure(
+    action: str,
+    attempted: dict[str, Any],
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+) -> tuple[str, str] | None:
+    accounts = {item["id"]: item for item in baseline["catalog"]["accounts"]}
+    categories = {item["id"]: item for item in baseline["catalog"]["categories"]}
+    positions = [
+        item for item in baseline["domain_entities"]
+        if item.get("type") == "lending_position"
+    ]
+
+    if action == "confirm_imported_lending_collection":
+        if set(attempted) != {"confirmation_request_id", "missing_field"}:
+            return None
+        return _RG08_INCOMPLETE_FAILURES.get(attempted["missing_field"])
+
+    if action == "validate_lending_event":
+        funding_id = attempted.get("funding_account_id")
+        if funding_id is not None and funding_id not in accounts:
+            return "unknown_account", "funding_account_id"
+        return None
+
+    def attempted_decimal(field: str) -> Decimal | None:
+        value = attempted.get(field)
+        if not isinstance(value, str) or not _DECIMAL_PATTERN.fullmatch(value):
+            return None
+        try:
+            return Decimal(value)
+        except InvalidOperation:
+            return None
+
+    total = attempted_decimal("total_received")
+    if "total_received" not in attempted or total is None:
+        return "exact_decimal_string_required", "total_received"
+    currency = attempted.get("currency", "CNY")
+    precision = precisions.get(currency)
+    if precision is not None and not re.fullmatch(
+        r"^(?:0|-?[1-9][0-9]*)$" if precision == 0
+        else rf"^(?:0|-?[1-9][0-9]*)\.[0-9]{{{precision}}}$",
+        attempted["total_received"],
+    ):
+        return "exact_decimal_string_required", "total_received"
+    if total <= 0:
+        return "total_must_be_positive", "total_received"
+
+    component_fields = ("principal_amount", "interest_amount", "fee_amount")
+    components = {field: attempted_decimal(field) for field in component_fields}
+    if all(value is not None for value in components.values()):
+        if sum(components.values(), Decimal(0)) != total:
+            return "components_must_equal_total", "components"
+        # D-090 intentionally mirrors either negative principal or negative interest
+        # at the principal field path.
+        if components["principal_amount"] < 0 or components["interest_amount"] < 0:
+            return "component_must_be_nonnegative", "principal_amount"
+        if components["fee_amount"] < 0:
+            return "fee_must_be_zero_in_rg08_v1", "fee_amount"
+        if components["fee_amount"] > 0:
+            return "nonzero_fee_accounting_out_of_scope", "fee_amount"
+        outstanding = sum(
+            (Decimal(item["payload"]["principal_balance"]) for item in positions),
+            Decimal(0),
+        )
+        if components["principal_amount"] > outstanding:
+            return "principal_exceeds_outstanding_position", "principal_amount"
+
+    destination_id = attempted.get("destination_account_id")
+    if destination_id is not None:
+        destination = accounts.get(destination_id)
+        if destination is None:
+            return "unknown_account", "destination_account_id"
+        if destination["kind"] != "asset" or not destination["real_account"]:
+            return "financial_asset_account_required", "destination_account_id"
+        if not destination["owned_by_user"]:
+            return "owned_account_required", "destination_account_id"
+    if attempted.get("counterparty_id") is not None:
+        known_counterparties = {
+            item["payload"]["counterparty_id"] for item in positions
+        }
+        if attempted["counterparty_id"] not in known_counterparties:
+            return "unknown_counterparty", "counterparty_id"
+    if attempted.get("behavior_code") is not None and attempted["behavior_code"] != "collect":
+        return "invalid_lending_behavior", "behavior_code"
+    if attempted.get("split_source") is not None:
+        return "explicit_component_split_required", "split_source"
+    if attempted.get("currency") is not None and attempted["currency"] not in precisions:
+        return "same_currency_required", "currency"
+    if attempted.get("interest_category_id") is not None:
+        category = categories.get(attempted["interest_category_id"])
+        if category is None or not category["active"] or category.get("posting_account_id") is None:
+            return "active_exact_interest_category_required", "interest_category_id"
+    if action == "allocate_lending_collection" and components["principal_amount"] is not None:
+        outstanding = sum(
+            (Decimal(item["payload"]["principal_balance"]) for item in positions),
+            Decimal(0),
+        )
+        if components["principal_amount"] > outstanding:
+            return "principal_exceeds_outstanding_position", "principal_amount"
+    return None
+
+
+def _validate_rejected_rg08_attempt(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    precisions: dict[str, int],
+) -> None:
+    failure = _rg08_rejection_failure(
+        operation["action_type"], operation["attempted_input"], baseline, precisions
+    )
+    if failure is None:
+        _fail(operation_path + ".attempted_input", "does not reproduce a registered RG-08 rejection")
+    reason, field = failure
+    outcome = operation["outcome"]
+    if outcome["reason_code"] != reason:
+        _fail(operation_path + ".outcome.reason_code", f"must be {reason!r} for the first failing attempted field")
+    expected_path = f"$.attempted_input.{field}"
+    if outcome["field_path"] != expected_path:
+        _fail(operation_path + ".outcome.field_path", f"must be {expected_path!r}")
+
+
 def _validate_action_input(
     operation: dict[str, Any],
     operation_path: str,
@@ -6971,6 +7452,11 @@ def _validate_action_input(
 ) -> None:
     action = operation["action_type"]
     if operation["outcome"]["status"] == "rejected":
+        if action in _RG08_ACTIONS:
+            _validate_rejected_rg08_attempt(
+                operation, operation_path, baseline, precisions
+            )
+            return
         if action == "manual_expense":
             _validate_rejected_manual_expense_attempt(
                 operation, operation_path, baseline, precisions, timezone
@@ -7044,6 +7530,58 @@ def _validate_action_input(
     transactions = {item["id"]: item for item in baseline["transactions"]}
     candidates = {item["id"]: item for item in baseline["candidates"]}
     entities = {item["id"]: item for item in baseline["domain_entities"]}
+
+    if action in _RG08_ACTIONS:
+        variant = input_value["variant"]
+        allowed_variants = {
+            "validate_lending_event": {"lend", "rename_counterparty"},
+            "validate_lending_settlement": {"manual_collection"},
+            "confirm_imported_lending_collection": {"import_intake", "formal_confirmation", "mirror_merge"},
+            "allocate_lending_collection": {"maximum_allocation"},
+            "retry_idempotent_input": {"retry"},
+        }
+        if variant not in allowed_variants[action]:
+            _fail(input_path + ".variant", "does not belong to the RG-08 action")
+        if action == "retry_idempotent_input":
+            return
+        if variant == "rename_counterparty":
+            return
+        for field in ("currency",):
+            if field in input_value and input_value[field] not in precisions:
+                _fail(input_path + ".currency", "currency is not declared")
+        for field in ("total_received", "principal_amount", "interest_amount", "fee_amount"):
+            if field in input_value:
+                value = _amount(input_value[field], input_value["currency"], input_path + "." + field, precisions)
+                if field == "total_received" and value <= 0:
+                    _fail(input_path + ".total_received", "must be positive")
+                if field != "total_received" and value < 0:
+                    _fail(input_path + "." + field, "must be nonnegative")
+        if "fee_amount" in input_value and _decimal(input_value["fee_amount"], input_path + ".fee_amount") != 0:
+            _fail(input_path + ".fee_amount", "RG-08 fee must be zero")
+        if all(field in input_value for field in ("total_received", "principal_amount", "interest_amount", "fee_amount")):
+            if sum((_decimal(input_value[field], input_path + "." + field) for field in ("principal_amount", "interest_amount", "fee_amount")), Decimal(0)) != _decimal(input_value["total_received"], input_path + ".total_received"):
+                _fail(input_path + ".components", "principal, interest, and fee must equal total_received")
+        if variant == "lend":
+            account = accounts.get(input_value["funding_account_id"])
+            if account is None or not (account["kind"] == "asset" and account["owned_by_user"] and account["real_account"]):
+                _fail(input_path + ".funding_account_id", "must be an owned real funding asset")
+        if variant in {"manual_collection", "maximum_allocation", "formal_confirmation"}:
+            account = accounts.get(input_value["destination_account_id"])
+            if account is None or not (account["kind"] == "asset" and account["owned_by_user"] and account["real_account"]):
+                _fail(input_path + ".destination_account_id", "must be an owned real destination asset")
+            category = categories.get(input_value["interest_category_id"])
+            if category is None or not category["active"] or categories[input_value["interest_category_id"]]["posting_account_id"] is None:
+                _fail(input_path + ".interest_category_id", "must be the active exact interest category")
+        if variant == "formal_confirmation":
+            candidate = candidates.get(input_value["candidate_id"])
+            if candidate is None or candidate["type"] != "lending_collection_credit" or candidate["status_history"][-1]["status"] != "pending_confirmation":
+                _fail(input_path + ".candidate_id", "must identify the pending lending collection candidate")
+            if set(input_value["explicitly_confirmed_fields"]) != {
+                "behavior_code", "counterparty_id", "destination_account_id",
+                "principal_amount", "interest_and_fee_amounts", "actual_receipt_time",
+            }:
+                _fail(input_path + ".explicitly_confirmed_fields", "must explicitly confirm all six gates")
+        return
 
     if action in _RG07_ACTIONS:
         _validate_rg07_action_input(
@@ -8279,6 +8817,27 @@ def _validate_append_only_transition(
                     _validate_reconstruction_history_prefix(
                         old_payload, new_payload, item_path + ".payload"
                     )
+                elif (
+                    case_id == "RG-08"
+                    and outcome_status == "accepted"
+                    and before[item_id].get("type") == after[item_id].get("type") == "lending_position"
+                ):
+                    if before[item_id]["id"] != after[item_id]["id"]:
+                        _fail(item_path, "lending position stable identity is immutable")
+                    immutable = {
+                        key: value for key, value in old_payload.items()
+                        if key not in {"principal_balance", "history"}
+                    }
+                    new_immutable = {
+                        key: value for key, value in new_payload.items()
+                        if key not in {"principal_balance", "history"}
+                    }
+                    if not _contract_equivalent(immutable, new_immutable):
+                        _fail(item_path + ".payload", "collection cannot change lending position identity")
+                    old_history = old_payload["history"]
+                    new_history = new_payload["history"]
+                    if len(new_history) != len(old_history) + 1 or new_history[: len(old_history)] != old_history:
+                        _fail(item_path + ".payload.history", "collection must append exactly one position event")
                 elif "status_history" in old_payload and "status_history" in new_payload:
                     old_outer = {key: value for key, value in before[item_id].items() if key != "payload"}
                     new_outer = {key: value for key, value in after[item_id].items() if key != "payload"}
@@ -8363,12 +8922,193 @@ def _validate_append_only_transition(
             )
 
 
+def _rg08_retry_receipts(
+    operation: dict[str, Any],
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+    input_value = operation["input"]
+    variant = input_value["variant"]
+    changes = _expected_entity_changes(baseline, result)
+    by_collection = {
+        name: {item["id"]: item for item in _collection(result, parts)}
+        for name, parts in _ENTITY_COLLECTIONS.items()
+    }
+
+    def ids(name: str) -> list[str]:
+        return changes[name]["added_ids"]
+
+    def one(name: str) -> dict[str, Any]:
+        values = ids(name)
+        if len(values) != 1:
+            return {}
+        return by_collection[name][values[0]]
+
+    receipts: dict[str, list[dict[str, str]]] = {}
+    if variant == "rename_counterparty":
+        receipts[input_value["request_id"]] = [
+            {"kind": "counterparty", "id": input_value["counterparty_id"]},
+            {"kind": "name_history", "id": input_value["name_history_id"]},
+        ]
+        return receipts
+    if variant == "lend":
+        transaction, version, position = one("transactions"), one("transaction_versions"), one("domain_entities")
+        receipts[input_value["request_id"]] = [
+            {"kind": "transaction", "id": transaction.get("id", "")},
+            {"kind": "transaction_version", "id": version.get("id", "")},
+            {"kind": "domain_entity", "id": position.get("id", "")},
+        ]
+        source, evidence, link = one("sources"), one("evidence"), one("evidence_links")
+        postings = [by_collection["postings"][item_id] for item_id in ids("postings")]
+        target = next((item for item in postings if item.get("role") == "lending_principal_out"), {})
+        receipts[source.get("id", "")] = [
+            {"kind": "source", "id": source.get("id", "")},
+            {"kind": "evidence", "id": evidence.get("id", "")},
+            {"kind": "evidence_link", "id": link.get("id", "")},
+            {"kind": "posting", "id": target.get("id", "")},
+        ]
+    elif variant in {"manual_collection", "maximum_allocation"}:
+        transaction, version = one("transactions"), one("transaction_versions")
+        settlement = next(
+            (by_collection["domain_entities"][item_id] for item_id in ids("domain_entities")
+             if by_collection["domain_entities"][item_id].get("type") == "lending_settlement"),
+            {},
+        )
+        request_ids = [
+            {"kind": "transaction", "id": transaction.get("id", "")},
+            {"kind": "transaction_version", "id": version.get("id", "")},
+            {"kind": "domain_entity", "id": settlement.get("id", "")},
+        ]
+        if variant == "maximum_allocation":
+            position = next(
+                (item for item in result["domain_entities"] if item.get("type") == "lending_position"
+                 and item["id"] == settlement.get("payload", {}).get("linked_position_id")),
+                {},
+            )
+            request_ids.append({"kind": "domain_entity", "id": position.get("id", "")})
+        else:
+            request_ids.extend(
+                {"kind": "component", "id": item["id"]}
+                for item in settlement.get("payload", {}).get("components", [])
+            )
+        receipts[input_value["request_id"]] = request_ids
+        if variant == "manual_collection":
+            for source_id in ids("sources"):
+                source = by_collection["sources"][source_id]
+                if source["type"] == "explicit_manual_lending_confirmation":
+                    receipts[source_id] = [
+                        {"kind": "source", "id": source_id},
+                        {"kind": "transaction", "id": transaction.get("id", "")},
+                        {"kind": "domain_entity", "id": settlement.get("id", "")},
+                    ]
+                elif source["type"] == "bank_credit":
+                    evidence = next((item for item in result["evidence"] if item["source_ids"] == [source_id]), {})
+                    link = next((item for item in result["evidence_links"] if item["evidence_id"] == evidence.get("id")), {})
+                    receipts[source_id] = [
+                        {"kind": "source", "id": source_id},
+                        {"kind": "evidence", "id": evidence.get("id", "")},
+                        {"kind": "evidence_link", "id": link.get("id", "")},
+                        {"kind": "posting", "id": link.get("target_id", "")},
+                    ]
+    elif variant == "import_intake":
+        candidate = one("candidates")
+        receipts[input_value["credit_source_id"]] = [
+            {"kind": "source", "id": input_value["credit_source_id"]},
+            {"kind": "candidate", "id": candidate.get("id", "")},
+        ]
+        agreement_id = input_value["agreement_source_id"]
+        evidence = next((item for item in result["evidence"] if item["source_ids"] == [agreement_id]), {})
+        link = next((item for item in result["evidence_links"] if item["evidence_id"] == evidence.get("id")), {})
+        receipts[agreement_id] = [
+            {"kind": "source", "id": agreement_id},
+            {"kind": "evidence", "id": evidence.get("id", "")},
+            {"kind": "evidence_link", "id": link.get("id", "")},
+            {"kind": "domain_entity", "id": link.get("target_id", "")},
+        ]
+    elif variant == "formal_confirmation":
+        transaction, version = one("transactions"), one("transaction_versions")
+        settlement = next(
+            (by_collection["domain_entities"][item_id] for item_id in ids("domain_entities")
+             if by_collection["domain_entities"][item_id].get("type") == "lending_settlement"),
+            {},
+        )
+        receipts[input_value["request_id"]] = [
+            {"kind": "candidate", "id": input_value["candidate_id"]},
+            {"kind": "transaction", "id": transaction.get("id", "")},
+            {"kind": "transaction_version", "id": version.get("id", "")},
+            {"kind": "domain_entity", "id": settlement.get("id", "")},
+        ]
+    elif variant == "mirror_merge":
+        source, evidence, link = one("sources"), one("evidence"), one("evidence_links")
+        returned = [
+            {"kind": "source", "id": source.get("id", "")},
+            {"kind": "evidence", "id": evidence.get("id", "")},
+            {"kind": "evidence_link", "id": link.get("id", "")},
+            {"kind": "posting", "id": input_value["target_posting_id"]},
+        ]
+        receipts[input_value["request_id"]] = returned
+        receipts[input_value["source_id"]] = returned
+    return {key: value for key, value in receipts.items() if key and all(item["id"] for item in value)}
+
+
+def _rg08_cross_root_state_payload(state: dict[str, Any]) -> dict[str, Any]:
+    value = _state_payload(state)
+    value.pop("root_id", None)
+    return value
+
+
 def _validate_no_change_retry(
     operation: dict[str, Any],
     operation_path: str,
     earlier_operations: list[dict[str, Any]],
+    *,
+    all_operations: list[dict[str, Any]] | None = None,
+    states: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     if operation["outcome"]["status"] != "no_change":
+        return
+    if operation["action_type"] == "validate_lending_event":
+        if operation["input"].get("variant") != "rename_counterparty":
+            _fail(operation_path + ".input.variant", "RG-08 no-change lending event must be the rename variant")
+        expected = [
+            {"kind": "counterparty", "id": operation["input"]["counterparty_id"]},
+            {"kind": "name_history", "id": operation["input"]["name_history_id"]},
+        ]
+        if operation["returned_ids"] != expected:
+            _fail(operation_path + ".returned_ids", "rename must return the exact counterparty and name-history identities")
+        return
+    if operation["action_type"] == "retry_idempotent_input":
+        if all_operations is None or states is None:
+            _fail(operation_path, "RG-08 retry validation requires the complete case operation/state inventory")
+        anchor = operation["input"]["input_anchor_id"]
+        owners: list[tuple[dict[str, Any], list[dict[str, str]]]] = []
+        retry_index = all_operations.index(operation)
+        for candidate_index, candidate in enumerate(all_operations):
+            if candidate["id"] == operation["id"] or candidate["action_type"] not in _RG08_ACTIONS:
+                continue
+            if candidate_index >= retry_index:
+                continue
+            if candidate["outcome"]["status"] not in {"accepted", "no_change"}:
+                continue
+            if candidate.get("input", {}).get("variant") == "retry":
+                continue
+            candidate_baseline = states[candidate["baseline_state_id"]]
+            candidate_result = states[candidate["result_state_id"]]
+            receipt = _rg08_retry_receipts(candidate, candidate_baseline, candidate_result).get(anchor)
+            if receipt is not None:
+                owners.append((candidate, receipt))
+        if len(owners) != 1:
+            _fail(operation_path + ".input.input_anchor_id", "must resolve exactly one RG-08 first-time anchor owner")
+        owner, expected_returned = owners[0]
+        owner_result = states[owner["result_state_id"]]
+        retry_baseline = states[operation["baseline_state_id"]]
+        if not _contract_equivalent(
+            _rg08_cross_root_state_payload(owner_result),
+            _rg08_cross_root_state_payload(retry_baseline),
+        ):
+            _fail(operation_path + ".baseline_state_id", "must be contract-equivalent to the unique anchor owner's result state")
+        if operation["returned_ids"] != expected_returned:
+            _fail(operation_path + ".returned_ids", "must exactly return the anchored accepted result IDs")
         return
     request_id = operation["input"].get("request_id")
     prior = [
@@ -8400,6 +9140,53 @@ def _validate_no_change_retry(
         {"returned_ids": accepted["returned_ids"]},
     ):
         _fail(operation_path + ".returned_ids", "must exactly return the prior accepted result IDs")
+
+
+def _rg08_effect_counts(operation: dict[str, Any], path: str) -> dict[str, tuple[int, int, int]]:
+    if operation["outcome"]["status"] != "accepted":
+        return {}
+    variant = operation["input"]["variant"]
+    common_formal = {
+        "transactions": (1, 0, 0),
+        "transaction_versions": (1, 0, 0),
+        "posting_sets": (1, 0, 0),
+        "confirmations": (1, 0, 0),
+    }
+    variants = {
+        "lend": {
+            **common_formal, "postings": (2, 0, 0), "sources": (1, 0, 0),
+            "evidence": (1, 0, 0), "evidence_links": (1, 0, 0),
+            "relations": (1, 0, 0), "domain_entities": (1, 0, 0),
+            "posting_reconciliations": (1, 0, 0),
+        },
+        "manual_collection": {
+            **common_formal, "postings": (3, 0, 0), "sources": (2, 0, 0),
+            "evidence": (1, 0, 0), "evidence_links": (1, 0, 0),
+            "domain_entities": (1, 1, 0), "posting_reconciliations": (1, 0, 0),
+        },
+        "maximum_allocation": {
+            **common_formal, "postings": (3, 0, 0),
+            "domain_entities": (1, 1, 0), "posting_reconciliations": (1, 0, 0),
+        },
+        "import_intake": {
+            "sources": (2, 0, 0), "evidence": (2, 0, 0),
+            "candidates": (1, 0, 0), "evidence_links": (1, 0, 0),
+        },
+        "formal_confirmation": {
+            **common_formal, "postings": (3, 0, 0), "candidates": (0, 1, 0),
+            "evidence_links": (1, 0, 0), "domain_entities": (1, 1, 0),
+            "posting_reconciliations": (1, 0, 0),
+        },
+        "mirror_merge": {
+            "sources": (1, 0, 0), "evidence": (1, 0, 0),
+            "evidence_links": (1, 0, 0), "audit_links": (2, 0, 0),
+            "posting_reconciliations": (0, 1, 0),
+        },
+    }
+    counts = variants.get(variant)
+    if counts is None:
+        _fail(path + ".input.variant", "unregistered accepted RG-08 variant")
+    return counts
 
 
 def _validate_rg07_action_effects(
@@ -8829,6 +9616,159 @@ def _validate_rg09_action_effects(
             )
 
 
+def _validate_rg08_action_effects(
+    operation: dict[str, Any],
+    operation_path: str,
+    baseline: dict[str, Any],
+    result: dict[str, Any],
+    expected_entities: dict[str, dict[str, list[str]]],
+) -> None:
+    variant = operation["input"]["variant"]
+    added = lambda name: expected_entities[name]["added_ids"]
+    changed = lambda name: expected_entities[name]["changed_ids"]
+    result_by = {
+        name: {item["id"]: item for item in _collection(result, parts)}
+        for name, parts in _ENTITY_COLLECTIONS.items()
+    }
+    receipts = _rg08_retry_receipts(operation, baseline, result)
+    identity_field = {
+        "lend": "request_id",
+        "manual_collection": "request_id",
+        "maximum_allocation": "request_id",
+        "import_intake": "credit_source_id",
+        "formal_confirmation": "request_id",
+        "mirror_merge": "source_id",
+    }[variant]
+    expected_returned = receipts.get(operation["input"][identity_field])
+    if expected_returned is None or operation["returned_ids"] != expected_returned:
+        _fail(operation_path + ".returned_ids", "must exactly return the RG-08 input-owned result identities")
+    if variant in {"lend", "manual_collection", "maximum_allocation", "formal_confirmation"}:
+        transaction = result_by["transactions"][added("transactions")[0]]
+        version = result_by["transaction_versions"][added("transaction_versions")[0]]
+        if version["transaction_id"] != transaction["id"] or version["id"] != transaction["current_version_id"]:
+            _fail(operation_path + ".result_state_id", "RG-08 transaction/version ownership is not closed")
+        expected_type = "lending_disbursement" if variant == "lend" else "lending_collection"
+        if transaction["type"] != expected_type:
+            _fail(operation_path + ".result_state_id", f"{variant} must create {expected_type}")
+        confirmation = result_by["confirmations"][added("confirmations")[0]]
+        expected_confirmation = "lending_event_confirmation" if variant == "lend" else "lending_settlement_confirmation"
+        if confirmation["type"] != expected_confirmation or confirmation["operation_id"] != operation["id"]:
+            _fail(operation_path + ".result_state_id", "RG-08 confirmation subtype and operation owner must match")
+        if version.get("confirmation_id") != confirmation["id"]:
+            _fail(operation_path + ".result_state_id", "RG-08 version must bind its confirmation")
+        input_value = operation["input"]
+        confirmation_payload = confirmation["payload"]
+        if (
+            confirmation["subject"] != {"kind": "transaction", "id": transaction["id"]}
+            or confirmation_payload.get("confirmation_request_id") != input_value["request_id"]
+            or confirmation_payload.get("transaction_id") != transaction["id"]
+            or confirmation_payload.get("counterparty_id") != input_value["counterparty_id"]
+            or confirmation.get("confirmed_at") != input_value["confirmed_at"]
+        ):
+            _fail(operation_path + ".result_state_id", "RG-08 confirmation identity, subject, counterparty, request, and time must bind input")
+        if variant == "lend":
+            position = result_by["domain_entities"][added("domain_entities")[0]]
+            postings = [result_by["postings"][item_id] for item_id in added("postings")]
+            roles = {item.get("role"): item for item in postings}
+            if (
+                position.get("type") != "lending_position"
+                or position["payload"]["counterparty_id"] != input_value["counterparty_id"]
+                or position["payload"]["currency"] != input_value["currency"]
+                or position["payload"]["principal_balance"] != input_value["principal_amount"]
+                or roles.get("lending_principal_out", {}).get("account_id") != input_value["funding_account_id"]
+                or roles.get("lending_principal_out", {}).get("amount") != "-" + input_value["principal_amount"]
+                or roles.get("lending_receivable", {}).get("amount") != input_value["principal_amount"]
+            ):
+                _fail(operation_path + ".result_state_id", "lend effects must exactly bind counterparty, principal, currency, and funding input")
+        else:
+            settlement = next(
+                result_by["domain_entities"][item_id]
+                for item_id in added("domain_entities")
+                if result_by["domain_entities"][item_id].get("type") == "lending_settlement"
+            )
+            payload = settlement["payload"]
+            components = {item["kind"]: item for item in payload["components"]}
+            expected_values = {
+                "behavior_code": input_value.get("behavior_code", "collect"),
+                "counterparty_id": input_value["counterparty_id"],
+                "destination_account_id": input_value["destination_account_id"],
+                "interest_category_id": input_value["interest_category_id"],
+                "total_received": input_value.get("total_received", payload["total_received"]),
+                "currency": input_value["currency"],
+                "actual_receipt_at": input_value["actual_receipt_at"],
+                "confirmed_at": input_value["confirmed_at"],
+            }
+            if any(payload[field] != value for field, value in expected_values.items()) or any(
+                components[kind]["amount"] != input_value[f"{kind}_amount"]
+                for kind in ("principal", "interest", "fee")
+            ):
+                _fail(operation_path + ".result_state_id", f"{variant} settlement and components must exactly bind action input")
+            expected_position = input_value.get("linked_position_id")
+            if expected_position is None:
+                expected_position = next(
+                    (
+                        item["id"]
+                        for item in baseline["domain_entities"]
+                        if item.get("type") == "lending_position"
+                        and item["payload"]["counterparty_id"] == input_value["counterparty_id"]
+                    ),
+                    None,
+                )
+            if (
+                payload["linked_position_id"] != expected_position
+                or payload["allocated_lend_transaction_id"] != input_value.get("allocated_lend_transaction_id")
+                or confirmation_payload.get("settlement_id") != settlement["id"]
+            ):
+                _fail(operation_path + ".result_state_id", f"{variant} settlement must bind the exact position and allocation owner")
+            if variant == "formal_confirmation" and confirmation["payload"].get("candidate_id") != input_value["candidate_id"]:
+                _fail(operation_path + ".result_state_id", "formal confirmation must bind the input candidate")
+    if variant == "import_intake":
+        if any(added(name) or changed(name) for name in ("transactions", "transaction_versions", "posting_sets", "postings", "confirmations", "posting_reconciliations")):
+            _fail(operation_path + ".deltas", "import intake must have zero formal and reconciliation effect")
+        candidate = result_by["candidates"][added("candidates")[0]]
+        if candidate["type"] != "lending_collection_credit" or [item["status"] for item in candidate["status_history"]] != ["pending_confirmation"]:
+            _fail(operation_path + ".result_state_id", "import intake must add one pending lending collection candidate")
+        input_value = operation["input"]
+        if (
+            candidate["id"] != input_value["candidate_id"]
+            or set(candidate["source_ids"]) != {input_value["credit_source_id"], input_value["agreement_source_id"]}
+            or candidate["confidence"] != input_value["confidence"]
+            or candidate["payload"]["proposed_total_received"] != input_value["proposed_total_received"]
+            or candidate["payload"]["proposed_destination_account_id"] != input_value["proposed_destination_account_id"]
+            or candidate["payload"]["proposed_actual_receipt_at"] != input_value["proposed_actual_receipt_at"]
+            or candidate["payload"]["currency"] != input_value["currency"]
+            or candidate["payload"]["rule_version"] != input_value["rule_version"]
+        ):
+            _fail(operation_path + ".result_state_id", "import intake candidate must exactly bind source and proposed input")
+    if variant == "formal_confirmation":
+        candidate = result_by["candidates"][changed("candidates")[0]]
+        if candidate["id"] != operation["input"]["candidate_id"]:
+            _fail(operation_path + ".deltas.entity_changes.candidates", "formal confirmation must change only the input candidate")
+        if [item["status"] for item in candidate["status_history"]] != ["pending_confirmation", "confirmed"]:
+            _fail(operation_path + ".result_state_id", "formal confirmation must append the candidate confirmed status")
+    if variant == "mirror_merge":
+        if any(added(name) or changed(name) for name in ("transactions", "transaction_versions", "posting_sets", "postings", "confirmations", "domain_entities")):
+            _fail(operation_path + ".deltas", "mirror merge must have zero formal and lending-domain effect")
+        audits = [result_by["audit_links"][item_id] for item_id in added("audit_links")]
+        if {item["type"] for item in audits} != {"mirror_of_evidence_id", "merged_into_evidence_link_id"}:
+            _fail(operation_path + ".result_state_id", "mirror merge must add both typed lending audit links")
+        input_value = operation["input"]
+        source = result_by["sources"][added("sources")[0]]
+        evidence = result_by["evidence"][added("evidence")[0]]
+        link = result_by["evidence_links"][added("evidence_links")[0]]
+        if (
+            source["id"] != input_value["source_id"]
+            or source["payload"].get("mirror_of_source_id") != input_value["mirror_of_source_id"]
+            or source["payload"].get("amount") != input_value["amount"]
+            or source["payload"].get("currency") != input_value["currency"]
+            or source["payload"].get("observed_at") != input_value["observed_at"]
+            or evidence["source_ids"] != [source["id"]]
+            or link["target_id"] != input_value["target_posting_id"]
+            or any(item["to"]["id"] not in {input_value["mirror_of_evidence_id"], input_value["merged_into_evidence_link_id"]} for item in audits)
+        ):
+            _fail(operation_path + ".result_state_id", "mirror merge lineage must exactly bind input and existing evidence targets")
+
+
 def _validate_registered_action_effects(
     operation: dict[str, Any],
     operation_path: str,
@@ -8837,7 +9777,11 @@ def _validate_registered_action_effects(
 ) -> None:
     action = operation["action_type"]
     accepted = operation["outcome"]["status"] == "accepted"
-    registered_counts = _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
+    registered_counts = (
+        _rg08_effect_counts(operation, operation_path)
+        if action in _RG08_ACTIONS
+        else _ACCEPTED_ACTION_ENTITY_COUNTS.get(action)
+    )
     if not accepted and action in _RG07_ACTIONS:
         registered_counts = {}
     if not accepted and action in _RG09_REJECTED_ACTIONS:
@@ -10093,6 +11037,11 @@ def _validate_action_semantics(
     if operation["outcome"]["status"] != "accepted":
         return
     action = operation["action_type"]
+    if action in _RG08_ACTIONS:
+        _validate_rg08_action_effects(
+            operation, operation_path, baseline, result, expected_entities
+        )
+        return
     if action in _RG06_ACTIONS:
         _validate_rg06_action_effects(
             operation, operation_path, baseline, result, expected_entities
@@ -11467,7 +12416,13 @@ def _validate_operations(
             _validate_rg05_identity_conflict(
                 operation, operation_path, earlier_operations
             )
-            _validate_no_change_retry(operation, operation_path, earlier_operations)
+            _validate_no_change_retry(
+                operation,
+                operation_path,
+                earlier_operations,
+                all_operations=case["operations"],
+                states=states,
+            )
 
             declared_entities = operation["deltas"]["entity_changes"]
             for collection_name, expected_change in expected_entities.items():
@@ -11589,6 +12544,7 @@ def validate_golden_case_v2(
         "RG-11": {"opening_balance", "prepaid_purchase", "prepaid_recognition"},
         "RG-12": {"expense"},
         "RG-07": {"opening_balance", "expense", "refund_receipt"},
+        "RG-08": {"opening_balance", "lending_disbursement", "lending_collection"},
     }
     case_id = case["case"]["id"]
     if case_id not in supported_transaction_types:
@@ -11669,6 +12625,10 @@ def validate_golden_case_v2(
                 precisions,
                 timezone,
             )
+        if case_id == "RG-08":
+            _validate_rg08_contract(
+                state, state_path, indexes, operations, precisions
+            )
         _validate_periodic_allocations(
             state, state_path, indexes, current, precisions, timezone
         )
@@ -11688,6 +12648,8 @@ def validate_golden_case_v2(
     _validate_operations(
         case, states, operations, state_indexes, precisions, timezone
     )
+    if case_id == "RG-08" and case["case"]["approval_status"] == "approved":
+        _validate_rg08_inventory(case)
 
     # D-065 projection and diagnostic shapes are frozen, but fingerprint action surfaces
     # remain outside this prototype until fixture and operation gates open together.
