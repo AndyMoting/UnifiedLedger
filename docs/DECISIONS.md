@@ -1270,3 +1270,33 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** golden/rules-v2 新增 3 个工件（rg-01/02/08.json）+ manifest 3 条新条目；v2.py 与 golden-case-v2.schema.json 扩展（RG-08 支持）；docs/migrations/golden-v2 新增 rg-08-expected.json；文档同步（README/CURRENT_STATE/ROADMAP/GOLDEN_V2_INVENTORY）；发布集合从 9 case 增至 12 case。
 
 **关联决定：** `D-084`、`D-086`、`D-087`、`D-088`
+
+---
+
+## D-090 RG-08 rejected field path 与 publication LF integrity 契约
+
+**状态：** 已确认
+
+**决定：** 根据用户明确批准（2026-08-10），关闭 D-089 实施中发现的 RG-08 rejected field-path 冲突与跨平台 publication raw-byte hash 缺陷，并据此修正 A 批验收门。
+
+**RG-08 field-path 修正：** D-089 B 批所述 12 条 rejected field-path 投影中，冻结 v1 `guessed-split` 的 `field: "components"` 必须映射到 canonical `$.attempted_input.split_source`，与 active `rg-08-closure-proposal.md`、`Rg08FullStateOracleTest.expectedFieldPath` 和 `Rg08Operations` 的 `ATTEMPTED_SPLIT_SOURCE` 一致；D-089 的“`guessed-split`→`components`”单处措辞在此范围内被 supersede。`negative-interest` 仍映射到 canonical `$.attempted_input.principal_amount`，本决定不改变该项。此修正只校准 v2 validator/builder 的 rejected field-path mirror，不修改冻结 v1、runtime、Kotlin oracle 或 closure 已批准语义。
+
+**publication LF integrity 契约：** 参与 publication raw-byte hash 的 repository bytes 统一以 **UTF-8 + LF** 为规范域。现有 11 个 manifest case（RG-01/02/03/04/05/06/07/09/10/11/12）必须按 Git LF blob 重新计算并仅修正 raw-byte hash 元数据：顶层 `source_byte_sha256`、兼容别名 `source_sha256`、`expected_byte_sha256`，以及 `hashes.source_sha256`、`hashes.expected_sha256`、`hashes.output_sha256`；`canonical_sha256` 及 `hashes.canonical_sha256` 保持不变。`source`、`expected` 与 `output` 的既有 Git blob 内容、对象计数、operation 状态计数和经济语义均不得改变。
+
+在仓库根 `.gitattributes` 增加且仅增加 publication hash 所需的精确覆盖：`golden/rules/*.json text eol=lf`、`docs/migrations/golden-v2/*-expected.json text eol=lf`、`golden/rules-v2/*.json text eol=lf`。实现一个独立、可复用的 pre-publish integrity gate，并在各现有 publisher 入口做调用该 gate 所必需的最小接线；本决定不授权重构 9 个 publisher 的常规发布、journal、恢复或事务逻辑。
+
+该 gate 必须直接读取 filesystem bytes，以 strict UTF-8 解码并要求 LF-only（拒绝 CRLF 与裸 CR），不运行 Git，也不静默 normalize。它在读取并计算供验证的数据后，对参与本次发布的 source/expected 与既有 manifest 全量登记工件核验 raw-byte hash、expected/output byte equality、canonical hash、路径与登记关系；任一不符必须 fail closed。Git LF blob 只用于本次 11 条 manifest raw-hash metadata 重算，以及 fresh-checkout/release proof，不是 publisher 运行时输入；陈旧 CRLF checkout 必须 fail closed，并由 publisher 外部刷新工作树后重试。
+
+**publisher 时序：** 若不存在 publication journal，直接运行全 manifest integrity gate；若存在合法 journal，则必须先按 D-088 既有 containment、ownership 与 phase-aware recovery 语义完成恢复。恢复完成后、stale dotfile sweep 或任何新 publication transaction/mutation 之前，运行全 manifest integrity gate。integrity 失败不得产生任何新的 publication mutation，也不得阻止、撤销或破坏已经完成的合法恢复；非法 journal 仍按 D-088 fail closed，不能绕过 journal 校验去运行 integrity gate 或开始发布。
+
+**回归与验收：** 新增全 manifest pre-publish integrity 回归，逐 case 独立核验 source/expected/output raw-byte hash、expected/output byte equality、canonical hash、路径与登记关系；新增 LF 成功、CRLF/裸 CR 拒绝且零 publication mutation、fresh checkout 复算一致和重复执行幂等回归。RG-01/RG-02 A 批此前生成的工件与 manifest 登记仅是候选，跨平台 acceptance 重新打开；只有上述 11-case metadata 修正、EOL contract、回归测试、独立 spec/quality review、distinct verifier、主代理复核和 clean release gate 全部通过后，A 批才可认定完成。RG-08 B 批继续受 D-089 已批准 publication target 约束，完成 B-1/B-2 及同等 release gate 前不得发布。
+
+**supersede 边界：** 本决定仅就 11 个 case 的 manifest raw-byte hash metadata、必要的 LF `.gitattributes` contract、独立 pre-publish integrity gate、各 publisher 入口最小接线及其测试，supersede D-088 中 manifest “逐字节不变”、“不重发/不修改 manifest”以及“不修未列入缺陷/不 scope 扩展”的相反限制，并在同一窄范围内 supersede D-089 对既有 9 个已发布工件 manifest 条目“逐字节不变”的限制。这不是重新发布既有 case：9 个既有 output 工件本身仍逐字节不变，RG-01/RG-02 的 source、approved expected 和已生成 output 工件同样保持 Git blob 内容不变。D-088 的 publisher 安全、原子性、journal/recovery 契约与 D-089 的 publication 授权其余部分继续有效；本决定不授权 push，也不因 metadata 修正自动满足验收或 clean release gate。
+
+**不授权：** 不修改任何冻结 `golden/rules/rg-XX.json` 的 Git blob，不修改既有 `docs/migrations/golden-v2/*-expected.json` 或 `golden/rules-v2/rg-XX.json` 工件内容，不修改 runtime、Kotlin oracle、closure 语义、schema migration 或 `.external/`；不执行 RG-08 publication，不 push，不以本决定替代后续 clean release verification。
+
+**理由：** 当前 11 个 case 的 33 组 source/expected/output raw-byte hash 全部匹配 Windows CRLF 工作树而不匹配 Git HEAD 的 LF blob，canonical hash 11/11 仍匹配；因此缺陷属于 publication byte-domain 与 manifest metadata，不是 JSON 语义或工件内容变化。固定 repository LF bytes、用 `.gitattributes` 消除 checkout 歧义并在 publisher mutation 前 fail closed，才能让 fresh checkout、跨平台验证和幂等发布共享同一可复算事实。RG-08 的 `guessed-split` 冲突则由现有 closure、oracle 与 runtime 三方一致证据直接裁决为 split-source canonical path。
+
+**影响：** 后续 writer 可在本决定的窄范围内修复 manifest 11 个 case 的 raw-byte hash 元数据、增加 `.gitattributes`、实现一个共享 pre-publish integrity gate、在各 publisher 入口做最小 gate wiring 与增加 publication integrity 回归，并将 RG-08 B-1 mapping 固定为 `$.attempted_input.split_source`。任何 publisher 常规逻辑重构、工件 JSON 内容、canonical hash、计数或经济结果变化都超出授权并必须停止升级。
+
+**关联决定：** `D-084`、`D-086`、`D-088`、`D-089`
