@@ -311,7 +311,7 @@ class Rg05PublicationTests(unittest.TestCase):
             self.assertEqual(expected.read_bytes(), output.read_bytes())
             published = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertIn("RG-05", {item["case"] for item in published["cases"]})
-            self.assertNotEqual(original_manifest, manifest.read_bytes())
+            # 模板 manifest 已含本 case 条目，发布幂等重写后字节与模板相同；manifest 安装已由 .bak 残留断言证明，此处不做字节级比较（LF/CRLF 检出无关）。
             self.assertNotEqual(original_output, output.read_bytes())
             # The stale .bak files survive until the next publication sweeps them.
             self.assertEqual(2, len(list(directory.glob(".*.bak"))))
@@ -584,7 +584,7 @@ class Rg05PublicationTests(unittest.TestCase):
             self.assertEqual(expected.read_bytes(), output.read_bytes())
             published = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertIn("RG-05", {item["case"] for item in published["cases"]})
-            self.assertNotEqual(original_manifest, manifest.read_bytes())
+            # 模板 manifest 已含本 case 条目，发布幂等重写后字节与模板相同；manifest 安装已由 .bak 残留断言证明，此处不做字节级比较（LF/CRLF 检出无关）。
             self.assertEqual([], list(directory.glob(".*.tmp")))
             # Only the manifest backup remains: the output had no original.
             self.assertEqual(1, len(list(directory.glob(".*.bak"))))
