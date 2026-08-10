@@ -286,11 +286,15 @@ class SqlDelightRg12StoreTest {
         val fixture = loadFixture()
         val path = Files.createTempFile("ledger-data-rg12-rejected-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
+        lateinit var baseline: Rg12Snapshot
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture, "root-rejections")
+                // The seeded opening baseline captured before the rejection is the
+                // reopen oracle.
+                baseline = store.snapshot(fixture.ledgerId)
                 val rejection = fixture.operations.single { it.id == "root-rejections-reject-8" }
                 val rejected = assertIs<Rg12ExecutionResult.Rejected>(store.commit(rejection.operation))
                 assertEquals(Rg12RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, rejected.reason)
@@ -329,6 +333,15 @@ class SqlDelightRg12StoreTest {
                 assertEquals(rejected.fieldPath, retried.fieldPath)
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
             }
+
+            JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = store(database, driver, fixture, "root-rejections")
+                // After close + reopen the rejection receipt persists and every
+                // dependent row is still exactly the pre-rejection baseline.
+                assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
+                assertPersistedSnapshotEquals(baseline, store.snapshot(fixture.ledgerId))
+            }
         } finally {
             Files.deleteIfExists(path)
         }
@@ -339,8 +352,14 @@ class SqlDelightRg12StoreTest {
         val fixture = loadFixture()
         val claimPath = Files.createTempFile("ledger-data-rg12-claim-failure-", ".db")
         val deltaPath = Files.createTempFile("ledger-data-rg12-delta-failure-", ".db")
+        val claimUrl = "jdbc:sqlite:${claimPath.absolutePathString()}"
+        val deltaUrl = "jdbc:sqlite:${deltaPath.absolutePathString()}"
+        lateinit var claimBaseline: Rg12Snapshot
+        lateinit var deltaBaseline: Rg12Snapshot
+        lateinit var claimCounts: OwnerTableCounts
+        lateinit var deltaCounts: OwnerTableCounts
         try {
-            JdbcSqliteDriver("jdbc:sqlite:${claimPath.absolutePathString()}", sqliteProperties()).use { driver ->
+            JdbcSqliteDriver(claimUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val injector = object : Rg12FailureInjector {
@@ -350,17 +369,32 @@ class SqlDelightRg12StoreTest {
                 }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
+                // The seeded opening baseline captured before the failure is the reopen
+                // oracle, and the four owner-table counts below are pinned to it.
+                claimBaseline = failing.snapshot(fixture.ledgerId)
+                claimCounts = ownerTableCounts(database, fixture.ledgerId)
                 assertFailsWith<IllegalStateException> { failing.commit(correct.operation) }
+            }
+            JdbcSqliteDriver(claimUrl, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = store(database, driver, fixture, "root-correction")
+                val correct = fixture.operations.single { it.id == "root-correction-correct" }
+                // After close + reopen the failed commit left no trace: the claim is
+                // gone, the formal chain and every RG-12 exclusive owner (including
+                // rg12_transaction_version_metadata / rg12_returned_id /
+                // rg12_consumption_record / rg12_report_period) keep their baseline
+                // counts and the full snapshot is byte-equal to the baseline.
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
-                // The opening baseline survives; the v2 version was never written.
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction").executeAsList().size.toLong())
                 assertEquals(2L, database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList().size.toLong())
-                // A clean store on the same database commits the same operation.
-                val clean = store(database, driver, fixture, "root-correction")
-                assertIs<Rg12ExecutionResult.Accepted>(clean.commit(correct.operation))
+                assertEquals(claimCounts, ownerTableCounts(database, fixture.ledgerId))
+                assertPersistedSnapshotEquals(claimBaseline, store.snapshot(fixture.ledgerId))
+                // A clean store on the reopened database commits the same operation.
+                assertIs<Rg12ExecutionResult.Accepted>(store.commit(correct.operation))
+                assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
             }
-            JdbcSqliteDriver("jdbc:sqlite:${deltaPath.absolutePathString()}", sqliteProperties()).use { driver ->
+            JdbcSqliteDriver(deltaUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val injector = object : Rg12FailureInjector {
@@ -370,7 +404,18 @@ class SqlDelightRg12StoreTest {
                 }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
+                // The seeded opening baseline captured before the failure is the reopen
+                // oracle, and the four owner-table counts below are pinned to it.
+                deltaBaseline = failing.snapshot(fixture.ledgerId)
+                deltaCounts = ownerTableCounts(database, fixture.ledgerId)
                 assertFailsWith<IllegalStateException> { failing.commit(correct.operation) }
+            }
+            JdbcSqliteDriver(deltaUrl, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = store(database, driver, fixture, "root-correction")
+                // After close + reopen the failed commit left no trace: the claim is
+                // gone, the v2 version was never written and every RG-12 exclusive
+                // owner keeps its baseline counts.
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction").executeAsList().size.toLong())
@@ -379,6 +424,12 @@ class SqlDelightRg12StoreTest {
                 assertEquals(2L, database.ledgerQueries.selectRg12AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
                 assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements(fixture.ledgerId.value).executeAsList().size.toLong())
                 assertEquals(0L, database.ledgerQueries.selectRg12AllConfirmations(fixture.ledgerId.value).executeAsList().size.toLong())
+                // The four owner tables the old counts omitted are pinned to their
+                // pre-failure baseline values (rg12_transaction_version_metadata keeps
+                // the seeded opening-version row; returned ids stay empty; consumption
+                // records and report periods keep their baseline rows).
+                assertEquals(deltaCounts, ownerTableCounts(database, fixture.ledgerId))
+                assertPersistedSnapshotEquals(deltaBaseline, store.snapshot(fixture.ledgerId))
             }
         } finally {
             Files.deleteIfExists(claimPath)
@@ -394,6 +445,7 @@ class SqlDelightRg12StoreTest {
         val fixture = loadFixture()
         val path = Files.createTempFile("ledger-data-rg12-trigger-rollback-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
+        lateinit var baseline: Rg12Snapshot
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
@@ -419,6 +471,9 @@ class SqlDelightRg12StoreTest {
                 }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
+                // The seeded opening baseline captured before the failure is the reopen
+                // oracle.
+                baseline = failing.snapshot(fixture.ledgerId)
                 assertFailsWith<SQLException> { failing.commit(correct.operation) }
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
@@ -433,6 +488,9 @@ class SqlDelightRg12StoreTest {
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture, "root-correction")
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
+                // After close + reopen the aborted commit left the full snapshot at
+                // exactly the pre-failure baseline; the clean re-commit then succeeds.
+                assertPersistedSnapshotEquals(baseline, store.snapshot(fixture.ledgerId))
                 assertIs<Rg12ExecutionResult.Accepted>(store.commit(correct.operation))
                 assertEquals(
                     2L,
@@ -841,6 +899,31 @@ class SqlDelightRg12StoreTest {
     private data class PostingSetProjection(
         val id: PostingSetId,
         val postings: List<Posting>,
+    )
+
+    /**
+     * Row counts of the four RG-12 exclusive owner tables the original failure-injection
+     * counts omitted (MIG-001): `rg12_transaction_version_metadata`, `rg12_returned_id`,
+     * `rg12_consumption_record` and `rg12_report_period`. Captured before a failure
+     * injection and asserted equal after close + reopen, they pin the failed commit to
+     * the pre-failure baseline.
+     */
+    private data class OwnerTableCounts(
+        val versionMetadata: Long,
+        val returnedIds: Long,
+        val consumption: Long,
+        val reportPeriods: Long,
+    )
+
+    private fun ownerTableCounts(database: LedgerDatabase, ledgerId: LedgerId): OwnerTableCounts = OwnerTableCounts(
+        versionMetadata = database.ledgerQueries
+            .selectRg12TransactionVersionMetadata(ledgerId.value).executeAsList().size.toLong(),
+        returnedIds = database.ledgerQueries
+            .selectRg12ReturnedIds(ledgerId.value, "root-correction-request").executeAsList().size.toLong(),
+        consumption = database.ledgerQueries
+            .selectRg12AllConsumptionRecords(ledgerId.value).executeAsList().size.toLong(),
+        reportPeriods = database.ledgerQueries
+            .selectRg12AllReportPeriods(ledgerId.value).executeAsList().size.toLong(),
     )
 
     private fun store(

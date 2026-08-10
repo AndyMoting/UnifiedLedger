@@ -226,11 +226,14 @@ class SqlDelightRg11StoreTest {
     fun rejectedOperationPersistsReceiptWithZeroDependentRows() {
         val path = Files.createTempFile("ledger-data-rg11-rejected-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
+        lateinit var baseline: com.unifiedledger.application.Rg11Snapshot
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightRg11Store(database, driver, catalog())
+                // The pre-rejection baseline (empty database) is the reopen oracle.
+                baseline = store.snapshot(LEDGER)
                 val missingConfirmation = createOperation().let { op ->
                     op.copy(input = op.input.copy(explicitConfirmation = false))
                 }
@@ -258,6 +261,15 @@ class SqlDelightRg11StoreTest {
                 assertEquals(rejected.reason, retried.reason)
                 assertEquals(rejected.fieldPath, retried.fieldPath)
             }
+
+            JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg11Store(database, driver, catalog())
+                // After close + reopen the rejection receipt persists and every
+                // dependent row is still exactly the pre-rejection baseline.
+                assertEquals(1L, database.ledgerQueries.countRg11Operations(LEDGER.value).executeAsOne())
+                assertPersistedSnapshotEquals(baseline, store.snapshot(LEDGER))
+            }
         } finally {
             Files.deleteIfExists(path)
         }
@@ -267,8 +279,12 @@ class SqlDelightRg11StoreTest {
     fun failureInjectionRollsBackClaimAndDeltaAtomically() {
         val claimPath = Files.createTempFile("ledger-data-rg11-claim-failure-", ".db")
         val deltaPath = Files.createTempFile("ledger-data-rg11-delta-failure-", ".db")
+        val claimUrl = "jdbc:sqlite:${claimPath.absolutePathString()}"
+        val deltaUrl = "jdbc:sqlite:${deltaPath.absolutePathString()}"
+        lateinit var claimBaseline: com.unifiedledger.application.Rg11Snapshot
+        lateinit var deltaBaseline: com.unifiedledger.application.Rg11Snapshot
         try {
-            JdbcSqliteDriver("jdbc:sqlite:${claimPath.absolutePathString()}", sqliteProperties()).use { driver ->
+            JdbcSqliteDriver(claimUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val injector = object : Rg11FailureInjector {
@@ -277,14 +293,23 @@ class SqlDelightRg11StoreTest {
                     }
                 }
                 val store = SqlDelightRg11Store(database, driver, catalog(), emptyList(), injector)
+                // The pre-failure baseline (empty database) is the reopen oracle.
+                claimBaseline = store.snapshot(LEDGER)
                 assertFailsWith<IllegalStateException> { store.commit(createOperation()) }
+            }
+            JdbcSqliteDriver(claimUrl, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg11Store(database, driver, catalog())
+                // After close + reopen the failed commit left no trace and the full
+                // snapshot is still exactly the pre-failure baseline.
                 assertEquals(0L, database.ledgerQueries.countRg11Operations(LEDGER.value).executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg11FormalTransactions(LEDGER.value).executeAsOne())
-                // A clean store on the same database commits the same operation.
-                val clean = SqlDelightRg11Store(database, driver, catalog())
-                assertIs<Rg11ExecutionResult.Accepted>(clean.commit(createOperation()))
+                assertPersistedSnapshotEquals(claimBaseline, store.snapshot(LEDGER))
+                // A clean store on the reopened database commits the same operation.
+                assertIs<Rg11ExecutionResult.Accepted>(store.commit(createOperation()))
+                assertEquals(1L, database.ledgerQueries.countRg11Operations(LEDGER.value).executeAsOne())
             }
-            JdbcSqliteDriver("jdbc:sqlite:${deltaPath.absolutePathString()}", sqliteProperties()).use { driver ->
+            JdbcSqliteDriver(deltaUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val injector = object : Rg11FailureInjector {
@@ -293,10 +318,19 @@ class SqlDelightRg11StoreTest {
                     }
                 }
                 val store = SqlDelightRg11Store(database, driver, catalog(), emptyList(), injector)
+                // The pre-failure baseline (empty database) is the reopen oracle.
+                deltaBaseline = store.snapshot(LEDGER)
                 assertFailsWith<IllegalStateException> { store.commit(createOperation()) }
+            }
+            JdbcSqliteDriver(deltaUrl, sqliteProperties()).use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg11Store(database, driver, catalog())
+                // After close + reopen the failed commit left no trace and the full
+                // snapshot is still exactly the pre-failure baseline.
                 assertEquals(0L, database.ledgerQueries.countRg11Operations(LEDGER.value).executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg11FormalTransactions(LEDGER.value).executeAsOne())
                 assertEquals(0L, database.ledgerQueries.selectRg11AllSchedules(LEDGER.value).executeAsList().size.toLong())
+                assertPersistedSnapshotEquals(deltaBaseline, store.snapshot(LEDGER))
             }
         } finally {
             Files.deleteIfExists(claimPath)
