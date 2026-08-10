@@ -17,8 +17,10 @@ published) it verifies, failing closed on the first mismatch:
 
 - registration relations: repository-relative registered paths that resolve
   inside the repository root, the role-owning parent directory and file
-  name pattern for each of source / expected / output, and no output
-  aliasing the manifest itself;
+  name pattern for each of source / expected / output, a cross-check that
+  every registered file name carries the case id (``RG-XX`` must map to
+  ``rg-XX.json`` / ``rg-XX-expected.json``), and no output aliasing the
+  manifest itself;
 - raw-byte hashes: top-level ``source_byte_sha256`` / ``source_sha256`` /
   ``expected_byte_sha256`` and ``hashes.source_sha256`` /
   ``hashes.expected_sha256`` / ``hashes.output_sha256`` must equal the
@@ -133,6 +135,20 @@ def _registered_relation(case_id: str, role: str, registered: Any, base: Path) -
         )
     if pattern.fullmatch(rel.name) is None:
         _fail(case_id, f"{role}_path {registered!r} name does not match {pattern.pattern}")
+    match = re.fullmatch(r"RG-(\d{2})", case_id)
+    if match is None:
+        _fail(case_id, "case id must match the RG-XX form")
+    expected_name = (
+        f"rg-{match.group(1)}.json"
+        if role != "expected"
+        else f"rg-{match.group(1)}-expected.json"
+    )
+    if rel.name != expected_name:
+        _fail(
+            case_id,
+            f"{role}_path name {rel.name!r} does not match the case id "
+            f"(expected {expected_name})",
+        )
     resolved = (base / rel).resolve()
     if not resolved.is_relative_to(base):
         _fail(case_id, f"{role}_path {registered!r} escapes the repository root")

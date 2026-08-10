@@ -398,9 +398,10 @@ def publish_rg10(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     publish_dir = manifest_path.parent
 
-    if not recover_rg10_publication(manifest_path):
-        _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
+    recovered = recover_rg10_publication(manifest_path)
     verify_publication_integrity(manifest_path)
+    if not recovered:
+        _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
     source_bytes, source = _load_json(source_path)
     expected_bytes, expected = _load_json(expected_path)
     if source.get("schema_version") != 1 or source.get("case", {}).get("id") != CASE_ID:

@@ -13,7 +13,8 @@ Covers the shared pre-publish integrity gate
   ``git show`` blob bytes, independent of worktree line endings;
 - publisher wiring: a failing gate stops the publisher before it reads the
   source, and all nine publishers call the gate at the same unconditional
-  seam (recovery branch done, before ``_load_json(source_path)``);
+  seam (after recovery completes, before the stale-dotfile sweep and before
+  ``_load_json(source_path)``);
 - fail-closed registration-relation and corruption rejection.
 """
 
@@ -261,24 +262,37 @@ class PublicationIntegrityTests(unittest.TestCase):
                     "from .publication_integrity import verify_publication_integrity",
                     lines,
                 )
-                if_idx = next(
+                recover_idx = next(
                     i for i, line in enumerate(lines)
-                    if line.strip().startswith("if not recover_rg")
+                    if line.strip().startswith("recovered = recover_rg")
                 )
                 gate_idx = next(
                     i for i, line in enumerate(lines)
                     if line.strip().startswith("verify_publication_integrity(")
                 )
+                sweep_if_idx = next(
+                    i for i, line in enumerate(lines)
+                    if line.strip().startswith("if not recovered:")
+                )
+                sweep_idx = next(
+                    i for i, line in enumerate(lines)
+                    if "sweep_stale_dotfiles" in line and "def " not in line
+                )
                 load_idx = next(
                     i for i, line in enumerate(lines)
                     if "_load_json(source_path)" in line
                 )
-                self.assertLess(if_idx, gate_idx)
-                self.assertLess(gate_idx, load_idx)
-                if_indent = len(lines[if_idx]) - len(lines[if_idx].lstrip())
+                # D-090 timing: recovery completes first, then the full
+                # integrity gate, then the stale-dotfile sweep, then any new
+                # publication transaction (the gate must precede the sweep).
+                self.assertLess(recover_idx, gate_idx)
+                self.assertLess(gate_idx, sweep_if_idx)
+                self.assertLess(sweep_if_idx, sweep_idx)
+                self.assertLess(sweep_idx, load_idx)
+                base_indent = len(lines[recover_idx]) - len(lines[recover_idx].lstrip())
                 gate_indent = len(lines[gate_idx]) - len(lines[gate_idx].lstrip())
                 self.assertEqual(
-                    if_indent, gate_indent, "gate call must be unconditional, not inside the if body"
+                    base_indent, gate_indent, "gate call must be unconditional, not inside the if body"
                 )
 
     def test_registration_relation_violations_fail_closed(self):
@@ -292,6 +306,46 @@ class PublicationIntegrityTests(unittest.TestCase):
         }
         for label, (field, value) in cases.items():
             with self.subTest(violation=label), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                manifest = _make_corpus(root)
+                document = json.loads(manifest.read_text(encoding="utf-8"))
+                document["cases"][0][field] = value
+                _write_lf(manifest, json.dumps(document, indent=2) + "\n")
+                with self.assertRaises(PublicationIntegrityError):
+                    verify_publication_integrity(manifest, repo_root=root)
+
+    def test_missing_file_rejected_fail_closed(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manifest = _make_corpus(root)
+            entry = json.loads(manifest.read_text(encoding="utf-8"))["cases"][0]
+            expected = root / Path(entry["expected_path"])
+            expected.unlink()
+            before = _snapshot(root)
+            with self.assertRaises(PublicationIntegrityError):
+                verify_publication_integrity(manifest, repo_root=root)
+            self.assertEqual(before, _snapshot(root))
+
+    def test_non_utf8_bytes_rejected_fail_closed(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manifest = _make_corpus(root)
+            entry = json.loads(manifest.read_text(encoding="utf-8"))["cases"][0]
+            source = root / Path(entry["source_path"])
+            source.write_bytes(b"\xff\xfe\x00 not utf-8")
+            before = _snapshot(root)
+            with self.assertRaises(PublicationIntegrityError):
+                verify_publication_integrity(manifest, repo_root=root)
+            self.assertEqual(before, _snapshot(root))
+
+    def test_case_id_filename_mismatch_rejected_fail_closed(self):
+        cases = {
+            "source": ("source_path", "golden/rules/rg-02.json"),
+            "expected": ("expected_path", "docs/migrations/golden-v2/rg-02-expected.json"),
+            "output": ("output_path", "golden/rules-v2/rg-02.json"),
+        }
+        for label, (field, value) in cases.items():
+            with self.subTest(role=label), tempfile.TemporaryDirectory() as name:
                 root = Path(name)
                 manifest = _make_corpus(root)
                 document = json.loads(manifest.read_text(encoding="utf-8"))

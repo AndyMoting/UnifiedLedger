@@ -398,9 +398,10 @@ def publish_rg12(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     publish_dir = manifest_path.parent
 
-    if not recover_rg12_publication(manifest_path):
-        _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
+    recovered = recover_rg12_publication(manifest_path)
     verify_publication_integrity(manifest_path)
+    if not recovered:
+        _sweep_stale_dotfiles(publish_dir, output_path.name, manifest_path.name)
     source_bytes, source = _load_json(source_path)
     expected_bytes, expected = _load_json(expected_path)
     if source_bytes != expected_bytes:
