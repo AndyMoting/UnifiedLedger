@@ -1,0 +1,5827 @@
+{
+  "contract": "unifiedledger.golden-case",
+  "contract_version": "2.0.0",
+  "case": {
+    "id": "RG-01",
+    "level": "core_required",
+    "rule_version": 1,
+    "approval_status": "approved",
+    "ledger_id": "ledger-a",
+    "timezone": "Asia/Shanghai",
+    "currencies": [
+      {
+        "code": "CNY",
+        "precision": 2
+      }
+    ]
+  },
+  "roots": [
+    {
+      "id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "purpose": "rg01_main_path",
+      "initial_state_id": "0a42c3cb-dfa8-5980-be62-4981b2c07ae9",
+      "operation_ids": [
+        "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+        "079d0834-6e62-5d9c-a840-f9c176211c07",
+        "36710006-4bab-5557-a5f4-1055f96c5883",
+        "6b8a3cf8-45cb-5268-8944-f763c003b4ea"
+      ]
+    },
+    {
+      "id": "42a81c0a-6374-52cb-8f12-86f1e0a90353",
+      "purpose": "rg01_rejected_missing_payment_account",
+      "initial_state_id": "df8cf2d0-4b82-5a33-bc8e-e03fc9faa4da",
+      "operation_ids": [
+        "93d8ef11-61cf-5cdc-84f9-16d2bbf71c1e"
+      ]
+    },
+    {
+      "id": "604452d2-dd60-5030-8413-b3f6d365de6f",
+      "purpose": "rg01_rejected_missing_amount",
+      "initial_state_id": "6662ffcc-59bf-5cd1-b946-16c73ca321c6",
+      "operation_ids": [
+        "14042a28-9182-5e83-ab21-1b59738915ab"
+      ]
+    },
+    {
+      "id": "8149414e-16a6-5670-9e52-a0aa8ed4e5f7",
+      "purpose": "rg01_rejected_negative_amount",
+      "initial_state_id": "37756f6f-d4c8-5970-be10-5bba4ce46638",
+      "operation_ids": [
+        "da94ac88-a8c5-5470-8e54-4149469fb925"
+      ]
+    },
+    {
+      "id": "81ca4219-3502-5f1c-81c3-10af2795c6a3",
+      "purpose": "rg01_rejected_primary_category",
+      "initial_state_id": "a410fe25-f1a5-5ed4-a435-7f87cef3ed42",
+      "operation_ids": [
+        "fa8161a5-e3bc-53f3-a7bc-5127ad0fc7a3"
+      ]
+    },
+    {
+      "id": "8bb4b8f5-804b-5f34-b240-648a78226b26",
+      "purpose": "rg01_rejected_inactive_secondary_category",
+      "initial_state_id": "946877b7-0fe4-5d2a-aaf0-8b9b2ac37d6d",
+      "operation_ids": [
+        "377ba031-6993-5f54-a119-e4aa5604e9f4"
+      ]
+    },
+    {
+      "id": "cbbf6ea1-6fb8-5bed-a25b-78fdf65aacae",
+      "purpose": "rg01_rejected_missing_secondary_category",
+      "initial_state_id": "27a9d7db-74f2-5e7a-9eac-a88fe2a9f051",
+      "operation_ids": [
+        "4e094f9b-b494-5656-a83f-ec2d8dcc6803"
+      ]
+    },
+    {
+      "id": "cc16b2db-1c31-50ad-9206-2e2fba04026a",
+      "purpose": "rg01_rejected_zero_amount",
+      "initial_state_id": "89548e9f-1e7b-51a7-b65d-aa0c90abf80b",
+      "operation_ids": [
+        "537a2ecc-4f24-5e49-bdc8-8501c3948475"
+      ]
+    }
+  ],
+  "states": [
+    {
+      "id": "0a42c3cb-dfa8-5980-be62-4981b2c07ae9",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "13868530-482c-579f-a34a-2514b0f58b74",
+      "root_id": "cbbf6ea1-6fb8-5bed-a25b-78fdf65aacae",
+      "as_of_operation_id": "4e094f9b-b494-5656-a83f-ec2d8dcc6803",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "2a84f8d7-4a74-563a-9f9c-e147dbb29888"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "2a84f8d7-4a74-563a-9f9c-e147dbb29888",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "2238b1e7-b972-5471-a016-1a3eddabc8f3",
+      "root_id": "8149414e-16a6-5670-9e52-a0aa8ed4e5f7",
+      "as_of_operation_id": "da94ac88-a8c5-5470-8e54-4149469fb925",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "d18baa2d-dd7c-5d5c-af62-9ca53954e1a8"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "d18baa2d-dd7c-5d5c-af62-9ca53954e1a8",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "27a9d7db-74f2-5e7a-9eac-a88fe2a9f051",
+      "root_id": "cbbf6ea1-6fb8-5bed-a25b-78fdf65aacae",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "2a84f8d7-4a74-563a-9f9c-e147dbb29888"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "2a84f8d7-4a74-563a-9f9c-e147dbb29888",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "df0cf59e-b12a-59af-9aca-638a26dd3e00",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "37756f6f-d4c8-5970-be10-5bba4ce46638",
+      "root_id": "8149414e-16a6-5670-9e52-a0aa8ed4e5f7",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "d18baa2d-dd7c-5d5c-af62-9ca53954e1a8"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "d18baa2d-dd7c-5d5c-af62-9ca53954e1a8",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "bc1516c6-3b45-5817-9ba5-6f4c0ddb3724",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "5ae0c036-1c0f-5c08-bc35-6c5bdc9cd00a",
+      "root_id": "8bb4b8f5-804b-5f34-b240-648a78226b26",
+      "as_of_operation_id": "377ba031-6993-5f54-a119-e4aa5604e9f4",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "05182f18-edde-5f4d-baaa-81e6b5e465f8"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "05182f18-edde-5f4d-baaa-81e6b5e465f8",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "6662ffcc-59bf-5cd1-b946-16c73ca321c6",
+      "root_id": "604452d2-dd60-5030-8413-b3f6d365de6f",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "4245c3a8-f9b7-592c-a70b-fc34fa6e7ed2"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "4245c3a8-f9b7-592c-a70b-fc34fa6e7ed2",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "675538ff-be92-57ba-a208-26b70a799b55",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "as_of_operation_id": "6b8a3cf8-45cb-5268-8944-f763c003b4ea",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-expense-rg01",
+          "type": "expense",
+          "current_version_id": "version-expense-rg01-v2"
+        },
+        {
+          "id": "tx-expense-rg01-distinct",
+          "type": "expense",
+          "current_version_id": "version-expense-rg01-distinct-v1"
+        },
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-expense-rg01-distinct-v1",
+          "transaction_id": "tx-expense-rg01-distinct",
+          "version_number": 1,
+          "posting_set_id": "posting-set-expense-rg01-distinct",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "",
+          "confirmation_id": "91540692-0a89-5644-985b-bf2ba4a3f98a"
+        },
+        {
+          "id": "version-expense-rg01-v1",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 1,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "",
+          "confirmation_id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        },
+        {
+          "id": "version-expense-rg01-v2",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 2,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "早餐",
+          "confirmation_id": "30024f82-8a64-5d08-a26c-49e0cb9dde26"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        },
+        {
+          "id": "posting-set-expense-rg01",
+          "posting_ids": [
+            "posting-bank-rg01",
+            "posting-expense-rg01"
+          ]
+        },
+        {
+          "id": "posting-set-expense-rg01-distinct",
+          "posting_ids": [
+            "posting-bank-rg01-distinct",
+            "posting-expense-rg01-distinct"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-bank-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "asset-bank-a",
+          "amount": "-35.80",
+          "currency": "CNY",
+          "role": "payment_asset",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-bank-rg01-distinct",
+          "posting_set_id": "posting-set-expense-rg01-distinct",
+          "account_id": "asset-bank-a",
+          "amount": "-35.80",
+          "currency": "CNY",
+          "role": "payment_asset",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-expense-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "expense-account-breakfast",
+          "amount": "35.80",
+          "currency": "CNY",
+          "role": "expense",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-expense-rg01-distinct",
+          "posting_set_id": "posting-set-expense-rg01-distinct",
+          "account_id": "expense-account-breakfast",
+          "amount": "35.80",
+          "currency": "CNY",
+          "role": "expense",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "30024f82-8a64-5d08-a26c-49e0cb9dde26",
+          "type": "explicit_manual_save",
+          "operation_id": "079d0834-6e62-5d9c-a840-f9c176211c07",
+          "subject": {
+            "kind": "operation",
+            "id": "079d0834-6e62-5d9c-a840-f9c176211c07"
+          },
+          "payload": {}
+        },
+        {
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b",
+          "type": "explicit_manual_save",
+          "operation_id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+          "subject": {
+            "kind": "operation",
+            "id": "bbae9073-21d5-5dd5-aca8-7989d6029d78"
+          },
+          "payload": {}
+        },
+        {
+          "id": "91540692-0a89-5644-985b-bf2ba4a3f98a",
+          "type": "explicit_manual_save",
+          "operation_id": "6b8a3cf8-45cb-5268-8944-f763c003b4ea",
+          "subject": {
+            "kind": "operation",
+            "id": "6b8a3cf8-45cb-5268-8944-f763c003b4ea"
+          },
+          "payload": {}
+        }
+      ],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [
+        {
+          "id": "31de58da-b351-5ea4-8cec-4ed1d97a9efe",
+          "posting_id": "posting-bank-rg01",
+          "status": "pending"
+        },
+        {
+          "id": "f2aa9809-bfaa-5948-b200-5a3dfa0e1a1d",
+          "posting_id": "posting-bank-rg01-distinct",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "928.40"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "71.60"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "71.60"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "71.60"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-71.60"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "71.60"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "71.60"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-71.60"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "113062c6-ef07-5cbe-8c34-13a1ab567d11",
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        },
+        {
+          "id": "36f7f03c-3058-5424-b4a3-8e754db02e88",
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01-distinct",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    },
+    {
+      "id": "87cfba2d-0b67-5808-a082-43312598e862",
+      "root_id": "604452d2-dd60-5030-8413-b3f6d365de6f",
+      "as_of_operation_id": "14042a28-9182-5e83-ab21-1b59738915ab",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "4245c3a8-f9b7-592c-a70b-fc34fa6e7ed2"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "4245c3a8-f9b7-592c-a70b-fc34fa6e7ed2",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "39a20868-d37a-58e6-b8c1-f1aefac3f1bf",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "89548e9f-1e7b-51a7-b65d-aa0c90abf80b",
+      "root_id": "cc16b2db-1c31-50ad-9206-2e2fba04026a",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "90c0d9d8-0feb-54dc-b0b9-32c56656319e"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "90c0d9d8-0feb-54dc-b0b9-32c56656319e",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "946877b7-0fe4-5d2a-aaf0-8b9b2ac37d6d",
+      "root_id": "8bb4b8f5-804b-5f34-b240-648a78226b26",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "05182f18-edde-5f4d-baaa-81e6b5e465f8"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "05182f18-edde-5f4d-baaa-81e6b5e465f8",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "52719582-8ad5-5e3e-af2d-834699c12c15",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "949a3be9-53bb-5f8c-abbd-4baa4caf0bd1",
+      "root_id": "42a81c0a-6374-52cb-8f12-86f1e0a90353",
+      "as_of_operation_id": "93d8ef11-61cf-5cdc-84f9-16d2bbf71c1e",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "355a0ff8-865e-5661-9e67-dd6fb84de7b3"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "355a0ff8-865e-5661-9e67-dd6fb84de7b3",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "95e31c75-d57e-54da-8aae-4c57c6034dd9",
+      "root_id": "81ca4219-3502-5f1c-81c3-10af2795c6a3",
+      "as_of_operation_id": "fa8161a5-e3bc-53f3-a7bc-5127ad0fc7a3",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "932537a7-5721-5f5e-9517-ad9638417fb9"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "932537a7-5721-5f5e-9517-ad9638417fb9",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "a410fe25-f1a5-5ed4-a435-7f87cef3ed42",
+      "root_id": "81ca4219-3502-5f1c-81c3-10af2795c6a3",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "932537a7-5721-5f5e-9517-ad9638417fb9"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "932537a7-5721-5f5e-9517-ad9638417fb9",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "14d339d7-1829-5832-ab4d-861f748062bd",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "ae8da85c-6c01-5306-8b64-dae036cb722c",
+      "root_id": "cc16b2db-1c31-50ad-9206-2e2fba04026a",
+      "as_of_operation_id": "537a2ecc-4f24-5e49-bdc8-8501c3948475",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "90c0d9d8-0feb-54dc-b0b9-32c56656319e"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "90c0d9d8-0feb-54dc-b0b9-32c56656319e",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "29cfa0d4-4a8f-582e-965c-31f6089a24f4",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "b812ac51-0bb1-5bbc-b23d-111ccf2b0957",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "as_of_operation_id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-expense-rg01",
+          "type": "expense",
+          "current_version_id": "version-expense-rg01-v1"
+        },
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-expense-rg01-v1",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 1,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "",
+          "confirmation_id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        },
+        {
+          "id": "posting-set-expense-rg01",
+          "posting_ids": [
+            "posting-bank-rg01",
+            "posting-expense-rg01"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-bank-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "asset-bank-a",
+          "amount": "-35.80",
+          "currency": "CNY",
+          "role": "payment_asset",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-expense-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "expense-account-breakfast",
+          "amount": "35.80",
+          "currency": "CNY",
+          "role": "expense",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b",
+          "type": "explicit_manual_save",
+          "operation_id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+          "subject": {
+            "kind": "operation",
+            "id": "bbae9073-21d5-5dd5-aca8-7989d6029d78"
+          },
+          "payload": {}
+        }
+      ],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [
+        {
+          "id": "31de58da-b351-5ea4-8cec-4ed1d97a9efe",
+          "posting_id": "posting-bank-rg01",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "964.20"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "35.80"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "113062c6-ef07-5cbe-8c34-13a1ab567d11",
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    },
+    {
+      "id": "d1e3172a-54f7-5b83-aec9-0c5a326021be",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "as_of_operation_id": "36710006-4bab-5557-a5f4-1055f96c5883",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-expense-rg01",
+          "type": "expense",
+          "current_version_id": "version-expense-rg01-v2"
+        },
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-expense-rg01-v1",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 1,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "",
+          "confirmation_id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        },
+        {
+          "id": "version-expense-rg01-v2",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 2,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "早餐",
+          "confirmation_id": "30024f82-8a64-5d08-a26c-49e0cb9dde26"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        },
+        {
+          "id": "posting-set-expense-rg01",
+          "posting_ids": [
+            "posting-bank-rg01",
+            "posting-expense-rg01"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-bank-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "asset-bank-a",
+          "amount": "-35.80",
+          "currency": "CNY",
+          "role": "payment_asset",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-expense-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "expense-account-breakfast",
+          "amount": "35.80",
+          "currency": "CNY",
+          "role": "expense",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "30024f82-8a64-5d08-a26c-49e0cb9dde26",
+          "type": "explicit_manual_save",
+          "operation_id": "079d0834-6e62-5d9c-a840-f9c176211c07",
+          "subject": {
+            "kind": "operation",
+            "id": "079d0834-6e62-5d9c-a840-f9c176211c07"
+          },
+          "payload": {}
+        },
+        {
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b",
+          "type": "explicit_manual_save",
+          "operation_id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+          "subject": {
+            "kind": "operation",
+            "id": "bbae9073-21d5-5dd5-aca8-7989d6029d78"
+          },
+          "payload": {}
+        }
+      ],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [
+        {
+          "id": "31de58da-b351-5ea4-8cec-4ed1d97a9efe",
+          "posting_id": "posting-bank-rg01",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "964.20"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "35.80"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "113062c6-ef07-5cbe-8c34-13a1ab567d11",
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    },
+    {
+      "id": "df8cf2d0-4b82-5a33-bc8e-e03fc9faa4da",
+      "root_id": "42a81c0a-6374-52cb-8f12-86f1e0a90353",
+      "as_of_operation_id": null,
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "355a0ff8-865e-5661-9e67-dd6fb84de7b3"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "355a0ff8-865e-5661-9e67-dd6fb84de7b3",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "08f6b7c2-ef10-515f-ab99-3c4c552e3a1d",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "1000.00"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "0.00"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": []
+    },
+    {
+      "id": "f8b9cbfa-788a-50be-9092-ecad9ec40975",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "as_of_operation_id": "079d0834-6e62-5d9c-a840-f9c176211c07",
+      "catalog": {
+        "accounts": [
+          {
+            "id": "asset-bank-a",
+            "name": "银行卡 A",
+            "kind": "asset",
+            "currency": "CNY",
+            "owned_by_user": true,
+            "real_account": true,
+            "reconciliation_eligible": true
+          },
+          {
+            "id": "equity-opening-a",
+            "name": "期初权益 A",
+            "kind": "equity",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          },
+          {
+            "id": "expense-account-breakfast",
+            "name": "早餐费用",
+            "kind": "expense",
+            "currency": "CNY",
+            "owned_by_user": false,
+            "real_account": false,
+            "reconciliation_eligible": false
+          }
+        ],
+        "categories": [
+          {
+            "id": "expense-category-breakfast",
+            "name": "早餐",
+            "parent_id": "expense-category-food",
+            "posting_account_id": "expense-account-breakfast",
+            "active": true
+          },
+          {
+            "id": "expense-category-food",
+            "name": "餐饮",
+            "parent_id": null,
+            "posting_account_id": null,
+            "active": true
+          },
+          {
+            "id": "expense-category-inactive",
+            "name": "已停用分类",
+            "parent_id": "expense-category-food",
+            "posting_account_id": null,
+            "active": false
+          }
+        ]
+      },
+      "transactions": [
+        {
+          "id": "tx-expense-rg01",
+          "type": "expense",
+          "current_version_id": "version-expense-rg01-v2"
+        },
+        {
+          "id": "tx-opening-a",
+          "type": "opening_balance",
+          "current_version_id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1"
+        }
+      ],
+      "transaction_versions": [
+        {
+          "id": "9a639c2b-863e-5c1c-bee8-cfd4679282c1",
+          "transaction_id": "tx-opening-a",
+          "version_number": 1,
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "occurred_at": "2026-01-01T00:00:00+08:00",
+          "statistics_at": "2026-01-01T00:00:00+08:00",
+          "effective_at": "2026-01-01T00:00:00+08:00"
+        },
+        {
+          "id": "version-expense-rg01-v1",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 1,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "",
+          "confirmation_id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        },
+        {
+          "id": "version-expense-rg01-v2",
+          "transaction_id": "tx-expense-rg01",
+          "version_number": 2,
+          "posting_set_id": "posting-set-expense-rg01",
+          "occurred_at": "2026-01-15T08:30:00+08:00",
+          "statistics_at": "2026-01-15T08:30:00+08:00",
+          "effective_at": "2026-01-15T08:30:00+08:00",
+          "note": "早餐",
+          "confirmation_id": "30024f82-8a64-5d08-a26c-49e0cb9dde26"
+        }
+      ],
+      "posting_sets": [
+        {
+          "id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "posting_ids": [
+            "posting-opening-bank-a",
+            "posting-opening-equity-a"
+          ]
+        },
+        {
+          "id": "posting-set-expense-rg01",
+          "posting_ids": [
+            "posting-bank-rg01",
+            "posting-expense-rg01"
+          ]
+        }
+      ],
+      "postings": [
+        {
+          "id": "posting-bank-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "asset-bank-a",
+          "amount": "-35.80",
+          "currency": "CNY",
+          "role": "payment_asset",
+          "reconciliation_eligible": true
+        },
+        {
+          "id": "posting-expense-rg01",
+          "posting_set_id": "posting-set-expense-rg01",
+          "account_id": "expense-account-breakfast",
+          "amount": "35.80",
+          "currency": "CNY",
+          "role": "expense",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-bank-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "asset-bank-a",
+          "amount": "1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        },
+        {
+          "id": "posting-opening-equity-a",
+          "posting_set_id": "419d42f3-97e8-5f00-b52f-20a0bfe24109",
+          "account_id": "equity-opening-a",
+          "amount": "-1000.00",
+          "currency": "CNY",
+          "reconciliation_eligible": false
+        }
+      ],
+      "sources": [],
+      "candidates": [],
+      "confirmations": [
+        {
+          "id": "30024f82-8a64-5d08-a26c-49e0cb9dde26",
+          "type": "explicit_manual_save",
+          "operation_id": "079d0834-6e62-5d9c-a840-f9c176211c07",
+          "subject": {
+            "kind": "operation",
+            "id": "079d0834-6e62-5d9c-a840-f9c176211c07"
+          },
+          "payload": {}
+        },
+        {
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b",
+          "type": "explicit_manual_save",
+          "operation_id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+          "subject": {
+            "kind": "operation",
+            "id": "bbae9073-21d5-5dd5-aca8-7989d6029d78"
+          },
+          "payload": {}
+        }
+      ],
+      "evidence": [],
+      "evidence_links": [],
+      "relations": [],
+      "domain_entities": [],
+      "audit_links": [],
+      "posting_reconciliations": [
+        {
+          "id": "31de58da-b351-5ea4-8cec-4ed1d97a9efe",
+          "posting_id": "posting-bank-rg01",
+          "status": "pending"
+        }
+      ],
+      "balances": [
+        {
+          "account_id": "asset-bank-a",
+          "currency": "CNY",
+          "amount": "964.20"
+        },
+        {
+          "account_id": "equity-opening-a",
+          "currency": "CNY",
+          "amount": "-1000.00"
+        },
+        {
+          "account_id": "expense-account-breakfast",
+          "currency": "CNY",
+          "amount": "35.80"
+        }
+      ],
+      "reports": [
+        {
+          "period_type": "day",
+          "period": "2026-01-15",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        },
+        {
+          "period_type": "month",
+          "period": "2026-01",
+          "metrics": [
+            {
+              "metric": "budget",
+              "applicability": "not_applicable"
+            },
+            {
+              "metric": "cash_outflow",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "consumption",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "35.80"
+            },
+            {
+              "metric": "income",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "0.00"
+            },
+            {
+              "metric": "net_worth_change",
+              "applicability": "applicable",
+              "currency": "CNY",
+              "amount": "-35.80"
+            }
+          ]
+        }
+      ],
+      "derived_statuses": [
+        {
+          "id": "113062c6-ef07-5cbe-8c34-13a1ab567d11",
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01",
+          "status_name": "reconciliation_summary",
+          "value": "pending"
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "bbae9073-21d5-5dd5-aca8-7989d6029d78",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "sequence": 1,
+      "operation_class": "creation",
+      "action_type": "manual_expense",
+      "baseline_state_id": "0a42c3cb-dfa8-5980-be62-4981b2c07ae9",
+      "result_state_id": "b812ac51-0bb1-5bbc-b23d-111ccf2b0957",
+      "input": {
+        "request_id": "request-rg01-create",
+        "amount": "35.80",
+        "currency": "CNY",
+        "category_id": "expense-category-breakfast",
+        "payment_account_id": "asset-bank-a",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "note": "",
+        "explicit_confirmation": true
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01",
+          "status_name": "reconciliation_summary",
+          "before": null,
+          "after": "pending"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [
+              "tx-expense-rg01"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-expense-rg01-v1"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [
+              "posting-set-expense-rg01"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [
+              "posting-bank-rg01",
+              "posting-expense-rg01"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [
+              "31de58da-b351-5ea4-8cec-4ed1d97a9efe"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [
+            {
+              "key": {
+                "account_id": "asset-bank-a",
+                "currency": "CNY"
+              },
+              "before": "1000.00",
+              "after": "964.20"
+            },
+            {
+              "key": {
+                "account_id": "expense-account-breakfast",
+                "currency": "CNY"
+              },
+              "before": "0.00",
+              "after": "35.80"
+            }
+          ],
+          "reports": [
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "cash_outflow",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              }
+            },
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "consumption",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              }
+            },
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-35.80"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "cash_outflow",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "consumption",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "0.00"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-35.80"
+              }
+            }
+          ],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "transaction",
+                "target_id": "tx-expense-rg01",
+                "status_name": "reconciliation_summary"
+              },
+              "before": null,
+              "after": "pending"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        },
+        {
+          "kind": "transaction",
+          "id": "tx-expense-rg01"
+        }
+      ]
+    },
+    {
+      "id": "079d0834-6e62-5d9c-a840-f9c176211c07",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "sequence": 2,
+      "operation_class": "update",
+      "action_type": "transaction_note_update",
+      "baseline_state_id": "b812ac51-0bb1-5bbc-b23d-111ccf2b0957",
+      "result_state_id": "f8b9cbfa-788a-50be-9092-ecad9ec40975",
+      "input": {
+        "request_id": "request-rg01-note-update",
+        "transaction_id": "tx-expense-rg01",
+        "note": "早餐",
+        "explicit_confirmation": true
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [
+              "tx-expense-rg01"
+            ],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-expense-rg01-v2"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "30024f82-8a64-5d08-a26c-49e0cb9dde26"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "transaction",
+          "id": "tx-expense-rg01"
+        },
+        {
+          "kind": "transaction_version",
+          "id": "version-expense-rg01-v2"
+        }
+      ]
+    },
+    {
+      "id": "36710006-4bab-5557-a5f4-1055f96c5883",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "sequence": 3,
+      "operation_class": "creation",
+      "action_type": "manual_expense",
+      "baseline_state_id": "f8b9cbfa-788a-50be-9092-ecad9ec40975",
+      "result_state_id": "d1e3172a-54f7-5b83-aec9-0c5a326021be",
+      "input": {
+        "request_id": "request-rg01-create",
+        "amount": "35.80",
+        "currency": "CNY",
+        "category_id": "expense-category-breakfast",
+        "payment_account_id": "asset-bank-a",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "note": "",
+        "explicit_confirmation": true
+      },
+      "outcome": {
+        "status": "no_change",
+        "reason_code": "idempotent_replay"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "7f6f2a9b-bb2c-5a11-8424-3211c027638b"
+        },
+        {
+          "kind": "transaction",
+          "id": "tx-expense-rg01"
+        }
+      ]
+    },
+    {
+      "id": "6b8a3cf8-45cb-5268-8944-f763c003b4ea",
+      "root_id": "32d7960d-320a-5716-9a6e-d5c305277b3d",
+      "sequence": 4,
+      "operation_class": "creation",
+      "action_type": "manual_expense",
+      "baseline_state_id": "d1e3172a-54f7-5b83-aec9-0c5a326021be",
+      "result_state_id": "675538ff-be92-57ba-a208-26b70a799b55",
+      "input": {
+        "request_id": "request-rg01-distinct-create",
+        "amount": "35.80",
+        "currency": "CNY",
+        "category_id": "expense-category-breakfast",
+        "payment_account_id": "asset-bank-a",
+        "occurred_at": "2026-01-15T08:30:00+08:00",
+        "note": "",
+        "explicit_confirmation": true
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "status_changes": [
+        {
+          "target_kind": "transaction",
+          "target_id": "tx-expense-rg01-distinct",
+          "status_name": "reconciliation_summary",
+          "before": null,
+          "after": "pending"
+        }
+      ],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [
+              "tx-expense-rg01-distinct"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [
+              "version-expense-rg01-distinct-v1"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [
+              "posting-set-expense-rg01-distinct"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [
+              "posting-bank-rg01-distinct",
+              "posting-expense-rg01-distinct"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [
+              "91540692-0a89-5644-985b-bf2ba4a3f98a"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [
+              "f2aa9809-bfaa-5948-b200-5a3dfa0e1a1d"
+            ],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [
+            {
+              "key": {
+                "account_id": "asset-bank-a",
+                "currency": "CNY"
+              },
+              "before": "964.20",
+              "after": "928.40"
+            },
+            {
+              "key": {
+                "account_id": "expense-account-breakfast",
+                "currency": "CNY"
+              },
+              "before": "35.80",
+              "after": "71.60"
+            }
+          ],
+          "reports": [
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "cash_outflow",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "71.60"
+              }
+            },
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "consumption",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "71.60"
+              }
+            },
+            {
+              "key": {
+                "period_type": "day",
+                "period": "2026-01-15",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-71.60"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "cash_outflow",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "71.60"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "consumption",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "71.60"
+              }
+            },
+            {
+              "key": {
+                "period_type": "month",
+                "period": "2026-01",
+                "metric": "net_worth_change",
+                "currency": "CNY"
+              },
+              "before": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-35.80"
+              },
+              "after": {
+                "applicability": "applicable",
+                "currency": "CNY",
+                "amount": "-71.60"
+              }
+            }
+          ],
+          "derived_statuses": [
+            {
+              "key": {
+                "kind": "transaction",
+                "target_id": "tx-expense-rg01-distinct",
+                "status_name": "reconciliation_summary"
+              },
+              "before": null,
+              "after": "pending"
+            }
+          ]
+        }
+      },
+      "returned_ids": [
+        {
+          "kind": "confirmation",
+          "id": "91540692-0a89-5644-985b-bf2ba4a3f98a"
+        },
+        {
+          "kind": "transaction",
+          "id": "tx-expense-rg01-distinct"
+        }
+      ]
+    },
+    {
+      "id": "93d8ef11-61cf-5cdc-84f9-16d2bbf71c1e",
+      "root_id": "42a81c0a-6374-52cb-8f12-86f1e0a90353",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "df8cf2d0-4b82-5a33-bc8e-e03fc9faa4da",
+      "result_state_id": "949a3be9-53bb-5f8c-abbd-4baa4caf0bd1",
+      "attempted_input": {
+        "request_id": "85fad5da-31b0-5dbf-b408-008451dfaa99",
+        "amount": "35.80",
+        "payment_account_id": null,
+        "category_id": "expense-category-breakfast"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "missing_required_field",
+        "field_path": "$.attempted_input.payment_account_id"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "14042a28-9182-5e83-ab21-1b59738915ab",
+      "root_id": "604452d2-dd60-5030-8413-b3f6d365de6f",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "6662ffcc-59bf-5cd1-b946-16c73ca321c6",
+      "result_state_id": "87cfba2d-0b67-5808-a082-43312598e862",
+      "attempted_input": {
+        "request_id": "27c403a9-cf8b-5f0a-9bee-ab62ac2bccab",
+        "amount": null,
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "missing_required_field",
+        "field_path": "$.attempted_input.amount"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "da94ac88-a8c5-5470-8e54-4149469fb925",
+      "root_id": "8149414e-16a6-5670-9e52-a0aa8ed4e5f7",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "37756f6f-d4c8-5970-be10-5bba4ce46638",
+      "result_state_id": "2238b1e7-b972-5471-a016-1a3eddabc8f3",
+      "attempted_input": {
+        "request_id": "e41f87e8-d46a-5667-bd97-a09ff3799400",
+        "amount": "-0.01",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "must_be_positive",
+        "field_path": "$.attempted_input.amount"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "fa8161a5-e3bc-53f3-a7bc-5127ad0fc7a3",
+      "root_id": "81ca4219-3502-5f1c-81c3-10af2795c6a3",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "a410fe25-f1a5-5ed4-a435-7f87cef3ed42",
+      "result_state_id": "95e31c75-d57e-54da-8aae-4c57c6034dd9",
+      "attempted_input": {
+        "request_id": "6ecbbf3a-ec7f-5916-8716-47a8b8c6e8a5",
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-food"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "secondary_category_required",
+        "field_path": "$.attempted_input.category_id"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "377ba031-6993-5f54-a119-e4aa5604e9f4",
+      "root_id": "8bb4b8f5-804b-5f34-b240-648a78226b26",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "946877b7-0fe4-5d2a-aaf0-8b9b2ac37d6d",
+      "result_state_id": "5ae0c036-1c0f-5c08-bc35-6c5bdc9cd00a",
+      "attempted_input": {
+        "request_id": "2e224810-3357-594e-8040-de138a63790a",
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-inactive"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "category_inactive",
+        "field_path": "$.attempted_input.category_id"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "4e094f9b-b494-5656-a83f-ec2d8dcc6803",
+      "root_id": "cbbf6ea1-6fb8-5bed-a25b-78fdf65aacae",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "27a9d7db-74f2-5e7a-9eac-a88fe2a9f051",
+      "result_state_id": "13868530-482c-579f-a34a-2514b0f58b74",
+      "attempted_input": {
+        "request_id": "4b02fef7-4dfc-54bb-bd16-f4279333dafa",
+        "amount": "35.80",
+        "payment_account_id": "asset-bank-a",
+        "category_id": null
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "missing_required_field",
+        "field_path": "$.attempted_input.category_id"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    },
+    {
+      "id": "537a2ecc-4f24-5e49-bdc8-8501c3948475",
+      "root_id": "cc16b2db-1c31-50ad-9206-2e2fba04026a",
+      "sequence": 1,
+      "operation_class": "rejection",
+      "action_type": "manual_expense",
+      "baseline_state_id": "89548e9f-1e7b-51a7-b65d-aa0c90abf80b",
+      "result_state_id": "ae8da85c-6c01-5306-8b64-dae036cb722c",
+      "attempted_input": {
+        "request_id": "abb2750a-c8f1-5bbb-862e-3735a99fa23e",
+        "amount": "0.00",
+        "payment_account_id": "asset-bank-a",
+        "category_id": "expense-category-breakfast"
+      },
+      "outcome": {
+        "status": "rejected",
+        "reason_code": "must_be_positive",
+        "field_path": "$.attempted_input.amount"
+      },
+      "status_changes": [],
+      "deltas": {
+        "entity_changes": {
+          "catalog_accounts": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "catalog_categories": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transactions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "transaction_versions": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_sets": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "postings": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "sources": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "candidates": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "confirmations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "evidence_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "relations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "domain_entities": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "audit_links": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          },
+          "posting_reconciliations": {
+            "added_ids": [],
+            "changed_ids": [],
+            "removed_ids": []
+          }
+        },
+        "value_changes": {
+          "balances": [],
+          "reports": [],
+          "derived_statuses": []
+        }
+      },
+      "returned_ids": []
+    }
+  ]
+}

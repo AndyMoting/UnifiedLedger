@@ -14,6 +14,78 @@
   "cases": [
     {
       "approval_status": "approved",
+      "case": "RG-01",
+      "discovery": {
+        "approval": "explicit user approval",
+        "comparison": "11-operation full comparison",
+        "explicit_user_approval": true,
+        "full_comparison_operation_count": 11,
+        "full_state_comparison": true,
+        "status": "approved expected output independently reviewed and explicitly approved"
+      },
+      "canonical_sha256": "266dc88ebc2a7aeac3aa7bb173f23e3a753d829af1a438a59adfa73554d86f7a",
+      "expected_byte_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
+      "expected_path": "docs/migrations/golden-v2/rg-01-expected.json",
+      "hashes": {
+        "canonical_sha256": "266dc88ebc2a7aeac3aa7bb173f23e3a753d829af1a438a59adfa73554d86f7a",
+        "expected_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
+        "output_sha256": "5b322e834087923b2fbc7af9452c355eb676e545c1f1e923bfd1cd422a1afb0b",
+        "source_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b"
+      },
+      "object_counts": {
+        "operations": 11,
+        "roots": 8,
+        "states": 19
+      },
+      "operation_status_counts": {
+        "accepted": 3,
+        "no_change": 1,
+        "rejected": 7
+      },
+      "output_path": "golden/rules-v2/rg-01.json",
+      "publication_status": "published",
+      "source_byte_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b",
+      "source_path": "golden/rules/rg-01.json",
+      "source_sha256": "8fb2c266de88cfad0cdab1e156162382c55541ed9f29a5782e2c7b13bc39666b"
+    },
+    {
+      "approval_status": "approved",
+      "case": "RG-02",
+      "discovery": {
+        "approval": "explicit user approval",
+        "comparison": "13-operation full comparison",
+        "explicit_user_approval": true,
+        "full_comparison_operation_count": 13,
+        "full_state_comparison": true,
+        "status": "approved expected output independently reviewed and explicitly approved"
+      },
+      "canonical_sha256": "7324ae5aa0345b30dafc58f5afc730b39db07fd323634cea095ae3e63f7a2ce6",
+      "expected_byte_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
+      "expected_path": "docs/migrations/golden-v2/rg-02-expected.json",
+      "hashes": {
+        "canonical_sha256": "7324ae5aa0345b30dafc58f5afc730b39db07fd323634cea095ae3e63f7a2ce6",
+        "expected_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
+        "output_sha256": "57f4f3d981c5621339d5ff1a23a41e3cd8ba44e7f18082c6595266bf914e80e8",
+        "source_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07"
+      },
+      "object_counts": {
+        "operations": 13,
+        "roots": 11,
+        "states": 24
+      },
+      "operation_status_counts": {
+        "accepted": 4,
+        "no_change": 1,
+        "rejected": 8
+      },
+      "output_path": "golden/rules-v2/rg-02.json",
+      "publication_status": "published",
+      "source_byte_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07",
+      "source_path": "golden/rules/rg-02.json",
+      "source_sha256": "0eb25a222c12dd601837593f5e1f887fb8e26e98bd9344b6a06b0eb58daf4d07"
+    },
+    {
+      "approval_status": "approved",
       "case": "RG-03",
       "discovery": {
         "approval": "explicit user approval",
