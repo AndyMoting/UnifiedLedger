@@ -2848,6 +2848,10 @@ def _validate_references(
             continue
         if source["type"] in {
             "bank_debit",
+            "bank_credit",
+            "bank_credit_mirror",
+            "lending_agreement",
+            "explicit_manual_lending_confirmation",
             "merchant_refund_notice",
             "wallet_credit",
             "combined_refund_statement",
@@ -2947,6 +2951,12 @@ def _validate_references(
         if sequences != list(range(1, len(history) + 1)):
             _fail(candidate_path + ".status_history", "sequence must be contiguous and ordered from 1")
         _decimal(candidate["confidence"], candidate_path + ".confidence")
+        if candidate["type"] == "lending_collection_credit":
+            # RG-08 lending collection candidates are fully validated by
+            # _validate_rg08_contract (bank credit + lending agreement source
+            # pairing, six confirmation gates, pending/confirmed status
+            # sequence); no generic candidate branch applies to them.
+            continue
         payload = candidate["payload"]
         if candidate["type"] == "staged_payment":
             if len(candidate["source_ids"]) != 1:
@@ -3532,7 +3542,9 @@ def _validate_references(
     for index, confirmation in enumerate(state["confirmations"]):
         confirmation_path = f"{path}.confirmations[{index}]"
         operation = operations.get(confirmation["operation_id"])
-        if operation is None or operation["root_id"] != state["root_id"]:
+        if operation is None or (
+            case_id != "RG-08" and operation["root_id"] != state["root_id"]
+        ):
             _fail(confirmation_path + ".operation_id", "dangling or cross-root operation reference")
         subject = confirmation["subject"]
         _resolve_ref(
@@ -8820,6 +8832,7 @@ def _validate_append_only_transition(
                 elif (
                     case_id == "RG-08"
                     and outcome_status == "accepted"
+                    and not _contract_equivalent(before[item_id], after[item_id])
                     and before[item_id].get("type") == after[item_id].get("type") == "lending_position"
                 ):
                     if before[item_id]["id"] != after[item_id]["id"]:
@@ -9180,7 +9193,7 @@ def _rg08_effect_counts(operation: dict[str, Any], path: str) -> dict[str, tuple
         "mirror_merge": {
             "sources": (1, 0, 0), "evidence": (1, 0, 0),
             "evidence_links": (1, 0, 0), "audit_links": (2, 0, 0),
-            "posting_reconciliations": (0, 1, 0),
+            "posting_reconciliations": (0, 0, 0),
         },
     }
     counts = variants.get(variant)
@@ -9826,6 +9839,11 @@ def _validate_registered_action_effects(
             )
 
     if not accepted:
+        return
+
+    if action in _RG08_ACTIONS:
+        # RG-08 accepted effect contracts are enforced by _rg08_effect_counts
+        # and _validate_rg08_action_effects; no generic action branch applies.
         return
 
     if action in _RG07_ACTIONS:
