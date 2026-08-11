@@ -1,6 +1,27 @@
 # Golden Schema v2 阶段 0 盘点（历史快照）
 
-> 本文记录阶段 0 完成时的结构与语义盘点，保留当时的设计门和未决问题，不能作为当前 runtime、publication 或 release 状态的报告。当前仓库事实以 [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)、[`docs/ROADMAP.md`](ROADMAP.md) 和各 RG mapping 为准；例如 RG-04 v2 已发布且全 26 项完整比较已合入，RG-11/12 的 direct-v2 工件已发布且 Kotlin runtime 已实现，RG-08 仍无 v2 工件且未发布。
+> 本文记录阶段 0 完成时的结构与语义盘点，保留当时的设计门和未决问题，不能作为当前 runtime、publication 或 release 状态的报告。当前仓库事实以 [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)、[`docs/ROADMAP.md`](ROADMAP.md) 和各 RG mapping 为准；例如 RG-04 v2 已发布且全 26 项完整比较已合入，RG-11/12 的 direct-v2 工件已发布且 Kotlin runtime 已实现，RG-01/02 与 RG-08 已按 `D-089` 发布（当前 12 case 集合完整）。
+
+## 当前 v2 发布清单（12 case）
+
+`golden/rules-v2/` 工件与 `manifest.json` 登记（manifest 为 raw-byte hash 与 canonical hash 的权威来源，D-090 LF 字节域）：
+
+| case | object_counts（operations/roots/states） | operation_status_counts（accepted/no_change/rejected） | discovery.comparison |
+| --- | --- | --- | --- |
+| `RG-01` | 11 / 8 / 19 | 3 / 1 / 7 | 11-operation full comparison |
+| `RG-02` | 13 / 11 / 24 | 4 / 1 / 8 | 13-operation full comparison |
+| `RG-03` | 20 / 13 / 33 | 5 / 5 / 10 | 20-operation full comparison |
+| `RG-04` | 26 / 17 / 43 | 6 / 6 / 14 | partial_runtime_comparison |
+| `RG-05` | 25 / 17 / 42 | 4 / 4 / 17 | 25-operation full comparison |
+| `RG-06` | 41 / 20 / 61 | 13 / 10 / 18 | 41-operation full comparison |
+| `RG-07` | 49 / 23 / 72 | 16 / 12 / 21 | 49-operation full comparison |
+| `RG-08` | 44 / 18 / 62 | 6 / 13 / 25 | 44-operation full comparison |
+| `RG-09` | 50 / 9 / 59 | 14 / 15 / 21 | 50-operation full comparison |
+| `RG-10` | 44 / 14 / 58 | 12 / 10 / 22 | 44-operation full comparison |
+| `RG-11` | 22 / 3 / 25 | 11 / 1 / 10 | 22-operation full comparison |
+| `RG-12` | 12 / 3 / 15 | 1 / 1 / 10 | 12-operation full comparison |
+
+RG-08 条目（`D-089` B 批，2026-08-11）：source `golden/rules/rg-08.json`（冻结 v1，schema_version 1），expected `docs/migrations/golden-v2/rg-08-expected.json`（SHA-256 `b3434dfc849fffb3c22511577bd0090158a3173d2b1cabfbe6bf9c20d866bca7`，44 ops / 18 roots / 62 states，accepted 6 / no_change 13 / rejected 25，approval approved），output `golden/rules-v2/rg-08.json`（== expected 字节，LF）；`D-090` 修正的 `guessed-split` rejected field path 映射为 canonical `$.attempted_input.split_source`，`negative-interest` 映射为 `$.attempted_input.principal_amount`。
 
 ## 历史状态、范围与权威
 

@@ -12,7 +12,7 @@ Covers the shared pre-publish integrity gate
 - full real-manifest per-case verification in an LF environment built from
   ``git show`` blob bytes, independent of worktree line endings;
 - publisher wiring: a failing gate stops the publisher before it reads the
-  source, and all nine publishers call the gate at the same unconditional
+  source, and all ten publishers call the gate at the same unconditional
   seam (after recovery completes, before the stale-dotfile sweep and before
   ``_load_json(source_path)``);
 - fail-closed registration-relation and corruption rejection.
@@ -37,7 +37,7 @@ from golden_cases.rg03_publication import publish_rg03
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "golden" / "rules-v2" / "manifest.json"
-PUBLISHERS = ("rg01", "rg02", "rg03", "rg05", "rg06", "rg09", "rg10", "rg11", "rg12")
+PUBLISHERS = ("rg01", "rg02", "rg03", "rg05", "rg06", "rg08", "rg09", "rg10", "rg11", "rg12")
 
 
 def _sha256(data: bytes) -> str:
@@ -187,7 +187,9 @@ class PublicationIntegrityTests(unittest.TestCase):
                 digest = _sha256(_git_show(path))
                 self.assertEqual(hashes[f"{base}_sha256"], digest)
                 total += 1
-        self.assertEqual(33, total)
+        # One source/expected/output raw-byte hash per registered case (12
+        # cases after the RG-08 publication, 3 hashes each).
+        self.assertEqual(3 * len(manifest["cases"]), total)
         for case in manifest["cases"]:
             expected_bytes = _git_show(case["expected_path"])
             canonical = _sha256(
