@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from golden_cases.publication_integrity import PublicationIntegrityError
 from golden_cases.rg12_publication import (
     PublicationRecoveryError,
     publish_rg12,
@@ -18,6 +20,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATH = ROOT / "golden" / "rules" / "rg-12.json"
 EXPECTED_PATH = ROOT / "docs" / "migrations" / "golden-v2" / "rg-12-expected.json"
 MANIFEST_PATH = ROOT / "golden" / "rules-v2" / "manifest.json"
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _craft_journal(directory: Path, case_id: str, phase_name: str, **overrides) -> Path:
@@ -103,6 +113,33 @@ class Rg12PublicationTests(unittest.TestCase):
             self.assertEqual(first.canonical_sha256, entries["RG-12"]["canonical_sha256"])
             self.assertEqual(first.expected_sha256, entries["RG-12"]["expected_byte_sha256"])
             self.assertEqual(first.output_sha256, entries["RG-12"]["hashes"]["output_sha256"])
+            # Manifest registration: the four hash groups, object counts and
+            # operation status counts must match the publication result, and
+            # the discovery record must carry the 12-operation full comparison
+            # (D-086 manifest registration format). RG-12 is direct-v2: the
+            # expected artifact is a frozen byte-identical copy of the source
+            # contract, so the source and expected hash groups coincide.
+            self.assertEqual(first.source_sha256, entries["RG-12"]["source_byte_sha256"])
+            self.assertEqual(first.source_sha256, entries["RG-12"]["source_sha256"])
+            self.assertEqual(first.source_sha256, entries["RG-12"]["hashes"]["source_sha256"])
+            self.assertEqual(first.expected_sha256, entries["RG-12"]["hashes"]["expected_sha256"])
+            self.assertEqual(first.canonical_sha256, entries["RG-12"]["hashes"]["canonical_sha256"])
+            self.assertEqual(
+                {"operations": 12, "roots": 3, "states": 15},
+                entries["RG-12"]["object_counts"],
+            )
+            self.assertEqual(
+                {"accepted": 1, "no_change": 1, "rejected": 10},
+                entries["RG-12"]["operation_status_counts"],
+            )
+            self.assertEqual(
+                "12-operation full comparison",
+                entries["RG-12"]["discovery"]["comparison"],
+            )
+            self.assertEqual(
+                "approved", entries["RG-12"]["approval_status"]
+            )
+            self.assertEqual("published", entries["RG-12"]["publication_status"])
 
     def test_output_swap_failure_rolls_back_and_isolates_other_cases(self):
         with tempfile.TemporaryDirectory() as name:
@@ -666,6 +703,51 @@ class Rg12PublicationTests(unittest.TestCase):
                     self.assertFalse((directory / ".rg-12-publication.journal.json").exists())
                     self.assertEqual([], list(directory.glob(".*.tmp")))
                     self.assertEqual([], list(directory.glob(".*.bak")))
+
+    def test_gate_failure_stops_publication_with_zero_mutation(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            source, expected, manifest = self._copy_inputs(directory)
+            output = directory / "rg-12.json"
+            before = _snapshot(directory)
+            with patch(
+                "golden_cases.rg12_publication.verify_publication_integrity",
+                side_effect=PublicationIntegrityError("injected gate failure"),
+            ) as gate_mock, patch(
+                "golden_cases.rg12_publication._load_json"
+            ) as load_mock:
+                with self.assertRaises(PublicationIntegrityError):
+                    publish_rg12(source, expected, output, manifest)
+                gate_mock.assert_called_once()
+                self.assertEqual(manifest.resolve(), gate_mock.call_args[0][0])
+                load_mock.assert_not_called()
+            self.assertEqual(before, _snapshot(directory))
+
+    def test_published_output_is_lf_only(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            source, expected, manifest = self._copy_inputs(directory)
+            output = directory / "rg-12.json"
+            result = publish_rg12(source, expected, output, manifest)
+            self.assertTrue(result.changed)
+            output_bytes = output.read_bytes()
+            # D-090 LF contract: publication output bytes are UTF-8 + LF and
+            # reproduce the expected artifact bytes exactly.
+            self.assertNotIn(b"\r", output_bytes)
+            self.assertEqual(b"\n", output_bytes[-1:])
+            self.assertEqual(expected.read_bytes(), output_bytes)
+            self.assertNotIn(b"\r", expected.read_bytes())
+
+    def test_expected_artifact_has_12_operations(self):
+        document = json.loads(EXPECTED_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(12, len(document["operations"]))
+        self.assertEqual(3, len(document["roots"]))
+        self.assertEqual(15, len(document["states"]))
+        counts: dict[str, int] = {}
+        for operation in document["operations"]:
+            status = operation["outcome"]["status"]
+            counts[status] = counts.get(status, 0) + 1
+        self.assertEqual({"accepted": 1, "no_change": 1, "rejected": 10}, counts)
 
 
 if __name__ == "__main__":

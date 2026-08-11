@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from golden_cases.publication_integrity import PublicationIntegrityError
 from golden_cases.rg01_publication import (
     PublicationRecoveryError,
     publish_rg01,
@@ -18,6 +20,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATH = ROOT / "golden" / "rules" / "rg-01.json"
 EXPECTED_PATH = ROOT / "docs" / "migrations" / "golden-v2" / "rg-01-expected.json"
 MANIFEST_PATH = ROOT / "golden" / "rules-v2" / "manifest.json"
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _craft_journal(directory: Path, case_id: str, phase_name: str, **overrides) -> Path:
@@ -103,6 +113,31 @@ class Rg01PublicationTests(unittest.TestCase):
             self.assertEqual(first.canonical_sha256, entries["RG-01"]["canonical_sha256"])
             self.assertEqual(first.expected_sha256, entries["RG-01"]["expected_byte_sha256"])
             self.assertEqual(first.output_sha256, entries["RG-01"]["hashes"]["output_sha256"])
+            # Manifest registration: the four hash groups, object counts and
+            # operation status counts must match the publication result, and
+            # the discovery record must carry the 11-operation full comparison
+            # (D-086 manifest registration format).
+            self.assertEqual(first.source_sha256, entries["RG-01"]["source_byte_sha256"])
+            self.assertEqual(first.source_sha256, entries["RG-01"]["source_sha256"])
+            self.assertEqual(first.source_sha256, entries["RG-01"]["hashes"]["source_sha256"])
+            self.assertEqual(first.expected_sha256, entries["RG-01"]["hashes"]["expected_sha256"])
+            self.assertEqual(first.canonical_sha256, entries["RG-01"]["hashes"]["canonical_sha256"])
+            self.assertEqual(
+                {"operations": 11, "roots": 8, "states": 19},
+                entries["RG-01"]["object_counts"],
+            )
+            self.assertEqual(
+                {"accepted": 3, "no_change": 1, "rejected": 7},
+                entries["RG-01"]["operation_status_counts"],
+            )
+            self.assertEqual(
+                "11-operation full comparison",
+                entries["RG-01"]["discovery"]["comparison"],
+            )
+            self.assertEqual(
+                "approved", entries["RG-01"]["approval_status"]
+            )
+            self.assertEqual("published", entries["RG-01"]["publication_status"])
 
     def test_output_swap_failure_rolls_back_and_isolates_other_cases(self):
         with tempfile.TemporaryDirectory() as name:
@@ -641,6 +676,51 @@ class Rg01PublicationTests(unittest.TestCase):
                 self.assertFalse(output_backup.exists())
                 self.assertFalse(manifest_backup.exists())
             self.assertFalse((directory / ".rg-01-publication.journal.json").exists())
+
+    def test_gate_failure_stops_publication_with_zero_mutation(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            source, expected, manifest = self._copy_inputs(directory)
+            output = directory / "rg-01.json"
+            before = _snapshot(directory)
+            with patch(
+                "golden_cases.rg01_publication.verify_publication_integrity",
+                side_effect=PublicationIntegrityError("injected gate failure"),
+            ) as gate_mock, patch(
+                "golden_cases.rg01_publication._load_json"
+            ) as load_mock:
+                with self.assertRaises(PublicationIntegrityError):
+                    publish_rg01(source, expected, output, manifest)
+                gate_mock.assert_called_once()
+                self.assertEqual(manifest.resolve(), gate_mock.call_args[0][0])
+                load_mock.assert_not_called()
+            self.assertEqual(before, _snapshot(directory))
+
+    def test_published_output_is_lf_only(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            source, expected, manifest = self._copy_inputs(directory)
+            output = directory / "rg-01.json"
+            result = publish_rg01(source, expected, output, manifest)
+            self.assertTrue(result.changed)
+            output_bytes = output.read_bytes()
+            # D-090 LF contract: publication output bytes are UTF-8 + LF and
+            # reproduce the expected artifact bytes exactly.
+            self.assertNotIn(b"\r", output_bytes)
+            self.assertEqual(b"\n", output_bytes[-1:])
+            self.assertEqual(expected.read_bytes(), output_bytes)
+            self.assertNotIn(b"\r", expected.read_bytes())
+
+    def test_expected_artifact_has_11_operations(self):
+        document = json.loads(EXPECTED_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(11, len(document["operations"]))
+        self.assertEqual(8, len(document["roots"]))
+        self.assertEqual(19, len(document["states"]))
+        counts: dict[str, int] = {}
+        for operation in document["operations"]:
+            status = operation["outcome"]["status"]
+            counts[status] = counts.get(status, 0) + 1
+        self.assertEqual({"accepted": 3, "no_change": 1, "rejected": 7}, counts)
 
 
 if __name__ == "__main__":
