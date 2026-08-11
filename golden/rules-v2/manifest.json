@@ -125,12 +125,10 @@
       "case": "RG-04",
       "discovery": {
         "approval": "explicit user approval",
-        "comparison": "partial_runtime_comparison",
+        "comparison": "26-operation full comparison",
         "explicit_user_approval": true,
-        "runtime_operation_count": 26,
-        "exact_projection_operation_count": 18,
-        "status_count_comparison": true,
-        "full_state_comparison": false,
+        "full_comparison_operation_count": 26,
+        "full_state_comparison": true,
         "status": "approved expected output independently reviewed and explicitly approved"
       },
       "canonical_sha256": "23ff5c85acef76ad191dc15c626890cdd184a1c6903b094664f2a67b8280905c",
