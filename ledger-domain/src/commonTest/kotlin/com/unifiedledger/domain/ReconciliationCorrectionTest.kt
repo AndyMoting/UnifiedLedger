@@ -169,6 +169,17 @@ class ReconciliationCorrectionTest {
     }
 
     @Test
+    fun rejectsSameCodeDifferentPrecisionAsCurrencyMismatch() {
+        val result = validate(
+            triple(asset = fixture.assetReplacement(accountId = fixture.cny3AccountId)),
+        )
+        assertEquals(
+            CorrectTransactionVersionViolation.AccountCurrencyMismatch(1),
+            failure(result),
+        )
+    }
+
+    @Test
     fun rejectsChangedMatchedAssetPostingByDefault() {
         val result = validate(
             triple(
@@ -899,6 +910,7 @@ private class Rg12CorrectionFixture {
     val liabilityAccountId = AccountId("root-correction-liability")
     val externalAccountId = AccountId("root-rejections-external")
     val usdAccountId = AccountId("root-rejections-usd")
+    val cny3AccountId = AccountId("root-rejections-cny-3")
     val categoryId = CategoryId("root-correction-category")
 
     val accounts = listOf(
@@ -907,6 +919,7 @@ private class Rg12CorrectionFixture {
         Account(liabilityAccountId, ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
         Account(externalAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = false, realAccount = true),
         Account(usdAccountId, ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
+        Account(cny3AccountId, ledgerId, AccountKind.ASSET, CurrencyUnit("CNY", 3), ownedByUser = true, realAccount = true),
     )
     val accountsById: Map<AccountId, Account> = accounts.associateBy { it.id }
 

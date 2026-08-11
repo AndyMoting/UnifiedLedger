@@ -122,7 +122,7 @@ fun validatePostingFactsCorrection(
         if (!ownedOrExpensePseudoAccount) {
             return DomainResult.Failure(CorrectTransactionVersionViolation.OwnedAccountRequired(index))
         }
-        if (account.currency.code != item.facts.currency.code) {
+        if (account.currency != item.facts.currency) {
             return DomainResult.Failure(CorrectTransactionVersionViolation.AccountCurrencyMismatch(index))
         }
     }
