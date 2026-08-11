@@ -1300,3 +1300,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **影响：** 后续 writer 可在本决定的窄范围内修复 manifest 11 个 case 的 raw-byte hash 元数据、增加 `.gitattributes`、实现一个共享 pre-publish integrity gate、在各 publisher 入口做最小 gate wiring 与增加 publication integrity 回归，并将 RG-08 B-1 mapping 固定为 `$.attempted_input.split_source`。任何 publisher 常规逻辑重构、工件 JSON 内容、canonical hash、计数或经济结果变化都超出授权并必须停止升级。
 
 **关联决定：** `D-084`、`D-086`、`D-088`、`D-089`
+
+---
+
+## D-091 DATA-001 Cross-RG loader 统一方案裁决
+
+**状态：** 已确认
+
+**决定：** 采用方案 1A（schema 统一）解决跨 RG loader 硬失败问题。新建共享 `formal_transaction_metadata` 表，合并 RG-08/09/10/11/12 五张私表的公共列（ledger_id、transaction_id、created_at、statistics_at_text），RG-11/12 私表整表删除，RG-08/09/10 私表仅保留 `source_record_id` 列。迁移顺带统一 RG-08 的 `effective_at_text` 命名偏差（列值即 statistics 值，迁移即语义重命名）。
+
+**理由：** 五个 `selectRgXXFormalTransactions` 已按 ledger_id 全量取数（`replayBalances` 需要全账本余额），"统一账本"是既有 SQL 设计已内嵌的方向。1A 使该方向落地为一致契约，消除私表-全取查询的结构性矛盾。单账本单 RG 约束不符合产品实际（同一银行卡可同时涉及借贷、储值、分期），会将技术限制倒逼产品形态。当前处于底层阶段，一次性工程成本可接受。
+
+**影响：**
+- 新建 `19.sqm`（v19→v20）迁移文件，重建五私表 + 共享表 + 守卫触发器迁移。
+- 五个 Store 的读写侧全部切换到共享表并统一为 statistics 语义。
+- RG-11/12 私表整表删除，守卫语义转移到共享表。
+- RG-08 的 `effective_at_text` 命名偏差顺带闭合。
+- 需新增混存验收测试（同一账本 manual + RG-08~12 交易，各 Store commit/reopen/snapshot 相等）。
+
+**关联决定：** `D-084`、`D-088`
