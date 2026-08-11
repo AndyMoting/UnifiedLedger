@@ -4944,6 +4944,48 @@ def _validate_rg08_contract(
         if evidence["payload"]["observed_at"] != source["payload"]["observed_at"]:
             _fail(evidence_path + ".payload.observed_at", "must byte-equal its source observed_at")
 
+    # Source semantic bindings (batch 0 F3, RG-07 :4798-4822 precedent): a
+    # bank_debit/bank_credit account anchor must resolve to a catalog account
+    # whose currency byte-equals the source currency; a lending_agreement
+    # counterparty must resolve to a counterparty projected through a lending
+    # position/settlement; a bank_credit_mirror lineage must identify one
+    # earlier same-state bank_credit source with the exact same amount and
+    # currency, and no other RG-08 source subtype may own source lineage.
+    source_positions = {
+        source["id"]: index for index, source in enumerate(state["sources"])
+    }
+    known_counterparties = {
+        entity["payload"]["counterparty_id"]
+        for entity in state["domain_entities"]
+        if entity.get("type") in {"lending_position", "lending_settlement"}
+    }
+    for index, source in enumerate(state["sources"]):
+        if source["type"] not in source_evidence_types:
+            continue
+        source_path = f"{path}.sources[{index}].payload"
+        payload = source["payload"]
+        if "account_id" in payload:
+            account = accounts.get(payload["account_id"])
+            if account is None:
+                _fail(source_path + ".account_id", "must reference a catalog account")
+            if payload.get("currency") != account["currency"]:
+                _fail(source_path + ".currency", "must match the source account currency")
+        if source["type"] == "lending_agreement" and payload["counterparty_id"] not in known_counterparties:
+            _fail(source_path + ".counterparty_id", "must reference a known lending counterparty")
+        mirror_source_id = payload.get("mirror_of_source_id")
+        if source["type"] == "bank_credit_mirror":
+            original_source = sources.get(mirror_source_id)
+            if (
+                original_source is None
+                or original_source["type"] != "bank_credit"
+                or source_positions[original_source["id"]] >= index
+                or original_source["payload"].get("amount") != payload.get("amount")
+                or original_source["payload"].get("currency") != payload.get("currency")
+            ):
+                _fail(source_path + ".mirror_of_source_id", "must identify one earlier equal bank credit source")
+        elif mirror_source_id is not None:
+            _fail(source_path + ".mirror_of_source_id", "only bank_credit_mirror owns source lineage")
+
     positions: dict[str, dict[str, Any]] = {}
     settlements: dict[str, dict[str, Any]] = {}
     for index, entity in enumerate(state["domain_entities"]):

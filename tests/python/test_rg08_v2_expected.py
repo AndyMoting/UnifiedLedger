@@ -57,18 +57,18 @@ Canonical semantics
   ``immutable_payload_hash`` (the import credit precedent has original ==
   immutable).  Both are the minimal way to satisfy the closed B-1 schema for
   these source subtypes.
-- Source semantic bindings NOT enforced in this batch (registered for
-  review): after the B-1 reference-layer fix, ``_validate_references``
-  performs only lexical timestamp/amount checks on the four RG-08 source
-  types, and ``_validate_rg08_contract`` validates only evidence<->source
-  subtype pairing and ``observed_at`` byte equality.  Not semantically
-  resolved for RG-08 sources: ``account_id`` -> catalog account, source
-  ``currency`` vs account currency, agreement ``counterparty_id`` -> known
-  counterparty, ``mirror_of_source_id`` lineage -> existing earlier source.
-  The risk is bounded by the frozen fixture copy, the artifact test
-  assertions, and the Kotlin oracle cross-checks; a validator-side resolution
-  check is out of scope for this batch (candidate for a later batch,
-  RG-07 :4786-4808 precedent).
+- Source semantic bindings enforced in ``_validate_rg08_contract`` (batch 0
+  F3, RG-07 :4786-4808 precedent): RG-08 sources carrying ``account_id``
+  (``bank_debit`` / ``bank_credit``) must resolve to a catalog account whose
+  currency byte-equals the source currency; ``lending_agreement``
+  ``counterparty_id`` must resolve to a counterparty projected through a
+  lending position/settlement; ``bank_credit_mirror`` ``mirror_of_source_id``
+  must resolve to one earlier same-state ``bank_credit`` source with the
+  exact same amount and currency, and no other RG-08 source subtype may own
+  ``mirror_of_source_id`` lineage.  ``_validate_references`` keeps its
+  lexical timestamp/amount checks on the four RG-08 source types; the
+  semantic resolution above sits in ``_validate_rg08_contract`` next to the
+  evidence<->source subtype pairing and ``observed_at`` byte equality.
 - Accepted-operation v2 ids are builder-authored readable ids (RG-10
   precedent): ``operation-rg08-lend``, ``operation-rg08-manual-collection``,
   ``operation-rg08-cap-maximum``, ``operation-rg08-import-intake``,

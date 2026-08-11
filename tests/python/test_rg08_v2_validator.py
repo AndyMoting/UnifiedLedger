@@ -170,6 +170,29 @@ def formal_confirmation_effect() -> tuple[dict, dict, dict]:
     return op, baseline, result
 
 
+def source_binding_state() -> dict:
+    """The base state plus all four RG-08 source subtypes in binding order:
+    bank_debit, bank_credit, lending_agreement, bank_credit_mirror (the mirror
+    targets the earlier bank_credit)."""
+    value = state()
+    debit = {
+        "id": "debit-source", "type": "bank_debit",
+        "payload": {"source_record_id": "debit-record", "observed_at": STAMP,
+                    "booking_at": STAMP, "value_at": STAMP, "account_id": "bank",
+                    "amount": "-100.00", "currency": "CNY",
+                    "immutable_payload_hash": "sha256:debit"},
+    }
+    mirror = {
+        "id": "mirror-source", "type": "bank_credit_mirror",
+        "payload": {"source_record_id": "mirror-record", "observed_at": STAMP,
+                    "amount": "45.00", "currency": "CNY",
+                    "mirror_of_source_id": "credit-source",
+                    "immutable_payload_hash": "sha256:mirror"},
+    }
+    value["sources"] = [debit, value["sources"][0], value["sources"][1], mirror]
+    return value
+
+
 class Rg08V2ValidatorTests(unittest.TestCase):
     def test_five_actions_are_registered_with_closed_variants(self):
         inputs = [
@@ -372,6 +395,71 @@ class Rg08V2ValidatorTests(unittest.TestCase):
             broken = deepcopy(result); mutate(broken)
             with self.assertRaises((GoldenCaseError, KeyError, IndexError)):
                 v2._validate_rg08_action_effects(op, "$", baseline, broken, v2._expected_entity_changes(baseline, broken))
+
+    def test_rg08_source_semantic_bindings_positive(self):
+        """All four RG-08 source subtypes resolve their semantic bindings:
+        bank debit/credit account anchors into the catalog with matching
+        currency, agreement counterparty into a position/settlement-projected
+        counterparty, and mirror lineage into one earlier equal bank credit."""
+        value = source_binding_state()
+        v2._validate_rg08_contract(value, "$", v2._state_indexes(value, "$"),
+                                   {"op-rg08": {"id": "op-rg08"}}, {"CNY": 2})
+
+    def test_rg08_source_binding_account_and_currency(self):
+        value = source_binding_state()
+        failures = [
+            ("dangling credit account", lambda x: x["sources"][1]["payload"].update(account_id="missing"),
+             "$.sources[1].payload.account_id: must reference a catalog account"),
+            ("credit currency vs account", lambda x: x["sources"][1]["payload"].update(currency="USD"),
+             "$.sources[1].payload.currency: must match the source account currency"),
+            ("dangling debit account", lambda x: x["sources"][0]["payload"].update(account_id="ghost"),
+             "$.sources[0].payload.account_id: must reference a catalog account"),
+            ("debit currency vs account", lambda x: x["sources"][0]["payload"].update(currency="EUR"),
+             "$.sources[0].payload.currency: must match the source account currency"),
+        ]
+        for label, mutate, message in failures:
+            broken = deepcopy(value); mutate(broken)
+            with self.subTest(label=label):
+                with self.assertRaises(GoldenCaseError) as caught:
+                    v2._validate_rg08_contract(broken, "$", v2._state_indexes(broken, "$"),
+                                               {"op-rg08": {"id": "op-rg08"}}, {"CNY": 2})
+                self.assertIn(message, str(caught.exception))
+
+    def test_rg08_source_binding_counterparty_and_mirror_lineage(self):
+        value = source_binding_state()
+        failures = [
+            ("unknown agreement counterparty",
+             lambda x: x["sources"][2]["payload"].update(counterparty_id="stranger"),
+             "$.sources[2].payload.counterparty_id: must reference a known lending counterparty"),
+            ("mirror to missing source",
+             lambda x: x["sources"][3]["payload"].update(mirror_of_source_id="ghost"),
+             "$.sources[3].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("mirror to non-bank-credit source",
+             lambda x: x["sources"][3]["payload"].update(mirror_of_source_id="agreement-source"),
+             "$.sources[3].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("mirror to cross-case id",
+             lambda x: x["sources"][3]["payload"].update(mirror_of_source_id="source-rg08-import-credit"),
+             "$.sources[3].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("mirror amount mismatch",
+             lambda x: x["sources"][3]["payload"].update(amount="44.00"),
+             "$.sources[3].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("mirror currency mismatch",
+             lambda x: x["sources"][3]["payload"].update(currency="USD"),
+             "$.sources[3].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("mirror not earlier in state",
+             lambda x: x["sources"].insert(0, x["sources"].pop(3)),
+             "$.sources[0].payload.mirror_of_source_id: must identify one earlier equal bank credit source"),
+            ("lineage on non-mirror source",
+             lambda x: x["sources"][1]["payload"].update(mirror_of_source_id="debit-source"),
+             "$.sources[1].payload.mirror_of_source_id: only bank_credit_mirror owns source lineage"),
+        ]
+        for label, mutate, message in failures:
+            broken = deepcopy(value); mutate(broken)
+            with self.subTest(label=label):
+                with self.assertRaises(GoldenCaseError) as caught:
+                    v2._validate_rg08_contract(broken, "$", v2._state_indexes(broken, "$"),
+                                               {"op-rg08": {"id": "op-rg08"}}, {"CNY": 2})
+                self.assertIn(message, str(caught.exception))
 
 
 
