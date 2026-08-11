@@ -11,7 +11,7 @@
 | `RG-01` | 11 / 8 / 19 | 3 / 1 / 7 | 11-operation full comparison |
 | `RG-02` | 13 / 11 / 24 | 4 / 1 / 8 | 13-operation full comparison |
 | `RG-03` | 20 / 13 / 33 | 5 / 5 / 10 | 20-operation full comparison |
-| `RG-04` | 26 / 17 / 43 | 6 / 6 / 14 | partial_runtime_comparison |
+| `RG-04` | 26 / 17 / 43 | 6 / 6 / 14 | 26-operation full comparison |
 | `RG-05` | 25 / 17 / 42 | 4 / 4 / 17 | 25-operation full comparison |
 | `RG-06` | 41 / 20 / 61 | 13 / 10 / 18 | 41-operation full comparison |
 | `RG-07` | 49 / 23 / 72 | 16 / 12 / 21 | 49-operation full comparison |
