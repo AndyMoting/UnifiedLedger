@@ -69,6 +69,11 @@ Canonical semantics
   lexical timestamp/amount checks on the four RG-08 source types; the
   semantic resolution above sits in ``_validate_rg08_contract`` next to the
   evidence<->source subtype pairing and ``observed_at`` byte equality.
+  Unlike the RG-07 precedent (v2.py:4803-4811), this batch does not enforce
+  the ``bank_debit``/``bank_credit`` amount-sign checks or the
+  owned/real/asset nature check on the source account; both remain registered
+  candidates for a later batch, bounded indirectly by the lending position
+  history checks and the account existence/currency binding above.
 - Accepted-operation v2 ids are builder-authored readable ids (RG-10
   precedent): ``operation-rg08-lend``, ``operation-rg08-manual-collection``,
   ``operation-rg08-cap-maximum``, ``operation-rg08-import-intake``,
