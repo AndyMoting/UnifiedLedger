@@ -98,8 +98,7 @@ python -m project_docs .
 - 一个提交只表达一个可独立理解的逻辑变化。
 - 代码行为变化时，实现、测试和必要文档在同一工作项中更新。
 - 在行为完整、适用测试通过且可以安全回退的稳定检查点提交；不按固定时间或文件数量机械提交。
-- 提交信息采用英文类型加中文说明，例如 `feat: 增加精确金额模型`；常用类型为 `feat`、`fix`、`refactor`、`test`、`docs` 和 `chore`。
-- 修复批次（D-088 附带约定，2026-08-10 用户授权）的提交采用英文 Conventional Commits 规范：前缀为 `feat`、`fix`、`refactor`、`test`、`docs`、`chore`、`release`、`merge`、`ci`，标题与正文均使用英文；例如 `fix: align RG-08 statistics fallback with RG-11/12 semantics (RG08-001, D-088)`。
+- 提交信息采用 Conventional Commits 规范，标题与正文均使用英文。前缀为 `feat`、`fix`、`refactor`、`test`、`docs`、`chore`、`release`、`merge`、`ci`。标题简洁，关联决定编号时以括号附在末尾；例如 `fix: align RG-08 statistics fallback with RG-11/12 semantics (RG08-001, D-088)`。
 - 不提交调试输出、半成品、真实账务数据或仅供本地工作的文件。
 
 ## 合并
