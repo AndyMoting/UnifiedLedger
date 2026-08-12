@@ -52,8 +52,19 @@ reporting-core --+
 - `ledger-application` 依赖领域类型，并定义外部能力端口。
 - 数据、导入、对账和报表模块依赖领域或应用契约，不能反向成为核心依赖。
 - 平台模块实现系统能力端口，应用组合根负责装配。
+- ID、时钟等运行时能力由应用用例通过端口消费；持久化适配器不拥有生成策略。当前 Android database handle 只是数据装配，不是 app 组合根。
 - 客户端 UI 只能调用应用用例，不直接写数据库或构造绕过不变量的正式分录。
 - 模块之间交换稳定 ID、精确金额和带时区的时间，不通过显示名称或备注建立业务关系。
+
+## 运行时能力与时间
+
+`D-093` 至 `D-095` 中已标记“暂停实施、重新审议”的历史细节不构成实现授权；`D-096` 仍是待用户批准的提案。本文只记录当前源码与既有正式规则已经支持的稳定边界，具体来源身份算法、parser 技术和 matcher 数据合同继续暂缓。
+
+阶段 4 产品路径的 ID 与 Clock 均是应用能力。当前源码证明 ID 保持在持久化 `commitOnce` 的原子首请求 callback 内惰性物化：持久化适配器先 claim 请求并判断 replay/conflict，只有赢得首请求的路径调用应用提供的 factory/callback；精确 replay、identity conflict 和并发失败方不消耗 ID。当前源码没有产品 Clock 端口，Clock 的读取时机、retry/并发语义和审计时间戳分配仍须另行决定。数据适配器负责原子写入、请求幂等、冲突检测、唯一性和事务恢复；它不能选择生成策略、读取系统时间补写来源事实或把 database handle 提升为应用组合根。既有 RG 专用 Store/IdentitySource 保持冻结回放语料，不构成产品装配先例。
+
+Android 与 Desktop 的运行时端口实现由未来实际存在的 `android-app` / `desktop-app` 组合根装配。仓库当前只有 `ledger-data` Android target 中的 SQLDelight database handle，没有可运行客户端或组合根。Golden 回放使用冻结输入供应确定性 ID 和文本时间；`GoldenV2Identity` 的命名空间与名字布局只属于 Golden v2 合同，不定义产品运行时身份。
+
+来源发生、支付、入账、起息和观察时间是不可变来源事实，用户确认的统计时间是独立业务值；运行时 Clock 只供应处理、创建、确认和审计事件自身的时间。任何 adapter、用例或 Store 都不得用当前时间覆盖缺失或已有的来源时间。
 
 ## 正式数据流
 
@@ -83,6 +94,16 @@ reporting-core --+
 每一层保留前一层引用。候选必须带来源、规则、置信度和待确认字段；重复来源可以补充证据，但不能再次影响余额。
 
 余额与报表从有效分录确定性计算。对账独立关联真实账户分录与证据，只描述核验状态，不回写金额或余额。
+
+### 导入逻辑职责
+
+`import-core` 当前是目标逻辑职责，不是已存在的构建模块。该职责拥有产品定义的 normalized source contract、可移植格式解析、raw/source facts 与派生字段分层、类型化解析诊断、来源身份、重复候选和导入候选生成；应用层拥有批次/命令幂等、确认用例和外部能力端口；`ledger-data` 只实现这些端口的原子持久化、唯一性、查询和审计历史。平台模块负责文件访问、权限和系统集成，portable parser 在可行时拥有格式语义，两者通过有界接口连接。平台路径或文件 API 不能泄漏为产品 schema；具体读取形态和容器解码责任继续暂缓。
+
+格式解析与平台文件访问在可行时分离。损坏、不支持、超限或结构无效的文件/行返回带来源位置的类型化诊断；只有已经形成可靠来源事实、但账务字段不足的记录才进入待确认或待补资料。归一化契约由产品需求和匿名验收拥有，个人 Python 类型只作迁移与行为基线。raw 保留必须同时满足可复核 provenance 与数据最小化，整文件保存策略不能由解析器实现自行决定。
+
+批次 `request_id`、raw source record identity、duplicate candidate detection 和 mirror/evidence matching 是四个独立关注点。分类、账户映射、用户配置映射、对方归一化等可变结果不能决定权威 raw identity。业务指纹只提供重复候选信号，不能静默删除来源或直接复用正式交易；具体来源身份算法和重复候选数据合同仍须另行决定。
+
+`reconcile-core` 的状态变化必须先解析到精确且具备资格的真实账户 posting，并通过应用确认/对账用例遵守证据职责和场景合同。精确请求 replay 不追加新状态；同一经济事件的后到补充证据只追加已批准的 lineage，不创建第二笔正式交易或重复既有 link/reconciliation effect；排他性冲突类型化拒绝且零写入。具体 matcher 字段、时间窗口、歧义模型和基数由场景合同另行决定。通道级总额比较只生成诊断差额，不能链接证据、改变对账、抑制交易或代替逐 posting 验收。
 
 ## 候选与确认边界
 
@@ -119,6 +140,8 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | UI 与导航库 | 暂缓决定 | Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |
+| 产品运行时 ID 算法 | 暂缓决定 | Golden v2 UUID 命名空间与名字布局不是产品默认；具体算法、版本和迁移策略另行决定 |
+| CSV/XLSX 解析技术 | 暂缓决定 | 格式合同与有界输入要求明确后，再单独评估具体库或自研实现 |
 | 网络库 | 暂缓决定 | 第一个可选网络边界及其安全、离线和替换要求确认后选择 |
 | 同步实现 | 暂缓决定 | 本地闭环、版本语义、冲突策略、加密和恢复要求通过验收后选择 |
 

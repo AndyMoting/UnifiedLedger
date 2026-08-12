@@ -1341,7 +1341,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-093 RUNTIME-001 运行时 ID 与时钟端口
 
-**状态：** 已确认
+**状态：** 已确认方向；争议实施条款暂停实施并由 `D-096` 重新审议，未实施
+
+**暂停实施与重新审议：** 保留且可继续作为批准方向的只有应用层可注入 ID/时钟能力，以及 Golden 路径注入冻结 ID/时间以保持确定性。以下旧正文条款暂停实施：把 `AndroidLedgerDatabase` 指定为生产组合根；抽取或冻结 `goldenV2UuidV5`/UUIDv5 原语作为产品技术；以 data Store 构造/消费端口模式决定产品生成策略或装配边界；运行时 ID 的命名空间化/序号方案。历史正文保留用于审计，但不能授权实现；替代细节经 D-096 或后续决定获用户明确批准前，本项实施保持阻塞。本决定历史文本从未批准产品复用 Golden 命名空间或名字布局。
 
 **决定：** 产品路径新增两个可注入端口：ID 生成端口（形式化现有 IdSource 模式——`ConfirmedManualExpenseIdSource` 等先例；抽取 `GoldenV2Identity.goldenV2UuidV5` 的 SHA-1/UUIDv5 骨架为通用原语，golden 名字布局原样保留）+ 时钟端口（全新能力，commonMain 现零 `Clock`/`now()` 用法）。golden 回放路径注入确定性实现（fixture 驱动 ID 与文本时间），产品路径注入运行时实现；生产装配点扩展 androidMain `AndroidLedgerDatabase`。
 
@@ -1358,7 +1360,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-094 IMPORT-001 来源解析适配器契约
 
-**状态：** 已确认
+**状态：** 已确认方向；争议实施条款暂停实施并由 `D-096` 重新审议，未实施
+
+**暂停实施与重新审议：** 保留且可继续作为批准方向的只有来源格式 adapter、raw/source facts 与派生字段分层、类型化诊断，以及 provenance/confidence 随候选保存。以下旧正文条款暂停实施：以个人 Python `Txn`/`TransactionFact` 形状定义产品中间表示或共享 source 表；把所有解析失败统一送入待补资料队列；冻结微信 XLSX/支付宝 CSV 的先后顺序、编码/宽容解析细节或“免依赖 XLSX”技术；把私人 Python 枚举直接提升为产品契约。历史正文保留用于审计，但不能授权实现；替代契约和技术经用户明确批准前，本项实施保持阻塞。
 
 **决定：** 解析适配器契约：适配器接口（平台格式语义隔离在 adapter）+ 归一化中间表示（raw 原文保留 + 派生字段双轨 + 丢弃原因枚举 + 证据分级 origin×confidence 从第一天带上）；中间表示与共享 source 表形状一起设计；首适配器微信导出文件（xlsx，免依赖读取，参考淘宝 zipfile+sharedStrings 直读先例），支付宝 CSV（gb18030）紧随；解析失败不猜测，进待补资料队列（D-032）。
 
@@ -1375,7 +1379,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-095 IMPORT-002 去重与镜像键推导
 
-**状态：** 已确认
+**状态：** 已确认方向；争议实施条款暂停实施并由 `D-096` 重新审议，未实施
+
+**暂停实施与重新审议：** 保留且可继续作为批准方向的只有同一 `request_id` 精确 replay 幂等、重复来源不得产生第二次余额或报表影响，以及通道总额比较仅作诊断展示。以下旧正文条款暂停实施：Python 键集/SHA1-16 业务指纹作为事实级身份、共享 source 内容指纹或破坏性去重依据；先到先得折叠；状态/支付方式/备注等字段的固定排除；把通道总额对碰当作镜像合并完成条件；逐笔配对、名称归一化和 matcher 基数的任何默认方案。历史正文保留用于审计，但不能授权实现；来源身份、重复候选与逐笔 matcher 的替代细节经用户明确批准前，本项实施保持阻塞。
 
 **决定：** 双层去重：批次级 `request_id` 幂等（`commitOnce` 先例）+ 事实级业务指纹（键集按 Python 基线 `[account, platform, time, direction, amount, category, counterparty, item, order_id, merchant_order_id]`，`status`/`payment_method`/`note` 不参与；存共享 source 表内容指纹列）。镜像首版采用通道级总额对碰（谓词选择器 + 精确到分求和 + 差额展示），逐笔配对与对方名称归一化后置（无现成行为基线）。
 
@@ -1389,3 +1395,43 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 未实施（设计包行动画面第 6 步）。
 
 **关联决定：** `D-015`、`D-033`、`D-035`、`D-092`
+
+## D-096 阶段 4 运行时能力、解析、来源身份与镜像匹配边界修订
+
+**状态：** 提案，待用户明确批准；不授权实施
+
+**提案目的：** 根据正式需求、架构边界和当前源码/测试现实，记录 `D-093` 至 `D-095` 中需要纠正的来源事实，并提出后续身份、解析和 matcher 契约的设计门。`D-092` 的共享导入链方向不在本提案中重开。除下列“已确认依据”外，所有“提议”与“待批准设计门”均不是已批准产品行为；用户明确批准前不得开始依赖 D-096 的实现。
+
+### 运行时 ID 与时间
+
+**已确认依据（ID）：** ID 能力属于应用用例边界；当前 `ConfirmedManualExpense` 先例把 `idSource.next()` 放在传给 `commitOnce` 的 factory callback 内。持久化实现先原子 claim 请求并判断 replay/conflict，只有赢得首请求的路径才调用应用提供的 callback。因此 ID 在原子首请求路径内惰性物化一次；精确 replay、identity conflict 和并发失败方不得消耗 ID。持久化负责 claim、事务、冲突和 callback 调用，不选择生成策略。既有 RG 专用 Store/IdentitySource 保持冻结回放语料，不构成产品装配先例。
+
+**已确认依据（Clock）：** Clock 是应用能力，来源发生、支付、入账、起息和观察时间是来源事实，Clock 不能补写或覆盖这些事实；Golden 回放继续注入冻结 ID 与文本时间。当前源码没有产品 Clock 端口或实现，不能证明 Clock 的读取位置、消费次数、retry/concurrent-loser 语义或审计时间戳分配策略。
+
+**已确认依据（装配与 Golden）：** 当前 `createAndroidLedgerDatabase` / `AndroidLedgerDatabaseHandle` 只封装 Android SQLDelight driver、database 和既有 commit port，不是 app 组合根。`GoldenV2Identity` 的命名空间和名字布局只属于 Golden v2 冻结契约，不能被解释为产品 ID 契约。
+
+**待批准设计门：** 产品 ID 算法、命名空间、版本与迁移策略仍未选择。若后续提议抽取底层散列/UUID 原语，必须单独证明兼容性、碰撞、离线、跨端和替换成本；D-096 本身不批准任何 UUIDv5 或其他算法。Clock 的读取/消费时机、retry 与并发失败方是否读取时间、以及处理/创建/确认/审计时间戳如何分配，均待 D-096 或后续决定明确批准。
+
+### 解析契约与技术边界
+
+- 归一化来源契约由产品需求、账务规则和匿名验收合同拥有，不能以个人 Python 的 `Txn`、`TransactionFact` 或其他历史内部结构作为产品字段集。Python 仅提供行为证据、迁移基线和差异比较；可移植内容必须改写为中立契约与合成测试。
+- 平台层负责文件选择、权限，以及按适配器需求打开有界 stream 或 random-access source；格式 adapter 负责 CSV 字段语义，以及 XLSX 的 ZIP/OPC/XML 解码和验证。只有后续证据证明多个格式需要独立 archive 能力时，才另行评估 archive port；本提案不预设该端口。
+- 不支持的文件类型、损坏或超限容器、编码失败、结构不兼容和无效行返回带来源位置的类型化诊断，不伪装成有效来源事实。文件或行已被可靠读取、但形成账务候选所需事实不足时，才保存来源事实并进入待确认或待补资料流程；任何推断字段继续与 raw/source facts 分层并携带 provenance、confidence 和待确认字段。
+- raw 保留遵守最小化与隐私边界：保存可复核所需的原始字段、来源定位、格式/规范版本和完整性标识；是否保留整文件及其生命周期由后续隐私、容量、导出和删除需求决定。诊断和 tracked 测试不得包含个人标识、真实订单号、账户锚点或完整账单。
+- 首批 XLSX/CSV 的具体库、免依赖实现或自研读取器均未冻结。选型前必须用受限大小、压缩炸弹/路径穿越、XML 实体或资源耗尽、日期与数字格式、shared strings、合并/缺失单元格、编码、跨平台兼容、许可证、维护与替换成本的有界证据证明可接受；否则保持技术决定暂缓。
+
+### 幂等、来源身份、重复候选与镜像证据
+
+**已确认依据：** 批次/命令 `request_id`、raw source record identity、duplicate-candidate detection 和 mirror/evidence matching 是四个不同问题，业务指纹不能同时替代四种契约。用户分类、分类建议、账户映射、用户配置映射和对方归一化等可变结果不能成为权威 raw identity；业务相似指纹只能提出候选，不能破坏性删除来源。通道级总额对碰只作诊断，不能链接某条证据、改变 posting reconciliation、压制候选或交易，也不能满足 RL-07 的逐记录镜像验收。
+
+**已确认依据：** 任何会改变 evidence link 或 posting reconciliation 的镜像处理都必须先解析到精确且具备资格的真实账户 `Posting`，并遵守对应场景已经批准的证据职责、确认和对账规则。精确请求 replay 返回原结果且零新写入；同一经济事件的后到补充来源/证据可以按已批准场景追加 lineage，但不得创建第二笔正式交易，也不得重复既有 link 或 reconciliation effect；与排他性目标冲突的请求类型化拒绝且零写入。一个 posting 可接受多少 evidence、一个 evidence 可支持多少目标，以及何时属于“补充”或“冲突”，由场景合同决定，本提案不建立全局一对一基数。
+
+**待批准设计门：** raw source record identity 尚未确定采用 provider ID、来源 locator、canonical raw identity、occurrence discriminator 或何种组合，也未批准 fallback 算法、domain separation 或碰撞处置。duplicate candidate 需要保存哪些 provenance、confidence、规则版本和人工处置字段，逐来源 matcher 的字段、时间窗、歧义模型与基数，以及 RL-08 是否扩展为跨批次、合法 lookalike、映射变化和碰撞/歧义矩阵，均须形成备选方案与匿名验收后由用户批准。
+
+**理由：** 当前源码已经证明应用用例消费 ID source、持久化适配器实现 `commitOnce`/request snapshot 原子边界，Android 文件只提供 database handle；Golden UUIDv5 明确绑定冻结 v2 命名空间和名字布局。RG-04 导入 runtime 也已经证明镜像证据需要在精确 posting 候选中处理 target missing、mismatch、ambiguity 和 reconciliation precondition，成功时追加 evidence link 而不创建第二笔正式交易。正式需求同时要求来源事实、候选、确认与正式账目分层，逐真实账户 posting 对账，重复导入零重复经济影响。个人 Python 指纹和通道汇总只能作为行为证据，不能覆盖这些产品契约。
+
+**影响：** `AndroidLedgerDatabaseHandle`、Golden v2 identity、个人 Python 字段形状和总额诊断不得被误用为生产组合根、产品身份、产品 schema 或 reconciliation 写入授权。活动本地 checkpoint、计划和设计材料必须与本提案及其未决门禁对齐；D-096 获得用户明确批准前，依赖其新身份、解析或 matcher 契约的实施继续阻塞。
+
+**未决：** 产品 ID 算法与版本策略；首批 XLSX/CSV 库或自研实现；逐来源 raw identity 与碰撞/歧义处置；整文件保留、加密、导出与删除生命周期；duplicate candidate 的数据合同、阈值和人工审核交互；逐来源 mirror matcher 的字段、时间窗口、基数和验收矩阵。以上事项必须在对应需求、隐私、技术证据或匿名验收明确后另行裁决，不能由实现默认值冻结。
+
+**关联决定：** `D-001`、`D-015`、`D-016`、`D-020`、`D-032`、`D-033`、`D-043`、`D-044`、`D-045`、`D-048`、`D-051`、`D-052`、`D-053`、`D-056`、`D-073`、`D-085`、`D-092`、`D-093`、`D-094`、`D-095`
