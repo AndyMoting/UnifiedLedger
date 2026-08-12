@@ -1321,3 +1321,71 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 已实施并合入本地 main（2026-08-12，commit `79241fe`；origin 未推送，push 待用户解除禁令）：`19.sqm` v19→v20 六阶段迁移落地（共享表、回填、fail-closed 数据守卫、RG-08/09/10 私表精简重建、RG-11/12 私表删除、共享表守卫触发器）；五个 Store 读写侧切换共享表并统一 statistics 语义（RG-09/10 写侧两步：共享表 + source 私表，读侧双表；RG-08 写侧共享表 + 恒 null source 占位行；RG-11/12 单步共享表 + UPDATE 改名 `updateFormalTransactionStatisticsAtText`）；RG-09 读侧以共享表 `statistics_at_text` 重建 `effectiveAtText`（共享列恒持有原 `effective_at_text` 的精确字节，D-065 指纹字节不变由等值保证）；混存验收测试（`MultiRgStoreCoexistenceTest`）与 v19→v20 迁移测试（数据保持 + 守卫 + 原子回滚）已完成，schema 当前为 v20。
 
 **关联决定：** `D-084`、`D-088`
+
+## D-092 DATA-002 阶段 4 统一 source/evidence/candidate 所有权模型（方案 A）
+
+**状态：** 已确认
+
+**决定：** 采用方案 A：新建共享导入链（非 `rgXX_` 前缀共享表：source → evidence → candidate → confirmation → 正式账务），12 套 RG 竖井原样冻结为 jvmTest 验证语料，首版退役零张，某 RG 的 store 指向共享 owner 后按 19.sqm 模板逐个退役。否决一次性合并（原 `DATA002_DECISION.local.md` 提案已归档）。
+
+**理由：** ROADMAP 阶段 4 前置条款"跨场景可复用范围限于严格解析、明确确认、request snapshot 与正式账务链；不得提前泛化专项 DTO、表或业务 owner"；竖井是 D-072/D-074 已批准的设计决定而非技术债；阶段 4 完成条件（标准来源走到正式账目）由新建共享链满足，不需要先合并竖井。代码现实：domain 层 37 文件零 `RgXX` 前缀（已共享），共享表 14 张，产品路径缺口在解析层、共享 import 链、去重与发号。
+
+**影响：**
+- 新建共享 import 链表（新迁移号 v20 → v21+），不动已发布迁移与 golden 工件。
+- 共享链只被产品路径写；竖井只被 jvmTest 写；共存测试证明互不引用、互不污染。
+- 首版退役零张竖井；退役走 19.sqm 模板。
+
+**实施登记：** 未实施（2026-08-12 决策登记；实施按 `PHASE4_DESIGN_PACKAGE.local.md` 行动画面第 2/4 步推进）。
+
+**关联决定：** `D-072`、`D-074`、`D-091`
+
+## D-093 RUNTIME-001 运行时 ID 与时钟端口
+
+**状态：** 已确认
+
+**决定：** 产品路径新增两个可注入端口：ID 生成端口（形式化现有 IdSource 模式——`ConfirmedManualExpenseIdSource` 等先例；抽取 `GoldenV2Identity.goldenV2UuidV5` 的 SHA-1/UUIDv5 骨架为通用原语，golden 名字布局原样保留）+ 时钟端口（全新能力，commonMain 现零 `Clock`/`now()` 用法）。golden 回放路径注入确定性实现（fixture 驱动 ID 与文本时间），产品路径注入运行时实现；生产装配点扩展 androidMain `AndroidLedgerDatabase`。
+
+**理由：** golden 回放确定性是硬约束（manifest sha256 字节级锁定，fixture 文本时间 + `+08:00` 偏移），现有全部 ID/时间由调用方传入（`Rg04ImportOperations` 等），产品路径无人供应；data 层已有 `IdentitySource` 端口消费端（Rg03/04/05/07），application 已有 IdSource 先例，形式化既有模式即可，非新发明。
+
+**影响：**
+- 端口契约在 application 层（先例位置）；data 层 store 消费端按 `private constructor` + 端口参数模式扩展。
+- 时钟端口必须保证 golden 路径注入 fixture 时间，否则字节级 golden 比对立即失败。
+- 运行时 ID 实现（UUID 命名空间化/序号）实施时按平台能力定。
+
+**实施登记：** 未实施（设计包行动画面第 1 步）。
+
+**关联决定：** `D-092`
+
+## D-094 IMPORT-001 来源解析适配器契约
+
+**状态：** 已确认
+
+**决定：** 解析适配器契约：适配器接口（平台格式语义隔离在 adapter）+ 归一化中间表示（raw 原文保留 + 派生字段双轨 + 丢弃原因枚举 + 证据分级 origin×confidence 从第一天带上）；中间表示与共享 source 表形状一起设计；首适配器微信导出文件（xlsx，免依赖读取，参考淘宝 zipfile+sharedStrings 直读先例），支付宝 CSV（gb18030）紧随；解析失败不猜测，进待补资料队列（D-032）。
+
+**理由：** Python 引擎（D-020/D-053 复用方向）已有完整行为基线：表头行扫描定位、编码回退链（gb18030 / utf-8-sig→utf-8→gb18030）、金额宽容解析（strict/lenient 双模式）、方向词表映射 + 负金额翻转、Txn 20 字段统一形状、证据分级枚举（EvidenceOrigin/Confidence/SourceKind）；设计缺口（丢弃原因记录、跨平台逐笔镜像配对、对方名称归一化）由新契约补齐。
+
+**影响：**
+- 移植只移格式语义与通用规则；私人配置（姓名表、关键词表、锚点值）外置私有空间，不进 tracked 文件。
+- 解析输出字段集以 Python 基线为准（Txn/TransactionFact 形状）。
+- 中间表示契约与共享 source 表列设计联合产出。
+
+**实施登记：** 未实施（设计包行动画面第 3/4 步）。
+
+**关联决定：** `D-020`、`D-032`、`D-053`、`D-092`
+
+## D-095 IMPORT-002 去重与镜像键推导
+
+**状态：** 已确认
+
+**决定：** 双层去重：批次级 `request_id` 幂等（`commitOnce` 先例）+ 事实级业务指纹（键集按 Python 基线 `[account, platform, time, direction, amount, category, counterparty, item, order_id, merchant_order_id]`，`status`/`payment_method`/`note` 不参与；存共享 source 表内容指纹列）。镜像首版采用通道级总额对碰（谓词选择器 + 精确到分求和 + 差额展示），逐笔配对与对方名称归一化后置（无现成行为基线）。
+
+**理由：** RL-08（同一来源重复导入不产生第二次余额或报表影响）是 `core_required` 硬验收，只做批次幂等不满足；Python `dedupe_transactions`（SHA1-16 业务指纹 + 先到先得）与 `mirror_checks`（通道总额对碰、无时间窗、无模糊匹配）为已验证行为基线。
+
+**影响：**
+- 共享 source 表含内容指纹列（参考 rg07/08/09/10 `immutable_payload_hash` 先例）。
+- 镜像差额只展示不自动处理（D-015/D-035 挂起语义）。
+- 指纹键集与 Python 基线对齐测试。
+
+**实施登记：** 未实施（设计包行动画面第 6 步）。
+
+**关联决定：** `D-015`、`D-033`、`D-035`、`D-092`
