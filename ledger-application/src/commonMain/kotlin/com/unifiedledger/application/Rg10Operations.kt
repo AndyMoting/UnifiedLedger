@@ -565,6 +565,7 @@ data class Rg10FormalTransactionRecord(
     val sourceRecordId: Rg10SourceRecordId? = null,
     val createdAtText: String? = null,
     val effectiveAtText: String? = null,
+    val statisticsAtText: String? = null,
 )
 
 data class Rg10SourceRecord(
@@ -915,6 +916,7 @@ class Rg10Runtime(
             input.createdAt,
             createdAtText = input.createdAtText,
             effectiveAtText = input.occurredAtText,
+            statisticsAtText = input.occurredAtText,
         )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
@@ -1140,6 +1142,7 @@ class Rg10Runtime(
             input.createdAt,
             createdAtText = input.createdAtText,
             effectiveAtText = input.occurredAtText,
+            statisticsAtText = input.occurredAtText,
         )
         val consumptionIds = operation.ids.consumptions
         // The commit ids must match the derived plan before any formal effect: a rejected
@@ -1281,6 +1284,7 @@ class Rg10Runtime(
             input.confirmedAt,
             createdAtText = input.confirmedAtText,
             effectiveAtText = input.occurredAtText,
+            statisticsAtText = input.occurredAtText,
         )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
@@ -1674,6 +1678,7 @@ class Rg10Runtime(
             input.createdAt,
             createdAtText = input.createdAtText,
             effectiveAtText = input.activationAtText,
+            statisticsAtText = input.activationAtText,
         )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||

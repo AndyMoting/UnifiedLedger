@@ -1318,4 +1318,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - RG-08 的 `effective_at_text` 命名偏差顺带闭合。
 - 需新增混存验收测试（同一账本 manual + RG-08~12 交易，各 Store commit/reopen/snapshot 相等）。
 
+**实施登记：** 已实施（待合入，2026-08-12）：`19.sqm` v19→v20 六阶段迁移落地（共享表、回填、fail-closed 数据守卫、RG-08/09/10 私表精简重建、RG-11/12 私表删除、共享表守卫触发器）；五个 Store 读写侧切换共享表并统一 statistics 语义（RG-09/10 写侧两步：共享表 + source 私表，读侧双表；RG-08 写侧共享表 + 恒 null source 占位行；RG-11/12 单步共享表 + UPDATE 改名 `updateFormalTransactionStatisticsAtText`）；RG-09 读侧以共享表 `statistics_at_text` 重建 `effectiveAtText`（共享列恒持有原 `effective_at_text` 的精确字节，D-065 指纹字节不变由等值保证）；混存验收测试（`MultiRgStoreCoexistenceTest`）与 v19→v20 迁移测试（数据保持 + 守卫 + 原子回滚）已完成，schema 当前为 v20。
+
 **关联决定：** `D-084`、`D-088`

@@ -316,13 +316,28 @@ class SqlDelightRg09Store private constructor(
                 )
             }
         }
-        database.ledgerQueries.insertRg09FormalTransactionMetadata(
+        // Step 1: the shared metadata table carries the statistics time text
+        // (D-091; the three-time collapse makes statistics equal effective).
+        // Byte-equality premise: statistics_at_text must hold the exact bytes the
+        // former effective_at_text column held, because the read side rehydrates
+        // effectiveAtText from it and the D-065 fingerprint projects those bytes.
+        // Every construction point folds statisticsAtText = effectiveAtText (and the
+        // v19->v20 migration copied effective_at_text into statistics_at_text); any
+        // new construction point that does not fold would break the fingerprint bytes.
+        database.ledgerQueries.insertFormalTransactionMetadata(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
-            record.sourceRecordId?.value,
             record.createdAtText ?: record.createdAt.toString(),
-            record.effectiveAtText ?: formal.versions.last().times.effectiveAt.toString(),
+            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
         )
+        // Step 2: the slimmed private table keeps the source link when present.
+        record.sourceRecordId?.let { sourceRecordId ->
+            database.ledgerQueries.insertRg09FormalTransactionSource(
+                formal.transaction.ledgerId.value,
+                formal.transaction.id.value,
+                sourceRecordId.value,
+            )
+        }
     }
 
     private fun loadPersistedSnapshot(ledgerId: LedgerId): Rg09Snapshot {
@@ -511,8 +526,11 @@ class SqlDelightRg09Store private constructor(
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg09FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectRg09FormalTransactionMetadata(ledger)
+        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
             .executeAsList().associateBy { it.transaction_id }
+        val sourceMap = database.ledgerQueries.selectRg09FormalTransactionSources(ledger)
+            .executeAsList()
+            .associate { it.transaction_id to it.source_record_id }
         return database.ledgerQueries.selectRg09FormalTransactions(ledger).executeAsList().map { row ->
             val versions = database.ledgerQueries.selectRg09FormalVersions(ledger, row.transaction_id)
                 .executeAsList().map { version ->
@@ -562,9 +580,14 @@ class SqlDelightRg09Store private constructor(
             Rg09FormalTransactionRecord(
                 formalTransaction = formal,
                 createdAt = Instant.parse(savedMetadata.created_at),
-                sourceRecordId = savedMetadata.source_record_id?.let(::Rg09SourceRecordId),
+                sourceRecordId = sourceMap[row.transaction_id]?.let(::Rg09SourceRecordId),
                 createdAtText = savedMetadata.created_at,
-                effectiveAtText = savedMetadata.effective_at_text,
+                // effectiveAtText is rehydrated from the shared statistics_at_text column:
+                // it always holds the exact bytes the former effective_at_text column
+                // held (folded construction + migration copy), so the D-065 fingerprint
+                // projection (Rg09Fingerprint.kt) keeps producing the same bytes.
+                effectiveAtText = savedMetadata.statistics_at_text,
+                statisticsAtText = savedMetadata.statistics_at_text,
             )
         }
     }

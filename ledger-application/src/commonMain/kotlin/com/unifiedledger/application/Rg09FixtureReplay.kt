@@ -764,6 +764,7 @@ private fun openingTransaction(raw: JsonObject, ledgerId: LedgerId): Rg09FormalT
         transaction.instant("created_at"),
         createdAtText = transaction.string("created_at"),
         effectiveAtText = transaction.string("effective_at"),
+        statisticsAtText = transaction.string("effective_at"),
     )
 }
 

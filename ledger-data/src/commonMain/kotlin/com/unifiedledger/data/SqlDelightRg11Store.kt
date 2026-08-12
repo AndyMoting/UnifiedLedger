@@ -310,7 +310,7 @@ class SqlDelightRg11Store private constructor(
                 )
             }
         }
-        database.ledgerQueries.insertRg11FormalTransactionMetadata(
+        database.ledgerQueries.insertFormalTransactionMetadata(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
             record.createdAtText ?: record.createdAt.toString(),
@@ -414,7 +414,7 @@ class SqlDelightRg11Store private constructor(
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg11FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectRg11FormalTransactionMetadata(ledger)
+        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
             .executeAsList().associateBy { it.transaction_id }
         return database.ledgerQueries.selectRg11FormalTransactions(ledger).executeAsList().map { row ->
             val versionRows = database.ledgerQueries.selectRg11FormalVersions(ledger, row.transaction_id)
@@ -576,7 +576,7 @@ class SqlDelightRg11Store private constructor(
                     .first { it.id == record.formalTransaction.transaction.currentVersionId }
                     .times.statisticsAt.toString()
             if (statisticsAtText != oldRecord.statisticsAtText) {
-                database.ledgerQueries.updateRg11FormalTransactionStatisticsAtText(
+                database.ledgerQueries.updateFormalTransactionStatisticsAtText(
                     statisticsAtText,
                     operation.ledgerId.value,
                     transactionId,

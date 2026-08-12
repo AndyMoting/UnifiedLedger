@@ -577,7 +577,7 @@ class SqlDelightRg10StoreTest {
         createdAt = record.createdAt,
         sourceRecordId = record.sourceRecordId?.value,
         createdAtText = record.createdAtText,
-        effectiveAtText = record.effectiveAtText,
+        statisticsAtText = record.statisticsAtText,
     )
 
     private data class FormalRecordProjection(
@@ -587,7 +587,7 @@ class SqlDelightRg10StoreTest {
         val createdAt: Instant,
         val sourceRecordId: String?,
         val createdAtText: String?,
-        val effectiveAtText: String?,
+        val statisticsAtText: String?,
     )
 
     private data class PostingSetProjection(

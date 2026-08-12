@@ -349,12 +349,20 @@ class SqlDelightRg08Store private constructor(
                 )
             }
         }
-        database.ledgerQueries.insertRg08FormalTransactionMetadata(
+        // Step 1: the shared metadata table carries the statistics time text
+        // (D-091; the RG-08 record already exposes statisticsAtText).
+        database.ledgerQueries.insertFormalTransactionMetadata(
+            formal.transaction.ledgerId.value,
+            formal.transaction.id.value,
+            record.createdAtText ?: record.createdAt.toString(),
+            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
+        )
+        // Step 2: the slimmed private table keeps a source-only placeholder row
+        // (RG-08 always writes null: the record type has no source id).
+        database.ledgerQueries.insertRg08FormalTransactionSource(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
             null,
-            record.createdAtText ?: record.createdAt.toString(),
-            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
         )
     }
 
@@ -561,7 +569,7 @@ class SqlDelightRg08Store private constructor(
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg08FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectRg08FormalTransactionMetadata(ledger)
+        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
             .executeAsList().associateBy { it.transaction_id }
         return database.ledgerQueries.selectRg08FormalTransactions(ledger).executeAsList().map { row ->
             val versions = database.ledgerQueries.selectRg08FormalVersions(ledger, row.transaction_id)
@@ -612,7 +620,7 @@ class SqlDelightRg08Store private constructor(
                 formalTransaction = formal,
                 createdAt = Instant.parse(savedMetadata.created_at),
                 createdAtText = savedMetadata.created_at,
-                statisticsAtText = savedMetadata.effective_at_text,
+                statisticsAtText = savedMetadata.statistics_at_text,
             )
         }
     }

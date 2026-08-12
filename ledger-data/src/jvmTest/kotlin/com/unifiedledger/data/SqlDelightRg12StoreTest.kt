@@ -129,7 +129,7 @@ class SqlDelightRg12StoreTest {
                     .single { it.version_id == "root-correction-transaction-v2" }
                 assertEquals("2026-04-20T10:00:00+08:00", versionMetadata.created_at)
                 val recordMetadata = database.ledgerQueries
-                    .selectRg12FormalTransactionMetadata(fixture.ledgerId.value)
+                    .selectFormalTransactionMetadata(fixture.ledgerId.value)
                     .executeAsList()
                     .single { it.transaction_id == "root-correction-transaction" }
                 assertEquals("2026-04-10T09:30:00+08:00", recordMetadata.statistics_at_text)

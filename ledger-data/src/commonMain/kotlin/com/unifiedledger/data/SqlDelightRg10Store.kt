@@ -310,13 +310,26 @@ class SqlDelightRg10Store private constructor(
                 )
             }
         }
-        database.ledgerQueries.insertRg10FormalTransactionMetadata(
+        // Step 1: the shared metadata table carries the statistics time text
+        // (D-091; the three-time collapse makes statistics equal effective).
+        // Byte-equality premise: statistics_at_text must hold the exact bytes the
+        // former effective_at_text column held (folded construction + migration
+        // copy); any new construction point that does not fold would break the
+        // byte identity.
+        database.ledgerQueries.insertFormalTransactionMetadata(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
-            record.sourceRecordId?.value,
             record.createdAtText ?: record.createdAt.toString(),
-            record.effectiveAtText ?: formal.versions.last().times.effectiveAt.toString(),
+            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
         )
+        // Step 2: the slimmed private table keeps the source link when present.
+        record.sourceRecordId?.let { sourceRecordId ->
+            database.ledgerQueries.insertRg10FormalTransactionSource(
+                formal.transaction.ledgerId.value,
+                formal.transaction.id.value,
+                sourceRecordId.value,
+            )
+        }
     }
 
     private fun loadPersistedSnapshot(ledgerId: LedgerId): Rg10Snapshot {
@@ -538,8 +551,11 @@ class SqlDelightRg10Store private constructor(
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg10FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectRg10FormalTransactionMetadata(ledger)
+        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
             .executeAsList().associateBy { it.transaction_id }
+        val sourceMap = database.ledgerQueries.selectRg10FormalTransactionSources(ledger)
+            .executeAsList()
+            .associate { it.transaction_id to it.source_record_id }
         return database.ledgerQueries.selectRg10FormalTransactions(ledger).executeAsList().map { row ->
             val versions = database.ledgerQueries.selectRg10FormalVersions(ledger, row.transaction_id)
                 .executeAsList().map { version ->
@@ -588,9 +604,12 @@ class SqlDelightRg10Store private constructor(
             Rg10FormalTransactionRecord(
                 formalTransaction = formal,
                 createdAt = Instant.parse(savedMetadata.created_at),
-                sourceRecordId = savedMetadata.source_record_id?.let(::Rg10SourceRecordId),
+                sourceRecordId = sourceMap[row.transaction_id]?.let(::Rg10SourceRecordId),
                 createdAtText = savedMetadata.created_at,
-                effectiveAtText = savedMetadata.effective_at_text,
+                // RG-10 has no fingerprint consumer: effectiveAtText stays null on the
+                // read side and effective time is derived from version.times when needed.
+                effectiveAtText = null,
+                statisticsAtText = savedMetadata.statistics_at_text,
             )
         }
     }

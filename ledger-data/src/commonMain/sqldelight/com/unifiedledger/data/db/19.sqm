@@ -1,0 +1,193 @@
+-- DATA-001 schema unification (D-091): v19 -> v20.
+-- Five RG-scoped private formal-transaction-metadata tables are replaced by one
+-- shared formal_transaction_metadata(ledger_id, transaction_id, created_at,
+-- statistics_at_text) table; the rg08/09/10 private tables are slimmed to their
+-- source-only column and the rg11/12 private tables are dropped entirely. The
+-- shared table carries the statistics time text for every RG: rg08's
+-- effective_at_text naming deviation (D-088 RG08-001, its value already is the
+-- statistics value) closes with this migration (semantic rename), rg09/10 fold
+-- effective into statistics (occurred == effective == statistics), rg11/12 copy
+-- statistics_at_text directly.
+-- Six stages: shared table, backfill, fail-closed data guard, staged rebuild of
+-- the rg08/09/10 private tables, drop of the rg11/12 private tables, shared-table
+-- immutability guards (statistics_at_text-only UPDATE, like the former rg11/12
+-- CASE guards). The statements execute one by one without an internal
+-- transaction; atomicity is guaranteed by the caller's transaction wrapper
+-- (Android onUpgrade / an explicit JVM transaction around Schema.migrate).
+
+-- Stage 1: the shared table.
+CREATE TABLE formal_transaction_metadata (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  statistics_at_text TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+-- Stage 2: backfill from the five private tables.
+-- RG-08: effective_at_text is the statistics value (D-088 RG08-001).
+INSERT INTO formal_transaction_metadata(ledger_id, transaction_id, created_at, statistics_at_text)
+SELECT ledger_id, transaction_id, created_at, effective_at_text
+FROM rg08_formal_transaction_metadata;
+
+-- RG-09: effective_at_text is the effective time; the three-time collapse
+-- guarantees statistics equivalence.
+INSERT INTO formal_transaction_metadata(ledger_id, transaction_id, created_at, statistics_at_text)
+SELECT ledger_id, transaction_id, created_at, effective_at_text
+FROM rg09_formal_transaction_metadata;
+
+-- RG-10: same collapse as RG-09.
+INSERT INTO formal_transaction_metadata(ledger_id, transaction_id, created_at, statistics_at_text)
+SELECT ledger_id, transaction_id, created_at, effective_at_text
+FROM rg10_formal_transaction_metadata;
+
+-- RG-11: statistics_at_text copied directly.
+INSERT INTO formal_transaction_metadata(ledger_id, transaction_id, created_at, statistics_at_text)
+SELECT ledger_id, transaction_id, created_at, statistics_at_text
+FROM rg11_formal_transaction_metadata;
+
+-- RG-12: statistics_at_text copied directly.
+INSERT INTO formal_transaction_metadata(ledger_id, transaction_id, created_at, statistics_at_text)
+SELECT ledger_id, transaction_id, created_at, statistics_at_text
+FROM rg12_formal_transaction_metadata;
+
+-- Stage 3: fail-closed data guard (18.sqm precedent: CHECK(value = 0) with a
+-- conditional INSERT). The backfill is a plain INSERT..SELECT of every source
+-- row, so any row loss or duplicate would surface as a count mismatch and abort
+-- the whole migration atomically.
+CREATE TABLE data001_migration_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO data001_migration_guard(value)
+SELECT 1 WHERE (
+  (SELECT count(*) FROM formal_transaction_metadata)
+  !=
+  (SELECT count(*) FROM rg08_formal_transaction_metadata)
+  + (SELECT count(*) FROM rg09_formal_transaction_metadata)
+  + (SELECT count(*) FROM rg10_formal_transaction_metadata)
+  + (SELECT count(*) FROM rg11_formal_transaction_metadata)
+  + (SELECT count(*) FROM rg12_formal_transaction_metadata)
+);
+DROP TABLE data001_migration_guard;
+
+-- Stage 4: staged rebuild of the rg08/09/10 private tables to their source-only
+-- shape (3.sqm stage precedent; the guard triggers are dropped before the
+-- RENAME so their bodies are not rewritten onto the stage table).
+
+-- 4a/4b/4c/4d/4e/4f: rg08
+DROP TRIGGER rg08_formal_metadata_guard_update;
+DROP TRIGGER rg08_formal_metadata_guard_delete;
+ALTER TABLE rg08_formal_transaction_metadata
+  RENAME TO rg08_formal_transaction_metadata_stage;
+CREATE TABLE rg08_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  source_record_id TEXT,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id)
+    REFERENCES rg08_source_record(ledger_id, source_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO rg08_formal_transaction_metadata(ledger_id, transaction_id, source_record_id)
+SELECT ledger_id, transaction_id, source_record_id
+FROM rg08_formal_transaction_metadata_stage;
+DROP TABLE rg08_formal_transaction_metadata_stage;
+-- Rebuilt immutable guards, same shape and text as the v19 guards.
+CREATE TRIGGER rg08_formal_metadata_guard_update
+BEFORE UPDATE ON rg08_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+CREATE TRIGGER rg08_formal_metadata_guard_delete
+BEFORE DELETE ON rg08_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg08 immutable'); END;
+
+-- 4a/4b/4c/4d/4e/4f: rg09
+DROP TRIGGER rg09_formal_metadata_guard_update;
+DROP TRIGGER rg09_formal_metadata_guard_delete;
+ALTER TABLE rg09_formal_transaction_metadata
+  RENAME TO rg09_formal_transaction_metadata_stage;
+CREATE TABLE rg09_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  source_record_id TEXT,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id)
+    REFERENCES rg09_source(ledger_id, source_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO rg09_formal_transaction_metadata(ledger_id, transaction_id, source_record_id)
+SELECT ledger_id, transaction_id, source_record_id
+FROM rg09_formal_transaction_metadata_stage;
+DROP TABLE rg09_formal_transaction_metadata_stage;
+-- Rebuilt immutable guards, same shape and text as the v19 guards.
+CREATE TRIGGER rg09_formal_metadata_guard_update
+BEFORE UPDATE ON rg09_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+CREATE TRIGGER rg09_formal_metadata_guard_delete
+BEFORE DELETE ON rg09_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg09 immutable'); END;
+
+-- 4a/4b/4c/4d/4e/4f: rg10
+DROP TRIGGER rg10_formal_metadata_guard_update;
+DROP TRIGGER rg10_formal_metadata_guard_delete;
+ALTER TABLE rg10_formal_transaction_metadata
+  RENAME TO rg10_formal_transaction_metadata_stage;
+CREATE TABLE rg10_formal_transaction_metadata (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  source_record_id TEXT,
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_record_id)
+    REFERENCES rg10_source(ledger_id, source_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO rg10_formal_transaction_metadata(ledger_id, transaction_id, source_record_id)
+SELECT ledger_id, transaction_id, source_record_id
+FROM rg10_formal_transaction_metadata_stage;
+DROP TABLE rg10_formal_transaction_metadata_stage;
+-- Rebuilt immutable guards, same shape and text as the v19 guards.
+CREATE TRIGGER rg10_formal_metadata_guard_update
+BEFORE UPDATE ON rg10_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+CREATE TRIGGER rg10_formal_metadata_guard_delete
+BEFORE DELETE ON rg10_formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'rg10 immutable'); END;
+
+-- Stage 5: drop the rg11/12 private tables and their CASE-style UPDATE guards.
+DROP TRIGGER rg11_formal_metadata_guard_update;
+DROP TRIGGER rg11_formal_metadata_guard_delete;
+DROP TABLE rg11_formal_transaction_metadata;
+
+DROP TRIGGER rg12_formal_metadata_guard_update;
+DROP TRIGGER rg12_formal_metadata_guard_delete;
+DROP TABLE rg12_formal_transaction_metadata;
+
+-- Stage 6: shared-table guards. The UPDATE guard mirrors the former rg11/rg12
+-- CASE guards: only the statistics_at_text column may change.
+CREATE TRIGGER formal_metadata_guard_update
+BEFORE UPDATE ON formal_transaction_metadata
+BEGIN
+  SELECT CASE
+    WHEN old.ledger_id = new.ledger_id
+      AND old.transaction_id = new.transaction_id
+      AND old.created_at = new.created_at
+      AND new.statistics_at_text != old.statistics_at_text
+    THEN NULL
+    ELSE RAISE(ABORT, 'formal metadata immutable')
+  END;
+END;
+
+CREATE TRIGGER formal_metadata_guard_delete
+BEFORE DELETE ON formal_transaction_metadata
+BEGIN SELECT RAISE(ABORT, 'formal metadata immutable'); END;

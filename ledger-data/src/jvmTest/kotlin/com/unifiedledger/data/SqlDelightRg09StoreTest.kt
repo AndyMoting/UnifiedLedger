@@ -197,7 +197,12 @@ class SqlDelightRg09StoreTest {
     }
 
     @Test
-    fun distinctFormalTimesAndMetadataSurviveReopen() {
+    fun distinctVersionTimesAndStatisticsMetadataSurviveReopen() {
+        // R1 (DATA-001): the three version times stay distinct and the persisted
+        // metadata is the statistics time text. The record's effective metadata is no
+        // longer stored in its own column: on read-back the store rehydrates
+        // effectiveAtText from the shared statistics_at_text column (the folded value),
+        // which is by design, so this test asserts the statisticsAtText round trip.
         val fixture = loadFixture()
         val original = fixture.openingTransactions.single()
         val originalFormal = original.formalTransaction
@@ -215,7 +220,7 @@ class SqlDelightRg09StoreTest {
             formalTransaction = formal,
             createdAt = Instant.parse("2026-01-04T00:00:00Z"),
             createdAtText = "2026-01-04T08:00:00+08:00",
-            effectiveAtText = "2026-01-03T08:00:00+08:00",
+            statisticsAtText = "2026-01-02T08:00:00+08:00",
         )
         val path = Files.createTempFile("ledger-data-rg09-times-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
@@ -538,7 +543,7 @@ class SqlDelightRg09StoreTest {
         )
         assertEquals(expected.createdAt, actual.createdAt)
         assertEquals(expected.createdAtText, actual.createdAtText)
-        assertEquals(expected.effectiveAtText, actual.effectiveAtText)
+        assertEquals(expected.statisticsAtText, actual.statisticsAtText)
     }
 
     private fun formalProjection(record: Rg09FormalTransactionRecord) = FormalRecordProjection(
@@ -550,7 +555,7 @@ class SqlDelightRg09StoreTest {
         createdAt = record.createdAt,
         sourceRecordId = record.sourceRecordId?.value,
         createdAtText = record.createdAtText,
-        effectiveAtText = record.effectiveAtText,
+        statisticsAtText = record.statisticsAtText,
     )
 
     private data class FormalRecordProjection(
@@ -560,7 +565,7 @@ class SqlDelightRg09StoreTest {
         val createdAt: Instant,
         val sourceRecordId: String?,
         val createdAtText: String?,
-        val effectiveAtText: String?,
+        val statisticsAtText: String?,
     )
 
     private data class PostingSetProjection(

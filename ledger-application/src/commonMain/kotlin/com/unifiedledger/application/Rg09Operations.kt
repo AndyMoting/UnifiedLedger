@@ -458,6 +458,7 @@ data class Rg09FormalTransactionRecord(
     val sourceRecordId: Rg09SourceRecordId? = null,
     val createdAtText: String? = null,
     val effectiveAtText: String? = null,
+    val statisticsAtText: String? = null,
 )
 
 data class Rg09Observation(
@@ -877,6 +878,7 @@ class Rg09Runtime(
             input.confirmedAt,
             createdAtText = input.confirmedAtText,
             effectiveAtText = candidate.targetObservedAtText,
+            statisticsAtText = candidate.targetObservedAtText,
         )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
@@ -1112,6 +1114,7 @@ class Rg09Runtime(
             sourceRecordId = input.sourceId ?: operation.ids.sourceRecordId,
             createdAtText = input.confirmedAtText,
             effectiveAtText = input.actualOccurredAtText,
+            statisticsAtText = input.actualOccurredAtText,
         )
         val importedSource = input.sourceId?.let { sourceId ->
             sourceRecords.firstOrNull { it.id == sourceId }
@@ -1309,6 +1312,7 @@ class Rg09Runtime(
             input.confirmedAt,
             createdAtText = input.confirmedAtText,
             effectiveAtText = adjustment.targetObservedAtText,
+            statisticsAtText = adjustment.targetObservedAtText,
         )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||

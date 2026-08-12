@@ -137,7 +137,7 @@ class SqlDelightRg11StoreTest {
                     .single { it.transaction_id == TX_2.value }
                 assertEquals(VERSION_CORRECT.value, tx2Row.current_version_id)
                 val metadata = database.ledgerQueries
-                    .selectRg11FormalTransactionMetadata(LEDGER.value)
+                    .selectFormalTransactionMetadata(LEDGER.value)
                     .executeAsList()
                     .single { it.transaction_id == TX_2.value }
                 assertEquals(CORRECTED_STATISTICS_AT_TEXT, metadata.statistics_at_text)
