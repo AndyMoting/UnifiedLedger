@@ -176,6 +176,118 @@ Direct-v2 validation covers complete replacement posting input, append-only `rec
 | `RL-07` | `core_required` | 银行侧与支付侧镜像证据；只形成一笔正式转账并合并证据 |
 | `RL-08` | `core_required` | 关闭、失败与重复导入记录；零资金影响、状态解释和幂等结果 |
 
+## P4-01 normalized source acceptance（D-097 已批准，未实现）
+
+P4-01 是 contract-only acceptance，不是新的 Golden 工件、序列化格式或 parser 实现。以下表格定义表示中立但可执行的逻辑 oracle；具体字段名、JSON 形状、Kotlin 类型、provider、文件格式、parser 限制和持久化 schema 均不属于本合同。
+
+### 公共逻辑投影
+
+`NormalizationResult` 固定比较：`contract_version = 1`；`outcome = complete | partial | rejected`；normalized records 的 semantic multiset（保留 multiplicity）；diagnostics 集合。存在任一 record error 时 outcome 为 `partial`，可以有零条或多条可靠 records；只有 fatal input/container/structure failure 或无法建立可靠 record boundary 时为 `rejected`。
+
+每条 normalized record 固定比较以下逻辑类别：
+
+| 类别 | 逻辑值 |
+| --- | --- |
+| safe source location | opaque synthetic `input-1` + record ordinal；字段诊断再加 field role |
+| record kind | `ordinary_flow_source` |
+| completeness | `valid_complete | valid_incomplete` |
+| source facts | amount、currency、occurred_time、direction、status；各自 presence 为 `absent | explicit_null | present` |
+| present source fact | 匿名 source token、机械 parsed value、provenance=`source_declared + mechanical_decode` |
+| derived facts | normalized_direction、normalized_status、ordinary_flow；各自包含 rule key、version 1、input roles、confidence=`exact | unresolved` |
+| unresolved requirements | `unresolved_required_facts` 集合 |
+
+`valid_complete` 要求 exact amount、currency、带 offset 的 source time、known direction 与 known status 均可靠；可靠 record 已形成但任一必要项 absent、explicit null 或 unresolved 时为 `valid_incomplete`。无效 amount/time 是 record error，不生成 record。
+
+已知 derived 映射使用：direction=`direction_token_v1`、status=`status_token_v1`、flow=`ordinary_flow_v1`，均为 version 1、列出 input roles、confidence=`exact`；未知映射保留 raw/source token，相关 derived 值 confidence=`unresolved`。不出现 account、category、candidate 或 identity。
+
+amount 比较 exact decimal value、currency 与 source scale，禁止 binary float。time 比较 source token、temporal kind=`offset_datetime | local_datetime`、components 与 offset presence；缺 offset 不使用 Clock 补齐。
+
+diagnostic 固定比较 code、severity、scope、安全 location 与可选 field role；message 不比较：
+
+| Code | Severity | Scope |
+| --- | --- | --- |
+| `INPUT_UNSUPPORTED` | fatal | input |
+| `INPUT_UNSAFE_OR_OVER_LIMIT` | fatal | input 或 container（按 fixture 冻结） |
+| `INPUT_DECODE_FAILED` | fatal | input 或 container（按 fixture 冻结） |
+| `STRUCTURE_MISMATCH` | fatal | structure |
+| `FIELD_AMOUNT_INVALID` | record_error | field |
+| `FIELD_TIME_INVALID` | record_error | field |
+| `CONFLICTING_SOURCE_FACTS` | record_error | record 或 field |
+| `REQUIRED_FACT_MISSING` | incomplete | field |
+| `REQUIRED_FACT_UNRESOLVED` | incomplete | field |
+
+safe location 只能包含有界 opaque synthetic input ref、record ordinal 与 field role。绝对路径、原文件名、worksheet 名、原始 header、raw value、整行、个人标识和底层库 exception 不得出现在 diagnostic、message、日志、异常或测试失败中。
+
+### 九项匿名 fixtures 与 expected
+
+以下所有非 fatal fixture 使用 synthetic input ref `input-1`。`r1`、`r2`、`r3` 分别映射 record ordinal 1、2、3。
+
+以下展开规则是每项 expected 的组成部分，不允许实现填入未声明默认值：
+
+- 每条保留 record 的 safe source location 精确为 `input-1/record-N`，record kind 为 `ordinary_flow_source`；每个 diagnostic 使用该坐标加固定 field role，fatal variant 只使用 `input-1` 与冻结 scope。
+- input 明确给值的 amount/currency/time/direction/status presence 均为 `present`；明确写 absent 或 explicit null 时分别冻结对应 presence，不能互换。present source fact 保留表中 token；amount parsed value 是同一精确十进制值和 source scale，currency parsed value 是 `CNY`，time parsed value 是 token 中的 components/kind/offset presence，direction/status 的 source value 是原 token。
+- 每个 present source fact 的 provenance 均为 `source_declared + mechanical_decode`。本合同不产生 account、category、candidate 或 identity 字段，也不允许额外 source/derived 字段进入比较。
+- known direction/status/flow 的 rule trace 分别固定为 `direction_token_v1`/`status_token_v1`/`ordinary_flow_v1`、version 1、input roles `[direction]`/`[status]`/`[normalized_direction, normalized_status]`、confidence `exact`；unresolved 项保留同一适用 rule key/version/input roles，confidence `unresolved`。
+- 除 fixture 明确列出的 diagnostics 和 unresolved requirements 外，对应集合必须为空；diagnostic message 不参与比较。
+
+#### P401-EXP-01 valid ordinary expense
+
+Input `r1`: amount token `30.00`；currency token `CNY`；time token `2026-01-02T08:30:00+08:00`；direction token `out`；status token `completed`。
+
+Expected: contract v1，outcome `complete`，一条 `valid_complete ordinary_flow_source`，无 diagnostic。amount present，decimal `30.00`、source scale 2、currency `CNY`；currency present=`CNY`；time present，kind `offset_datetime`，components `2026-01-02 08:30:00`，offset present=`+08:00`；direction/status 均 present 并保留 source token。normalized_direction=`outgoing`（`direction_token_v1`，input role direction，exact）；normalized_status=`completed`（`status_token_v1`，input role status，exact）；ordinary_flow=`expense`（`ordinary_flow_v1`，input roles normalized_direction+normalized_status，exact）；unresolved requirements 为空。
+
+#### P401-INC-01 valid ordinary income
+
+Input `r1`: amount `100.00`；currency `CNY`；time `2026-01-02T09:15:00+08:00`；direction `in`；status `completed`。
+
+Expected: contract v1，outcome `complete`，一条 `valid_complete ordinary_flow_source` at `input-1/record-1`，无 diagnostic。amount present，decimal `100.00`、scale 2、currency `CNY`；currency present=`CNY`；time present，kind `offset_datetime`，components `2026-01-02 09:15:00`，offset present=`+08:00`；direction/status present 并保留 source token。normalized_direction=`incoming`、normalized_status=`completed`、ordinary_flow=`income`，分别使用公共 rule trace，confidence 均为 exact；unresolved requirements 为空。
+
+#### P401-INCOMPLETE-01 valid incomplete
+
+Input `r1`: amount `45.00`；currency `CNY`；local time `2026-01-03T10:00:00`；direction absent；status explicit null。
+
+Expected: contract v1，outcome `complete`，一条 `valid_incomplete ordinary_flow_source` at `input-1/record-1`。amount present，decimal `45.00`、scale 2、currency `CNY`；currency present=`CNY`；time present，kind `local_datetime`，components `2026-01-03 10:00:00`，offset absent；direction presence=`absent`；status presence=`explicit_null`。normalized_direction、normalized_status、ordinary_flow 均 unresolved，分别保留公共适用 rule trace，confidence=`unresolved`。`unresolved_required_facts` 精确为 direction、status、occurred_time_offset。diagnostics 精确为三个 `REQUIRED_FACT_MISSING`（incomplete/field），locations 分别为 `input-1/record-1/direction`、`input-1/record-1/status`、`input-1/record-1/occurred_time_offset`，field roles 与末段一致。explicit null status 与 absent direction 必须不同。
+
+#### P401-AMOUNT-INVALID-01 invalid amount
+
+Input `r1`: amount `1,2x.34`；currency `CNY`；time `2026-01-02T10:00:00+08:00`；direction `out`；status `completed`。
+
+Expected: contract v1，outcome `partial`，零 records；一个 `FIELD_AMOUNT_INVALID` diagnostic，severity `record_error`、scope `field`、location `input-1/record-1/amount`、field role amount。不得生成 rejected-record envelope。
+
+#### P401-TIME-INVALID-01 invalid time
+
+Input `r1`: amount `12.00`；currency `CNY`；time `2026-02-30T10:00:00+08:00`；direction `out`；status `completed`。
+
+Expected: contract v1，outcome `partial`，零 records；一个 `FIELD_TIME_INVALID` diagnostic，severity `record_error`、scope `field`、location `input-1/record-1/occurred_time`、field role occurred_time。不得生成 incomplete record。
+
+#### P401-UNKNOWN-01 unknown tokens unresolved
+
+Input `r1`: `12.00` CNY，time `2026-01-04T08:00:00+08:00`，direction `sideways`，status `completed`。Input `r2`: `13.00` CNY，time `2026-01-04T08:05:00+08:00`，direction `out`，status `mystery`。
+
+Expected: contract v1，outcome `complete`，两条 `valid_incomplete ordinary_flow_source` at `input-1/record-1` 与 `input-1/record-2`。两条 amount/currency/time 均 present，decimal 分别 `12.00`/`13.00`、scale 2、currency `CNY`、time components 分别 `2026-01-04 08:00:00`/`08:05:00`、kind `offset_datetime`、offset present=`+08:00`。r1 direction/status 均 present；保留 direction token `sideways`，normalized_direction unresolved（公共 direction rule trace，unresolved）；normalized_status=`completed` exact；ordinary_flow unresolved（公共 flow rule trace，unresolved）；unresolved requirements 精确为 direction；一个 `REQUIRED_FACT_UNRESOLVED` incomplete/field diagnostic at `input-1/record-1/direction`。r2 direction/status 均 present；normalized_direction=`outgoing` exact，保留 status token `mystery`，normalized_status unresolved（公共 status rule trace，unresolved）；ordinary_flow unresolved；unresolved requirements 精确为 status；一个 `REQUIRED_FACT_UNRESOLVED` incomplete/field diagnostic at `input-1/record-2/status`。
+
+#### P401-MIXED-01 mixed partial
+
+Input `r1`: `20.00` CNY，`2026-01-05T08:00:00+08:00`，`out`，`completed`。Input `r2`: amount `bad`，CNY，`2026-01-05T08:05:00+08:00`，`out`，`completed`。Input `r3`: `25.00` CNY，`2026-01-05T08:10:00+08:00`，`in`，`completed`。
+
+Expected: contract v1，outcome `partial`；records 精确为 r1/r3 at `input-1/record-1` 与 `input-1/record-3`。两条 amount/currency/time/direction/status 均 present。r1 是 `valid_complete` expense：decimal `20.00` scale 2、CNY、offset datetime components `2026-01-05 08:00:00`、offset `+08:00`、outgoing/completed/expense exact。r3 是 `valid_complete` income：decimal `25.00` scale 2、CNY、offset datetime components `2026-01-05 08:10:00`、offset `+08:00`、incoming/completed/income exact。两条均使用公共 provenance 和 version 1 rule traces，unresolved requirements 为空。唯一 diagnostic 为 r2 的 `FIELD_AMOUNT_INVALID` record_error/field at `input-1/record-2/amount`；无 rejected-record envelope。
+
+#### P401-LOOKALIKE-01 lookalike preserved twice
+
+Input `r1` 与 `r2` 字节及逻辑值相同：`9.99` CNY，`2026-01-06T08:00:00+08:00`，`out`，`completed`。
+
+Expected: contract v1，outcome `complete`，无 diagnostic。semantic record multiset 含同一 `valid_complete ordinary_flow_source` expense 投影 multiplicity 2：五类 source facts 均 present，decimal `9.99` scale 2、CNY、offset datetime components `2026-01-06 08:00:00`、offset `+08:00`、outgoing/completed/expense exact，unresolved requirements 为空；具体 provenance locations 分别为 `input-1/record-1` 与 `input-1/record-2`。不得 dedup。
+
+#### P401-FATAL-01 input/container fatal rejected variants
+
+同一 operation family 下冻结四个 root variants，不冻结 provider、格式或限制数字：unsupported input→`INPUT_UNSUPPORTED` fatal/input；unsafe/over-limit container→`INPUT_UNSAFE_OR_OVER_LIMIT` fatal/container；decode/corrupt container→`INPUT_DECODE_FAILED` fatal/container；无法建立可靠 record boundary→`STRUCTURE_MISMATCH` fatal/structure。每个 variant 的 expected 都是 contract v1、outcome `rejected`、零 records、恰好一个对应 fatal diagnostic，安全 location 仅含 `input-1` 与适用 scope，不含原文件信息。
+
+### 全局副作用与确定性
+
+每个 fixture 的 candidate、confirmation、formal transaction、posting、evidence link、reconciliation、balance 与 report 创建/改变计数均为零。相同逻辑输入重复执行必须得到同一结构结果，不依赖产品 ID、Clock 或本机路径。
+
+records 的主要比较是 semantic multiset 并保留 multiplicity；location/provenance 按当前 fixture 坐标精确比较。额外 permutation assertion 对 records 重排并同步重映射 fixture coordinates 后，必须得到相同 semantic multiset 与相应重映射的 diagnostics/provenance；不得要求原 locator 在重排后保持不变。
+
 ### 未来草案：组合转账
 
 **级别：** `future_draft`

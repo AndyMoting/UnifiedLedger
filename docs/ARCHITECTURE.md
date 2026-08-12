@@ -58,7 +58,7 @@ reporting-core --+
 
 ## 运行时能力与时间
 
-`D-093` 至 `D-095` 中已标记“暂停实施、重新审议”的历史细节不构成实现授权；`D-096` 仍是待用户批准的提案。本文只记录当前源码与既有正式规则已经支持的稳定边界，具体来源身份算法、parser 技术和 matcher 数据合同继续暂缓。
+`D-093` 至 `D-095` 中已标记“暂停实施、重新审议”的历史细节不构成实现授权。`D-097` 已批准 contract-only P4-01 normalized source、typed diagnostics 与匿名 acceptance 子集；`D-096` 的其余来源身份、retention persistence、candidate lifecycle、atomic confirmation、parser、matcher、产品 ID 与 Clock 问题继续待决。D-097 不授权实现或 P4-02。
 
 阶段 4 产品路径的 ID 与 Clock 均是应用能力。当前源码证明 ID 保持在持久化 `commitOnce` 的原子首请求 callback 内惰性物化：持久化适配器先 claim 请求并判断 replay/conflict，只有赢得首请求的路径调用应用提供的 factory/callback；精确 replay、identity conflict 和并发失败方不消耗 ID。当前源码没有产品 Clock 端口，Clock 的读取时机、retry/并发语义和审计时间戳分配仍须另行决定。数据适配器负责原子写入、请求幂等、冲突检测、唯一性和事务恢复；它不能选择生成策略、读取系统时间补写来源事实或把 database handle 提升为应用组合根。既有 RG 专用 Store/IdentitySource 保持冻结回放语料，不构成产品装配先例。
 
@@ -99,7 +99,13 @@ Android 与 Desktop 的运行时端口实现由未来实际存在的 `android-ap
 
 `import-core` 当前是目标逻辑职责，不是已存在的构建模块。该职责拥有产品定义的 normalized source contract、可移植格式解析、raw/source facts 与派生字段分层、类型化解析诊断、来源身份、重复候选和导入候选生成；应用层拥有批次/命令幂等、确认用例和外部能力端口；`ledger-data` 只实现这些端口的原子持久化、唯一性、查询和审计历史。平台模块负责文件访问、权限和系统集成，portable parser 在可行时拥有格式语义，两者通过有界接口连接。平台路径或文件 API 不能泄漏为产品 schema；具体读取形态和容器解码责任继续暂缓。
 
-格式解析与平台文件访问在可行时分离。损坏、不支持、超限或结构无效的文件/行返回带来源位置的类型化诊断；只有已经形成可靠来源事实、但账务字段不足的记录才进入待确认或待补资料。归一化契约由产品需求和匿名验收拥有，个人 Python 类型只作迁移与行为基线。raw 保留必须同时满足可复核 provenance 与数据最小化，整文件保存策略不能由解析器实现自行决定。
+格式解析与平台文件访问在可行时分离。D-097 的 P4-01 逻辑合同规定：input/container fatal failure fail-closed；record 级错误隔离，可靠记录保留，混合批次显式 partial；无效行只产生脱敏 typed diagnostic，不生成 normalized record；只有可靠来源事实已经形成但后续必要事实不足时才是 `valid_incomplete`。v1 只覆盖 ordinary expense/income 最小核心并版本化扩展，不预设 transfer/credit/refund superset、provider DTO 或序列化形状。
+
+normalized source 中 source facts 与 derived facts 分层。机械可复核 decode 可以是 source fact；方向推断、默认币种、符号翻转、账户映射、分类、交易类型、duplicate 和 mirror 判断均属于 derived 或后续职责。unknown direction/status token 保留 raw/source token，normalized 语义 unresolved。金额保持 exact decimal 与 source scale，禁止 binary float；来源时间保留 temporal kind、components 与 offset presence，缺 offset 不得由 Clock 补写。
+
+source location 只用于 diagnostic/provenance，不是 identity，只能由有界 opaque synthetic input ref、record ordinal 与 field role 组成；绝对路径、原文件名、worksheet 名、原始 header、raw value、整行、个人标识和底层库 exception 不得进入 diagnostic、日志、异常或测试失败。semantic records 按 multiset 比较并保留 multiplicity；permutation 验收在重映射 fixture coordinates 后比较 semantic multiset，不能把原 locator 固定为重排后的业务不变量。
+
+P4-01 不做 dedup，也不创建 candidate、confirmation、formal transaction、posting、evidence link 或 reconciliation，不改变 balance/report。归一化契约由产品需求和匿名验收拥有，个人 Python 类型只作迁移与行为基线。raw retention/provenance 的持久化合同、整文件生命周期和 P4-02 owner 仍待批准；整文件保存策略不能由 parser 实现自行决定。
 
 批次 `request_id`、raw source record identity、duplicate candidate detection 和 mirror/evidence matching 是四个独立关注点。分类、账户映射、用户配置映射、对方归一化等可变结果不能决定权威 raw identity。业务指纹只提供重复候选信号，不能静默删除来源或直接复用正式交易；具体来源身份算法和重复候选数据合同仍须另行决定。
 

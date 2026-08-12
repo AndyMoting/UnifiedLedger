@@ -1435,3 +1435,39 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **未决：** 产品 ID 算法与版本策略；首批 XLSX/CSV 库或自研实现；逐来源 raw identity 与碰撞/歧义处置；整文件保留、加密、导出与删除生命周期；duplicate candidate 的数据合同、阈值和人工审核交互；逐来源 mirror matcher 的字段、时间窗口、基数和验收矩阵。以上事项必须在对应需求、隐私、技术证据或匿名验收明确后另行裁决，不能由实现默认值冻结。
 
 **关联决定：** `D-001`、`D-015`、`D-016`、`D-020`、`D-032`、`D-033`、`D-043`、`D-044`、`D-045`、`D-048`、`D-051`、`D-052`、`D-053`、`D-056`、`D-073`、`D-085`、`D-092`、`D-093`、`D-094`、`D-095`
+
+## D-097 P4-01 normalized source 与类型化诊断验收合同
+
+**状态：** 已确认；仅批准 contract-only P4-01，不授权实现或 P4-02
+
+**决定：** 根据用户对 P4-01 推荐组合 `B/A/A/B` 的明确批准，冻结来源中立的 normalized source、类型化诊断和匿名验收语义。P4-01 是逻辑合同交付批次，不是 Kotlin API、JSON 格式、JSON Schema、数据库 schema、parser、provider 或实现授权；正式登记完成即关闭 P4-01 合同交付，下一门是 P4-02 的 raw identity/retention/provenance、candidate lifecycle 与 atomic confirmation。
+
+**NormalizationResult 逻辑投影：** `contract_version = 1`。`outcome` 值域为 `complete | partial | rejected`：存在任一 record error 时为 `partial`，此时可以有零条或多条可靠 normalized record；只有 fatal input/container/structure failure，或无法建立可靠 record boundary 时才为 `rejected`。`records` 按语义 multiset 比较并保留重复计数，`diagnostics` 按冻结集合比较。该投影是逻辑 oracle，不规定 Kotlin 类型、JSON 或 schema。
+
+**批次与错误语义：** input/container 级 fatal failure 必须 fail-closed，整个 normalization result 为 `rejected` 且不产生 normalized record；record 级错误相互隔离，可靠记录继续保留，混合成功与记录错误的批次返回 `partial`。无效行只产生脱敏 typed diagnostic，不生成 normalized record。只有行已被可靠读取并形成来源事实、但后续必要事实不足时，才形成 `valid_incomplete` normalized record；无效 amount/time 属于 record error，不得降格为 incomplete。
+
+**v1 合同宽度：** P4-01 v1 只冻结 ordinary expense 与 ordinary income 的最小 normalized source 核心，并通过显式合同版本后续扩展。不预设 transfer、credit、refund 的 superset，不预设 provider DTO，也不要求第一版字段容纳后续全部交易类型。未知 direction/status token 必须保留可复核的 raw/source token，同时 normalized 语义保持 unresolved；不得猜测、默认或静默映射为已知值。
+
+**normalized record 逻辑投影：** 每条 record 包含安全 `source_location`、`record_kind = ordinary_flow_source`、`completeness = valid_complete | valid_incomplete`、`unresolved_required_facts`，以及 amount/currency/occurred_time/direction/status 五类 source fact。每类 source fact 都有 `presence = absent | explicit_null | present`；present 只携带匿名验收所需 source token 与机械 parsed value。derived 投影只包括 `normalized_direction`、`normalized_status` 和 `ordinary_flow`，每项记录 `rule_key`、`version = 1`、input roles 与 `confidence = exact | unresolved`。本合同不加入 account、category、candidate 或 identity 字段。
+
+**完整性：** `valid_complete` 要求 exact amount、currency、带 offset 的 source time、known direction 与 known status 均可靠。可靠 record/source facts 已形成，但任一必要项 absent、explicit null 或 unresolved 时为 `valid_incomplete`，并列出 `unresolved_required_facts`。无效 amount/time 不产生 normalized record。
+
+**事实分层：** source facts 与 derived facts 必须分层。对输入内容的机械、可复核 decode 可以作为 source fact，provenance 为 `source_declared + mechanical_decode`；方向推断、默认币种、符号翻转、账户映射、分类、交易类型、重复判断和 mirror 判断均为 derived fact 或后续批次职责，不能回写成来源事实。已知映射使用 `direction_token_v1`、`status_token_v1` 或 `ordinary_flow_v1` 的 version 1 rule trace 与 `exact` confidence；未知映射保留 source token并使用 `unresolved` confidence。
+
+**金额与时间：** amount 比较精确十进制值、currency 与 source scale，禁止 binary floating point。occurred time 比较 source token、parsed temporal kind（`offset_datetime | local_datetime`）、机械解析的 components 与 offset presence；缺少 offset 时保持 unresolved，不使用 Clock 补齐。
+
+**稳定诊断 taxonomy：** diagnostic 比较 `code`、`severity = fatal | record_error | incomplete`、`scope = input | container | structure | record | field`、安全 location 与可选 field role；message 不稳定且不比较。固定映射为：`INPUT_UNSUPPORTED`→fatal/input；`INPUT_UNSAFE_OR_OVER_LIMIT`→fatal/input 或 container；`INPUT_DECODE_FAILED`→fatal/input 或 container；`STRUCTURE_MISMATCH`→fatal/structure（无法建立可靠 record boundary）；`FIELD_AMOUNT_INVALID`→record_error/field；`FIELD_TIME_INVALID`→record_error/field；`CONFLICTING_SOURCE_FACTS`→record_error/record 或 field；`REQUIRED_FACT_MISSING`→incomplete/field；`REQUIRED_FACT_UNRESOLVED`→incomplete/field。
+
+**安全 location 与隐私：** source location 只用于 diagnostic/provenance，不构成 raw identity。它只能由有界 opaque synthetic input reference、record ordinal 与 field role 组成；不得包含绝对路径、原文件名、worksheet 名、原始 header、raw value、完整行或个人标识。diagnostic message、日志、异常和测试失败输出遵守相同边界，不得透出底层库 exception 文本。
+
+**重复、顺序与副作用：** P4-01 不做 dedup。输入中两个相同或业务近似的可靠记录仍分别产生两条 normalized record；语义 records 按 multiset 比较并保留 multiplicity，location/provenance 按具体 fixture 坐标比较。额外 permutation assertion 在重映射 fixture coordinates 后比较同一 semantic multiset，不能要求原 locator 在重排后不变。来源身份、duplicate candidate 与人工处置留给后续决定。P4-01 对 candidate、confirmation、formal transaction、posting、evidence link、reconciliation、balance 和 report 的创建或改变计数全部为零。相同逻辑输入重复执行必须产生结构确定的 normalization result，不依赖产品 ID、Clock 或本机路径。
+
+**匿名验收：** `GOLDEN_TESTS.md` 中的 P4-01 acceptance 至少覆盖 valid ordinary expense、valid ordinary income、valid incomplete、invalid amount、invalid time、unknown token unresolved、mixed partial、lookalike preserved twice 和 input/container fatal rejected。每项冻结 normalization outcome、normalized records、diagnostics、absent/null/present、source/derived/provenance/confidence 以及精确金额和时间语义；不冻结具体实现表示。
+
+**未授权与后续门：** 本决定不批准源码、测试实现、schema、migration、Golden 工件、parser 技术、provider 或来源顺序，也不批准 P4-02。`D-096` 中 raw identity、raw retention persistence、candidate lifecycle、atomic confirmation、parser、duplicate、matcher、产品 ID 与 Clock 的其余问题继续待决。整文件默认不保存；若后续 P4-02 提议保存整文件，必须先批准生命周期、加密、导出和删除合同。
+
+**理由：** 该边界允许先冻结可机器验证且来源中立的 normalization 行为，同时避免把个人 Python 结构、某个 provider、某个解析库或后续交易类型提前固化为产品 schema。逐记录隔离保留可靠事实，fatal fail-closed 防止不可信容器伪装成部分成功；unknown token unresolved 与脱敏诊断共同防止猜测和隐私泄漏。
+
+**实施登记：** 未实现。P4-01 只有正式合同与 acceptance 登记；不得据此开始 P4-02 或其他阶段 4 实现。
+
+**关联决定：** `D-016`、`D-020`、`D-032`、`D-043`、`D-053`、`D-092`、`D-094`、`D-096`
