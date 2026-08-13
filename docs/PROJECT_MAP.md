@@ -32,6 +32,7 @@
 | 产品和账务行为 | [产品需求](PRODUCT_REQUIREMENTS.md)、[账务规则](ACCOUNTING_RULES.md)、[决定](DECISIONS.md) | 无 | 相关模块测试和 Golden 场景 |
 | Golden v2 | [Golden Schema](GOLDEN_SCHEMA.md)、[Golden 测试](GOLDEN_TESTS.md)、[v2 清单](GOLDEN_V2_INVENTORY.md) | [`schemas/`](../schemas)、[`golden/`](../golden) | [`tests/python`](../tests/python) |
 | v1 到 v2 迁移 | [`docs/migrations/golden-v2`](migrations/golden-v2) | mapping、path-map、expected draft | mapping、contract 和 semantic tests |
+| P4-02 共享导入 spine | [设计规格](specs/2026-08-13-p4-02-shared-import-spine-design.md)（approved） | `ledger-data` 的 20.sqm（v20→v21）、`Ledger.sq` 共享 `import_*` 表族 | migration verifier、`ImportSpineLifecycleEndToEndTest`、`ImportSpineMigrationCoexistenceTest` |
 | 开发和发布验证 | [开发规范](CONTRIBUTING.md) | Gradle Wrapper、Python validator | focused tests、affected full suite、文档验证 |
 
 `golden/rules/` 保存冻结输入或答案，`golden/rules-v2/` 只保存已进入正式 v2 发布边界的机器工件。`docs/migrations/golden-v2/` 保存迁移和审查材料；其中的 expected 只有在明确批准后才能成为发布工件。
