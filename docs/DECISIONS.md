@@ -1526,3 +1526,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 未实施；已按交付形态 A 授权实施共享 spine 最小实现（P4-02 实施批）。
 
 **关联决定：** `D-065`、`D-073`、`D-077`、`D-081`、`D-092`、`D-093`、`D-094`、`D-095`、`D-096`、`D-097`
+
+## D-099 P4-03 首个标准来源与 parser 技术（微信账单 XLSX + Apache POI）
+
+**状态：** 已确认。按用户常设授权（研判后全权批准推荐计划，不可逆动作才停），主代理于 2026-08-14 研判批准；未推送。
+
+**决定：** P4-03 provider/format/parser 证据门按以下五组条款登记：
+
+1. **首个标准来源 = 微信支付账单（XLSX）**。理由：用户账单体量最大（~4.4K 行）；标准 OOXML、表头 0-based row 17、11 列（`交易时间`、`交易类型`、`交易对方`、`商品`、`收/支`（单列，3 值）、`金额(元)`、`支付方式`、`当前状态`、`交易单号`、`商户单号`、`备注`）、无宏无公式；表头位置（0-based row 17）与 11 列 token 为冻结契约，禁止表头扫描与漂移容差；五类事实映射可行（amount 数值格按格定精度、occurred_at excel datetime 且文件注明 UTC+08:00、direction 显式单列、status 15+ 枚举、currency 隐式 CNY）→ valid_complete；与 D-098 spine 的 intake→候选→确认链对接。**不构成对支付宝或其他来源的顺序预选**（P4-05 独立门，PHASE4_DESIGN_PACKAGE 门规）。
+2. **Parser 技术 = Apache POI（org.apache.poi:poi-ooxml 5.5.x，Apache-2.0）**。六维：格式兼容（xlsx 标准 API）；安全（内建 ZipSecureFile zip-bomb 防护默认值、不自动求值公式——仅读缓存值、宏不执行、只接受 .xlsx 拒绝 .xlsm）；跨平台（纯 Java，XSSF 读取路径不依赖 java.awt，Android minSdk 34 可行；无官方 Android 声明已登记）；许可（Apache-2.0 绿区）；维护（活跃，5.5.1）；替换（生态标准 API，代价 ~8MB 体积——登记为已知成本，APK 阶段再议）。备选 fastexcel-reader（Apache-2.0、流式、~1.5MB）落选理由：无文档化 zip 防护需自建、生态小；本批文件 <2MB、最大单文件 1780 行，流式非必需。**红区**：iText（AGPL-3.0）不采用；EasyExcel 已归档；kotlinx-csv 不存在；CSV 库选择（支付宝门 P4-05）与 PDF 库（银行批次）均延后，本批不引入。
+3. **证据门结论**：微信/支付宝个人账单导出格式无公开可抓取的官方文档（kf.qq.com/cshall.alipay.com 为 JS 渲染，2026-08 实测）——格式事实全部标注为行为证据；证据源：本地账单文件结构分析、开源 beancount 脚本与微信账单解析项目文档（行为证据，具体清单登记于本地 SOURCE_REFERENCES）、本地克隆的记账应用源码仓库（无 LICENSE，仅行为证据不复制代码）、闭源记账应用（官方 import 文档作行为证据）。外部证据门已完成：SOURCE_REFERENCES、.external/DISCOVERY_DECISION_LOG（D-014 银行 PDF 非首版硬依赖、D-020）、CORE_ACCEPTANCE_PLAN 均已读。
+4. **范围**：本批交付 RL-01/RL-02 普通收支 formalization 子切片——微信 xlsx 严格解析 → normalized source facts → spine intake（candidate pending）→ 明确确认 → formal。类型范围：**普通收支类型**（商户消费、扫二维码付款、二维码收款、赞赏码、其他——最终集合随批次规格冻结）；转账/群收款/零钱提现/零钱充值（转账/提现/充值类）与红包/退款类（红包、`<商户>-退款` 变体及状态含「退款」的行）本批 fail-closed 拒绝并登记为后续批次类型：转账/提现/充值类 → P4-04（Transfer Slice）维度；红包类 → 未分配批次维度，留待后续合同决定；退款类 → P4-06（RG-07 退款边界复用）。zip 解包与 6 位密码留平台适配层（解析器只接收 xlsx 字节流；文件访问属平台职责）。
+5. **边界**：不引入 matcher/evidence-link/reconciliation（P4-08）、dedup（P4-07）、产品 ID/Clock（后续阶段）；schema 本批预期零变更（复用 spine import_* 表）；D-096:1421 parser 技术门对首个来源关闭，其余（第二个来源、银行 PDF）仍开；D-093~D-095 暂停条款维持。
+
+**理由：** 证据体量与 valid_complete 可行性指向微信为首个来源；POI 在六维上全面满足且内建防护；本决定把格式事实限定为行为证据并锁死许可证红区。
+
+**实施登记：** 未实施；本批按 P4-01/P4-02 契约先行流程执行（规格冻结→双评审→实现→verifier→合并）。
+
+**关联决定：** `D-014`、`D-020`、`D-092`、`D-096`、`D-097`、`D-098`

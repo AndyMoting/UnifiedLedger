@@ -22,5 +22,13 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+
+        // P4-03 (D-099, spec section 6): Apache POI is JVM-only. It must never move to
+        // commonMain: a future Android target must not inherit the POI classpath.
+        val jvmMain by getting {
+            dependencies {
+                implementation("org.apache.poi:poi-ooxml:5.5.1")
+            }
+        }
     }
 }
