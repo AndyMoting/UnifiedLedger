@@ -1398,7 +1398,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-096 阶段 4 运行时能力、解析、来源身份与镜像匹配边界修订
 
-**状态：** 提案，待用户明确批准；不授权实施
+**状态：** 提案，待用户明确批准；不授权实施（2026-08-13 更新：D-098 已接受，关闭本提案中 raw identity 组合/碰撞处置、raw retention persistence（整文件除外）及 D-097:1467 所列四项的 P4-02 部分；其余设计门仍待后续批次，见 D-098 处置段。）
 
 **提案目的：** 根据正式需求、架构边界和当前源码/测试现实，记录 `D-093` 至 `D-095` 中需要纠正的来源事实，并提出后续身份、解析和 matcher 契约的设计门。`D-092` 的共享导入链方向不在本提案中重开。除下列“已确认依据”外，所有“提议”与“待批准设计门”均不是已批准产品行为；用户明确批准前不得开始依赖 D-096 的实现。
 
@@ -1471,3 +1471,58 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 未实现。P4-01 只有正式合同与 acceptance 登记；不得据此开始 P4-02 或其他阶段 4 实现。
 
 **关联决定：** `D-016`、`D-020`、`D-032`、`D-043`、`D-053`、`D-092`、`D-094`、`D-096`
+
+## D-098 P4-02「Shared Import Spine」契约
+
+**spine 释义：** spine（= D-092 共享导入链 source → evidence → candidate → confirmation → 正式账务，docs/DECISIONS.md:1329）。
+
+**状态：** 已确认。用户于 2026-08-13 明确接受 P4-02 契约（四选项 A/A/A/A 与全部细节条款）；按交付形态 A 授权实施共享 spine 最小实现。
+
+**决定：** 根据用户于 2026-08-13 对 P4-02 gate 四选项 A/A/A/A 的明确批准，将四选项与下列细节推荐值固化为逻辑合同：领域 1 raw identity 采用组合确定性身份（选项 A）、领域 2 raw retention/provenance 采用哈希+元数据（选项 A）、领域 3 candidate lifecycle 采用共享 spine + 全状态值域（选项 A）、领域 4 采用 atomic confirmation 契约 + spine 最小实现交付（选项 A）。用户已于 2026-08-13 明确接受并登记；按交付形态 A 授权实施共享 spine 最小实现。
+
+**领域 1 — Raw identity（选项 A：组合确定性身份）：**
+
+1. 主身份 = D-097 来源定位的记录级分量投影 `(input ref, record ordinal)` 的确定性组合；field role 只作 diagnostic/provenance 定位，不进入 raw identity。来源定位整体维持 D-097「只用于诊断/溯源、不构成身份」的边界（docs/DECISIONS.md:1461、docs/ARCHITECTURE.md:106）；raw identity 只是该定位器在记录粒度上的投影，不含 raw value、绝对路径、原文件名、header、整行或个人标识。
+2. 规范化内容哈希作交叉校验：RFC 8785 canonical JSON 规范化（沿用 `Rg09Fingerprint.kt:7-10` 文档注释先例：string-only JCS 子集，非完整 canonicalizer；D-065，docs/DECISIONS.md:791）。哈希在 intake 时由入站字节一次性计算（原文不落盘、事后不重算）；与 golden publication canonical hash 的跨实现可比性不成立（docs/GOLDEN_SCHEMA.md:528-530），编码为小写 `sha256:<hex>`（先例 docs/GOLDEN_SCHEMA.md:529）。只作诊断、不构成身份、不参与去重。
+3. provider ID 若存在仅作诊断字段，不作为身份依据（隐私边界）。
+4. 碰撞处置：hard reject（fail-closed；碰撞处置先例 docs/GOLDEN_SCHEMA.md:524；该区间的 UUIDv5 机制不采纳，见 D-093 暂停）；不采用 D-095 已暂停的『先到先得折叠』。
+5. 与产品运行时 ID 分离：raw identity 是确定性语义键，不是产品随机 ID；产品 ID/Clock 算法仍留待后续阶段决定（docs/DECISIONS.md:1413、docs/ARCHITECTURE.md:149）；不复活 D-093 暂停条款（UUIDv5 抽取、运行时命名空间化/序号方案）。
+
+**领域 2 — Raw retention/provenance（选项 A：哈希+元数据）：**
+
+1. 保存：规范化内容哈希（immutable）+ 完整性标识 + 来源定位 + 格式/规范版本；不存原文。沿用 rg08_source_record 先例（Ledger.sq:6073-6091：original_source_payload_hash / immutable_payload_hash / mirror_of_source_id）。本合同的规范化内容哈希列仅作完整性/诊断用途，不构成对 D-095 暂停条款（内容指纹作去重依据）的复活；任何以该哈希参与 dedup、折叠或身份的行为继续禁止（dedup 留 P4-07）。该先例及其余 rgXX 形状（Ledger.sq:502-508、:1801-1822 模式、SqlDelightRg04ImportStore 顺序）仅作形状/模式先例；产品承载一律为 D-092 方案 A 的非 rgXX_ 前缀共享表（docs/DECISIONS.md:1329, 1335），不得复用或挂接竖井表；竖井保持冻结回放语料。
+2. 整文件默认不保存（docs/DECISIONS.md:1467）；生命周期/加密/导出/删除合同整体后置到独立门禁。
+3. 来源事实/派生事实分层不变（docs/DECISIONS.md:1455）；运行时 Clock 不得补写来源时间（docs/ARCHITECTURE.md:67）；confirmed_at 是明确 provenance 字段（D-081）。
+4. 每层保留前一层引用（分层保存 docs/ACCOUNTING_RULES.md:31；每层保留前一层引用 docs/ARCHITECTURE.md:94）。
+
+**领域 3 — Candidate lifecycle（选项 A：共享 spine + 全状态值域）：**
+
+1. D-092 方案 A 方向：非 rgXX_ 前缀共享表（docs/DECISIONS.md:1329, 1335-1336）。
+2. 候选至少携带：来源引用、provenance rule、confidence、requires_confirmation 清单（docs/ACCOUNTING_RULES.md:213；D-094 保留方向 docs/DECISIONS.md:1365-1367；RG-04 字段先例 Ledger.sq:502-508）。provenance rule 命名沿用 golden 先例 `rule`/`rule_version`（docs/GOLDEN_SCHEMA.md:130）；产品字段名随实施批冻结，且只允许在 golden `rule`/`rule_version` 与 RG-04 `provenance_rule`/`provenance_rule_version`（Ledger.sq:504-505）两套既有先例命名中选取，不得引入第三套。
+3. 状态值域作为**产品契约**登记（不是直接采用 golden）：pending_confirmation / confirmed / rejected / incomplete；rgXX 竖井的 UPPER token（如 Ledger.sq:511 `'PENDING_CONFIRMATION'`）是冻结回放语料拼写，不构成产品拼写先例。本产品状态契约版本 = 1，后续扩展经显式合同修订。status_history 追加-only，每项 {id, sequence>=1, status}（形状参照 docs/GOLDEN_SCHEMA.md:113；docs/GOLDEN_SCHEMA.md:448 仅引「实体状态 ≠ 操作结果」语义，不引状态拼写）。incomplete 为产品契约状态（golden 未采用此表示，docs/GOLDEN_SCHEMA.md:131 以 pending+requires_confirmation 表达缺失事实）；incomplete 候选不得直接确认，补全必要事实的明确操作与状态迁移矩阵随实施批冻结，历史始终追加-only。
+4. 语义：导入候选默认 pending_confirmation、永不自动确认（D-073）；confirmed 状态本身不授权、不创建正式分录（D-077，docs/DECISIONS.md:951）；重复确认已确认候选返回 candidate_not_pending（D-073，docs/DECISIONS.md:897）；rejected = 人工处置终态、无正式效果；incomplete 仅按 D-097 边界（可靠来源事实已形成但后续必要事实不足；无效 amount/time 是 record error、不降格为 incomplete，docs/DECISIONS.md:1447, 1453）。
+
+**领域 4 — Atomic confirmation + 交付形态（选项 A：契约 + spine 最小实现）：**
+
+1. 共享确认端口 confirmCandidate(identity, snapshot)，commitOnce 语义（ConfirmedManualExpense.kt:83-112）：首请求最多一次回调；失败零残留且身份可用；成功 all-or-nothing。
+2. claim-first：INSERT ... ON CONFLICT DO NOTHING + changes()，输家不调回调（Ledger.sq:1801-1822）；ID 惰性分配仅发生在回调内（ConfirmedManualExpense.kt:133-141）。
+3. 校验顺序（RG-04 先例 SqlDelightRg04ImportStore.kt:94-185；产品相对先例收紧：证据/绑定校验前置，对账前置校验步骤留 P4-08 不实现）：claim → 候选存在且 status = pending_confirmation → 快照等价比对 → 证据/绑定校验 → 回调创建正式（领域用例，逐字段明确、不推断）→ 状态行 confirmed → 确认行 → receipt；同一事务。本批『证据/绑定校验』的范围 = 候选与其来源/evidence 引用的存在性与一致性校验、候选快照等价校验（stale 指纹按候选快照等价判定）；D-065 目标时点账本指纹投影、posting 匹配/绑定均不在本批范围（P4-08）。确认行必须携带创建它的操作关联：登记操作类（按实际效果，候选确认默认 `creation`，参照 docs/GOLDEN_SCHEMA.md:438）与操作引用（产品侧以本次确认请求/claim 标识为操作引用，形状先例 Ledger.sq:534-541 的 request_id 关联，`UNIQUE (ledger_id, request_id)` 与 `UNIQUE (ledger_id, candidate_id)` 语义保留）；等价 replay 必须返回原确认行与原操作引用，不得新建操作或确认行。确认行形状 candidate_confirmation：空 payload、subject=candidate；`confirmed_at` 仅在确认事实显式记录实际时间时存在，不得由来源时间、支付时间、operation time 或运行时时钟推导（docs/GOLDEN_SCHEMA.md:139-142、D-081 docs/DECISIONS.md:1007）。
+4. replay/并发：等价快照 → 原 receipt 原子重放；不等价 → RequestIdentityConflict 零写入；stale 指纹 → 整体拒绝（D-065）；并发失败方不消耗 ID（docs/DECISIONS.md:1407、docs/ARCHITECTURE.md:63）。
+5. 交付形态：合同接受并登记后，实施共享 spine 最小实现（source intake 身份+哈希+元数据、候选创建与状态历史、共享确认端口与实现、receipt/replay/并发测试），本批验收。
+
+**范围与延后（明确边界）：**
+
+- 本批包含：上述 spine 最小实现；验收标准沿用 D-097 匿名 fixtures + 诊断 taxonomy 风格，具体 fixture 清单随实施批冻结。
+- receipt 与诊断契约：receipt 形状（至少含操作/请求引用、确认行引用与正式效果引用）随实施批冻结；等价 replay 必须返回与首次确认同标识、同内容的原 receipt。spine 新增诊断（identity collision、candidate_not_pending、RequestIdentityConflict、stale 指纹等）以 D-097 稳定 taxonomy 同风格（code/severity/scope/安全 location）追加注册，具体编码随实施批冻结。
+- evidence 节点：共享链 evidence 节点按 D-092（docs/DECISIONS.md:1329）已批准链在 intake 创建来源时同事务创建对应 evidence 节点（先例 D-073:895『完整来源…只创建来源、证据与待确认候选』）；evidence 匹配/绑定到 posting 的语义仍属 P4-08，本批不写任何 evidence link 或 reconciliation 状态。
+- intake 幂等：同一 raw identity 的重复 intake：内容哈希与来源事实等价 → 返回既有 source/candidate 引用、零新写入；不等价 → 身份碰撞 hard reject、零写入。后到补充来源/镜像证据不在 P4-02 范围（P4-08），本批不做任何 evidence link、reconciliation 或第二笔正式交易。
+- 延后：provider/parser ports 与来源顺序（P4-03 各格式 evidence gate）；dedup/duplicate 数据合同（P4-07）；mirror/evidence matching 与 reconciliation（P4-08）；产品随机 ID 算法（docs/ARCHITECTURE.md:149 暂缓决定）与产品/应用 Clock 端口（应用能力，docs/ARCHITECTURE.md:63/67：仅供应处理/创建/确认/审计事件自身时间）留待后续阶段决定；确认用例的 confirmed_at 由显式确认事实提供（D-081），不依赖产品 Clock 端口；整文件保留生命周期合同（独立门禁）；RL-01~RL-08 全量闭合（P4-09）。
+- golden 冻结契约与 .external/ 不动；所有新表/端口遵循不可变或追加-only、失败零残留的既有不变量。
+
+**D-096 处置：** 本决定关闭：D-096:1429 的 raw identity 组合、domain separation 与碰撞/歧义处置（碰撞 hard reject，不设 fallback 算法）；D-096:1420 raw retention persistence 的持久化合同（整文件除外）；以及 D-097:1467 所列未决中 raw identity、raw retention persistence、candidate lifecycle、atomic confirmation 四项的 P4-02 部分。仍开：D-096:1421 parser 技术选择（P4-03）；D-096:1429/1435 duplicate candidate 数据合同与 RL-08 扩展（P4-07）；D-096:1427/1429/1435 逐来源 matcher 与 evidence/mirror 基数（P4-08）；D-096:1413 产品 ID 算法/命名空间/版本/迁移与 Clock 读取/消费时机、retry/并发失败方时间读取、审计时间戳分配（后续阶段）；D-096:1420/1435 整文件保留生命周期（独立门禁）。D-093~D-095 暂停条款维持暂停，本合同不复活其中任何暂停项（内容哈希列的诊断用途划界见领域 2 第 1 条）。
+
+**理由：** 组合确定性身份把身份与可变产品 ID、provider ID 和内容推断分离；哈希+元数据满足隐私与复核需求而不落盘原文；全状态值域把产品候选生命周期显式登记为产品契约；claim-first 原子确认复用既有 commitOnce 先例并保持失败零残留。四选项与细节推荐值共同构成可机器验证的逻辑合同；用户已于 2026-08-13 明确接受并登记，按交付形态 A 授权实施。
+
+**实施登记：** 未实施；已按交付形态 A 授权实施共享 spine 最小实现（P4-02 实施批）。
+
+**关联决定：** `D-065`、`D-073`、`D-077`、`D-081`、`D-092`、`D-093`、`D-094`、`D-095`、`D-096`、`D-097`
