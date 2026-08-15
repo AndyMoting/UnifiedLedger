@@ -1544,3 +1544,30 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 已实施并合入、推送 main（2026-08-14，commit `18fae64`）：冻结规格、微信 XLSX fail-closed parser、Apache POI JVM 接线、匿名 synthetic fixtures、P-01～P-21/E-01～E-14 oracle 与 shared spine 对接完成；schema 保持 v21，且未引入 matcher/evidence-link/reconciliation、dedup 或产品 ID/Clock。
 
 **关联决定：** `D-014`、`D-020`、`D-092`、`D-096`、`D-097`、`D-098`
+
+## D-100 P4-04 Transfer Formalization Slice 契约
+
+**状态：** 已确认；批准 P4-04 冻结契约（2026-08-16，A/A/A/A）并放行轮 B 实施批；轮 B 仍须按本契约与项目评审拓扑在独立 worktree 独立执行
+
+**决定：** P4-04 实施批（RL-03 转账 formalization 子切片，PHASE4_DESIGN_PACKAGE.local.md:77-83、WORK_PLAN.local.md:97-98）契约由 `docs/specs/2026-08-14-p4-04-transfer-formalization-slice-design.md`（Status: proposal）提出。提案条款：
+
+1. **批界**：仅 RL-03 子切片。完整腿候选经明确确认形成平衡 asset transfer，外部收支与报表效应为零；缺腿候选保持 pending 的可解释候选，不猜测另一端、不提前创建正式转账；mirror/evidence-link（P4-08）、dedup（P4-07）、产品 ID/Clock（后续阶段）不在本批（PHASE4_DESIGN_PACKAGE.local.md:79-82）。
+2. **类型范围**：恰为 D-099:1539 登记的转账/群收款/零钱提现/零钱充值四类，不新增接受类型；红包类 fail-closed（未分配批次）、退款类 fail-closed（→ P4-06）、未知 token fail-closed（SPINE_WEIXIN_UNKNOWN_TOKEN）。
+3. **会计锚点与本批收窄**：一般 core 转账规则允许用户自己的资产或负债账户一对一互转（docs/ACCOUNTING_RULES.md:52-60），但 P4-04 只冻结 `createOwnAssetPrincipalTransfer` 支持的 self-owned real asset → self-owned real asset；负债腿不在本批，不能由 D-100 推断实现。手工转账两端由用户显式选择、导入信息不足 pending 不猜测（D-032:387）；来源已明确两端才生成完整草稿、另一端后到仅作补充证据（D-033:399；合并属 P4-08）；钱包充值 = 内部转账不计消费（docs/ACCOUNTING_RULES.md:164-168）；RG-09 主例转账零收入/费用/消费报告语义先例（docs/ACCOUNTING_RULES.md:227）；RL-03 anchor（CORE_ACCEPTANCE_PLAN `GL-A3CB7F3D48BC`）= 两条资产分录平衡、不进入对外收支。
+4. **类型处置**：零钱提现（支出）/零钱充值（收入）= 钱包↔银行 self-transfer 候选（来源经方向证明零钱腿，另一端经显式确认补全）；转账/群收款 = 来源无第二自有腿 → 缺腿候选，本片确认门关闭，reject 可作人工处置终态。
+5. **确认契约与强绑定**：扩展现有 ConfirmImportCandidate 端口为 decision-kind 判别确认请求（TransferFlow 携带 fromAccountId+toAccountId、无 category；OrdinaryFlow 字段不变）；单一 commitOnce 端口。`ImportRequestIdentity.ledgerId` 是 candidate decision/formalization 唯一 ledger 来源；application `ImportCandidateDecisionSnapshot` value object 不再重复携带 ledgerId，持久化 decision row 的 ledger_id 仍存在但只能取 identity。同一 immutable formalization input（identity ledger + persisted source facts + frozen decisionFields）同时供 callback、pre-persist binding validator 与 decision snapshot 使用，factory 不再捕获 legs。validator 在 persistFormal 前逐项绑定 created transfer 的 ledger/kind/from/to/amount/currency/恰好两条 posting；故意返回反向 legs 或另一 ledger 的 formal transaction，以及用另一 ledger identity 查找 candidate，均须零残留拒绝。等价重放按 decision/candidate/category/funding/from/to/confirmed_at 七项检查；方向门与领域 violation 各有独立向量。
+6. **Schema v21→v22（21.sqm）**：扩展 `import_candidate_decision_snapshot`（+from_account_id/+to_account_id、XOR CHECK 重写）而非新表；record_kind/candidate_kind/contract_version CHECK 扩展；八张依赖表按 3.sqm 模板重建；fresh=migrated、reopen、冻结 rg03/rg04/rg08 竖井共存、八表 append-only 与 status_history transition 守卫逐项复核。late-stage failure oracle 必须在真实 migration 全部语句与 user_version=22 已位于同一 outer transaction、commit 前注入失败，证明关闭重开仍为完整 v21、无 stage/guard 残留、foreign_keys=1、foreign_key_check=0，且可重试成功；ledger-domain 零改动（复用 createOwnAssetPrincipalTransfer，OwnAssetPrincipalTransfer.kt:40-128）。
+7. **腿建模**：确认请求显式携带两端（from+to 用户选择）；方向与钱包腿一致（支出 → 钱包=from、收入 → 钱包=to），违约类型化拒绝；永不从交易对方文本推导任何腿（provider DTO/隐私/D-032）。
+8. **手续费**：本金-only；手续费类行不在冻结集合 → 现有 fail-closed 路由（D-031 手续费为独立支出，本批不实现）。
+9. **Kinds 与 normalized contract 版本**：record_kind ∈ {`transfer_flow_source`, `transfer_flow_source_missing_leg`}、candidate_kind ∈ {`transfer_flow`, `transfer_flow_missing_leg`}（P4-02 命名纪律）；解析器由交易类型路由列派生 provider-neutral `ImportRecordKind`，`WechatRowResult.Accepted` 增加该字段。D-097 v1 ordinary 边界通过版本化扩展处理：ordinary kind 保持 contract_version=1（既有行不重写，新 ordinary 行也不升级），两个 transfer kind 固定 contract_version=2；kind→version 封闭派生且 DDL 配对 CHECK 拒绝错配。类型 token 不落盘（provider DTO 零引入）。
+10. **方向未决**：raw token 保留 → valid_incomplete + REQUIRED_FACT_UNRESOLVED（D-097）；候选 incomplete、不可确认。
+11. **confirmed_at**：仅显式确认事实（D-098:1509、D-081:1007）。
+12. **兼容载体技术债**：本批为保持 ledger-domain 零改动，方向门失败暂沿用 `DomainViolation.InvalidOrdinaryIncome`，但该名称不表达转账语义。实现返回点必须用注释声明兼容原因并引用规格 §9 第 7 项；下一次获批且允许修改 ledger-domain 的 transfer 批次必须重新评估专用 violation，当前载体不得成为长期语义先例。
+13. **P4-03 回归处置**：D-099 已登记的类型转移只修订三处既有冻结断言：W7/P-07 由拒行变 transfer v2 record；P-14 记录数 8→9、诊断 9→8；E-12 full-batch intake 由 8→9 个 record/candidate、拒行 6→5、诊断 9→8。P4-02 全部断言与 P4-03 其余断言逐值不变。
+14. **Complete state oracle**：每个 E 操作及复合操作的 setup/failure/retry checkpoint 都比较独立构造的 complete canonical state：九张 spine 表全部行列、五张 formal chain 表全部行列、status history、完整余额与 transfer/external income/external expense/consumption/category/net-worth report projection、operation result/receipt/returned IDs，以及由完整 pre/post state 独立求差得到的 14 表 canonical delta。NoChange、Rejected、异常和并发输家必须与 pre-state 逐值相同，selected fields/counts 只能作辅助。
+
+**理由：** 转账两端的余额解释必须完整且显式（D-032），导入只能证明零钱腿；self-transfer 与缺腿的确认门区别冻结防止猜测入账；共享单一确认端口与单张决策快照保持 replay/冲突/失败注入证明面最小；ledger-domain 零改动沿用既有转账原语与 RG-09 报告先例。
+
+**实施登记：** 未实施。轮 A 契约已于 2026-08-16 批准：spec closure P404-SPEC-001…017 全 PASS、quality 0 BLOCKER / 0 MAJOR（5 MINOR 已登记）、verifier V1–V5 全 PASS、主代理 A/A/A/A 裁决，开放问题 1–10 按推荐全部批准；轮 B 实施批待按规格在独立 worktree 启动。
+
+**关联决定：** `D-030`、`D-031`、`D-032`、`D-033`、`D-073`、`D-077`、`D-081`、`D-092`、`D-096`、`D-097`、`D-098`、`D-099`
