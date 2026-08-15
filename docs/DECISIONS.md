@@ -1318,7 +1318,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - RG-08 的 `effective_at_text` 命名偏差顺带闭合。
 - 需新增混存验收测试（同一账本 manual + RG-08~12 交易，各 Store commit/reopen/snapshot 相等）。
 
-**实施登记：** 已实施并合入本地 main（2026-08-12，commit `79241fe`；origin 未推送，push 待用户解除禁令）：`19.sqm` v19→v20 六阶段迁移落地（共享表、回填、fail-closed 数据守卫、RG-08/09/10 私表精简重建、RG-11/12 私表删除、共享表守卫触发器）；五个 Store 读写侧切换共享表并统一 statistics 语义（RG-09/10 写侧两步：共享表 + source 私表，读侧双表；RG-08 写侧共享表 + 恒 null source 占位行；RG-11/12 单步共享表 + UPDATE 改名 `updateFormalTransactionStatisticsAtText`）；RG-09 读侧以共享表 `statistics_at_text` 重建 `effectiveAtText`（共享列恒持有原 `effective_at_text` 的精确字节，D-065 指纹字节不变由等值保证）；混存验收测试（`MultiRgStoreCoexistenceTest`）与 v19→v20 迁移测试（数据保持 + 守卫 + 原子回滚）已完成，schema 当前为 v20。
+**实施登记：** 已实施并合入 main（2026-08-12，commit `79241fe`；后续已随阶段 4 提交推送 origin）：`19.sqm` v19→v20 六阶段迁移落地（共享表、回填、fail-closed 数据守卫、RG-08/09/10 私表精简重建、RG-11/12 私表删除、共享表守卫触发器）；五个 Store 读写侧切换共享表并统一 statistics 语义（RG-09/10 写侧两步：共享表 + source 私表，读侧双表；RG-08 写侧共享表 + 恒 null source 占位行；RG-11/12 单步共享表 + UPDATE 改名 `updateFormalTransactionStatisticsAtText`）；RG-09 读侧以共享表 `statistics_at_text` 重建 `effectiveAtText`（共享列恒持有原 `effective_at_text` 的精确字节，D-065 指纹字节不变由等值保证）；混存验收测试（`MultiRgStoreCoexistenceTest`）与 v19→v20 迁移测试（数据保持 + 守卫 + 原子回滚）已完成。该批交付时 schema 为 v20；P4-02 后续将当前 schema 推进至 v21。
 
 **关联决定：** `D-084`、`D-088`
 
@@ -1523,13 +1523,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 组合确定性身份把身份与可变产品 ID、provider ID 和内容推断分离；哈希+元数据满足隐私与复核需求而不落盘原文；全状态值域把产品候选生命周期显式登记为产品契约；claim-first 原子确认复用既有 commitOnce 先例并保持失败零残留。四选项与细节推荐值共同构成可机器验证的逻辑合同；用户已于 2026-08-13 明确接受并登记，按交付形态 A 授权实施。
 
-**实施登记：** 未实施；已按交付形态 A 授权实施共享 spine 最小实现（P4-02 实施批）。
+**实施登记：** 已实施并合入、推送 main（2026-08-14，commit `d756391`）：shared import spine 最小实现、schema v21（20.sqm）、30-operation oracle 与迁移/原子失败/重开验证完成；范围保持本决定的 P4-02 边界。
 
 **关联决定：** `D-065`、`D-073`、`D-077`、`D-081`、`D-092`、`D-093`、`D-094`、`D-095`、`D-096`、`D-097`
 
 ## D-099 P4-03 首个标准来源与 parser 技术（微信账单 XLSX + Apache POI）
 
-**状态：** 已确认。按用户常设授权（研判后全权批准推荐计划，不可逆动作才停），主代理于 2026-08-14 研判批准；未推送。
+**状态：** 已确认。按用户常设授权（研判后全权批准推荐计划，不可逆动作才停），主代理于 2026-08-14 研判批准；已随实施提交推送 main。
 
 **决定：** P4-03 provider/format/parser 证据门按以下五组条款登记：
 
@@ -1541,6 +1541,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 证据体量与 valid_complete 可行性指向微信为首个来源；POI 在六维上全面满足且内建防护；本决定把格式事实限定为行为证据并锁死许可证红区。
 
-**实施登记：** 未实施；本批按 P4-01/P4-02 契约先行流程执行（规格冻结→双评审→实现→verifier→合并）。
+**实施登记：** 已实施并合入、推送 main（2026-08-14，commit `18fae64`）：冻结规格、微信 XLSX fail-closed parser、Apache POI JVM 接线、匿名 synthetic fixtures、P-01～P-21/E-01～E-14 oracle 与 shared spine 对接完成；schema 保持 v21，且未引入 matcher/evidence-link/reconciliation、dedup 或产品 ID/Clock。
 
 **关联决定：** `D-014`、`D-020`、`D-092`、`D-096`、`D-097`、`D-098`

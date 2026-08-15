@@ -6,7 +6,7 @@
 
 ## Authority And Boundary
 
-本规格全部条款对齐 D-099（docs/DECISIONS.md:1530-1546，2026-08-14 主代理研判批准，未推送），及其引用条款：
+本规格全部条款对齐 D-099（docs/DECISIONS.md:1530-1546，2026-08-14 主代理研判批准；后续已随实施提交推送 main），及其引用条款：
 
 - D-099:1536 首个标准来源 = 微信支付账单（XLSX）；11 列表头 0-based row 17、五类事实映射、不构成来源顺序预选。
 - D-099:1537 parser 技术 = Apache POI（poi-ooxml 5.5.x，Apache-2.0）六维证据与许可证红区。
