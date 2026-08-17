@@ -37,8 +37,8 @@
 - RG-01、RG-02、RG-08 已全部发布（`D-089` A/B 批；A 批经 `D-090` LF 验收闭合，B 批含 LF gate 与 raw-byte hash 核验）；完整比较证据见 `D-087` 与 `D-088` R3 登记。
 - RG-05 完整状态 oracle、RG-06 publication 与 RG-07 closure 不表示全部黄金场景或正式账务核心已完成；RG-01、RG-02 的完整 state/delta/status 比较已实现（`D-087`，`f9da4b6`）且 v2 publication 已按 `D-089` A 批完成；RG-08 的 runtime 与 mapping gate 已按 `D-084` 完成（4 个 gap 已关闭），v2 expected 与工件已按 `D-089` B 批发布。
 - 其他 RG 的 v1 rewrite、v2 publication 和未完成完整比较仍分别受其现有 gate 约束；RG-03/05/10/11/12 已按 `D-086` 发布，RG-01/02 与 RG-08 已按 `D-089` 发布（`D-090` LF 验收闭合），12 case 集合完整；RG-09 已发布且历史 gaps 已 closed，mapping gate 已 approved，独立高风险 closure review 证据已记录。
-- P4-01、P4-02 与 P4-03 已分别由 `D-097`、`D-098` 与 `D-099` 闭环。P4-04 transfer formalization slice 的轮 A 曾于 2026-08-16 登记批准，但后续质量复核确认 `P404-QUAL-001` BLOCKER（source scale 被误作账户币种精度）、`P404-QUAL-002` MAJOR（完整 report oracle 缺预算与对外现金流）和 `P404-QUAL-003` MAJOR（pre-persist validator 未绑定应用分配的完整 ID 集）。D-100 与规格已重新打开为 proposal，轮 B 实施授权暂停；在三项 finding 完成文档修订、独立复审和明确重新批准前，不得修改源码、schema 或 migration。`D-096` 中第二来源 parser、duplicate、matcher、产品 ID 与 Clock 等其余门继续待决；整文件默认不保存，若提议保存则须先批准生命周期、加密、导出和删除。
+- P4-01、P4-02 与 P4-03 已分别由 `D-097`、`D-098` 与 `D-099` 闭环。P4-04 transfer formalization slice 的轮 A 曾于 2026-08-16 登记批准，但后续质量复核确认 `P404-QUAL-001` BLOCKER（source scale 被误作账户币种精度）、`P404-QUAL-002` MAJOR（完整 report oracle 缺预算与对外现金流）和 `P404-QUAL-003` MAJOR（pre-persist validator 未绑定应用分配的完整 ID 集）。纠偏修订已于 2026-08-17 经两轮独立复审、distinct verification 与主代理重新批准（提交 41c1a8d），轮 B 实施授权恢复、尚未启动。`D-096` 中第二来源 parser、duplicate、matcher、产品 ID 与 Clock 等其余门继续待决；整文件默认不保存，若提议保存则须先批准生命周期、加密、导出和删除。
 
 ## 唯一下一步
 
-完成 P4-04 的三项纯文档纠偏并冻结新候选：精确 source-scale→账户币种换算、预算/对外现金流 oracle、完整 `ImportCommitIds` 绑定；随后重新执行独立 spec/quality review 与 distinct verification，再决定是否重新批准 D-100。
+按重新批准的 D-100 契约（spec Status: approved，2026-08-17）启动 P4-04 轮 B 实施批：独立 worktree 唯一 writer，按规格 §1–§9 实现 ledger-application/ledger-data 源码、schema v21→v22（21.sqm）与测试，并按高风险拓扑复审验证；`D-096` 其余门维持待决。

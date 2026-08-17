@@ -1,6 +1,6 @@
 # P4-04 转账正式化实施批冻结规格（轮 A）
 
-**Status:** proposal — reopened。2026-08-16 的 A/A/A/A 批准记录保留为历史；后续质量复核确认 P404-QUAL-001 BLOCKER、P404-QUAL-002 MAJOR、P404-QUAL-003 MAJOR，故轮 B 实施授权暂停。本修订只纠正合同；新候选完成独立 spec/quality review、distinct verification 与明确重新批准前不得实现。
+**Status:** approved — 纠偏修订经独立 spec review 与独立 quality review 两轮闭环（首轮 FAIL、修复与微修后全部 finding CLOSED）、distinct verification V1–V5 全 PASS 与主代理关键检查；主代理于 2026-08-17 重新批准并恢复轮 B 实施授权。2026-08-16 批准与 P404-QUAL-001…003 重开历史见 D-100 状态与实施登记。本文件自此约束实现，不再单独授权。
 
 **Scope:** 冻结 P4-04 实施批（RL-03 转账 formalization 子切片，PHASE4_DESIGN_PACKAGE.local.md:77-83、WORK_PLAN.local.md:97-98）的匿名 fixtures/解析契约变更/类型范围矩阵/spine 对接（intake kind 路由 + 转账确认链）/source scale 精确归一化/完整 ID binding/schema v21→v22（21.sqm）迁移与 DDL/诊断码/模块与依赖/测试计划与边界断言。本文件只冻结规格，不含实现；实现只允许在本规格按项目评审拓扑重新冻结并获明确批准后，由后续实施批（轮 B）在独立 worktree 执行。
 

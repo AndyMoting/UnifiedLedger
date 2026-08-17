@@ -4,7 +4,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-项目当前处于阶段 4“导入与对账闭环”。P4-01 acceptance contract、P4-02 shared import spine 和 P4-03 微信 XLSX 普通收支解析均已闭环；P4-04 transfer formalization slice 的 2026-08-16 轮 A 批准因后续质量复核发现 1 个 BLOCKER 与 2 个 MAJOR 而重新打开，轮 B 实施授权暂停，当前只允许纯文档纠偏与重新评审。
+项目当前处于阶段 4“导入与对账闭环”。P4-01 acceptance contract、P4-02 shared import spine 和 P4-03 微信 XLSX 普通收支解析均已闭环；P4-04 transfer formalization slice 的轮 A 契约经纯文档纠偏（scale 归一化、完整 report oracle、ID 绑定）后已于 2026-08-17 重新批准，轮 B 实施授权恢复、尚未启动实现。
 
 Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v21（v1→v21 共 20 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
 

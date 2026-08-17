@@ -1547,9 +1547,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-100 P4-04 Transfer Formalization Slice 契约
 
-**状态：** 提案（重新打开）。2026-08-16 的 A/A/A/A 批准与轮 B 放行记录保留为历史，但后续质量复核确认 `P404-QUAL-001` BLOCKER、`P404-QUAL-002` MAJOR、`P404-QUAL-003` MAJOR；实施授权自本修订起暂停。三项 finding 完成文档闭合、独立复审、distinct verification 与明确重新批准前，不得开始轮 B。
+**状态：** 已批准（2026-08-17 重新批准）。纠偏修订（提交 41c1a8d）经两轮独立 spec/quality review（全部 finding CLOSED）、distinct verification V1–V5 与主代理关键检查后由主代理重新批准，轮 B 实施授权恢复。2026-08-16 批准因 `P404-QUAL-001` BLOCKER、`P404-QUAL-002`/`-003` MAJOR 重开的历史保留于实施登记。
 
-**决定：** P4-04 实施批（RL-03 转账 formalization 子切片，PHASE4_DESIGN_PACKAGE.local.md:77-83、WORK_PLAN.local.md:97-98）契约由 `docs/specs/2026-08-14-p4-04-transfer-formalization-slice-design.md`（Status: proposal — reopened）提出。提案条款：
+**决定：** P4-04 实施批（RL-03 转账 formalization 子切片，PHASE4_DESIGN_PACKAGE.local.md:77-83、WORK_PLAN.local.md:97-98）契约由 `docs/specs/2026-08-14-p4-04-transfer-formalization-slice-design.md`（Status: approved — 2026-08-17 重新批准）提出。提案条款：
 
 1. **批界**：仅 RL-03 子切片。完整腿候选经明确确认形成平衡 asset transfer，外部收支与报表效应为零；缺腿候选保持 pending 的可解释候选，不猜测另一端、不提前创建正式转账；mirror/evidence-link（P4-08）、dedup（P4-07）、产品 ID/Clock（后续阶段）不在本批（PHASE4_DESIGN_PACKAGE.local.md:79-82）。
 2. **类型范围**：恰为 D-099:1539 登记的转账/群收款/零钱提现/零钱充值四类，不新增接受类型；红包类 fail-closed（未分配批次）、退款类 fail-closed（→ P4-06）、未知 token fail-closed（SPINE_WEIXIN_UNKNOWN_TOKEN）。
@@ -1569,6 +1569,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 转账两端的余额解释必须完整且显式（D-032），导入只能证明零钱腿；self-transfer 与缺腿的确认门区别冻结防止猜测入账；共享单一确认端口与单张决策快照保持 replay/冲突/失败注入证明面最小；复用既有转账原语与 RG-09 报告先例，但 source decimal scale、应用分配 ID 和完整 report projection 必须在 formal persistence 前独立绑定，不能由测试 fixture 的两位小数或可信 factory 假设代替合同。
 
-**实施登记：** 未实施。2026-08-16 曾按当时记录的 spec closure P404-SPEC-001…017、quality 0 BLOCKER / 0 MAJOR（5 MINOR）、verifier V1–V5 与 A/A/A/A 裁决登记批准；后续质量复核确认 `P404-QUAL-001…003`，证明该批准证据不完整。轮 A 已重新打开，轮 B 实施授权暂停；历史批准记录不删除，但不得继续作为实现依据。
+**实施登记：** 未实施。2026-08-16 曾按当时记录的 spec closure P404-SPEC-001…017、quality 0 BLOCKER / 0 MAJOR（5 MINOR）、verifier V1–V5 与 A/A/A/A 裁决登记批准；后续质量复核确认 `P404-QUAL-001…003`，证明该批准证据不完整。轮 A 已重新打开，轮 B 实施授权暂停；历史批准记录不删除，但不得继续作为实现依据。2026-08-17：纯文档纠偏候选（提交 41c1a8d；冻结 SHA-256：README `87d5f35d…`、CURRENT_STATE `96773d19…`、DECISIONS `540b2015…`、spec `7bea76c4…`）经独立复审全 finding 闭合与 V1–V5 验证后由主代理重新批准（轮 2 拓扑 A/A/A/A）；轮 B 可按本契约启动。
 
 **关联决定：** `D-030`、`D-031`、`D-032`、`D-033`、`D-073`、`D-077`、`D-081`、`D-092`、`D-096`、`D-097`、`D-098`、`D-099`
