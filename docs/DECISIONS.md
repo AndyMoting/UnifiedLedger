@@ -1621,3 +1621,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 已实施（2026-08-18）。2026-08-18 经用户批准后在独立 worktree `feat/rl04-yuebao-transfer` 落地：`AlipaySourceTokens.kt`（冻结子类型集合/方向映射/rule 常量 + 负向登记）、`AlipayCsvParser.kt`（判定顺序第 2 步 `parseInvestmentRow`，单一事实源 `YUEBAO_TRANSFER_SUBTYPES` + 方向 `getValue` fail-fast）、RL-04 解析级测试 17 条（Y-01…Y-15/P-01…P-18/T-01…T-22 + 畸形字段防御）+ E2E 9 条（E-01…E-12/R-02）全绿；P4-05 既有 28+5 保持绿（R-01）。经独立 spec 评审（3 findings 闭合）、独立 quality 评审（2 MINOR 闭合）、distinct verification（8/8 PASS）、主代理全量回归后闭环。主代理负责 Git 写操作与合并推送。
 
 **关联决定：** `D-092`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`
+
+## D-103 P4-08 matcher 契约 前置门
+
+**状态：** 已批准（2026-08-19 用户批准 O-1…O-6 全部方案 A）；本决定批准 matcher 契约，不授权实施代码。
+
+**决定：** P4-08 matcher 契约前置门（WORK_PLAN.local.md:110 五项 = matcher fields、time window、ambiguity model、scenario cardinality、RL-07 acceptance matrix）由 `docs/specs/2026-08-19-p4-08-matcher-contract-design.md`（Status: approved，2026-08-19 用户批准）提出并固化。批准条款如下：
+
+1. **门定义**：本批对照 WORK_PLAN:110 五项与 D-096:1429/1435，产生可裁决的中立契约文本（spec）；批准后 spec 转为 approved，作为 P4-08 实施批的 matcher 契约。备选方案与权衡保留为决策审计记录。
+2. **现状基线**（spec §1，证据侦察）：产品路径零 matcher/evidence-link/posting-reconciliation 写入——import_evidence 无 UNIQUE(source_id)（P4-02 spec:187）、import_candidate 保留 UNIQUE(ledger_id,source_id)（:188、多候选走加性迁移）；evidence 唯一消费点 = SqlDelightImportSpineStore.kt:289/456/617（引用完整性校验与 intake 返回 ID，非匹配语义）；report 九维度不含 reconciliation 维度（P4-04 spec:138）；schema 当前 v22。竖井表 rg03_evidence_link（Ledger.sq:267-273）/rg04_import_evidence_match（:548-554）均 1:1，只作冻结语料与行为证据先例（D-096:1431），不构成产品表形状先例（D-092:1329/1335；D-098:1493 纪律）。
+3. **已知约束摘要**（spec §2 九条，逐条带出处）：Posting 级对账与四要素（外部证据/证据职责/匹配依据/人工决定）；实际资金时间 = 主要时间锚且运行时 Clock 不补写来源时间；不建立全局 1:1（场景合同决定）；业务相似指纹（D-095 十键）与通道总额只作候选/诊断、不能满足 RL-07 逐记录验收；排他性冲突类型化拒绝零写入、后到镜像只追加 lineage 不重复 link/effect 不建第二笔交易；资料不足允许待补/部分核对、可补充后重匹配、不得自动补平；金额精确十进制 + source scale、时间按 source token/kind/components/offset、缺 offset 保持 unresolved；P4-03/04/05（含 RL-04 路由）零 evidence-link/reconciliation、状态变更语义首现于 P4-08。
+4. **O-1..O-6 已批准裁决（全部 A）**：O-1 资金事实核心门，必选 `amount`（精确十进制及 source scale）、`currency`、`direction`、真实 `account`；`occurred_at` 参加时间窗；`status` 仅可选诊断/置信度；`order_id`/`counterparty`/`category`/`item` 不参与身份。O-2 有界自然日窗，以 posting 实际资金时间为锚，首版固定默认 **±2 个自然日**，允许账户/来源配置能力；来源级结算偏移不在本批准组合中启用。O-3 同窗多命中默认 defer 人工，保持 `待补资料`/`有差异` 上界，零 link、零 reconciliation effect。O-4 场景显式登记基数：RL-07 evidence:posting 各 1:1、evidence:transaction 多对一；RL-03/04 同源 1:1；拆单/混合支付 1:N 由场景合同显式登记；不设全局默认基数。O-5 RL-07 逐记录验收，通道总额仅诊断。O-6 P4-08 引入最小加性 reconciliation 面（v22→v23、非 `rgXX_` 共享表）并纳入 report reconciliation 维度与 canonical oracle；产品状态枚举固定为 `待对账`/`部分匹配`/`有差异`/`待补资料`/`已核对`，具体列形状和迁移 SQL留实施批规格登记。任何 matcher 实现默认值不得超出本登记（D-096:1435）。
+5. **验收锚点**：首版 RL-07 锚点 = `GL-0DCF5FCDB9BA`（银行流水与平台侧镜像证据、只形成一笔正式转账并合并证据，GOLDEN_TESTS.md:176；CORE_ACCEPTANCE_PLAN:66/31/91）；真实注册金额/时间只在 .external 只读 fixture，不复制进 tracked 文件（P405FIX-QUAL-001 隐私先例）。
+
+**理由：** 证据链：GOLDEN_TESTS.md:172/:176 与 CORE_ACCEPTANCE_PLAN:63-67/:66/:31/:91 确立 RL-07 验收锚点与对账状态断言体系；ACCOUNTING_RULES.md:239-253 对账专章确立 Posting 级、状态枚举、部分核对、四要素与补充重匹配语义（另 :202 实际资金时间主锚、:233 fully_reconciled）；D-096:1425（通道总额只诊断、不能满足 RL-07 逐记录镜像验收）、:1427（一 posting/一 evidence 基数由场景合同决定、不建全局 1:1）、:1429（matcher 字段/时间窗/歧义模型/基数须备选方案+匿名验收后批准）、:1435（未决不能由实现默认值冻结）与 IMPORT-002 暂停项（WORK_PLAN.local.md:61-65「any default matcher cardinality 被否决、matcher 语义是 P4-08 gate」）共同把 matcher 语义锁定为 P4-08 前置门；产品路径现状侦察（spec §1.1：零 matcher/evidence-link/reconciliation、状态语义首现 P4-08，WORK_PLAN:129）证明本批只冻结契约、不实施。
+
+**实施登记：** 契约已批准，尚未实施。本批仅登记 matcher 契约（spec + 本决定，无代码、无 schema）；实施属后续 P4-08 实施批，需在独立 worktree 拓扑、单一 writer 纪律下进行，并重新经过高风险 acceptance topology。matcher 行为/schema/report 引入将按 O-6 触发 v22→v23 加性迁移、独立规格/质量评审和 distinct verification。
+
+**关联决定：** `D-085`、`D-092`、`D-094`、`D-095`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`
