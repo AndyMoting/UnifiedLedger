@@ -159,6 +159,7 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected = when (thi
     MixedPaymentViolation.SingleCurrencyRequired -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.SINGLE_CURRENCY_REQUIRED, "funding_components")
     MixedPaymentViolation.AssetAndCreditLiabilityRequired -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.ASSET_AND_CREDIT_LIABILITY_REQUIRED, "funding_components")
     DomainViolation.ArithmeticOverflow,
+    is DomainViolation.AmountNotRepresentableInCurrency,
     DomainViolation.InvalidPostingSet,
     DomainViolation.UnbalancedPostingSet,
     DomainViolation.InvalidFormalTransaction,

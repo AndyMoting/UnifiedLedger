@@ -30,6 +30,12 @@ data class ImportStatusHistoryId(val value: String)
 data class ImportRawIdentity(val ledgerId: LedgerId, val inputRef: String, val recordOrdinal: Int)
 data class ImportRequestIdentity(val ledgerId: LedgerId, val requestId: ImportRequestId)
 
+enum class ImportRecordKind(val storageValue: String, val contractVersion: Int) {
+    ORDINARY_FLOW_SOURCE("ordinary_flow_source", 1),
+    TRANSFER_FLOW_SOURCE("transfer_flow_source", 2),
+    TRANSFER_FLOW_SOURCE_MISSING_LEG("transfer_flow_source_missing_leg", 2),
+}
+
 enum class ImportCompleteness { VALID_COMPLETE, VALID_INCOMPLETE }
 
 data class ImportSourceFacts(
@@ -42,32 +48,44 @@ data class ImportSourceFacts(
 )
 
 data class ImportIntakeRequest(
-    val ledgerId: LedgerId,
-    val requestId: ImportRequestId,
+    val identity: ImportRequestIdentity,
     val inputRef: String,
     val recordOrdinal: Int,
+    val recordKind: ImportRecordKind,
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
 )
 
 data class ImportIntakeSnapshot(
-    val ledgerId: LedgerId,
-    val identity: ImportRawIdentity,
+    val identity: ImportRequestIdentity,
+    val inputRef: String,
+    val recordOrdinal: Int,
+    val recordKind: ImportRecordKind,
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
+    val contentHash: String,
 )
 
 enum class ImportCandidateDecision { CONFIRM, REJECT }
 
-data class ImportConfirmFields(val categoryId: CategoryId, val fundingAccountId: AccountId)
+sealed interface ImportConfirmDecisionFields {
+    data class OrdinaryFlow(
+        val categoryId: CategoryId,
+        val fundingAccountId: AccountId,
+    ) : ImportConfirmDecisionFields
+
+    data class TransferFlow(
+        val fromAccountId: AccountId,
+        val toAccountId: AccountId,
+    ) : ImportConfirmDecisionFields
+}
 
 data class ImportCandidateDecisionSnapshot(
-    val ledgerId: LedgerId,
     val candidateId: ImportCandidateId,
     val decision: ImportCandidateDecision,
     val expectedContentHash: String,
     val explicitConfirmedAt: String?,
-    val confirmFields: ImportConfirmFields?,
+    val confirmDecisionFields: ImportConfirmDecisionFields?,
 )
 
 data class ImportCandidateConfirmRequest(
@@ -75,8 +93,7 @@ data class ImportCandidateConfirmRequest(
     val candidateId: ImportCandidateId,
     val expectedContentHash: String,
     val explicitConfirmedAt: String?,
-    val categoryId: CategoryId,
-    val fundingAccountId: AccountId,
+    val decisionFields: ImportConfirmDecisionFields,
 )
 
 data class ImportCandidateRejectRequest(
@@ -173,6 +190,18 @@ object SpineDiagnostics {
             "SPINE_DOMAIN_VALIDATION_FAILED", "invalid", "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
+
+    fun transferNotConfirmable(candidateId: ImportCandidateId): ImportDiagnostic =
+        ImportDiagnosticRecord(
+            "SPINE_TRANSFER_NOT_CONFIRMABLE", "invalid", "candidate",
+            ImportDiagnosticLocation(null, null, null, candidateId),
+        )
+
+    fun decisionKindMismatch(candidateId: ImportCandidateId): ImportDiagnostic =
+        ImportDiagnosticRecord(
+            "SPINE_DECISION_KIND_MISMATCH", "invalid", "candidate",
+            ImportDiagnosticLocation(null, null, null, candidateId),
+        )
 }
 
 enum class ImportReturnedIdKind { SOURCE, EVIDENCE, CANDIDATE, CONFIRMATION, TRANSACTION }
@@ -261,8 +290,14 @@ data class ImportFormalCommit(
     val transaction: FormalTransaction,
 )
 
+data class ImportCandidateFormalizationInput(
+    val ledgerId: LedgerId,
+    val resolved: ImportResolvedSourceFacts,
+    val decisionFields: ImportConfirmDecisionFields,
+)
+
 fun interface ImportCandidateFormalFactory {
-    fun create(resolved: ImportResolvedSourceFacts, ids: ImportCommitIds): DomainResult<ImportFormalCommit>
+    fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit>
 }
 
 fun interface ImportIntakeCommitPort {
@@ -288,7 +323,8 @@ interface ImportCandidateCommitPort {
     fun commitOnce(
         identity: ImportRequestIdentity,
         snapshot: ImportCandidateDecisionSnapshot,
-        createFormalTransaction: (resolved: ImportResolvedSourceFacts) -> DomainResult<ImportFormalCommit>,
+        allocateIds: () -> ImportCommitIds,
+        createFormalTransaction: (input: ImportCandidateFormalizationInput, ids: ImportCommitIds) -> DomainResult<ImportFormalCommit>,
     ): ImportCandidateDecisionResult
 
     fun commitRejectOnce(
@@ -311,14 +347,17 @@ class ExecuteImportIntake(
         // intake boundary: the injected fingerprint canonicalizes here (and fails closed
         // on ill-formed tokens), while the commit port persists the same canonical value
         // derived from the snapshot facts.
-        fingerprint.digest(request.facts)
+        val contentHash = fingerprint.digest(request.recordKind, request.facts)
 
-        val identity = ImportRequestIdentity(request.ledgerId, request.requestId)
+        val identity = request.identity
         val snapshot = ImportIntakeSnapshot(
-            ledgerId = request.ledgerId,
-            identity = ImportRawIdentity(request.ledgerId, request.inputRef, request.recordOrdinal),
+            identity = request.identity,
+            inputRef = request.inputRef,
+            recordOrdinal = request.recordOrdinal,
+            recordKind = request.recordKind,
             facts = request.facts,
             completeness = request.completeness,
+            contentHash = contentHash,
         )
         return commitPort.commitIntake(identity, snapshot) { idSource.next() }
     }
@@ -361,15 +400,17 @@ class ConfirmImportCandidate(
 ) {
     fun execute(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult {
         val snapshot = ImportCandidateDecisionSnapshot(
-            ledgerId = request.identity.ledgerId,
             candidateId = request.candidateId,
             decision = ImportCandidateDecision.CONFIRM,
             expectedContentHash = request.expectedContentHash,
             explicitConfirmedAt = request.explicitConfirmedAt,
-            confirmFields = ImportConfirmFields(request.categoryId, request.fundingAccountId),
+            confirmDecisionFields = request.decisionFields,
         )
-        return commitPort.commitOnce(request.identity, snapshot) { resolved ->
-            createFormalTransaction.create(resolved, idSource.next())
+        return commitPort.commitOnce(
+            request.identity, snapshot,
+            allocateIds = { idSource.next() },
+        ) { input, ids ->
+            createFormalTransaction.create(input, ids)
         }
     }
 }
@@ -380,12 +421,11 @@ class RejectImportCandidate(
 ) {
     fun execute(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult {
         val snapshot = ImportCandidateDecisionSnapshot(
-            ledgerId = request.identity.ledgerId,
             candidateId = request.candidateId,
             decision = ImportCandidateDecision.REJECT,
             expectedContentHash = request.expectedContentHash,
             explicitConfirmedAt = null,
-            confirmFields = null,
+            confirmDecisionFields = null,
         )
         return commitPort.commitRejectOnce(request.identity, snapshot) { statusIdSource.next() }
     }

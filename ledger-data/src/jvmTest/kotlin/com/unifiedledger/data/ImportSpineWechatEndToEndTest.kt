@@ -26,6 +26,9 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportResolvedSourceFacts
 import com.unifiedledger.application.ImportReturnedId
 import com.unifiedledger.application.ImportReturnedIdKind
+import com.unifiedledger.application.ImportCandidateFormalizationInput
+import com.unifiedledger.application.ImportConfirmDecisionFields
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.ImportStatusIdSource
@@ -261,16 +264,18 @@ class ImportSpineWechatEndToEndTest {
         private val fundingAccountId: AccountId,
     ) : ImportCandidateFormalFactory {
         override fun create(
-            resolved: ImportResolvedSourceFacts,
+            input: ImportCandidateFormalizationInput,
             ids: ImportCommitIds,
         ): DomainResult<ImportFormalCommit> {
+            val resolved = input.resolved
+            val decisionFields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
             val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
             val money = Money.ofMinor(resolved.amountMinor, currency)
             val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
             return when (resolved.directionToken) {
                 "out" -> createAssetPaidOrdinaryExpense(
                     catalog,
-                    AssetPaidOrdinaryExpenseCommand(ledgerId, money, categoryId, fundingAccountId, times),
+                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
                     AssetPaidOrdinaryExpenseIds(
                         transactionId = ids.formalIds.transactionId,
                         versionId = ids.formalIds.versionId,
@@ -281,7 +286,7 @@ class ImportSpineWechatEndToEndTest {
                 ).toSpineCommit(ids)
                 "in" -> createAssetReceivedOrdinaryIncome(
                     catalog,
-                    AssetReceivedOrdinaryIncomeCommand(ledgerId, money, categoryId, fundingAccountId, times),
+                    AssetReceivedOrdinaryIncomeCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
                     AssetReceivedOrdinaryIncomeIds(
                         transactionId = ids.formalIds.transactionId,
                         versionId = ids.formalIds.versionId,
@@ -338,7 +343,7 @@ class ImportSpineWechatEndToEndTest {
         fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
             ConfirmImportCandidate(
                 store, commitIds,
-                OrdinaryFlowFormalFactory(catalog, ledgerId, request.categoryId, request.fundingAccountId),
+                OrdinaryFlowFormalFactory(catalog, ledgerId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
             ).execute(request)
 
         fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
@@ -351,7 +356,15 @@ class ImportSpineWechatEndToEndTest {
         recordOrdinal: Int,
         facts: com.unifiedledger.application.ImportSourceFacts,
         completeness: ImportCompleteness,
-    ) = ImportIntakeRequest(ledgerId, ImportRequestId(requestId), inputRef, recordOrdinal, facts, completeness)
+        recordKind: ImportRecordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+    ) = ImportIntakeRequest(
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        inputRef = inputRef,
+        recordOrdinal = recordOrdinal,
+        recordKind = recordKind,
+        facts = facts,
+        completeness = completeness,
+    )
 
     private fun confirmRequest(
         requestId: String = "req-a-confirm",
@@ -365,8 +378,10 @@ class ImportSpineWechatEndToEndTest {
         candidateId = ImportCandidateId(candidate),
         expectedContentHash = hash,
         explicitConfirmedAt = confirmedAt,
-        categoryId = CategoryId(category),
-        fundingAccountId = AccountId(funding),
+        decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
+            categoryId = CategoryId(category),
+            fundingAccountId = AccountId(funding),
+        ),
     )
 
     private fun rejectRequest(
@@ -448,7 +463,7 @@ class ImportSpineWechatEndToEndTest {
                 e01.receipt,
             )
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
-            assertEquals(fingerprint.digest(w1.facts), database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, "req-a-intake").executeAsOne().content_hash)
+            assertEquals(fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts), database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, "req-a-intake").executeAsOne().content_hash)
 
             // E-02: same-request equivalent replay.
             val e02 = assertIs<ImportIntakeResult.NoChange>(
@@ -464,7 +479,7 @@ class ImportSpineWechatEndToEndTest {
             )
             val executorWithCommit = Executor(database, driver, ledgerId, catalog, intakeIds, commitIdsA, BatchStatusIdSource(emptyList()))
             val e03 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(w1.facts))),
+                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts))),
             )
             assertEquals(
                 listOf(
@@ -486,7 +501,7 @@ class ImportSpineWechatEndToEndTest {
 
             // E-04: same-request confirm replay.
             val e04 = assertIs<ImportCandidateDecisionResult.NoChange>(
-                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(w1.facts))),
+                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts))),
             )
             assertEquals(e03.receipt, e04.receipt)
             assertEquals("equivalent_replay", e04.reasonCode)
@@ -494,7 +509,7 @@ class ImportSpineWechatEndToEndTest {
 
             // E-05: re-confirm with a new request.
             val e05 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executorWithCommit.confirm(confirmRequest(requestId = "req-a-confirm-2", hash = fingerprint.digest(w1.facts))),
+                executorWithCommit.confirm(confirmRequest(requestId = "req-a-confirm-2", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts))),
             )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", e05.diagnostic.code)
 
@@ -509,7 +524,7 @@ class ImportSpineWechatEndToEndTest {
             val statusIds = BatchStatusIdSource(listOf(ImportStatusHistoryId("status-b-2")))
             val executorWithReject = Executor(database, driver, ledgerId, catalog, intakeIds, commitIdsA, statusIds)
             val e07 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executorWithReject.reject(rejectRequest(hash = fingerprint.digest(w2.facts))),
+                executorWithReject.reject(rejectRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w2.facts))),
             )
             assertEquals(listOf(ImportReturnedId(ImportReturnedIdKind.CANDIDATE, "candidate-b")), e07.returnedIds)
             assertEquals(
@@ -540,7 +555,7 @@ class ImportSpineWechatEndToEndTest {
             val e10 = assertIs<ImportCandidateDecisionResult.Rejected>(
                 Executor(database, driver, ledgerId, catalog, intakeIds, attempt1, statusIds).confirm(
                     confirmRequest(
-                        requestId = "req-d-confirm", candidate = "candidate-d", hash = fingerprint.digest(w4.facts),
+                        requestId = "req-d-confirm", candidate = "candidate-d", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w4.facts),
                         category = "category-unknown", confirmedAt = "2026-08-13T11:00:00+08:00",
                     ),
                 ),
@@ -563,7 +578,7 @@ class ImportSpineWechatEndToEndTest {
             val e11 = assertIs<ImportCandidateDecisionResult.Accepted>(
                 Executor(database, driver, ledgerId, catalog, intakeIds, batch2, statusIds).confirm(
                     confirmRequest(
-                        requestId = "req-d-confirm", candidate = "candidate-d", hash = fingerprint.digest(w4.facts),
+                        requestId = "req-d-confirm", candidate = "candidate-d", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w4.facts),
                         category = "category-salary", confirmedAt = "2026-08-13T11:00:00+08:00",
                     ),
                 ),
@@ -613,7 +628,7 @@ class ImportSpineWechatEndToEndTest {
     // ---- E-12 batch ledger + T-21 privacy ----
 
     @Test
-    fun e12BatchLedgerIntakesEightRecordsAndRejectsSixRowsWithZeroWrites() {
+    fun e12BatchLedgerIntakesNineRecordsAndRejectsFiveRowsWithZeroWrites() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
@@ -622,9 +637,9 @@ class ImportSpineWechatEndToEndTest {
             assertEquals(WechatBatchOutcome.PARTIAL, result.outcome)
             val acceptedRows = result.rows.filterIsInstance<WechatRowResult.Accepted>()
             val rejectedRows = result.rows.filterIsInstance<WechatRowResult.Rejected>()
-            assertEquals(8, acceptedRows.size)
-            assertEquals(6, rejectedRows.size)
-            assertEquals(9, result.rows.flatMap { it.diagnostics }.size)
+            assertEquals(9, acceptedRows.size)
+            assertEquals(5, rejectedRows.size)
+            assertEquals(8, result.rows.flatMap { it.diagnostics }.size)
 
             val batches = acceptedRows.map { row -> intakeIds("w${row.recordOrdinal}", "status-w${row.recordOrdinal}-1") }
             val executor = Executor(
@@ -633,16 +648,16 @@ class ImportSpineWechatEndToEndTest {
             )
             acceptedRows.forEach { row ->
                 assertIs<ImportIntakeResult.Accepted>(
-                    executor.intake(intakeRequest(batchLedgerId, "req-batch-${row.recordOrdinal}", row.recordOrdinal, row.facts, row.completeness)),
+                    executor.intake(intakeRequest(batchLedgerId, "req-batch-${row.recordOrdinal}", row.recordOrdinal, row.facts, row.completeness, row.recordKind)),
                 )
             }
-            // Rejected rows produced no intake call and no write: only eight owners exist.
-            assertEquals(listOf(8L, 8L, 8L, 8L, 8L, 0L, 0L, 8L), spineCounts(database))
+            // Rejected rows produced no intake call and no write: only nine owners exist.
+            assertEquals(listOf(9L, 9L, 9L, 9L, 9L, 0L, 0L, 9L), spineCounts(database))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
 
-            // C1..C5 (ordinals 0..4) pending_confirmation; C6 (W6, ordinal 5), C7 (W10,
-            // ordinal 9) and C8 (W14, ordinal 13) incomplete.
-            listOf(0, 1, 2, 3, 4).forEach { ordinal ->
+            // C1..C5 (ordinals 0..4) pending_confirmation; C6 (W6, ordinal 5), C7 (W7,
+            // ordinal 6) transfer pending, C8 (W10, ordinal 9) and C9 (W14, ordinal 13) incomplete.
+            listOf(0, 1, 2, 3, 4, 6).forEach { ordinal ->
                 val history = database.ledgerQueries.selectImportStatusHistoryByCandidate(batchLedgerId.value, "candidate-w$ordinal").executeAsList()
                 assertEquals(1, history.size)
                 assertEquals("pending_confirmation", history[0].status)
@@ -718,7 +733,7 @@ class ImportSpineWechatEndToEndTest {
                 ConfirmImportCandidate(
                     failingConfirmStore, attempt1,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
-                ).execute(confirmRequest(hash = fingerprint.digest(w1.facts)))
+                ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts)))
             }
             assertEquals(1, attempt1.calls.get())
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
@@ -730,7 +745,7 @@ class ImportSpineWechatEndToEndTest {
                 ConfirmImportCandidate(
                     SqlDelightImportSpineStore(database, driver), confirmBatch2,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
-                ).execute(confirmRequest(hash = fingerprint.digest(w1.facts))),
+                ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, w1.facts))),
             )
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))

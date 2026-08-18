@@ -7,9 +7,11 @@ import com.unifiedledger.application.ExecuteRg04ImportOperation
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateFormalFactory
+import com.unifiedledger.application.ImportCandidateFormalizationInput
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCommitIds
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportConfirmDecisionFields
 import com.unifiedledger.application.ImportConfirmationId
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
@@ -20,6 +22,7 @@ import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
 import com.unifiedledger.application.ImportIntakeRequest
 import com.unifiedledger.application.ImportIntakeResult
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportResolvedSourceFacts
@@ -106,20 +109,20 @@ class ImportSpineMigrationCoexistenceTest {
 
     private class FormalFactory(
         private val catalog: LedgerCatalog,
-        private val categoryId: CategoryId,
-        private val fundingAccountId: AccountId,
     ) : ImportCandidateFormalFactory {
         override fun create(
-            resolved: ImportResolvedSourceFacts,
+            input: ImportCandidateFormalizationInput,
             ids: ImportCommitIds,
         ): DomainResult<ImportFormalCommit> {
+            val resolved = input.resolved
+            val decisionFields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
             val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
             val money = Money.ofMinor(resolved.amountMinor, currency)
             val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
             return when (
                 val created = createAssetPaidOrdinaryExpense(
                     catalog,
-                    AssetPaidOrdinaryExpenseCommand(LedgerId("ledger-p402"), money, categoryId, fundingAccountId, times),
+                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
                     AssetPaidOrdinaryExpenseIds(
                         transactionId = ids.formalIds.transactionId,
                         versionId = ids.formalIds.versionId,
@@ -156,7 +159,7 @@ class ImportSpineMigrationCoexistenceTest {
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(21, LedgerDatabase.Schema.version)
+                assertEquals(22, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg04ImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportSourceRecords().executeAsOne())
@@ -242,9 +245,12 @@ class ImportSpineMigrationCoexistenceTest {
 
             // Shared spine on ledger-p402: intake + confirm + replay.
             val intakeRequest = ImportIntakeRequest(
-                ledgerId, ImportRequestId("req-a-intake"), "batch-p402-a", 0,
-                ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
-                ImportCompleteness.VALID_COMPLETE,
+                identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")),
+                inputRef = "batch-p402-a",
+                recordOrdinal = 0,
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+                completeness = ImportCompleteness.VALID_COMPLETE,
             )
             val intakeIds = object : ImportIntakeIdSource {
                 override fun next() = ImportIntakeIds(
@@ -266,13 +272,18 @@ class ImportSpineMigrationCoexistenceTest {
                 ExecuteImportIntake(spineStore, intakeIds, ImportContentFingerprint()).execute(intakeRequest),
             )
             val confirmRequest = ImportCandidateConfirmRequest(
-                ImportRequestIdentity(ledgerId, ImportRequestId("req-a-confirm")),
-                ImportCandidateId("candidate-a"), hashR1, "2026-08-07T10:00:00+08:00",
-                CategoryId("category-food"), AccountId("account-asset-a"),
+                identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-confirm")),
+                candidateId = ImportCandidateId("candidate-a"),
+                expectedContentHash = hashR1,
+                explicitConfirmedAt = "2026-08-07T10:00:00+08:00",
+                decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
+                    categoryId = CategoryId("category-food"),
+                    fundingAccountId = AccountId("account-asset-a"),
+                ),
             )
             val confirm = ConfirmImportCandidate(
                 spineStore, commitIds,
-                FormalFactory(spineCatalog(), CategoryId("category-food"), AccountId("account-asset-a")),
+                FormalFactory(spineCatalog()),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(confirm.execute(confirmRequest))
             assertIs<ImportCandidateDecisionResult.NoChange>(confirm.execute(confirmRequest))

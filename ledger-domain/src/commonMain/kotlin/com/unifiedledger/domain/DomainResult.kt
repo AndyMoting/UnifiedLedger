@@ -28,6 +28,13 @@ sealed interface DomainViolation {
     data object InvalidMergedPayment : DomainViolation
 
     data object InvalidRefundReceipt : DomainViolation
+
+    data class AmountNotRepresentableInCurrency(
+        val amountMinor: Long,
+        val sourceScale: Int,
+        val targetCurrencyCode: String,
+        val targetPrecision: Int,
+    ) : DomainViolation
 }
 
 sealed interface MixedPaymentViolation : DomainViolation {

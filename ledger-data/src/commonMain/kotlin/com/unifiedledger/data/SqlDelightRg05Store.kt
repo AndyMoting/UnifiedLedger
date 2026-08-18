@@ -422,6 +422,7 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected = whe
     MergedPaymentViolation.ExpenseCategoryRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPENSE_CATEGORY_REQUIRED, "items")
     MergedPaymentViolation.SingleCurrencyRequired -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.SINGLE_CURRENCY_REQUIRED, "items")
     DomainViolation.ArithmeticOverflow,
+    is DomainViolation.AmountNotRepresentableInCurrency,
     DomainViolation.InvalidPostingSet,
     DomainViolation.UnbalancedPostingSet,
     DomainViolation.InvalidFormalTransaction -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")

@@ -40,10 +40,10 @@ class ImportSpineUseCaseJvmTest {
     )
 
     private val validRequest = ImportIntakeRequest(
-        ledgerId = ledgerId,
-        requestId = ImportRequestId("req-a-intake"),
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")),
         inputRef = "batch-p402-a",
         recordOrdinal = 0,
+        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
         facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
         completeness = ImportCompleteness.VALID_COMPLETE,
     )
@@ -98,8 +98,7 @@ class ImportSpineUseCaseJvmTest {
         assertEquals(1, port.allocateInvocations)
         assertEquals(1, idSource.calls)
         assertEquals(ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")), port.lastIdentity)
-        assertEquals(ledgerId, port.lastSnapshot?.ledgerId)
-        assertEquals(ImportRawIdentity(ledgerId, "batch-p402-a", 0), port.lastSnapshot?.identity)
+        assertEquals(ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")), port.lastSnapshot?.identity)
         assertEquals(ImportCompleteness.VALID_COMPLETE, port.lastSnapshot?.completeness)
     }
 
@@ -149,9 +148,9 @@ class ImportSpineUseCaseJvmTest {
     @Test
     fun `T-26 confirm wires resolved facts through the factory with lazy id allocation`() {
         val idSourceCalls = intArrayOf(0)
-        val factoryCalls = mutableListOf<Pair<ImportResolvedSourceFacts, ImportCommitIds>>()
-        val factory = ImportCandidateFormalFactory { resolved, ids ->
-            factoryCalls.add(resolved to ids)
+        val factoryCalls = mutableListOf<Pair<ImportCandidateFormalizationInput, ImportCommitIds>>()
+        val factory = ImportCandidateFormalFactory { input, ids ->
+            factoryCalls.add(input to ids)
             DomainResult.Failure(DomainViolation.InvalidOrdinaryExpense)
         }
         var portSawDecision: ImportCandidateDecision? = null
@@ -159,11 +158,13 @@ class ImportSpineUseCaseJvmTest {
             override fun commitOnce(
                 identity: ImportRequestIdentity,
                 snapshot: ImportCandidateDecisionSnapshot,
-                createFormalTransaction: (ImportResolvedSourceFacts) -> DomainResult<ImportFormalCommit>,
+                allocateIds: () -> ImportCommitIds,
+                createFormalTransaction: (ImportCandidateFormalizationInput, ImportCommitIds) -> DomainResult<ImportFormalCommit>,
             ): ImportCandidateDecisionResult {
                 portSawDecision = snapshot.decision
                 val resolved = ImportResolvedSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled")
-                val created = createFormalTransaction(resolved)
+                val input = ImportCandidateFormalizationInput(identity.ledgerId, resolved, snapshot.confirmDecisionFields!!)
+                val created = createFormalTransaction(input, allocateIds())
                 assertIs<DomainResult.Failure>(created)
                 return ImportCandidateDecisionResult.Rejected(SpineDiagnostics.domainValidationFailed(snapshot.candidateId))
             }
@@ -185,15 +186,17 @@ class ImportSpineUseCaseJvmTest {
                 candidateId = ImportCandidateId("candidate-a"),
                 expectedContentHash = "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2",
                 explicitConfirmedAt = "2026-08-07T10:00:00+08:00",
-                categoryId = CategoryId("category-food"),
-                fundingAccountId = AccountId("account-asset-a"),
+                decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
+                    categoryId = CategoryId("category-food"),
+                    fundingAccountId = AccountId("account-asset-a"),
+                ),
             ),
         )
         assertEquals(ImportCandidateDecision.CONFIRM, portSawDecision)
         assertEquals(1, factoryCalls.size)
         assertEquals(
             ImportResolvedSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
-            factoryCalls.single().first,
+            factoryCalls.single().first.resolved,
         )
         assertEquals(commitIds, factoryCalls.single().second)
         assertEquals(1, idSourceCalls[0])
@@ -205,12 +208,13 @@ class ImportSpineUseCaseJvmTest {
     fun `T-26 reject wires the status id source and never touches the formal factory`() {
         var statusCalls = 0
         var portSawDecision: ImportCandidateDecision? = null
-        var portSawFields: ImportConfirmFields? = null
+        var portSawFields: ImportConfirmDecisionFields? = null
         val port = object : ImportCandidateCommitPort {
             override fun commitOnce(
                 identity: ImportRequestIdentity,
                 snapshot: ImportCandidateDecisionSnapshot,
-                createFormalTransaction: (ImportResolvedSourceFacts) -> DomainResult<ImportFormalCommit>,
+                allocateIds: () -> ImportCommitIds,
+                createFormalTransaction: (ImportCandidateFormalizationInput, ImportCommitIds) -> DomainResult<ImportFormalCommit>,
             ): ImportCandidateDecisionResult = error("confirm must not be called")
 
             override fun commitRejectOnce(
@@ -219,7 +223,7 @@ class ImportSpineUseCaseJvmTest {
                 allocateStatusId: () -> ImportStatusHistoryId,
             ): ImportCandidateDecisionResult {
                 portSawDecision = snapshot.decision
-                portSawFields = snapshot.confirmFields
+                portSawFields = snapshot.confirmDecisionFields
                 allocateStatusId()
                 return ImportCandidateDecisionResult.Accepted(
                     ImportReceipt(identity.requestId, null, null, snapshot.candidateId, null, null),
