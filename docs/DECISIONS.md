@@ -1601,3 +1601,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 4. **根本程序缺口**：无任何自动化测试对冻结表头与真实导出做字节级比对（测试与 parser 共享同一错误常量 → 自我一致闭环）；纠正实施批已以合成字节级表头测试 + 合成真实布局数据行测试 + 文档化手工真实文件 diff 程序补上（§9.5(a)(b) 已实现、(c) 已文档化；对应规格 §9.3、§9.5）。
 
 **关联决定：** `D-097`、`D-098`、`D-099`、`D-100`、`D-092`
+
+## D-102 RL-04 余额宝转账路由 契约
+
+**状态：** 已批准（2026-08-18 用户批准）。
+
+**决定：** RL-04 余额宝转账路由批（D-10x）契约由 `docs/specs/2026-08-18-p4-05b-rl04-yuebao-transfer-routing-design.md`（Status: approved，2026-08-18 用户批准）提出。提案条款：
+
+1. **批界**：仅支付宝 `投资理财` 交易分类 + `余额宝-*` 商品说明（列 4）子类型判别 → P4-04 转账语义路由（`ImportRecordKind.TRANSFER_FLOW_SOURCE`、`ImportConfirmDecisionFields.TransferFlow` 确认契约、`TransferFlowFormalFactory`、ACCOUNT_TRANSFER 方向门——全部已在 main 实现，本批零新增域原语、零 schema/spine 改动、零新诊断码）。证明 spine 非首来源特化（PHASE4_DESIGN_PACKAGE.local.md:84-87）+ RL-04 一对一转账/formalization 子切片（WORK_PLAN.local.md:123）；mirror/evidence-link 与 posting reconciliation 留 P4-08。
+2. **路由矩阵（冻结）**：`余额宝-自动转入`（交易成功，7/9 样本）→ TRANSFER_FLOW_SOURCE、方向 out（余额→余额宝，wallet=from）；`余额宝-转出到余额`（交易成功，1/9 样本）→ TRANSFER_FLOW_SOURCE、方向 in（余额宝→余额，wallet=to）；`余额宝-单次转入`（唯一样本 交易关闭，无成功样本）→ **本批不冻结路由**（fail-closed `SPINE_ALIPAY_UNKNOWN_TOKEN` 拒行），登记待真实成功样本；`余额宝-转出到银行卡`（无样本）→ 不冻结（UNKNOWN 拒行），登记缺腿；`余额宝-收益发放`（无样本）→ 不冻结，**硬性负向登记为收入（RL-05），禁止路由到 TransferFlow**。状态门：路由要求 交易状态=`交易成功`；冻结子类型 + 非成功状态 → status raw 保留 + unresolved → valid_incomplete（A-05 先例），不可确认 ⇒ 零正式分录。
+3. **判定顺序**：退款（不变）→ 余额宝路由分支（子类型 ∈ 冻结集合 + 状态门）→ 拒绝集合（不变）→ 未知 token（不变）→ 事实映射（不变）；`投资理财` 由 P4-05 的 UNKNOWN 移入冻结转账族，其余 fail-closed 语义不变。该修订登记为 P4-05 §3.2/§3.4 与 D-101 条款的跨规格登记修订（P4-05 oracle 无 `投资理财` fixture 行 ⇒ 零 oracle 影响，与 P4-04 对 P4-03 的三处修订形成对照）。
+4. **方向语义**：子类型 → 方向（自动转入→out / 转出到余额→in）；收/支列（取证恒 `不计收支`）不参与方向判定（P4-04 微信 self-transfer token 族 → 方向先例）；方向事实来源 = 冻结子类型映射，provenance rule `yuebao_subtype_direction_v1`、confidence exact（D-097:1455 分层）。
+5. **账户建模**：余额宝为组合账户下的独立资产账户（golden 锚点语义）；确认契约 `TransferFlow(fromAccountId, toAccountId)` 双账户显式提供 ⇒ parser/spine 不物化余额宝账户 ID；方向门以 walletAccountId = 支付宝余额 账户装配（应用层注入，P4-04 §4.3 先例）。
+6. **复用与隐私**：金额/时间/币种/精度复用 P4-05 已冻结列映射（时间 `fields[0]`、金额 `fields[6]`、CNY、精度 2）；收/付款方式列不解析（P4-05 §3.4 冻结维持），`账户余额`/`余额` 通用 token 仅行为证据、不进持久化；商品说明列仅对 `投资理财` 行做冻结子类型精确匹配、任何值不落盘（provider DTO 零引入）。
+7. **零新增诊断码**：解析级复用 P4-05（SPINE_ALIPAY_UNKNOWN_TOKEN/REFUND_UNSUPPORTED/UNSUPPORTED_TX_TYPE、REQUIRED_FACT_UNRESOLVED 等）；spine 级复用 P4-04（SPINE_DOMAIN_VALIDATION_FAILED 方向门、SPINE_CANDIDATE_INCOMPLETE、SPINE_DECISION_KIND_MISMATCH、SPINE_TRANSFER_NOT_CONFIRMABLE 不触发等）。
+
+**理由：** 证据链：主代理字节级复核 9 份真实导出，9 行余额宝行全部 交易分类=`投资理财`、收/支=`不计收支`（`余额宝-自动转入` ×7 全部 `交易成功`、`余额宝-单次转入` ×1 `交易关闭`、`余额宝-转出到余额` ×1 `交易成功`）；9/9 行收/付款方式无银行卡 ⇒ 全部两腿（余额↔余额宝），无缺腿样本。golden 锚点 `GL-A6F5A461E605`（`.external/requirements/golden-ledger/golden_expected_fund_movements.csv:94-95`）为来源账户 −X → 目标账户 +X 平衡两腿（组合账户展示下 支付宝余额 与 余额宝 为两个独立资产账户）；CORE_ACCEPTANCE_PLAN.md:63 验收点 = 两条资产分录平衡、组合账户展示、分账户对账。负向登记：`余额宝-收益发放` 为收入（RL-05）、`余额宝-转出到银行卡` 为缺腿，均禁止本批路由，fail-closed（真实数据无此两类样本，社区共识项非 9 文件取证）。金额/时间见 .external 只读 fixture 注册值，不复制进 tracked 文件（P405FIX-QUAL-001 隐私先例）。
+
+**实施登记：** 已实施（2026-08-18）。2026-08-18 经用户批准后在独立 worktree `feat/rl04-yuebao-transfer` 落地：`AlipaySourceTokens.kt`（冻结子类型集合/方向映射/rule 常量 + 负向登记）、`AlipayCsvParser.kt`（判定顺序第 2 步 `parseInvestmentRow`，单一事实源 `YUEBAO_TRANSFER_SUBTYPES` + 方向 `getValue` fail-fast）、RL-04 解析级测试 17 条（Y-01…Y-15/P-01…P-18/T-01…T-22 + 畸形字段防御）+ E2E 9 条（E-01…E-12/R-02）全绿；P4-05 既有 28+5 保持绿（R-01）。经独立 spec 评审（3 findings 闭合）、独立 quality 评审（2 MINOR 闭合）、distinct verification（8/8 PASS）、主代理全量回归后闭环。主代理负责 Git 写操作与合并推送。
+
+**关联决定：** `D-092`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`

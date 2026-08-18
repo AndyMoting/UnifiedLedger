@@ -1,13 +1,28 @@
 package com.unifiedledger.application.import.alipay
 
 /**
- * P4-05 frozen token tables (spec sections 1.1, 2.2, 2.4 and 3).
+ * P4-05 + RL-04 (P4-05b) frozen token tables (spec sections 1.1, 2.2, 2.4, 3 and the
+ * frozen RL-04 yuebao transfer routing design sections 2.2/2.3/3).
  *
  * Every token below is a frozen contract constant: byte-level header match at 0-based
  * line 23, the accepted/rejected category sets, the refund marker, the direction
- * mapping, the settled-status subset and the frozen evidence constants (+08:00 offset,
- * CNY currency). The parser never reads a timezone or currency declaration from any
- * region of the input file (the metadata area at lines 0-22 is never read at all).
+ * mapping, the settled-status subset, the frozen evidence constants (+08:00 offset,
+ * CNY currency) and the RL-04 yuebao transfer subtype tables. The parser never reads
+ * a timezone or currency declaration from any region of the input file (the metadata
+ * area at lines 0-22 is never read at all).
+ *
+ * RL-04 negative registrations (frozen in the design matrix, section 3; deliberately
+ * NOT part of [YUEBAO_TRANSFER_SUBTYPES]): the parser routes a 投资理财 row to the
+ * transfer flow only when its 商品说明 exactly matches a frozen subtype AND its status
+ * is 交易成功. Registered non-routed families fail closed to SPINE_ALIPAY_UNKNOWN_TOKEN:
+ *   - 余额宝-单次转入  — not frozen (the only real sample is 交易关闭; awaiting a real
+ *     success sample; if its 收/付款方式 proves bank-card it would be a missing-leg case).
+ *   - 余额宝-转出到银行卡 — not frozen (missing-leg registration: the destination is an
+ *     external card, not a self-owned asset account).
+ *   - 余额宝-收益发放   — hard negative registration: income (RL-05), TransferFlow routing
+ *     forbidden; must never enter the transfer route.
+ * These three tokens must never be added to [YUEBAO_TRANSFER_SUBTYPES] unless a future
+ * contract amendment explicitly freezes them.
  */
 object AlipaySourceTokens {
     /** Frozen 12-column header (0-based line 23), byte-level exact match, fixed order.
@@ -44,6 +59,35 @@ object AlipaySourceTokens {
     /** Frozen settled-status mapping subset (spec section 2.4); every other status token stays raw + unresolved. */
     const val STATUS_SETTLED: String = "settled"
     val STATUS_TOKEN_MAP: Map<String, String> = mapOf("交易成功" to STATUS_SETTLED)
+
+    /**
+     * RL-04 frozen route category (design section 2.3, evidence 9/9 real samples): every
+     * 余额宝 行 carries 交易分类 = 投资理财. The yuebao transfer branch triggers on exactly
+     * this category token; for every other category 商品说明 (field 4) is never read.
+     */
+    const val INVESTMENT_CATEGORY: String = "投资理财"
+
+    /**
+     * RL-04 frozen transfer subtype collection (design sections 2.2/3). Exact-match only,
+     * and only for 交易分类=投资理财 rows; any other 商品说明 value (empty, unknown, or one of
+     * the registered non-frozen families above) stays fail-closed SPINE_ALIPAY_UNKNOWN_TOKEN.
+     */
+    val YUEBAO_TRANSFER_SUBTYPES: Set<String> = setOf("余额宝-自动转入", "余额宝-转出到余额")
+
+    /**
+     * RL-04 frozen subtype -> direction mapping (design section 2.2). 余额宝-自动转入 =
+     * 余额 -> 余额宝 (wallet is the FROM leg; "out"); 余额宝-转出到余额 = 余额宝 -> 余额 (wallet
+     * is the TO leg; "in"). The 收/支 column (field 5) is never read for a routed row:
+     * direction is derived only from this exact mapping (P4-04 wechat token-family
+     * precedent), provenance rule [YUEBAO_SUBTYPE_DIRECTION_RULE] with exact confidence.
+     */
+    val YUEBAO_SUBTYPE_DIRECTION_MAP: Map<String, String> = mapOf(
+        "余额宝-自动转入" to "out",
+        "余额宝-转出到余额" to "in",
+    )
+
+    /** RL-04 frozen provenance rule for the subtype-derived direction fact (design §2.2, D-097:1455). */
+    const val YUEBAO_SUBTYPE_DIRECTION_RULE: String = "yuebao_subtype_direction_v1"
 
     /** Frozen evidence constants (D-099:1536); never read from the file at runtime. */
     const val CURRENCY_CNY: String = "CNY"

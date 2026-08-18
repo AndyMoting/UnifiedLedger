@@ -97,8 +97,10 @@ object AlipayCsvParser {
         return null
     }
 
-    // Frozen judgment order (spec section 3.3): refund marker first, then rejected
-    // category set, then unknown category, then the section 2.4 fact mapping.
+    // Frozen judgment order (spec section 3.3 + RL-04 design section 2.3): refund marker
+    // first, then the 投资理财 余额宝 transfer routing branch (RL-04, new), then rejected
+    // category set, then unknown category, then the section 2.4 fact mapping. The yuebao
+    // branch routes only 余额宝-* frozen subtypes; all other 投资理财 rows stay fail-closed.
     private fun parseDataRow(inputRef: String, ordinal: Int, line: String): AlipayRowResult {
         val fields = line.split(",")
         if (fields.size != AlipaySourceTokens.FIELD_COUNT || fields.last().isNotEmpty() || !tabShapeValid(fields)) {
@@ -113,6 +115,10 @@ object AlipayCsvParser {
             statusRaw.contains(AlipaySourceTokens.REFUND_MARKER)
         ) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.refundUnsupported(inputRef, ordinal)))
+        }
+        // Judgment order 2: 投资理财 -> 余额宝 transfer routing branch (RL-04, frozen).
+        if (typeToken == AlipaySourceTokens.INVESTMENT_CATEGORY) {
+            return parseInvestmentRow(inputRef, ordinal, fields, statusRaw)
         }
         if (typeToken in AlipaySourceTokens.REJECTED_TX_TYPES) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unsupportedTxType(inputRef, ordinal)))
@@ -148,6 +154,62 @@ object AlipayCsvParser {
             statusToken = statusMapped ?: statusRaw.ifEmpty { null },
         )
         return AlipayRowResult.Accepted(ordinal, ImportRecordKind.ORDINARY_FLOW_SOURCE, facts, completeness, diagnostics)
+    }
+
+    // Judgment order 2 (RL-04 frozen branch): 商品说明 (field 4) is read exactly here and only
+    // for 投资理财 rows (abstract subtype token, exact match; never persisted; provider DTO
+    // zero). The 收/支 column (field 5) is not read by this branch: direction derives only
+    // from the frozen subtype mapping. Route branches:
+    //   (2a) frozen subtype + 交易成功 -> accepted TRANSFER_FLOW_SOURCE (contract_version 2),
+    //        direction by subtype map, status settled, valid_complete.
+    //   (2b) frozen subtype + non-success status -> valid_incomplete: status raw preserved +
+    //        unresolved; transfer_flow_source; amount/time/currency/direction stay reliable.
+    //   (2c) any other subtype (empty/unknown, incl. the 余额宝-单次转入 / 余额宝-转出到银行卡 /
+    //        余额宝-收益发放 registered families) -> fail-closed SPINE_ALIPAY_UNKNOWN_TOKEN.
+    private fun parseInvestmentRow(
+        inputRef: String,
+        ordinal: Int,
+        fields: List<String>,
+        statusRaw: String,
+    ): AlipayRowResult {
+        val subtype = fields[4]
+        // Single source of truth for routing membership (spec §2.3 2c): the frozen subtype
+        // set is the member predicate; the direction map only supplies the direction for a
+        // routed row. A subtype in the set but missing from the map fails fast (getValue).
+        if (subtype !in AlipaySourceTokens.YUEBAO_TRANSFER_SUBTYPES) {
+            return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownToken(inputRef, ordinal)))
+        }
+        val directionMapped = AlipaySourceTokens.YUEBAO_SUBTYPE_DIRECTION_MAP.getValue(subtype)
+        val occurredAt = parseTime(fields[0])
+            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor = parseAmount(fields[6])
+            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val statusMapped = AlipaySourceTokens.STATUS_TOKEN_MAP[statusRaw]
+        if (statusMapped == null) {
+            val facts = ImportSourceFacts(
+                amountMinor = amountMinor,
+                currencyCode = AlipaySourceTokens.CURRENCY_CNY,
+                currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
+                occurredAt = occurredAt,
+                directionToken = directionMapped,
+                statusToken = statusRaw.ifEmpty { null },
+            )
+            return AlipayRowResult.Accepted(
+                ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_INCOMPLETE,
+                listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
+            )
+        }
+        val facts = ImportSourceFacts(
+            amountMinor = amountMinor,
+            currencyCode = AlipaySourceTokens.CURRENCY_CNY,
+            currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
+            occurredAt = occurredAt,
+            directionToken = directionMapped,
+            statusToken = statusMapped,
+        )
+        return AlipayRowResult.Accepted(
+            ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_COMPLETE, emptyList(),
+        )
     }
 
     // Frozen tab invariant (spec section 2.3): field 9 (交易订单号) = non-empty value +
