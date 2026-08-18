@@ -10,10 +10,14 @@ package com.unifiedledger.application.import.alipay
  * region of the input file (the metadata area at lines 0-22 is never read at all).
  */
 object AlipaySourceTokens {
-    /** Frozen 12-column header (0-based line 23), byte-level exact match, fixed order. */
+    /** Frozen 12-column header (0-based line 23), byte-level exact match, fixed order.
+     *  Canonical real tokens (spec §9.2, byte-verified across 9 real exports on 2026-08-18):
+     *  index 0 交易时间=occurred_at, 1 交易分类=route, 2 交易对方, 3 对方账号, 4 商品说明,
+     *  5 收/支=direction, 6 金额=amount, 7 收/付款方式, 8 交易状态=status, 9 交易订单号,
+     *  10 商家订单号, 11 备注. Columns 2/3/4/7/9/10/11 are never persisted. */
     val HEADER_TOKENS: List<String> = listOf(
-        "交易号", "交易分类", "交易对方", "商品名称", "交易时间", "收/支",
-        "金额(元)", "收付款方式", "交易状态", "交易订单号", "商家订单号", "备注",
+        "交易时间", "交易分类", "交易对方", "对方账号", "商品说明", "收/支",
+        "金额", "收/付款方式", "交易状态", "交易订单号", "商家订单号", "备注",
     )
 
     const val HEADER_ROW_INDEX: Int = 23

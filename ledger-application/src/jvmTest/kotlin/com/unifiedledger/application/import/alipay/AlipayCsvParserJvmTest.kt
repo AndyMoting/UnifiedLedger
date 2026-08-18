@@ -45,7 +45,10 @@ class AlipayCsvParserJvmTest {
     private fun rawRow(fields: List<String>, trailingComma: Boolean = true): String =
         fields.joinToString(",") + if (trailingComma) "," else ""
 
-    /** Generic frozen-shape data row; [merchOrderNo] = null renders the single-tab (empty) shape. */
+    /** Generic frozen-shape data row in the REAL column layout (spec §9.2): time at index 0,
+     *  category[1], counterparty[2], account[3], product 商品说明[4], direction[5], amount[6],
+     *  method[7], status[8], order[9] (trailing tab), merchant order[10] (trailing tab or empty),
+     *  note[11]. [merchOrderNo] = null renders the single-tab (empty) shape. */
     private fun recordRow(
         category: String,
         direction: String,
@@ -55,8 +58,8 @@ class AlipayCsvParserJvmTest {
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
     ): String = rawRow(
         listOf(
-            "SYN-SECRET-TXID", category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT",
-            time, direction, amount, "SYN-SECRET-METHOD", status,
+            time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
+            "SYN-SECRET-PRODUCT", direction, amount, "SYN-SECRET-METHOD", status,
             "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
         ),
     )
@@ -66,8 +69,8 @@ class AlipayCsvParserJvmTest {
         merchOrderField: String = "SYN-SECRET-MERCHNO\t",
         note: String = "SYN-SECRET-NOTE",
     ): List<String> = listOf(
-        "SYN-SECRET-TXID", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT",
-        "2026-08-01 12:30:45", "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
+        "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
+        "SYN-SECRET-PRODUCT", "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
         txOrderField, merchOrderField, note,
     )
 
@@ -419,9 +422,9 @@ class AlipayCsvParserJvmTest {
             expectedInputRef = "batch-p405-b3",
         )
 
-        // b4: token off by one character (金额(元) -> 金额(圆)).
+        // b4: token off by one character (对方账号 -> 对方帐号).
         val offByOneTokens = AlipaySourceTokens.HEADER_TOKENS.mapIndexed { index, token ->
-            if (index == 6) "金额(圆)" else token
+            if (index == 3) "对方帐号" else token
         }
         val offByOne = csvBytes(listOf(a01Row()), header = headerLine(offByOneTokens))
         val offByOneResult = AlipayCsvParser.parse("batch-p405-b4", offByOne)
@@ -703,17 +706,79 @@ class AlipayCsvParserJvmTest {
         assertEquals(a03Facts, accepted(shapeResult.rows, 1).facts)
 
         // Provider DTO zero introduction: values of the non-persisted columns
-        // (交易号/交易对方/商品名称/收付款方式/交易订单号/商家订单号/备注) and the metadata area
-        // never intersect the parse output or diagnostics.
+        // (交易对方/对方账号/商品说明/收/付款方式/交易订单号/商家订单号/备注 — the real layout has no
+        // 交易号 column, spec §9.2) and the metadata area never intersect the parse output
+        // or diagnostics.
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
         val outputs = outputStrings(result)
         val forbidden = (0..22).flatMap { listOf("SYN-META-PII-EXPORT-$it", "SYN-META-PII-NICK-$it") } +
             listOf(
-                "SYN-SECRET-TXID", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT", "SYN-SECRET-METHOD",
+                "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT", "SYN-SECRET-PRODUCT", "SYN-SECRET-METHOD",
                 "SYN-SECRET-TXNO", "SYN-SECRET-MERCHNO", "SYN-SECRET-NOTE",
             )
         forbidden.forEach { secret ->
             assertTrue(outputs.none { it == secret || it.contains(secret) }, "forbidden value leaked: $secret")
         }
+    }
+
+    // ---- §9.5 corrective-amendment consistency tests (real-header / real-layout) ----
+
+    @Test // §9.5(a) / canonical real-header byte acceptance (defect-catcher)
+    fun canonicalRealHeaderGbkEncodedIsAcceptedByHeaderMatch() {
+        // The 12 canonical real tokens (spec §9.2, byte-verified across 9 real exports on
+        // 2026-08-18) are hardcoded as a literal — NOT derived from HEADER_TOKENS — then
+        // GBK-encoded and fed to the parser. The byte-exact header match must ACCEPT it
+        // (no STRUCTURE_MISMATCH, batch not REJECTED on header). This is the test that
+        // would have caught the frozen-header defect: if HEADER_TOKENS held the wrong
+        // tokens, this literal header would fail the match and the batch would be REJECTED.
+        // Column-name tokens only, no personal data.
+        val canonicalHeader =
+            "交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注,"
+        val bytes = csvBytes(emptyList(), header = canonicalHeader, charset = gb18030)
+        val result = AlipayCsvParser.parse("batch-p405-canonical-header", bytes)
+        assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
+        assertNull(result.diagnostic)
+        assertEquals(0, result.rows.size)
+    }
+
+    @Test // §9.5(b) / real-layout data-row fact extraction
+    fun realLayoutDataRowExtractsFactsFromCorrectColumnIndices() {
+        // A synthetic data row in the REAL column layout (spec §9.2): time at index 0,
+        // product 商品说明 at index 4, amount at index 6, category[1]/direction[5]/
+        // status[8]/order[9] (trailing tab)/merchant-order[10] (trailing tab). Asserts
+        // facts come from the real indices and the 商品说明 value (fields[4]) never appears
+        // in the extracted facts or diagnostics. Synthetic values only.
+        val productDescription = "SYN-PRODUCT-DESCRIPTION-VALUE"
+        val dataRow = rawRow(
+            listOf(
+                "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
+                productDescription, "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
+                "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
+            ),
+        )
+        val bytes = csvBytes(listOf(dataRow))
+        val result = AlipayCsvParser.parse("batch-p405-real-layout", bytes)
+        assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
+
+        val row = accepted(result.rows, 0)
+        // occurred_at comes from fields[0] (real time column); fields[4] holds the product
+        // description, which is not a valid time shape, so acceptance proves the read index.
+        assertEquals("2026-08-01T12:30:45+08:00", row.facts.occurredAt)
+        // amount_minor comes from fields[6] (real amount column); no other field holds "128.50".
+        assertEquals(12850L, row.facts.amountMinor)
+        assertEquals("CNY", row.facts.currencyCode)
+        assertEquals(2, row.facts.currencyPrecision)
+        // category[1] routed (网上支付 accepted), direction[5] mapped, status[8] mapped.
+        assertEquals("out", row.facts.directionToken)
+        assertEquals("settled", row.facts.statusToken)
+        assertEquals(ImportCompleteness.VALID_COMPLETE, row.completeness)
+        assertEquals(emptyList<AlipayDiagnostic>(), row.diagnostics)
+
+        // 商品说明 (fields[4]) never appears in any extracted fact or diagnostic string.
+        val outputs = outputStrings(result)
+        assertTrue(
+            outputs.none { it == productDescription || it.contains(productDescription) },
+            "商品说明 value leaked into facts/diagnostics: $productDescription",
+        )
     }
 }

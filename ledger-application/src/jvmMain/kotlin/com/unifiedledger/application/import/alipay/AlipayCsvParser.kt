@@ -120,7 +120,7 @@ object AlipayCsvParser {
         if (typeToken !in AlipaySourceTokens.ACCEPTED_TX_TYPES) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownToken(inputRef, ordinal)))
         }
-        val occurredAt = parseTime(fields[4])
+        val occurredAt = parseTime(fields[0])
             ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
         val amountMinor = parseAmount(fields[6])
             ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
