@@ -17,7 +17,7 @@ class Rg09SchemaV12Test {
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                assertEquals(22, LedgerDatabase.Schema.version)
+                assertEquals(23, LedgerDatabase.Schema.version)
                 val database = LedgerDatabase(driver)
                 seedFormal(database, "adjustment", "BALANCE_ADJUSTMENT", 3_000L)
                 seedFormal(database, "reversal", "BALANCE_ADJUSTMENT_REVERSAL", -2_000L)

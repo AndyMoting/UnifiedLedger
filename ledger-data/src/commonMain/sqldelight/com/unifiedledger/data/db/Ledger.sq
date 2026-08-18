@@ -7507,6 +7507,171 @@ CREATE TABLE import_receipt (
   FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id)
 );
 
+-- P4-08 shared reconciliation surface. Scenario cardinality is enforced by the
+-- confirmation port; these shared tables deliberately have no global evidence or
+-- posting uniqueness beyond the one current reconciliation projection per posting.
+CREATE TABLE reconciliation_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('confirm_link', 'invalidate_link', 'migration_seed')),
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED', 'CONFLICT')),
+  reason_code TEXT,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE reconciliation_request_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+  account_id TEXT NOT NULL,
+  responsibility TEXT NOT NULL CHECK (responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  basis_version INTEGER NOT NULL CHECK (basis_version = 1),
+  match_basis TEXT NOT NULL,
+  window_days INTEGER NOT NULL CHECK (window_days >= 0),
+  natural_day_distance INTEGER NOT NULL CHECK (natural_day_distance >= 0),
+  source_occurred_at TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  human_decision TEXT NOT NULL CHECK (human_decision = 'confirm_match'),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE reconciliation_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  link_id TEXT,
+  reconciliation_id TEXT,
+  history_sequence INTEGER,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES posting_reconciliation(ledger_id, reconciliation_id)
+);
+
+CREATE TABLE evidence_link (
+  ledger_id TEXT NOT NULL,
+  link_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  responsibility TEXT NOT NULL CHECK (responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  basis_version INTEGER NOT NULL CHECK (basis_version = 1),
+  match_basis TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+CREATE INDEX evidence_link_by_evidence ON evidence_link(ledger_id, evidence_id);
+CREATE INDEX evidence_link_by_posting ON evidence_link(ledger_id, posting_id);
+
+CREATE TABLE evidence_link_history (
+  ledger_id TEXT NOT NULL,
+  link_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  state TEXT NOT NULL CHECK (state IN ('active', 'invalidated')),
+  reason TEXT NOT NULL CHECK (reason IN ('confirmed', 'posting_replaced', 'corrected')),
+  request_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, link_id, sequence),
+  FOREIGN KEY (ledger_id, link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+
+CREATE TABLE posting_reconciliation (
+  ledger_id TEXT NOT NULL,
+  reconciliation_id TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'PARTIAL', 'DIFFERENCE', 'MISSING', 'CHECKED')),
+  latest_sequence INTEGER NOT NULL CHECK (latest_sequence >= 1),
+  PRIMARY KEY (ledger_id, reconciliation_id),
+  UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE posting_reconciliation_history (
+  ledger_id TEXT NOT NULL,
+  reconciliation_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'PARTIAL', 'DIFFERENCE', 'MISSING', 'CHECKED')),
+  evidence_link_id TEXT,
+  request_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, reconciliation_id, sequence),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES posting_reconciliation(ledger_id, reconciliation_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+CREATE INDEX posting_reconciliation_history_by_link ON posting_reconciliation_history(ledger_id, evidence_link_id);
+
+CREATE TRIGGER reconciliation_request_guard_update BEFORE UPDATE ON reconciliation_request BEGIN
+  SELECT CASE WHEN old.outcome != 'PENDING'
+      OR new.ledger_id != old.ledger_id OR new.request_id != old.request_id
+      OR new.operation != old.operation OR new.input_fingerprint != old.input_fingerprint
+      OR new.outcome NOT IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED', 'CONFLICT')
+    THEN RAISE(ABORT, 'cannot update reconciliation request') END;
+END;
+CREATE TRIGGER reconciliation_request_guard_delete BEFORE DELETE ON reconciliation_request BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation request'); END;
+CREATE TRIGGER reconciliation_snapshot_guard_update BEFORE UPDATE ON reconciliation_request_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update reconciliation snapshot'); END;
+CREATE TRIGGER reconciliation_snapshot_guard_delete BEFORE DELETE ON reconciliation_request_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation snapshot'); END;
+CREATE TRIGGER reconciliation_receipt_guard_update BEFORE UPDATE ON reconciliation_receipt BEGIN SELECT RAISE(ABORT, 'cannot update reconciliation receipt'); END;
+CREATE TRIGGER reconciliation_receipt_guard_delete BEFORE DELETE ON reconciliation_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation receipt'); END;
+CREATE TRIGGER evidence_link_guard_update BEFORE UPDATE ON evidence_link BEGIN SELECT RAISE(ABORT, 'cannot update evidence link'); END;
+CREATE TRIGGER evidence_link_guard_delete BEFORE DELETE ON evidence_link BEGIN SELECT RAISE(ABORT, 'cannot delete evidence link'); END;
+CREATE TRIGGER evidence_link_history_guard_update BEFORE UPDATE ON evidence_link_history BEGIN SELECT RAISE(ABORT, 'cannot update evidence link history'); END;
+CREATE TRIGGER evidence_link_history_guard_delete BEFORE DELETE ON evidence_link_history BEGIN SELECT RAISE(ABORT, 'cannot delete evidence link history'); END;
+CREATE TRIGGER posting_reconciliation_guard_delete BEFORE DELETE ON posting_reconciliation BEGIN SELECT RAISE(ABORT, 'cannot delete posting reconciliation'); END;
+CREATE TRIGGER posting_reconciliation_history_guard_update BEFORE UPDATE ON posting_reconciliation_history BEGIN SELECT RAISE(ABORT, 'cannot update posting reconciliation history'); END;
+CREATE TRIGGER posting_reconciliation_history_guard_delete BEFORE DELETE ON posting_reconciliation_history BEGIN SELECT RAISE(ABORT, 'cannot delete posting reconciliation history'); END;
+CREATE TRIGGER evidence_link_history_sequence_guard BEFORE INSERT ON evidence_link_history BEGIN
+  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM evidence_link_history WHERE ledger_id = new.ledger_id AND link_id = new.link_id) + 1 != new.sequence
+    OR (new.sequence = 1 AND new.state != 'active')
+  THEN RAISE(ABORT, 'evidence link history sequence') END;
+END;
+CREATE TRIGGER evidence_link_history_transition_guard BEFORE INSERT ON evidence_link_history BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM evidence_link_history latest
+    WHERE latest.ledger_id = new.ledger_id AND latest.link_id = new.link_id
+      AND latest.sequence = (SELECT max(previous.sequence) FROM evidence_link_history previous
+        WHERE previous.ledger_id = new.ledger_id AND previous.link_id = new.link_id)
+      AND (latest.state = 'invalidated' OR (latest.state = 'active' AND new.state != 'invalidated'))
+  ) THEN RAISE(ABORT, 'evidence link history transition') END;
+END;
+CREATE TRIGGER posting_reconciliation_history_sequence_guard BEFORE INSERT ON posting_reconciliation_history BEGIN
+  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM posting_reconciliation_history WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id) + 1 != new.sequence
+  THEN RAISE(ABORT, 'posting reconciliation sequence') END;
+END;
+CREATE TRIGGER posting_reconciliation_history_link_guard BEFORE INSERT ON posting_reconciliation_history BEGIN
+  SELECT CASE WHEN new.evidence_link_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM evidence_link link
+    JOIN posting_reconciliation reconciliation
+      ON reconciliation.ledger_id = link.ledger_id AND reconciliation.posting_id = link.posting_id
+    WHERE link.ledger_id = new.ledger_id AND link.link_id = new.evidence_link_id
+      AND reconciliation.reconciliation_id = new.reconciliation_id
+  ) THEN RAISE(ABORT, 'posting reconciliation evidence link target') END;
+END;
+CREATE TRIGGER posting_reconciliation_update_guard BEFORE UPDATE ON posting_reconciliation BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.reconciliation_id != old.reconciliation_id OR new.posting_id != old.posting_id
+      OR new.latest_sequence != old.latest_sequence + 1
+      OR NOT EXISTS (SELECT 1 FROM posting_reconciliation_history h
+        WHERE h.ledger_id = new.ledger_id AND h.reconciliation_id = new.reconciliation_id
+          AND h.sequence = new.latest_sequence AND h.status = new.status)
+    THEN RAISE(ABORT, 'posting reconciliation current projection') END;
+END;
+
 CREATE TRIGGER import_request_guard_update BEFORE UPDATE ON import_request BEGIN SELECT RAISE(ABORT, 'cannot update import request'); END;
 CREATE TRIGGER import_request_guard_delete BEFORE DELETE ON import_request BEGIN SELECT RAISE(ABORT, 'cannot delete import request'); END;
 CREATE TRIGGER import_source_record_guard_update BEFORE UPDATE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot update import source record'); END;
@@ -7661,3 +7826,243 @@ countImportConfirmations:
 SELECT count(*) FROM import_confirmation;
 countImportReceipts:
 SELECT count(*) FROM import_receipt;
+
+-- P4-08 reconciliation operation queries.
+claimP408ReconciliationRequest:
+INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome)
+VALUES (?, ?, ?, ?, 'PENDING') ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+selectP408ReconciliationRequest:
+SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code
+FROM reconciliation_request WHERE ledger_id = ? AND request_id = ?;
+
+insertP408ReconciliationSnapshot:
+INSERT INTO reconciliation_request_snapshot(
+  ledger_id, request_id, evidence_id, candidate_id, posting_id, amount_minor,
+  currency_code, currency_precision, direction, account_id, responsibility,
+  basis_version, match_basis, window_days, natural_day_distance,
+  source_occurred_at, confirmed_at, human_decision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertP408EvidenceLink:
+INSERT INTO evidence_link(
+  ledger_id, link_id, evidence_id, posting_id, responsibility, basis_version,
+  match_basis, candidate_id, request_id, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertP408EvidenceLinkHistory:
+INSERT INTO evidence_link_history(
+  ledger_id, link_id, sequence, state, reason, request_id, occurred_at
+) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertP408PostingReconciliation:
+INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence)
+VALUES (?, ?, ?, 'PENDING', 1) ON CONFLICT (ledger_id, posting_id) DO NOTHING;
+
+insertP408PostingReconciliationHistory:
+INSERT INTO posting_reconciliation_history(
+  ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at
+) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+updateP408PostingReconciliation:
+UPDATE posting_reconciliation SET status = ?, latest_sequence = ?
+WHERE ledger_id = ? AND reconciliation_id = ?;
+
+updateP408ReconciliationRequest:
+UPDATE reconciliation_request SET outcome = ?, reason_code = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+insertP408ReconciliationReceipt:
+INSERT INTO reconciliation_receipt(
+  ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence
+) VALUES (?, ?, ?, ?, ?, ?);
+
+selectP408ReconciliationReceipt:
+SELECT ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence
+FROM reconciliation_receipt WHERE ledger_id = ? AND request_id = ?;
+
+selectP408EvidenceLinksForEvidence:
+SELECT ledger_id, link_id, evidence_id, posting_id, responsibility, basis_version,
+  match_basis, candidate_id, request_id, created_at
+FROM evidence_link WHERE ledger_id = ? AND evidence_id = ? ORDER BY link_id;
+
+selectP408EvidenceSourceFacts:
+SELECT evidence.evidence_id, source.source_id, source.amount_minor, source.currency_code,
+  source.currency_precision, source.occurred_at, source.direction_token, source.status_token
+FROM import_evidence AS evidence
+JOIN import_source_record AS source
+  ON source.ledger_id = evidence.ledger_id AND source.source_id = evidence.source_id
+WHERE evidence.ledger_id = ? AND evidence.evidence_id = ?;
+
+selectP408PostingIntegrity:
+SELECT DISTINCT p.posting_id, p.ledger_id, p.amount_minor, p.currency_code, p.currency_precision,
+  p.account_id, v.transaction_id, cv.current_version_id, v.occurred_at
+FROM posting AS p
+JOIN transaction_version AS v
+  ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version AS cv
+  ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id
+ AND cv.current_version_id = v.version_id
+WHERE p.ledger_id = ? AND p.posting_id = ?
+  AND EXISTS (
+    SELECT 1 FROM rg03_transfer_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg04_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg05_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg06_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg07_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg08_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg09_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg10_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg11_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg12_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  );
+
+selectP408ActiveLinkCountForPosting:
+SELECT count(*) FROM evidence_link AS link
+WHERE link.ledger_id = ? AND link.posting_id = ?
+  AND EXISTS (SELECT 1 FROM evidence_link_history AS history
+    WHERE history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+      AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+        WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+      AND history.state = 'active');
+
+selectP408ActiveLinksForEvidence:
+SELECT link.link_id, link.posting_id, link.responsibility, link.candidate_id, link.request_id
+FROM evidence_link AS link
+JOIN evidence_link_history AS history
+  ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+WHERE link.ledger_id = ? AND link.evidence_id = ?
+  AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+    WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+  AND history.state = 'active'
+ORDER BY link.link_id;
+
+selectP408ActiveLinksForPostingResponsibility:
+SELECT link.link_id, link.evidence_id, link.candidate_id, link.request_id
+FROM evidence_link AS link
+JOIN evidence_link_history AS history
+  ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+WHERE link.ledger_id = ? AND link.posting_id = ? AND link.responsibility = ?
+  AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+    WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+  AND history.state = 'active'
+ORDER BY link.link_id;
+
+selectP408ActiveResponsibilityCountForPosting:
+SELECT count(DISTINCT link.responsibility) FROM evidence_link AS link
+WHERE link.ledger_id = ? AND link.posting_id = ?
+  AND EXISTS (SELECT 1 FROM evidence_link_history AS history
+    WHERE history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+      AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+        WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+      AND history.state = 'active');
+
+selectP408ActiveEvidenceLinkHistory:
+SELECT link_id, sequence, state, reason, request_id, occurred_at
+FROM evidence_link_history WHERE ledger_id = ? AND link_id = ?
+ORDER BY sequence DESC LIMIT 1;
+
+selectP408PostingReconciliation:
+SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence
+FROM posting_reconciliation WHERE ledger_id = ? AND posting_id = ?;
+
+selectP408PostingReconciliationHistory:
+SELECT ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at
+FROM posting_reconciliation_history WHERE ledger_id = ? AND reconciliation_id = ?
+ORDER BY sequence;
+
+selectP408ReconciliationReport:
+SELECT p.posting_id, v.transaction_id, p.account_id,
+  COALESCE(reconciliation.status, 'PENDING') AS status,
+  link.link_id AS active_link_id
+FROM posting AS p
+JOIN transaction_version AS v
+  ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = v.ledger_id
+ AND current_version.transaction_id = v.transaction_id
+ AND current_version.current_version_id = v.version_id
+LEFT JOIN posting_reconciliation AS reconciliation
+  ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+LEFT JOIN evidence_link AS link
+  ON link.ledger_id = p.ledger_id AND link.posting_id = p.posting_id
+ AND EXISTS (
+   SELECT 1 FROM evidence_link_history AS link_history
+   WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+     AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+       WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+     AND link_history.state = 'active'
+ )
+WHERE p.ledger_id = ?
+  AND EXISTS (
+    SELECT 1 FROM rg03_transfer_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg04_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg05_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg06_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg07_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg08_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg09_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg10_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg11_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+    UNION ALL SELECT 1 FROM rg12_posting_semantic s
+    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  )
+ORDER BY p.posting_id, active_link_id;
+
+-- Fresh-schema counterpart of the v22->v23 migration seed. This runs after all
+-- formal semantic tables have been declared, so fresh and migrated v23 start with
+-- the same qualified current-posting PENDING projection.
+INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome)
+SELECT DISTINCT p.ledger_id, 'migration-v23-seed', 'migration_seed', 'schema-v23-seed', 'ACCEPTED'
+FROM posting p
+WHERE EXISTS (
+  SELECT 1 FROM rg03_transfer_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg04_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg05_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg06_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg07_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg08_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg09_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg10_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg11_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg12_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+);
+INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence)
+SELECT p.ledger_id, 'reconciliation-' || p.posting_id, p.posting_id, 'PENDING', 1
+FROM posting p
+JOIN transaction_version v ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version cv ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id AND cv.current_version_id = v.version_id
+WHERE EXISTS (
+  SELECT 1 FROM rg03_transfer_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg04_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg05_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg06_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg07_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg08_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg09_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg10_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg11_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+  UNION ALL SELECT 1 FROM rg12_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
+);
+INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at)
+SELECT ledger_id, reconciliation_id, 1, 'PENDING', NULL, 'migration-v23-seed', 'schema-v23'
+FROM posting_reconciliation;
