@@ -114,8 +114,8 @@ class ImportSpineAlipayEndToEndTest {
         time: String,
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
     ): String = listOf(
-        "SYN-SECRET-TXID", category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT",
-        time, direction, amount, "SYN-SECRET-METHOD", status,
+        time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
+        "SYN-SECRET-PRODUCT", direction, amount, "SYN-SECRET-METHOD", status,
         "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
     ).joinToString(",") + ","
 
@@ -715,8 +715,9 @@ class ImportSpineAlipayEndToEndTest {
                 assertEquals("incomplete", history[0].status)
             }
 
-            // Privacy: the metadata area and the non-persisted columns (交易号/交易对方/商品名称/
-            // 收付款方式/交易订单号/商家订单号/备注) never reach any persisted column.
+            // Privacy: the metadata area and the non-persisted columns (交易对方/对方账号/商品说明/
+            // 收/付款方式/交易订单号/商家订单号/备注 — the real layout has no 交易号 column, spec §9.2)
+            // never reach any persisted column.
             val leaked = scalarText(
                 driver,
                 "SELECT COUNT(*) FROM import_source_record WHERE ledger_id = '${batchLedgerId.value}' AND (" +
