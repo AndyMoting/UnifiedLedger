@@ -21,8 +21,14 @@ object WechatSourceTokens {
     /** Frozen ordinary-flow type domain (spec section 3). */
     val ACCEPTED_TX_TYPES: Set<String> = setOf("商户消费", "扫二维码付款", "二维码收款", "赞赏码", "其他")
 
+    /** Frozen self-transfer type set: wallet↔bank own-asset transfer (spec section 2.1). */
+    val TRANSFER_SELF_TX_TYPES: Set<String> = setOf("零钱提现", "零钱充值")
+
+    /** Frozen missing-leg transfer type set: counterparty is external third party (spec section 2.1). */
+    val TRANSFER_MISSING_LEG_TX_TYPES: Set<String> = setOf("转账", "群收款")
+
     /** Frozen out-of-scope type set: typed rejection, registered for later batches. */
-    val REJECTED_TX_TYPES: Set<String> = setOf("转账", "群收款", "零钱提现", "零钱充值", "微信红包")
+    val REJECTED_TX_TYPES: Set<String> = setOf("微信红包")
 
     /** Refund rows (type or status token containing this marker) are rejected (judgment order 1). */
     const val REFUND_MARKER: String = "退款"
@@ -31,7 +37,7 @@ object WechatSourceTokens {
     val DIRECTION_TOKEN_MAP: Map<String, String> = mapOf("收入" to "in", "支出" to "out")
 
     /** Frozen settled-status subset; every other status token stays raw + unresolved. */
-    val SETTLED_STATUS_TOKENS: Set<String> = setOf("支付成功", "已存入零钱", "已到账")
+    val SETTLED_STATUS_TOKENS: Set<String> = setOf("支付成功", "已存入零钱", "已到账", "提现已到账")
     const val STATUS_SETTLED: String = "settled"
 
     /** Frozen evidence constants (D-099:1536); never read from the file at runtime. */

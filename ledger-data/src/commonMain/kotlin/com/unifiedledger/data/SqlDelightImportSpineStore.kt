@@ -5,17 +5,22 @@ import com.unifiedledger.application.ImportCandidateCommitPort
 import com.unifiedledger.application.ImportCandidateDecision
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateDecisionSnapshot
+import com.unifiedledger.application.ImportCandidateFormalizationInput
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportCommitIds
+import com.unifiedledger.application.ImportConfirmDecisionFields
 import com.unifiedledger.application.ImportConfirmationId
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
+import com.unifiedledger.application.ImportFormalIds
 import com.unifiedledger.application.ImportIntakeCommitPort
 import com.unifiedledger.application.ImportIntakeIds
 import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportIntakeSnapshot
 import com.unifiedledger.application.ImportReceipt
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportResolvedSourceFacts
@@ -25,6 +30,7 @@ import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.SpineDiagnostics
+import com.unifiedledger.application.validateImportFormalBinding
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
@@ -70,11 +76,11 @@ class SqlDelightImportSpineStore private constructor(
         snapshot: ImportIntakeSnapshot,
         allocateIds: () -> ImportIntakeIds,
     ): ImportIntakeResult {
-        require(identity.ledgerId == snapshot.ledgerId) {
+        require(identity.ledgerId == snapshot.identity.ledgerId) {
             "Request identity and snapshot must belong to the same ledger"
         }
         // Computed exactly once at intake from the inbound facts (spec section 6).
-        val digest = fingerprint.digest(snapshot.facts)
+        val digest = fingerprint.digest(snapshot.recordKind, snapshot.facts)
         return try {
             rollbackTypedRejection { database.transactionWithResult {
                 database.ledgerQueries.claimImportRequest(identity.ledgerId.value, identity.requestId.value, "intake")
@@ -82,9 +88,9 @@ class SqlDelightImportSpineStore private constructor(
                     return@transactionWithResult resolveIntake(identity, snapshot, digest)
                 }
                 val existing = database.ledgerQueries.selectImportSourceByIdentity(
-                    snapshot.ledgerId.value,
-                    snapshot.identity.inputRef,
-                    snapshot.identity.recordOrdinal.toLong(),
+                    snapshot.identity.ledgerId.value,
+                    snapshot.inputRef,
+                    snapshot.recordOrdinal.toLong(),
                 ).executeAsOneOrNull()
                 if (existing != null) {
                     if (intakeEquivalent(existing.toStoredFacts(), snapshot, digest)) {
@@ -94,22 +100,22 @@ class SqlDelightImportSpineStore private constructor(
                     abortImportSpine(
                         ImportIntakeResult.Rejected(
                             SpineDiagnostics.identityCollision(
-                                snapshot.identity.inputRef,
-                                snapshot.identity.recordOrdinal,
+                                snapshot.inputRef,
+                                snapshot.recordOrdinal,
                             ),
                         ),
                     )
                 }
                 val ids = allocateIds()
                 database.ledgerQueries.insertImportSourceRecord(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     source_id = ids.sourceId.value,
                     owner_request_id = identity.requestId.value,
-                    input_ref = snapshot.identity.inputRef,
-                    record_ordinal = snapshot.identity.recordOrdinal.toLong(),
-                    record_kind = ImportContentFingerprint.RECORD_KIND,
+                    input_ref = snapshot.inputRef,
+                    record_ordinal = snapshot.recordOrdinal.toLong(),
+                    record_kind = snapshot.recordKind.storageValue,
                     content_hash = digest,
-                    contract_version = 1L,
+                    contract_version = snapshot.recordKind.contractVersion.toLong(),
                     completeness = snapshot.completeness.name.lowercase(),
                     amount_minor = snapshot.facts.amountMinor,
                     currency_code = snapshot.facts.currencyCode,
@@ -119,23 +125,27 @@ class SqlDelightImportSpineStore private constructor(
                     status_token = snapshot.facts.statusToken,
                 )
                 database.ledgerQueries.insertImportEvidence(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     evidence_id = ids.evidenceId.value,
                     source_id = ids.sourceId.value,
                     evidence_kind = "source_observation",
                     observed_at = snapshot.facts.occurredAt,
                 )
                 database.ledgerQueries.insertImportCandidate(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     candidate_id = ids.candidateId.value,
                     source_id = ids.sourceId.value,
-                    candidate_kind = "ordinary_flow",
+                    candidate_kind = when (snapshot.recordKind) {
+                        ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
+                        ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
+                        ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                    },
                     confidence = confidenceFor(snapshot.completeness),
-                    rule = "ordinary_flow_source",
+                    rule = snapshot.recordKind.storageValue,
                     rule_version = 1L,
                 )
                 database.ledgerQueries.insertImportCandidateRequirement(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     candidate_id = ids.candidateId.value,
                     requirement_index = 0L,
                     requirement = "formal_transaction_creation",
@@ -146,7 +156,7 @@ class SqlDelightImportSpineStore private constructor(
                     "incomplete"
                 }
                 database.ledgerQueries.insertImportStatusHistory(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     candidate_id = ids.candidateId.value,
                     sequence = 1L,
                     status_id = ids.statusHistoryId.value,
@@ -156,7 +166,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
                 failure.failAt(ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE)
                 database.ledgerQueries.insertImportReceipt(
-                    ledger_id = snapshot.ledgerId.value,
+                    ledger_id = snapshot.identity.ledgerId.value,
                     request_id = identity.requestId.value,
                     outcome = "accepted",
                     source_id = ids.sourceId.value,
@@ -186,15 +196,15 @@ class SqlDelightImportSpineStore private constructor(
             // transaction already rolled back, so any pre-existing source row belongs to
             // a committed winner; re-read and re-judge (spec section 8 intake order).
             val existing = database.ledgerQueries.selectImportSourceByIdentity(
-                snapshot.ledgerId.value,
-                snapshot.identity.inputRef,
-                snapshot.identity.recordOrdinal.toLong(),
+                snapshot.identity.ledgerId.value,
+                snapshot.inputRef,
+                snapshot.recordOrdinal.toLong(),
             ).executeAsOneOrNull() ?: throw unexpected
             if (intakeEquivalent(existing.toStoredFacts(), snapshot, digest)) {
                 intakeIdentityNoChange(snapshot, existing.source_id)
             } else {
                 ImportIntakeResult.Rejected(
-                    SpineDiagnostics.identityCollision(snapshot.identity.inputRef, snapshot.identity.recordOrdinal),
+                    SpineDiagnostics.identityCollision(snapshot.inputRef, snapshot.recordOrdinal),
                 )
             }
         }
@@ -203,17 +213,15 @@ class SqlDelightImportSpineStore private constructor(
     override fun commitOnce(
         identity: ImportRequestIdentity,
         snapshot: ImportCandidateDecisionSnapshot,
-        createFormalTransaction: (resolved: ImportResolvedSourceFacts) -> DomainResult<ImportFormalCommit>,
+        allocateIds: () -> ImportCommitIds,
+        createFormalTransaction: (input: ImportCandidateFormalizationInput, ids: ImportCommitIds) -> DomainResult<ImportFormalCommit>,
     ): ImportCandidateDecisionResult {
-        require(identity.ledgerId == snapshot.ledgerId) {
-            "Request identity and snapshot must belong to the same ledger"
-        }
         return rollbackTypedRejection { database.transactionWithResult {
             database.ledgerQueries.claimImportRequest(identity.ledgerId.value, identity.requestId.value, "confirm_candidate")
             if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
                 return@transactionWithResult resolveConfirm(identity, snapshot)
             }
-            if (snapshot.decision != ImportCandidateDecision.CONFIRM || snapshot.confirmFields == null) {
+            if (snapshot.decision != ImportCandidateDecision.CONFIRM || snapshot.confirmDecisionFields == null) {
                 abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
                         SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
@@ -221,7 +229,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             val state = database.ledgerQueries.selectImportCandidateCurrentStatus(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -242,8 +250,28 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
+            // Kind gate: check candidate_kind against decision fields
+            val candidateKind = state.candidate_kind
+            val decisionFields = snapshot.confirmDecisionFields!!
+            when {
+                candidateKind == "transfer_flow_missing_leg" -> abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.transferNotConfirmable(snapshot.candidateId),
+                    ),
+                )
+                candidateKind == "ordinary_flow" && decisionFields !is ImportConfirmDecisionFields.OrdinaryFlow -> abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
+                    ),
+                )
+                candidateKind == "transfer_flow" && decisionFields !is ImportConfirmDecisionFields.TransferFlow -> abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
+                    ),
+                )
+            }
             val source = database.ledgerQueries.selectImportSourceForCandidate(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -259,7 +287,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             database.ledgerQueries.selectImportEvidenceForSource(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 source.source_id,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -275,7 +303,22 @@ class SqlDelightImportSpineStore private constructor(
                 directionToken = source.direction_token!!,
                 statusToken = source.status_token,
             )
-            val created = when (val result = createFormalTransaction(resolved)) {
+            val input = ImportCandidateFormalizationInput(
+                ledgerId = identity.ledgerId,
+                resolved = resolved,
+                decisionFields = decisionFields,
+            )
+            val allocatedIds = allocateIds()
+            // Shape gate (spec 4.2 / T-54): allocated posting IDs must be exactly two;
+            // otherwise reject before the factory runs at all (factory zero-call).
+            if (allocatedIds.formalIds.postingIds.size != 2) {
+                abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
+                    ),
+                )
+            }
+            val created = when (val result = createFormalTransaction(input, allocatedIds)) {
                 is DomainResult.Success -> result.value
                 is DomainResult.Failure -> abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
@@ -283,24 +326,40 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
+            when (val validation = validateImportFormalBinding(input, allocatedIds, created)) {
+                is DomainResult.Success -> Unit
+                // Binding failure reuses SPINE_REFERENCE_INTEGRITY_VIOLATION (spec 4.2):
+                // the returned graph is not bound to the same immutable input/allocated IDs.
+                is DomainResult.Failure -> abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
+                    ),
+                )
+            }
             persistFormal(created.transaction)
             failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL)
+            val categoryId: String? = (decisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.categoryId?.value
+            val fundingAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.fundingAccountId?.value
+            val fromAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.TransferFlow)?.fromAccountId?.value
+            val toAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.TransferFlow)?.toAccountId?.value
             database.ledgerQueries.insertImportDecisionSnapshot(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
                 decision = "confirm",
                 candidate_id = snapshot.candidateId.value,
                 expected_content_hash = snapshot.expectedContentHash,
-                category_id = snapshot.confirmFields?.categoryId?.value,
-                funding_account_id = snapshot.confirmFields?.fundingAccountId?.value,
+                category_id = categoryId,
+                funding_account_id = fundingAccountId,
+                from_account_id = fromAccountId,
+                to_account_id = toAccountId,
                 explicit_confirmed_at = snapshot.explicitConfirmedAt,
             )
             val sequence = database.ledgerQueries.selectImportCandidateLatestSequence(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOne() + 1L
             database.ledgerQueries.insertImportStatusHistory(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 candidate_id = snapshot.candidateId.value,
                 sequence = sequence,
                 status_id = created.statusHistoryId.value,
@@ -309,7 +368,7 @@ class SqlDelightImportSpineStore private constructor(
                 operation_class = "creation",
             )
             database.ledgerQueries.insertImportConfirmation(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 confirmation_id = created.confirmationId.value,
                 request_id = identity.requestId.value,
                 candidate_id = snapshot.candidateId.value,
@@ -319,7 +378,7 @@ class SqlDelightImportSpineStore private constructor(
                 confirmed_at = snapshot.explicitConfirmedAt,
             )
             database.ledgerQueries.insertImportReceipt(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
                 outcome = "accepted",
                 source_id = null,
@@ -350,15 +409,12 @@ class SqlDelightImportSpineStore private constructor(
         snapshot: ImportCandidateDecisionSnapshot,
         allocateStatusId: () -> ImportStatusHistoryId,
     ): ImportCandidateDecisionResult {
-        require(identity.ledgerId == snapshot.ledgerId) {
-            "Request identity and snapshot must belong to the same ledger"
-        }
         return rollbackTypedRejection { database.transactionWithResult {
             database.ledgerQueries.claimImportRequest(identity.ledgerId.value, identity.requestId.value, "reject_candidate")
             if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
                 return@transactionWithResult resolveReject(identity, snapshot)
             }
-            if (snapshot.decision != ImportCandidateDecision.REJECT || snapshot.confirmFields != null) {
+            if (snapshot.decision != ImportCandidateDecision.REJECT || snapshot.confirmDecisionFields != null) {
                 abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
                         SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
@@ -366,7 +422,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             val state = database.ledgerQueries.selectImportCandidateCurrentStatus(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -382,7 +438,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             val source = database.ledgerQueries.selectImportSourceForCandidate(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -398,7 +454,7 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             database.ledgerQueries.selectImportEvidenceForSource(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 source.source_id,
             ).executeAsOneOrNull()
                 ?: abortImportSpine(
@@ -408,21 +464,23 @@ class SqlDelightImportSpineStore private constructor(
                 )
             val statusId = allocateStatusId()
             database.ledgerQueries.insertImportDecisionSnapshot(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
                 decision = "reject",
                 candidate_id = snapshot.candidateId.value,
                 expected_content_hash = snapshot.expectedContentHash,
                 category_id = null,
                 funding_account_id = null,
+                from_account_id = null,
+                to_account_id = null,
                 explicit_confirmed_at = null,
             )
             val sequence = database.ledgerQueries.selectImportCandidateLatestSequence(
-                snapshot.ledgerId.value,
+                identity.ledgerId.value,
                 snapshot.candidateId.value,
             ).executeAsOne() + 1L
             database.ledgerQueries.insertImportStatusHistory(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 candidate_id = snapshot.candidateId.value,
                 sequence = sequence,
                 status_id = statusId.value,
@@ -431,7 +489,7 @@ class SqlDelightImportSpineStore private constructor(
                 operation_class = "status_transition",
             )
             database.ledgerQueries.insertImportReceipt(
-                ledger_id = snapshot.ledgerId.value,
+                ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
                 outcome = "accepted",
                 source_id = null,
@@ -498,8 +556,10 @@ class SqlDelightImportSpineStore private constructor(
         }
         val equivalent = stored.decision == "confirm" &&
             stored.candidate_id == snapshot.candidateId.value &&
-            stored.category_id == snapshot.confirmFields?.categoryId?.value &&
-            stored.funding_account_id == snapshot.confirmFields?.fundingAccountId?.value &&
+            stored.category_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.categoryId?.value &&
+            stored.funding_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.fundingAccountId?.value &&
+            stored.from_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.TransferFlow)?.fromAccountId?.value &&
+            stored.to_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.TransferFlow)?.toAccountId?.value &&
             stored.explicit_confirmed_at == snapshot.explicitConfirmedAt
         if (!equivalent) {
             return ImportCandidateDecisionResult.Rejected(SpineDiagnostics.requestIdentityConflict(identity.requestId))
@@ -530,6 +590,8 @@ class SqlDelightImportSpineStore private constructor(
             stored.candidate_id == snapshot.candidateId.value &&
             stored.category_id == null &&
             stored.funding_account_id == null &&
+            stored.from_account_id == null &&
+            stored.to_account_id == null &&
             stored.explicit_confirmed_at == null
         if (!equivalent) {
             return ImportCandidateDecisionResult.Rejected(SpineDiagnostics.requestIdentityConflict(identity.requestId))
@@ -565,13 +627,14 @@ class SqlDelightImportSpineStore private constructor(
         snapshot: ImportIntakeSnapshot,
         sourceId: String,
     ): ImportIntakeResult = ImportIntakeResult.NoChange(
-        returnedIds = intakeReturnedIds(snapshot.ledgerId.value, sourceId),
+        returnedIds = intakeReturnedIds(snapshot.identity.ledgerId.value, sourceId),
         receipt = null,
         reasonCode = SPINE_NO_CHANGE_REASON_CODE,
     )
 
     private data class StoredSourceFacts(
         val sourceId: String,
+        val recordKind: String,
         val contentHash: String,
         val completeness: String,
         val amountMinor: Long?,
@@ -585,6 +648,7 @@ class SqlDelightImportSpineStore private constructor(
     private fun com.unifiedledger.data.db.SelectImportSourceByIdentity.toStoredFacts(): StoredSourceFacts =
         StoredSourceFacts(
             sourceId = source_id,
+            recordKind = record_kind,
             contentHash = content_hash,
             completeness = completeness,
             amountMinor = amount_minor,
@@ -598,6 +662,7 @@ class SqlDelightImportSpineStore private constructor(
     private fun com.unifiedledger.data.db.SelectImportSourceByOwnerRequest.toStoredFacts(): StoredSourceFacts =
         StoredSourceFacts(
             sourceId = source_id,
+            recordKind = record_kind,
             contentHash = content_hash,
             completeness = completeness,
             amountMinor = amount_minor,
@@ -613,6 +678,7 @@ class SqlDelightImportSpineStore private constructor(
         snapshot: ImportIntakeSnapshot,
         digest: String,
     ): Boolean = stored.contentHash == digest &&
+        stored.recordKind == snapshot.recordKind.storageValue &&
         stored.completeness == snapshot.completeness.name.lowercase() &&
         stored.amountMinor == snapshot.facts.amountMinor &&
         stored.currencyCode == snapshot.facts.currencyCode &&

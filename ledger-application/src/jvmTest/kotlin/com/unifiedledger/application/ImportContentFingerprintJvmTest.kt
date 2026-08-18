@@ -38,10 +38,10 @@ class ImportContentFingerprintJvmTest {
     fun `T-18 R1 canonical bytes and pinned digest match independent JVM SHA-256`() {
         val canonical =
             """{"amount":"128.50","currency_code":"CNY","currency_precision":"2","direction_token":"out","occurred_at":"2026-08-01T12:30:00+08:00","record_kind":"ordinary_flow_source","status_token":"settled"}"""
-        assertEquals(canonical, fingerprint.canonicalJson(r1))
+        assertEquals(canonical, fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1))
         val expected =
             "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2"
-        assertEquals(expected, fingerprint.digest(r1))
+        assertEquals(expected, fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1))
         assertEquals(expected, "sha256:" + jvmSha256(canonical.encodeToByteArray()))
     }
 
@@ -49,32 +49,32 @@ class ImportContentFingerprintJvmTest {
     fun `T-18 R2 R3 R1-prime R5 pinned digests match independent JVM SHA-256`() {
         assertEquals(
             "sha256:5a5860ec8dd13eaa03b45627e5403c4ce62cd051c57e3a5a9d5c40f871245c89",
-            fingerprint.digest(r2),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r2),
         )
         assertEquals(
             "sha256:5a5860ec8dd13eaa03b45627e5403c4ce62cd051c57e3a5a9d5c40f871245c89",
-            "sha256:" + jvmSha256(fingerprint.canonicalJson(r2).encodeToByteArray()),
+            "sha256:" + jvmSha256(fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r2).encodeToByteArray()),
         )
 
         // R3: absent status_token is omitted from the canonical document.
-        val canonicalR3 = fingerprint.canonicalJson(r3)
+        val canonicalR3 = fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3)
         assertEquals(
             """{"amount":"45.00","currency_code":"CNY","currency_precision":"2","direction_token":"out","occurred_at":"2026-08-06T18:45:00+08:00","record_kind":"ordinary_flow_source"}""",
             canonicalR3,
         )
         assertEquals(
             "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35",
-            fingerprint.digest(r3),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3),
         )
         assertEquals(
             "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35",
             "sha256:" + jvmSha256(canonicalR3.encodeToByteArray()),
         )
 
-        val canonicalR1Prime = fingerprint.canonicalJson(r1Prime)
+        val canonicalR1Prime = fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1Prime)
         assertEquals(
             "sha256:bffe1da79bcb3411fab3b6226aa9f5696eee27b6361c811681f88eaabba6ecc4",
-            fingerprint.digest(r1Prime),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1Prime),
         )
         assertEquals(
             "sha256:bffe1da79bcb3411fab3b6226aa9f5696eee27b6361c811681f88eaabba6ecc4",
@@ -82,23 +82,23 @@ class ImportContentFingerprintJvmTest {
         )
         assertEquals(
             "sha256:80b823a2a5a392a431c15e84b2ca1783337c57d53a2b940f414b53befeef1e47",
-            fingerprint.digest(r5),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r5),
         )
         assertEquals(
             "sha256:80b823a2a5a392a431c15e84b2ca1783337c57d53a2b940f414b53befeef1e47",
-            "sha256:" + jvmSha256(fingerprint.canonicalJson(r5).encodeToByteArray()),
+            "sha256:" + jvmSha256(fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r5).encodeToByteArray()),
         )
     }
 
     @Test
     fun `T-18 repeated digests are deterministic and different facts differ`() {
-        repeat(3) { assertEquals(fingerprint.digest(r1), fingerprint.digest(r1)) }
+        repeat(3) { assertEquals(fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1), fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1)) }
         assertEquals(
             "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2",
-            fingerprint.digest(r1),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1),
         )
-        assertNotEqualBytes(fingerprint.digest(r1), fingerprint.digest(r1Prime))
-        assertNotEqualBytes(fingerprint.digest(r1), fingerprint.digest(r3))
+        assertNotEqualBytes(fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1), fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1Prime))
+        assertNotEqualBytes(fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1), fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3))
     }
 
     @Test
@@ -107,26 +107,26 @@ class ImportContentFingerprintJvmTest {
             amountMinor = 1, currencyCode = "CNY", currencyPrecision = 0,
             occurredAt = "quote\"back\\slash", directionToken = "ctrl\u0001\u001f", statusToken = "tab\tnewline\nform\u000Creturn\r",
         )
-        val canonical = fingerprint.canonicalJson(facts)
+        val canonical = fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts)
         assertEquals(
             """{"amount":"1","currency_code":"CNY","currency_precision":"0","direction_token":"ctrl\u0001\u001f","occurred_at":"quote\"back\\slash","record_kind":"ordinary_flow_source","status_token":"tab\tnewline\nform\freturn\r"}""",
             canonical,
         )
-        assertEquals(fingerprint.digest(facts), "sha256:" + jvmSha256(canonical.encodeToByteArray()))
+        assertEquals(fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts), "sha256:" + jvmSha256(canonical.encodeToByteArray()))
     }
 
     @Test
     fun `T-18 unpaired surrogates fail closed`() {
         val high = ImportSourceFacts(1, "CNY", 0, "\ud800", "out", "settled")
-        assertFailsWith<IllegalArgumentException> { fingerprint.canonicalJson(high) }
+        assertFailsWith<IllegalArgumentException> { fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, high) }
         val low = ImportSourceFacts(1, "CNY", 0, "\udc00", "out", "settled")
-        assertFailsWith<IllegalStateException> { fingerprint.canonicalJson(low) }
+        assertFailsWith<IllegalStateException> { fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, low) }
     }
 
     @Test
     fun `T-18 decimal formatting pads to precision like the RG-09 emitter`() {
-        assertEquals("128.50", fingerprint.canonicalJson(r1).substringAfter("\"amount\":\"").substringBefore('"'))
-        assertEquals("8888.00", fingerprint.canonicalJson(r5).substringAfter("\"amount\":\"").substringBefore('"'))
+        assertEquals("128.50", fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1).substringAfter("\"amount\":\"").substringBefore('"'))
+        assertEquals("8888.00", fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r5).substringAfter("\"amount\":\"").substringBefore('"'))
         assertEquals("1", formatDecimal(1, 0))
         assertEquals("0.05", formatDecimal(5, 2))
         assertEquals("-128.50", formatDecimal(-12850, 2))

@@ -769,6 +769,7 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected = whe
         field.inputField(),
     )
     DomainViolation.ArithmeticOverflow,
+    is DomainViolation.AmountNotRepresentableInCurrency,
     DomainViolation.InvalidPostingSet,
     DomainViolation.UnbalancedPostingSet,
     DomainViolation.InvalidFormalTransaction,

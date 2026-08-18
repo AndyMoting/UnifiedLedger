@@ -1,6 +1,7 @@
 package com.unifiedledger.application.import.wechat
 
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
@@ -118,19 +119,28 @@ object WechatBillParser {
         return WechatBatchResult(outcome, rows, null)
     }
 
-    // Frozen judgment order (spec section 3): refund first, then type routing, then facts.
+    // Frozen judgment order (spec section 2.1): refund first, then self-transfer,
+    // missing-leg, rejected, ordinary, unknown.
     private fun parseDataRow(inputRef: String, ordinal: Int, row: Row): WechatRowResult {
         val typeToken = textOf(row.getCell(1))
         val statusTokenRaw = textOf(row.getCell(7))
+        // Judgment order 1: refund (unchanged)
         if (typeToken.contains(WechatSourceTokens.REFUND_MARKER) ||
             statusTokenRaw.contains(WechatSourceTokens.REFUND_MARKER)
         ) {
             return WechatRowResult.Rejected(ordinal, listOf(WechatDiagnostics.refundUnsupported(inputRef, ordinal)))
         }
-        when {
+        // Determine recordKind via type routing (judgment orders 2-6)
+        val recordKind = when {
+            typeToken in WechatSourceTokens.TRANSFER_SELF_TX_TYPES ->
+                ImportRecordKind.TRANSFER_FLOW_SOURCE
+            typeToken in WechatSourceTokens.TRANSFER_MISSING_LEG_TX_TYPES ->
+                ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG
             typeToken in WechatSourceTokens.REJECTED_TX_TYPES ->
                 return WechatRowResult.Rejected(ordinal, listOf(WechatDiagnostics.unsupportedTxType(inputRef, ordinal)))
-            typeToken !in WechatSourceTokens.ACCEPTED_TX_TYPES ->
+            typeToken in WechatSourceTokens.ACCEPTED_TX_TYPES ->
+                ImportRecordKind.ORDINARY_FLOW_SOURCE
+            else ->
                 return WechatRowResult.Rejected(ordinal, listOf(WechatDiagnostics.unknownToken(inputRef, ordinal)))
         }
         val occurredAt = parseTime(row.getCell(0))
@@ -146,6 +156,19 @@ object WechatBillParser {
                 inputRef, ordinal, WechatSourceTokens.FIELD_ROLE_DIRECTION,
             )
         }
+        // Self-transfer direction matrix check (spec section 2.2)
+        if (recordKind == ImportRecordKind.TRANSFER_FLOW_SOURCE && directionMapped != null) {
+            val expectedDirection = when (typeToken) {
+                "零钱提现" -> "out"
+                "零钱充值" -> "in"
+                else -> null
+            }
+            if (expectedDirection != null && directionMapped != expectedDirection) {
+                return WechatRowResult.Rejected(
+                    ordinal, listOf(WechatDiagnostics.conflictingSourceFacts(inputRef, ordinal)),
+                )
+            }
+        }
         if (!statusMapped) {
             diagnostics += WechatDiagnostics.requiredFactUnresolved(
                 inputRef, ordinal, WechatSourceTokens.FIELD_ROLE_STATUS,
@@ -160,7 +183,7 @@ object WechatBillParser {
             directionToken = directionMapped ?: directionRaw,
             statusToken = if (statusMapped) WechatSourceTokens.STATUS_SETTLED else statusTokenRaw.ifEmpty { null },
         )
-        return WechatRowResult.Accepted(ordinal, facts, completeness, diagnostics)
+        return WechatRowResult.Accepted(ordinal, recordKind, facts, completeness, diagnostics)
     }
 
     private data class ParsedAmount(val minor: Long, val precision: Int)

@@ -15,25 +15,21 @@ package com.unifiedledger.application
  * dedup (spec section 6, D-098:1493).
  */
 class ImportContentFingerprint {
-    fun canonicalJson(facts: ImportSourceFacts): String = buildString {
+    fun canonicalJson(recordKind: ImportRecordKind, facts: ImportSourceFacts): String = buildString {
         append("{\"amount\":").append(jcsString(formatDecimal(facts.amountMinor, facts.currencyPrecision)))
         append(",\"currency_code\":").append(jcsString(facts.currencyCode))
         append(",\"currency_precision\":").append(jcsString(facts.currencyPrecision.toString()))
         append(",\"direction_token\":").append(jcsString(facts.directionToken))
         append(",\"occurred_at\":").append(jcsString(facts.occurredAt))
-        append(",\"record_kind\":").append(jcsString(RECORD_KIND))
+        append(",\"record_kind\":").append(jcsString(recordKind.storageValue))
         if (facts.statusToken != null) {
             append(",\"status_token\":").append(jcsString(facts.statusToken))
         }
         append('}')
     }
 
-    fun digest(facts: ImportSourceFacts): String =
-        "sha256:${Sha256.digestHex(canonicalJson(facts).encodeToByteArray())}"
-
-    companion object {
-        const val RECORD_KIND = "ordinary_flow_source"
-    }
+    fun digest(recordKind: ImportRecordKind, facts: ImportSourceFacts): String =
+        "sha256:${Sha256.digestHex(canonicalJson(recordKind, facts).encodeToByteArray())}"
 }
 
 internal fun formatDecimal(minorUnits: Long, precision: Int): String {

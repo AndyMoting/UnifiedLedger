@@ -284,9 +284,6 @@ class WechatBillParserJvmTest {
     fun rejectedRowsCarryFrozenDiagnostics() {
         val result = WechatBillParser.parse(inputRef, workbookA())
 
-        val w7 = rejected(result.rows, 6)
-        assertDiagnostic(w7.diagnostics.single(), "SPINE_WEIXIN_UNSUPPORTED_TX_TYPE", "unsupported", "record", 6)
-
         val w8 = rejected(result.rows, 7)
         assertDiagnostic(w8.diagnostics.single(), "SPINE_WEIXIN_REFUND_UNSUPPORTED", "unsupported", "record", 7)
 
@@ -304,17 +301,16 @@ class WechatBillParserJvmTest {
     }
 
     @Test
-    fun wholeBatchOutcomeIsPartialWithEightRecordsAndNineDiagnostics() {
+    fun wholeBatchOutcomeIsPartialWithNineRecordsAndEightDiagnostics() {
         val result = WechatBillParser.parse(inputRef, workbookA())
         assertEquals(WechatBatchOutcome.PARTIAL, result.outcome)
         assertNull(result.diagnostic)
         assertEquals(14, result.rows.size)
-        assertEquals(8, result.rows.count { it is WechatRowResult.Accepted })
-        assertEquals(6, result.rows.count { it is WechatRowResult.Rejected })
+        assertEquals(9, result.rows.count { it is WechatRowResult.Accepted })
+        assertEquals(5, result.rows.count { it is WechatRowResult.Rejected })
         val byCode = result.rows.flatMap { it.diagnostics }.groupingBy { it.code }.eachCount()
         assertEquals(
             mapOf(
-                "SPINE_WEIXIN_UNSUPPORTED_TX_TYPE" to 1,
                 "SPINE_WEIXIN_REFUND_UNSUPPORTED" to 2,
                 "SPINE_WEIXIN_UNKNOWN_TOKEN" to 1,
                 "FIELD_AMOUNT_INVALID" to 1,

@@ -1,0 +1,350 @@
+-- P4-04 transfer formalization (D-098, D-092 scheme A): v21 -> v22.
+-- Eight spine tables: import_source_record, import_evidence,
+-- import_candidate, import_candidate_requires_confirmation,
+-- import_candidate_status_history, import_candidate_decision_snapshot,
+-- import_confirmation, import_receipt. No existing table, row, or rgXX silo is
+-- permanently altered; rebuilt tables match the fresh schema in Ledger.sq.
+-- Six stages (20.sqm template): create, empty backfill, fail-closed data guard
+-- (created and dropped inside the stage), staged rebuild of 8 tables with FK
+-- kept ON (3.sqm template), empty delete with silo guard, trigger re-creation.
+-- The statements execute one by one without an internal transaction; atomicity
+-- is guaranteed by the caller's transaction wrapper.
+
+-- Stage 1: Create. Intentionally empty: no new tables in this migration. The
+-- v21 spine tables are extended in-place via Stage 4 rebuild (new CHECK
+-- constraints, new columns), not replaced by new tables.
+
+-- Stage 2: Backfill. Intentionally empty: no cross-table data movement. New
+-- column values (from_account_id, to_account_id) are populated as NULL during
+-- Stage 4 rebuild, not via a separate backfill pass.
+
+-- Stage 3: fail-closed data guard (20.sqm precedent: CHECK(value = 0) with a
+-- conditional INSERT per check). Asserts that the pre-migration v21 data
+-- satisfies the old shape invariants: all source rows are ordinary v1, no
+-- candidate rows have transfer kinds, and all decision rows satisfy the old
+-- CHECK constraints. The guard is created and dropped inside this stage.
+CREATE TABLE p404_migration_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p404_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_source_record WHERE record_kind != 'ordinary_flow_source' OR contract_version != 1) != 0;
+INSERT INTO p404_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate WHERE candidate_kind NOT IN ('ordinary_flow')) != 0;
+INSERT INTO p404_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_decision_snapshot WHERE (decision = 'confirm' AND (category_id IS NULL OR funding_account_id IS NULL)) OR (decision = 'reject' AND (category_id IS NOT NULL OR funding_account_id IS NOT NULL))) != 0;
+DROP TABLE p404_migration_guard;
+
+-- Stage 4: staged rebuild of 8 spine tables (3.sqm template: FK kept ON,
+-- stage copy, drop in child->parent order, create in parent->child order,
+-- re-insert, verify counts, drop stage). Triggers are deleted with the tables
+-- and re-created in Stage 6.
+
+-- Create stage copies for all 8 tables.
+CREATE TABLE import_source_record_stage AS SELECT * FROM import_source_record;
+CREATE TABLE import_evidence_stage AS SELECT * FROM import_evidence;
+CREATE TABLE import_candidate_stage AS SELECT * FROM import_candidate;
+CREATE TABLE import_candidate_requires_confirmation_stage AS SELECT * FROM import_candidate_requires_confirmation;
+CREATE TABLE import_candidate_status_history_stage AS SELECT * FROM import_candidate_status_history;
+CREATE TABLE import_candidate_decision_snapshot_stage AS SELECT * FROM import_candidate_decision_snapshot;
+CREATE TABLE import_confirmation_stage AS SELECT * FROM import_confirmation;
+CREATE TABLE import_receipt_stage AS SELECT * FROM import_receipt;
+
+-- Delete old tables in child->parent order (triggers deleted with tables).
+DROP TABLE import_receipt;
+DROP TABLE import_confirmation;
+DROP TABLE import_candidate_decision_snapshot;
+DROP TABLE import_candidate_status_history;
+DROP TABLE import_candidate_requires_confirmation;
+DROP TABLE import_evidence;
+DROP TABLE import_candidate;
+DROP TABLE import_source_record;
+
+-- Re-create tables in parent->child order with new shapes.
+-- import_source_record: new record_kind/contract_version CHECKs plus pair CHECK.
+CREATE TABLE import_source_record (
+  ledger_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  owner_request_id TEXT NOT NULL,
+  input_ref TEXT NOT NULL,
+  record_ordinal INTEGER NOT NULL CHECK (record_ordinal >= 0),
+  record_kind TEXT NOT NULL CHECK (record_kind IN ('ordinary_flow_source', 'transfer_flow_source', 'transfer_flow_source_missing_leg')),
+  content_hash TEXT NOT NULL,
+  contract_version INTEGER NOT NULL CHECK (contract_version IN (1, 2)),
+  completeness TEXT NOT NULL CHECK (completeness IN ('valid_complete', 'valid_incomplete')),
+  amount_minor INTEGER,
+  currency_code TEXT,
+  currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  occurred_at TEXT,
+  direction_token TEXT,
+  status_token TEXT,
+  PRIMARY KEY (ledger_id, source_id),
+  UNIQUE (ledger_id, input_ref, record_ordinal),
+  UNIQUE (ledger_id, owner_request_id),
+  FOREIGN KEY (ledger_id, owner_request_id) REFERENCES import_request(ledger_id, request_id),
+  CHECK (completeness != 'valid_complete' OR (amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_precision IS NOT NULL AND occurred_at IS NOT NULL AND direction_token IS NOT NULL AND status_token IS NOT NULL)),
+  CHECK (amount_minor IS NULL OR (currency_code IS NOT NULL AND currency_precision IS NOT NULL)),
+  CHECK ((record_kind = 'ordinary_flow_source' AND contract_version = 1) OR (record_kind IN ('transfer_flow_source', 'transfer_flow_source_missing_leg') AND contract_version = 2))
+);
+INSERT INTO import_source_record SELECT * FROM import_source_record_stage;
+
+-- import_evidence: unchanged shape.
+CREATE TABLE import_evidence (
+  ledger_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('source_observation')),
+  observed_at TEXT,
+  PRIMARY KEY (ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id)
+);
+INSERT INTO import_evidence SELECT * FROM import_evidence_stage;
+
+-- import_candidate: new candidate_kind CHECK.
+CREATE TABLE import_candidate (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  candidate_kind TEXT NOT NULL CHECK (candidate_kind IN ('ordinary_flow', 'transfer_flow', 'transfer_flow_missing_leg')),
+  confidence TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+  PRIMARY KEY (ledger_id, candidate_id),
+  UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id)
+);
+INSERT INTO import_candidate SELECT * FROM import_candidate_stage;
+
+-- import_candidate_requires_confirmation: unchanged shape.
+CREATE TABLE import_candidate_requires_confirmation (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  requirement_index INTEGER NOT NULL CHECK (requirement_index >= 0),
+  requirement TEXT NOT NULL CHECK (requirement IN ('formal_transaction_creation')),
+  PRIMARY KEY (ledger_id, candidate_id, requirement_index),
+  UNIQUE (ledger_id, candidate_id, requirement),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id)
+);
+INSERT INTO import_candidate_requires_confirmation SELECT * FROM import_candidate_requires_confirmation_stage;
+
+-- import_candidate_status_history: unchanged shape.
+CREATE TABLE import_candidate_status_history (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  status_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending_confirmation', 'confirmed', 'rejected', 'incomplete')),
+  request_id TEXT NOT NULL,
+  operation_class TEXT NOT NULL CHECK (operation_class IN ('creation', 'status_transition')),
+  PRIMARY KEY (ledger_id, candidate_id, sequence),
+  UNIQUE (ledger_id, status_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id)
+);
+INSERT INTO import_candidate_status_history SELECT * FROM import_candidate_status_history_stage;
+
+-- import_candidate_decision_snapshot: new from_account_id/to_account_id columns
+-- after funding_account_id, with XOR CHECK for confirm and NULL CHECK for reject.
+CREATE TABLE import_candidate_decision_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('confirm', 'reject')),
+  candidate_id TEXT NOT NULL,
+  expected_content_hash TEXT NOT NULL,
+  category_id TEXT,
+  funding_account_id TEXT,
+  from_account_id TEXT,
+  to_account_id TEXT,
+  explicit_confirmed_at TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  CHECK (decision != 'confirm' OR
+         (category_id IS NOT NULL AND funding_account_id IS NOT NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL)
+         OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL)),
+  CHECK (decision != 'reject' OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL))
+);
+INSERT INTO import_candidate_decision_snapshot(
+  ledger_id, request_id, decision, candidate_id, expected_content_hash,
+  category_id, funding_account_id, explicit_confirmed_at,
+  from_account_id, to_account_id
+)
+SELECT
+  ledger_id, request_id, decision, candidate_id, expected_content_hash,
+  category_id, funding_account_id, explicit_confirmed_at,
+  NULL, NULL
+FROM import_candidate_decision_snapshot_stage;
+
+-- import_confirmation: unchanged shape.
+CREATE TABLE import_confirmation (
+  ledger_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  status_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  operation_class TEXT NOT NULL CHECK (operation_class IN ('creation')),
+  confirmed_at TEXT,
+  PRIMARY KEY (ledger_id, confirmation_id),
+  UNIQUE (ledger_id, request_id),
+  UNIQUE (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, status_id) REFERENCES import_candidate_status_history(ledger_id, status_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO import_confirmation SELECT * FROM import_confirmation_stage;
+
+-- import_receipt: unchanged shape.
+CREATE TABLE import_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted')),
+  source_id TEXT,
+  evidence_id TEXT,
+  candidate_id TEXT NOT NULL,
+  confirmation_id TEXT,
+  transaction_id TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id)
+);
+INSERT INTO import_receipt SELECT * FROM import_receipt_stage;
+
+-- Verify counts match for each rebuilt table.
+CREATE TABLE p404_rebuild_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_source_record) != (SELECT count(*) FROM import_source_record_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_evidence) != (SELECT count(*) FROM import_evidence_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate) != (SELECT count(*) FROM import_candidate_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_requires_confirmation) != (SELECT count(*) FROM import_candidate_requires_confirmation_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_status_history) != (SELECT count(*) FROM import_candidate_status_history_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_decision_snapshot) != (SELECT count(*) FROM import_candidate_decision_snapshot_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_confirmation) != (SELECT count(*) FROM import_confirmation_stage);
+INSERT INTO p404_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_receipt) != (SELECT count(*) FROM import_receipt_stage);
+DROP TABLE p404_rebuild_guard;
+
+-- Drop stage tables.
+DROP TABLE import_source_record_stage;
+DROP TABLE import_evidence_stage;
+DROP TABLE import_candidate_stage;
+DROP TABLE import_candidate_requires_confirmation_stage;
+DROP TABLE import_candidate_status_history_stage;
+DROP TABLE import_candidate_decision_snapshot_stage;
+DROP TABLE import_confirmation_stage;
+DROP TABLE import_receipt_stage;
+
+-- Stage 5: drops. Intentionally empty: this migration deletes no existing
+-- table. Guarded assertion that the frozen rg03/rg04/rg08 silo owners stay
+-- queryable (counts are never negative, so the always-false comparisons keep
+-- the guard empty when the tables exist and fail the migration if one was
+-- dropped).
+CREATE TABLE p404_silo_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_operation_request) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_source_record) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_evidence) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_transfer_candidate) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_confirmation) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_operation_receipt) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_request) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_source) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_evidence) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_candidate) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_confirmation) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_receipt) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_operation) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_source_record) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_evidence) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_candidate) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_confirmation) < (SELECT 0);
+INSERT INTO p404_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_formal_transaction_metadata) < (SELECT 0);
+DROP TABLE p404_silo_guard;
+
+-- Stage 6: immutability/append-only guards and status-history sequence/transition
+-- guards. Same shape and text as the fresh schema in Ledger.sq.
+DROP TRIGGER IF EXISTS import_request_guard_update;
+CREATE TRIGGER import_request_guard_update BEFORE UPDATE ON import_request BEGIN SELECT RAISE(ABORT, 'cannot update import request'); END;
+DROP TRIGGER IF EXISTS import_request_guard_delete;
+CREATE TRIGGER import_request_guard_delete BEFORE DELETE ON import_request BEGIN SELECT RAISE(ABORT, 'cannot delete import request'); END;
+DROP TRIGGER IF EXISTS import_source_record_guard_update;
+CREATE TRIGGER import_source_record_guard_update BEFORE UPDATE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot update import source record'); END;
+DROP TRIGGER IF EXISTS import_source_record_guard_delete;
+CREATE TRIGGER import_source_record_guard_delete BEFORE DELETE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot delete import source record'); END;
+DROP TRIGGER IF EXISTS import_evidence_guard_update;
+CREATE TRIGGER import_evidence_guard_update BEFORE UPDATE ON import_evidence BEGIN SELECT RAISE(ABORT, 'cannot update import evidence'); END;
+DROP TRIGGER IF EXISTS import_evidence_guard_delete;
+CREATE TRIGGER import_evidence_guard_delete BEFORE DELETE ON import_evidence BEGIN SELECT RAISE(ABORT, 'cannot delete import evidence'); END;
+DROP TRIGGER IF EXISTS import_candidate_guard_update;
+CREATE TRIGGER import_candidate_guard_update BEFORE UPDATE ON import_candidate BEGIN SELECT RAISE(ABORT, 'cannot update import candidate'); END;
+DROP TRIGGER IF EXISTS import_candidate_guard_delete;
+CREATE TRIGGER import_candidate_guard_delete BEFORE DELETE ON import_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete import candidate'); END;
+DROP TRIGGER IF EXISTS import_candidate_requires_confirmation_guard_update;
+CREATE TRIGGER import_candidate_requires_confirmation_guard_update BEFORE UPDATE ON import_candidate_requires_confirmation BEGIN SELECT RAISE(ABORT, 'cannot update import candidate requirement'); END;
+DROP TRIGGER IF EXISTS import_candidate_requires_confirmation_guard_delete;
+CREATE TRIGGER import_candidate_requires_confirmation_guard_delete BEFORE DELETE ON import_candidate_requires_confirmation BEGIN SELECT RAISE(ABORT, 'cannot delete import candidate requirement'); END;
+DROP TRIGGER IF EXISTS import_candidate_status_history_guard_update;
+CREATE TRIGGER import_candidate_status_history_guard_update BEFORE UPDATE ON import_candidate_status_history BEGIN SELECT RAISE(ABORT, 'cannot update import candidate status history'); END;
+DROP TRIGGER IF EXISTS import_candidate_status_history_guard_delete;
+CREATE TRIGGER import_candidate_status_history_guard_delete BEFORE DELETE ON import_candidate_status_history BEGIN SELECT RAISE(ABORT, 'cannot delete import candidate status history'); END;
+DROP TRIGGER IF EXISTS import_candidate_decision_snapshot_guard_update;
+CREATE TRIGGER import_candidate_decision_snapshot_guard_update BEFORE UPDATE ON import_candidate_decision_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update import decision snapshot'); END;
+DROP TRIGGER IF EXISTS import_candidate_decision_snapshot_guard_delete;
+CREATE TRIGGER import_candidate_decision_snapshot_guard_delete BEFORE DELETE ON import_candidate_decision_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete import decision snapshot'); END;
+DROP TRIGGER IF EXISTS import_confirmation_guard_update;
+CREATE TRIGGER import_confirmation_guard_update BEFORE UPDATE ON import_confirmation BEGIN SELECT RAISE(ABORT, 'cannot update import confirmation'); END;
+DROP TRIGGER IF EXISTS import_confirmation_guard_delete;
+CREATE TRIGGER import_confirmation_guard_delete BEFORE DELETE ON import_confirmation BEGIN SELECT RAISE(ABORT, 'cannot delete import confirmation'); END;
+DROP TRIGGER IF EXISTS import_receipt_guard_update;
+CREATE TRIGGER import_receipt_guard_update BEFORE UPDATE ON import_receipt BEGIN SELECT RAISE(ABORT, 'cannot update import receipt'); END;
+DROP TRIGGER IF EXISTS import_receipt_guard_delete;
+CREATE TRIGGER import_receipt_guard_delete BEFORE DELETE ON import_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete import receipt'); END;
+DROP TRIGGER IF EXISTS import_status_history_sequence_guard;
+CREATE TRIGGER import_status_history_sequence_guard BEFORE INSERT ON import_candidate_status_history BEGIN
+  SELECT CASE WHEN
+    (SELECT COALESCE(MAX(sequence), 0) FROM import_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id) + 1 != new.sequence
+  THEN RAISE(ABORT, 'spine status sequence') END;
+END;
+DROP TRIGGER IF EXISTS import_status_history_transition_guard;
+CREATE TRIGGER import_status_history_transition_guard BEFORE INSERT ON import_candidate_status_history BEGIN
+  SELECT CASE
+    WHEN (SELECT status FROM import_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id ORDER BY sequence DESC LIMIT 1) IS NULL
+      AND new.status NOT IN ('pending_confirmation', 'incomplete') THEN RAISE(ABORT, 'spine status transition')
+    WHEN (SELECT status FROM import_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id ORDER BY sequence DESC LIMIT 1) = 'pending_confirmation'
+      AND new.status NOT IN ('confirmed', 'rejected') THEN RAISE(ABORT, 'spine status transition')
+    WHEN (SELECT status FROM import_candidate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id ORDER BY sequence DESC LIMIT 1) IN ('confirmed', 'rejected', 'incomplete')
+      THEN RAISE(ABORT, 'spine status terminal')
+  END;
+END;

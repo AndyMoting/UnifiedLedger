@@ -1,6 +1,7 @@
 package com.unifiedledger.application.import.wechat
 
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 
 /**
@@ -28,6 +29,7 @@ sealed interface WechatRowResult {
 
     data class Accepted(
         override val recordOrdinal: Int,
+        val recordKind: ImportRecordKind,
         val facts: ImportSourceFacts,
         val completeness: ImportCompleteness,
         override val diagnostics: List<WechatDiagnostic>,
@@ -74,6 +76,9 @@ object WechatDiagnostics {
 
     fun unknownToken(inputRef: String, ordinal: Int): WechatDiagnostic =
         WechatDiagnostic("SPINE_WEIXIN_UNKNOWN_TOKEN", "unsupported", "record", inputRef, ordinal, null)
+
+    fun conflictingSourceFacts(inputRef: String, ordinal: Int): WechatDiagnostic =
+        WechatDiagnostic("CONFLICTING_SOURCE_FACTS", "record_error", "record", inputRef, ordinal, null)
 
     fun fieldAmountInvalid(inputRef: String, ordinal: Int): WechatDiagnostic =
         WechatDiagnostic("FIELD_AMOUNT_INVALID", "record_error", "field", inputRef, ordinal, WechatSourceTokens.FIELD_ROLE_AMOUNT)

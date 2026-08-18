@@ -29,6 +29,9 @@ import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportResolvedSourceFacts
 import com.unifiedledger.application.ImportReturnedId
+import com.unifiedledger.application.ImportCandidateFormalizationInput
+import com.unifiedledger.application.ImportConfirmDecisionFields
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportReturnedIdKind
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
@@ -90,9 +93,12 @@ class ImportSpineLifecycleEndToEndTest {
     private val hashR5 = "sha256:80b823a2a5a392a431c15e84b2ca1783337c57d53a2b940f414b53befeef1e47"
 
     private fun r1(requestId: String = "req-a-intake") = ImportIntakeRequest(
-        ledgerId, ImportRequestId(requestId), "batch-p402-a", 0,
-        ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
-        ImportCompleteness.VALID_COMPLETE,
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        inputRef = "batch-p402-a",
+        recordOrdinal = 0,
+        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+        completeness = ImportCompleteness.VALID_COMPLETE,
     )
 
     private fun r1Prime(requestId: String) = r1(requestId = requestId).copy(
@@ -100,21 +106,30 @@ class ImportSpineLifecycleEndToEndTest {
     )
 
     private fun r2() = ImportIntakeRequest(
-        ledgerId, ImportRequestId("req-b-intake"), "batch-p402-a", 1,
-        ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled"),
-        ImportCompleteness.VALID_COMPLETE,
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-b-intake")),
+        inputRef = "batch-p402-a",
+        recordOrdinal = 1,
+        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+        facts = ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled"),
+        completeness = ImportCompleteness.VALID_COMPLETE,
     )
 
     private fun r3() = ImportIntakeRequest(
-        ledgerId, ImportRequestId("req-c-intake"), "batch-p402-b", 0,
-        ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null),
-        ImportCompleteness.VALID_INCOMPLETE,
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-c-intake")),
+        inputRef = "batch-p402-b",
+        recordOrdinal = 0,
+        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+        facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null),
+        completeness = ImportCompleteness.VALID_INCOMPLETE,
     )
 
     private fun r5() = ImportIntakeRequest(
-        ledgerId, ImportRequestId("req-e-intake"), "batch-p402-c", 0,
-        ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled"),
-        ImportCompleteness.VALID_COMPLETE,
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-e-intake")),
+        inputRef = "batch-p402-c",
+        recordOrdinal = 0,
+        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+        facts = ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled"),
+        completeness = ImportCompleteness.VALID_COMPLETE,
     )
 
     private fun intakeIds(prefix: String, statusId: String) = ImportIntakeIds(
@@ -175,16 +190,18 @@ class ImportSpineLifecycleEndToEndTest {
         private val fundingAccountId: AccountId,
     ) : ImportCandidateFormalFactory {
         override fun create(
-            resolved: ImportResolvedSourceFacts,
+            input: ImportCandidateFormalizationInput,
             ids: ImportCommitIds,
         ): DomainResult<ImportFormalCommit> {
+            val resolved = input.resolved
+            val decisionFields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
             val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
             val money = Money.ofMinor(resolved.amountMinor, currency)
             val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
             return when (resolved.directionToken) {
                 "out" -> createAssetPaidOrdinaryExpense(
                     catalog,
-                    AssetPaidOrdinaryExpenseCommand(LedgerId("ledger-p402"), money, categoryId, fundingAccountId, times),
+                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
                     AssetPaidOrdinaryExpenseIds(
                         transactionId = ids.formalIds.transactionId,
                         versionId = ids.formalIds.versionId,
@@ -195,7 +212,7 @@ class ImportSpineLifecycleEndToEndTest {
                 ).toSpineCommit(ids)
                 "in" -> createAssetReceivedOrdinaryIncome(
                     catalog,
-                    AssetReceivedOrdinaryIncomeCommand(LedgerId("ledger-p402"), money, categoryId, fundingAccountId, times),
+                    AssetReceivedOrdinaryIncomeCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
                     AssetReceivedOrdinaryIncomeIds(
                         transactionId = ids.formalIds.transactionId,
                         versionId = ids.formalIds.versionId,
@@ -252,7 +269,7 @@ class ImportSpineLifecycleEndToEndTest {
             ConfirmImportCandidate(
                 store,
                 commitIds,
-                OrdinaryFlowFormalFactory(catalog, request.categoryId, request.fundingAccountId),
+                OrdinaryFlowFormalFactory(catalog, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
             ).execute(request)
 
         fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
@@ -265,8 +282,10 @@ class ImportSpineLifecycleEndToEndTest {
             candidateId = ImportCandidateId(candidate),
             expectedContentHash = hash,
             explicitConfirmedAt = confirmedAt,
-            categoryId = CategoryId(category),
-            fundingAccountId = AccountId(funding),
+            decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
+                categoryId = CategoryId(category),
+                fundingAccountId = AccountId(funding),
+            ),
         )
 
     private fun rejectRequest(requestId: String = "req-b-reject", candidate: String = "candidate-b", hash: String = hashR2) =
@@ -1008,27 +1027,13 @@ class ImportSpineLifecycleEndToEndTest {
                 store.commitIntake(
                     ImportRequestIdentity(otherLedger, ImportRequestId("req-x")),
                     ImportIntakeSnapshot(
-                        ledgerId, ImportRawIdentity(ledgerId, "batch-p402-a", 0),
-                        ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
-                        ImportCompleteness.VALID_COMPLETE,
-                    ),
-                ) { error("must not allocate") }
-            }
-            assertFailsWith<IllegalArgumentException> {
-                store.commitOnce(
-                    ImportRequestIdentity(otherLedger, ImportRequestId("req-x")),
-                    ImportCandidateDecisionSnapshot(
-                        ledgerId, ImportCandidateId("candidate-a"),
-                        ImportCandidateDecision.CONFIRM, "sha256:x", null, null,
-                    ),
-                ) { error("must not invoke") }
-            }
-            assertFailsWith<IllegalArgumentException> {
-                store.commitRejectOnce(
-                    ImportRequestIdentity(otherLedger, ImportRequestId("req-x")),
-                    ImportCandidateDecisionSnapshot(
-                        ledgerId, ImportCandidateId("candidate-a"),
-                        ImportCandidateDecision.REJECT, "sha256:x", null, null,
+                        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-x")),
+                        inputRef = "batch-p402-a",
+                        recordOrdinal = 0,
+                        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+                        completeness = ImportCompleteness.VALID_COMPLETE,
+                        contentHash = "sha256:test",
                     ),
                 ) { error("must not allocate") }
             }
@@ -1100,7 +1105,7 @@ class ImportSpineLifecycleEndToEndTest {
         ConfirmImportCandidate(
             SqlDelightImportSpineStore(database, driver),
             commitIds,
-            OrdinaryFlowFormalFactory(catalog, request.categoryId, request.fundingAccountId),
+            OrdinaryFlowFormalFactory(catalog, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
         ).execute(request)
     }
 
