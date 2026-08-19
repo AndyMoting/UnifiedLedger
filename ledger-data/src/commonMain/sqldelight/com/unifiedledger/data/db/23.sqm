@@ -1,8 +1,32 @@
--- P4-07 duplicate candidates and reviews: v23 -> v24 additive migration.
-ALTER TABLE import_source_record ADD COLUMN funding_state TEXT NOT NULL DEFAULT 'UNRESOLVED';
-ALTER TABLE import_source_record ADD COLUMN funding_rule_id TEXT NOT NULL DEFAULT 'migration-v24-unresolved';
-ALTER TABLE import_source_record ADD COLUMN funding_rule_version INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE import_source_record ADD COLUMN candidate_generated_at TEXT NOT NULL DEFAULT 'migration-v24-unresolved';
+-- P4-07 duplicate candidates and reviews: v23 -> v24.
+-- The caller wraps Schema.migrate in one outer transaction. Deferring FK checks lets
+-- the parent be replaced while all v23 import/P4-08 descendants retain their rows.
+PRAGMA defer_foreign_keys = 1;
+CREATE TABLE import_source_record_stage AS SELECT * FROM import_source_record;
+DROP TRIGGER import_source_record_guard_update;
+DROP TRIGGER import_source_record_guard_delete;
+DROP TABLE import_source_record;
+CREATE TABLE import_source_record (
+  ledger_id TEXT NOT NULL, source_id TEXT NOT NULL, owner_request_id TEXT NOT NULL,
+  input_ref TEXT NOT NULL, record_ordinal INTEGER NOT NULL CHECK (record_ordinal >= 0),
+  record_kind TEXT NOT NULL CHECK (record_kind IN ('ordinary_flow_source', 'transfer_flow_source', 'transfer_flow_source_missing_leg')),
+  content_hash TEXT NOT NULL, contract_version INTEGER NOT NULL CHECK (contract_version IN (1, 2)),
+  completeness TEXT NOT NULL CHECK (completeness IN ('valid_complete', 'valid_incomplete')),
+  amount_minor INTEGER, currency_code TEXT, currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  occurred_at TEXT, direction_token TEXT, status_token TEXT,
+  funding_state TEXT NOT NULL DEFAULT 'UNRESOLVED', funding_rule_id TEXT NOT NULL DEFAULT 'migration-v24-unresolved',
+  funding_rule_version INTEGER NOT NULL DEFAULT 1, candidate_generated_at TEXT NOT NULL DEFAULT 'migration-v24-unresolved',
+  PRIMARY KEY (ledger_id, source_id), UNIQUE (ledger_id, input_ref, record_ordinal), UNIQUE (ledger_id, owner_request_id),
+  FOREIGN KEY (ledger_id, owner_request_id) REFERENCES import_request(ledger_id, request_id),
+  CHECK (completeness != 'valid_complete' OR (amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_precision IS NOT NULL AND occurred_at IS NOT NULL AND direction_token IS NOT NULL AND status_token IS NOT NULL)),
+  CHECK (amount_minor IS NULL OR (currency_code IS NOT NULL AND currency_precision IS NOT NULL)),
+  CHECK ((record_kind = 'ordinary_flow_source' AND contract_version = 1) OR (record_kind IN ('transfer_flow_source', 'transfer_flow_source_missing_leg') AND contract_version = 2))
+);
+INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token)
+SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token FROM import_source_record_stage;
+DROP TABLE import_source_record_stage;
+CREATE TRIGGER import_source_record_guard_update BEFORE UPDATE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot update import source record'); END;
+CREATE TRIGGER import_source_record_guard_delete BEFORE DELETE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot delete import source record'); END;
 CREATE TABLE import_duplicate_candidate (
   ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, subject_source_id TEXT NOT NULL, possible_existing_source_id TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('EXACT_BUSINESS_TUPLE', 'CLOSED_OR_FAILED_NO_FUNDS')), comparison_fingerprint TEXT NOT NULL,
@@ -38,6 +62,18 @@ CREATE TABLE import_duplicate_review_receipt (
 );
 CREATE TRIGGER import_duplicate_candidate_guard_update BEFORE UPDATE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot update duplicate candidate'); END;
 CREATE TRIGGER import_duplicate_candidate_guard_delete BEFORE DELETE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate candidate'); END;
+CREATE TRIGGER import_duplicate_history_guard_update BEFORE UPDATE ON import_duplicate_status_history BEGIN SELECT RAISE(ABORT, 'cannot update duplicate history'); END;
+CREATE TRIGGER import_duplicate_history_guard_delete BEFORE DELETE ON import_duplicate_status_history BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate history'); END;
+CREATE TRIGGER import_duplicate_review_request_guard_update BEFORE UPDATE ON import_duplicate_review_request BEGIN
+ SELECT CASE WHEN old.outcome != 'PENDING' OR new.ledger_id != old.ledger_id OR new.request_id != old.request_id
+ OR new.operation != old.operation OR new.input_fingerprint != old.input_fingerprint OR new.outcome != 'ACCEPTED'
+ THEN RAISE(ABORT, 'cannot update duplicate review request') END;
+END;
+CREATE TRIGGER import_duplicate_review_request_guard_delete BEFORE DELETE ON import_duplicate_review_request BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review request'); END;
+CREATE TRIGGER import_duplicate_review_snapshot_guard_update BEFORE UPDATE ON import_duplicate_review_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update duplicate review snapshot'); END;
+CREATE TRIGGER import_duplicate_review_snapshot_guard_delete BEFORE DELETE ON import_duplicate_review_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review snapshot'); END;
+CREATE TRIGGER import_duplicate_review_receipt_guard_update BEFORE UPDATE ON import_duplicate_review_receipt BEGIN SELECT RAISE(ABORT, 'cannot update duplicate review receipt'); END;
+CREATE TRIGGER import_duplicate_review_receipt_guard_delete BEFORE DELETE ON import_duplicate_review_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review receipt'); END;
 CREATE TRIGGER import_duplicate_history_sequence BEFORE INSERT ON import_duplicate_status_history BEGIN
  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id) + 1 != new.sequence
  OR (new.sequence = 1 AND new.status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history sequence') END;

@@ -513,6 +513,55 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
+    fun freshV24EqualsMigratedV24ForP407AndP408Owners() {
+        val freshPath = Files.createTempFile("ledger-data-fresh-v24-p407-", ".db")
+        val migratedPath = Files.createTempFile("ledger-data-migrated-v24-p407-", ".db")
+        try {
+            JdbcSqliteDriver("jdbc:sqlite:${freshPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+            }
+            DriverManager.getConnection("jdbc:sqlite:${migratedPath.absolutePathString()}").use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 24)
+            }
+            assertEquals(
+                schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
+                schemaMetadata("jdbc:sqlite:${migratedPath.absolutePathString()}"),
+            )
+        } finally {
+            Files.deleteIfExists(freshPath)
+            Files.deleteIfExists(migratedPath)
+        }
+    }
+
+    @Test
+    fun populatedV23ToV24RebuildPreservesImportChainAndMigrationSentinelsAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v23-v24-p407-populated-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 23)
+                driver.execute(null, "INSERT INTO import_request(ledger_id, request_id, operation) VALUES ('ledger-p407', 'request-p407', 'intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-p407', 'source-p407', 'request-p407', 'batch-p407', 0, 'ordinary_flow_source', 'sha256:p407', 1, 'valid_complete', 1234, 'CNY', 2, '2026-08-19T10:00:00+08:00', 'out', 'settled')", 0)
+                driver.execute(null, "INSERT INTO import_evidence(ledger_id, evidence_id, source_id, evidence_kind, observed_at) VALUES ('ledger-p407', 'evidence-p407', 'source-p407', 'source_observation', '2026-08-19T10:00:00+08:00')", 0)
+                driver.execute(null, "INSERT INTO import_candidate(ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version) VALUES ('ledger-p407', 'candidate-p407', 'source-p407', 'ordinary_flow', '1.00', 'ordinary_flow_source', 1)", 0)
+                driver.execute(null, "INSERT INTO import_candidate_status_history(ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class) VALUES ('ledger-p407', 'candidate-p407', 1, 'history-p407', 'pending_confirmation', 'request-p407', 'creation')", 0)
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 23, 24) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p407' AND amount_minor=1234 AND funding_state='UNRESOLVED' AND candidate_generated_at='migration-v24-unresolved'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-p407'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_candidate_status_history WHERE status_id='history-p407'"))
+            }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
     fun populatedVersionNinePreservesFormalRowsAndAddsRg07OwnersAtVersionTen() {
         val path = Files.createTempFile("ledger-data-v9-v10-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"

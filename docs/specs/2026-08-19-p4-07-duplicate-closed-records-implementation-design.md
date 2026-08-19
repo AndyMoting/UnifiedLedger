@@ -1,6 +1,6 @@
 # P4-07 重复候选与关闭记录实施规格
 
-**Status:** proposal（承接已批准 D-104；本文件冻结实现候选，尚未授权 writer 修改 runtime 或 schema）
+**Status:** approved（2026-08-19 用户批准实施规格；writer 可在本文件边界内开始代码、schema、migration 与测试）
 
 ## 1. 目的与范围
 

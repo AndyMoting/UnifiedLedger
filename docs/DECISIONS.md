@@ -1644,11 +1644,11 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已批准（2026-08-19 用户批准）；不授权实施代码。
 
-**决定：** 由 `docs/specs/2026-08-19-p4-07-duplicate-closed-records-design.md` 冻结 RL-08 的 duplicate candidate 数据合同、身份边界、同批次/跨批次行为、合法相似记录、关闭/失败记录、碰撞/歧义矩阵及匿名验收锚点。候选必须保存稳定引用、候选类型、provenance、confidence、rule/version、比较快照和人工处置历史；候选永远不能替代 raw identity，不能破坏性删除或折叠来源。
+**决定提案：** 由 `docs/specs/2026-08-19-p4-07-duplicate-closed-records-design.md` 冻结 RL-08 的 duplicate candidate 数据合同、身份边界、同批次/跨批次行为、合法相似记录、关闭/失败记录、碰撞/歧义矩阵及匿名验收锚点。候选必须保存稳定引用、候选类型、provenance、confidence、rule/version、比较快照和人工处置历史；候选永远不能替代 raw identity，不能破坏性删除或折叠来源。
 
 同 request 或等价 raw identity replay 按既有合同返回稳定结果并零写入；不同 raw identity 的相似记录只生成候选，默认待人工处置；合法 lookalike 必须允许明确区分并保留两条来源。关闭、失败或状态未知记录若无可靠资金变化事实，正式资金分录数为零；退款、冲回和修正仍是独立经济事件。碰撞 hard reject，歧义 defer，后到重复来源仅追加 lineage/candidate，不创建第二笔交易、分录、余额、报表或对账效果。通道总额只作诊断。
 
-**理由：** 对齐 D-096 对 duplicate contract 的前置要求、D-098 raw identity/collision 已批准边界、ACCOUNTING_RULES.md 的来源/候选/正式账目分层与零副作用规则，以及 PRODUCT_REQUIREMENTS.md/GOLDEN_TESTS.md 的 RL-08 验收要求。该决定避免把业务指纹误当身份，也避免把关闭状态误当退款或成功。
+**理由：** 对齐 D-096 对 duplicate contract 的前置要求、D-098 raw identity/collision 已批准边界、ACCOUNTING_RULES.md 的来源/候选/正式账目分层与零副作用规则，以及 PRODUCT_REQUIREMENTS.md/GOLDEN_TESTS.md 的 RL-08 验收要求。该提案避免把业务指纹误当身份，也避免把关闭状态误当退款或成功。
 
 **实施登记：** 未实施。后续独立实施批仍需规格明确阈值、诊断码、候选持久化形状（必要时加性 schema/migration）和 runtime/tests，并经过高风险验收拓扑；本决定本身不授权这些变更。
 

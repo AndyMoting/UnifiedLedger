@@ -7553,6 +7553,18 @@ CREATE TABLE import_duplicate_review_receipt (
 );
 CREATE TRIGGER import_duplicate_candidate_guard_update BEFORE UPDATE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot update duplicate candidate'); END;
 CREATE TRIGGER import_duplicate_candidate_guard_delete BEFORE DELETE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate candidate'); END;
+CREATE TRIGGER import_duplicate_history_guard_update BEFORE UPDATE ON import_duplicate_status_history BEGIN SELECT RAISE(ABORT, 'cannot update duplicate history'); END;
+CREATE TRIGGER import_duplicate_history_guard_delete BEFORE DELETE ON import_duplicate_status_history BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate history'); END;
+CREATE TRIGGER import_duplicate_review_request_guard_update BEFORE UPDATE ON import_duplicate_review_request BEGIN
+ SELECT CASE WHEN old.outcome != 'PENDING' OR new.ledger_id != old.ledger_id OR new.request_id != old.request_id
+ OR new.operation != old.operation OR new.input_fingerprint != old.input_fingerprint OR new.outcome != 'ACCEPTED'
+ THEN RAISE(ABORT, 'cannot update duplicate review request') END;
+END;
+CREATE TRIGGER import_duplicate_review_request_guard_delete BEFORE DELETE ON import_duplicate_review_request BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review request'); END;
+CREATE TRIGGER import_duplicate_review_snapshot_guard_update BEFORE UPDATE ON import_duplicate_review_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update duplicate review snapshot'); END;
+CREATE TRIGGER import_duplicate_review_snapshot_guard_delete BEFORE DELETE ON import_duplicate_review_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review snapshot'); END;
+CREATE TRIGGER import_duplicate_review_receipt_guard_update BEFORE UPDATE ON import_duplicate_review_receipt BEGIN SELECT RAISE(ABORT, 'cannot update duplicate review receipt'); END;
+CREATE TRIGGER import_duplicate_review_receipt_guard_delete BEFORE DELETE ON import_duplicate_review_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review receipt'); END;
 CREATE TRIGGER import_duplicate_history_sequence BEFORE INSERT ON import_duplicate_status_history BEGIN
  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id) + 1 != new.sequence
  OR (new.sequence = 1 AND new.status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history sequence') END;

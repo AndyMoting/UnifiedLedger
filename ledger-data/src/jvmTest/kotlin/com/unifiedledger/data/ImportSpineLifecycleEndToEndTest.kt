@@ -14,6 +14,12 @@ import com.unifiedledger.application.ImportCommitIds
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportConfirmationId
 import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateIntakeIds
+import com.unifiedledger.application.ImportDuplicateReviewId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
@@ -38,6 +44,7 @@ import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.ImportStatusIdSource
 import com.unifiedledger.application.RejectImportCandidate
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
@@ -1094,6 +1101,128 @@ class ImportSpineLifecycleEndToEndTest {
                 ImportContentFingerprint(),
             ).execute(request)
         }
+
+    @Test
+    fun p407ExactTupleCreatesDirectedCandidateWithBothSourceIds() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val ids = BatchIntakeIdSource(listOf(
+                intakeIds("p407-a", "status-p407-a"),
+                intakeIds("p407-b", "status-p407-b").copy(
+                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-b-a"),
+                        ImportStatusHistoryId("duplicate-status-p407-b-a"),
+                    )),
+                ),
+            ))
+            val intake = ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint())
+            assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-a")))
+            assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-b").copy(inputRef = "batch-p407-b")))
+            val snapshot = driver.executeQuery(null,
+                "SELECT comparison_snapshot FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-b-a'",
+                { cursor -> app.cash.sqldelight.db.QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) }, 0,
+            ).value
+            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            check(snapshot!!.contains("\"subject_source_id\":\"source-p407-b\"") && snapshot.contains("\"possible_existing_source_id\":\"source-p407-a\""))
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun p407ConfirmedDuplicateBlocksFormalFactoryAndLeavesFormalRowsUnchanged() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val ids = BatchIntakeIdSource(listOf(
+                intakeIds("p407-block-a", "status-p407-block-a"),
+                intakeIds("p407-block-b", "status-p407-block-b").copy(
+                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"),
+                        ImportStatusHistoryId("duplicate-status-p407-block"),
+                    )),
+                ),
+            ))
+            val executor = Executor(database, driver, catalog(), ids, BatchCommitIdSource(emptyList()), BatchStatusIdSource(emptyList()))
+            executor.intake(r1("request-p407-block-a"))
+            executor.intake(r1("request-p407-block-b").copy(inputRef = "batch-p407-block-b"))
+            val candidateFingerprint = driver.executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-block'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value
+            val review = ReviewImportDuplicateCandidate(executor.store).execute(
+                com.unifiedledger.application.ImportDuplicateReviewRequest(
+                    ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-block")),
+                    com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"), candidateFingerprint!!,
+                    com.unifiedledger.application.ImportDuplicateStatus.CONFIRMED_DUPLICATE, "exact", "2026-08-19T12:00:00+08:00", "reviewer-p407", "2026-08-19T12:00:00+08:00",
+                    com.unifiedledger.application.ImportDuplicateReviewId("review-p407-block"), ImportStatusHistoryId("review-history-p407-block"),
+                ),
+            )
+            assertIs<com.unifiedledger.application.ImportDuplicateReviewResult.Accepted>(review)
+            val before = formalCounts(database)
+            val blocked = executor.confirm(confirmRequest("confirm-p407-block", "candidate-p407-block-b", hashR1))
+            assertIs<ImportCandidateDecisionResult.Rejected>(blocked)
+            assertEquals("SPINE_DUPLICATE_NOT_CONFIRMABLE", (blocked as ImportCandidateDecisionResult.Rejected).diagnostic.code)
+            assertEquals(before, formalCounts(database))
+            assertEquals(0L, database.ledgerQueries.countImportConfirmations().executeAsOne())
+            assertEquals(1L, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun p407NoFundsCreatesOnlyIncompleteSourceCandidateAndClosedDuplicate() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val ids = BatchIntakeIdSource(listOf(intakeIds("p407-no-funds", "status-p407-no-funds").copy(
+                duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
+                    com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-no-funds"),
+                    ImportStatusHistoryId("duplicate-status-p407-no-funds"),
+                )),
+            )))
+            val request = r1("request-p407-no-funds").copy(
+                facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS, fundingRuleId = "source-contract-no-funds-v1"),
+            )
+            val result = ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint()).execute(request)
+            assertIs<ImportIntakeResult.Accepted>(result)
+            assertEquals(1L, database.ledgerQueries.countImportSourceRecords().executeAsOne())
+            assertEquals(1L, database.ledgerQueries.countImportEvidence().executeAsOne())
+            assertEquals(1L, database.ledgerQueries.countImportCandidates().executeAsOne())
+            assertEquals(1L, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
+            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_candidate_status_history WHERE status='incomplete'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate WHERE kind='CLOSED_OR_FAILED_NO_FUNDS'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun p407ConfirmedDuplicateReviewReplaysWithoutDuplicateRows() {
+        // Review behavior is exercised through the same persisted spine used by intake.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val ids = BatchIntakeIdSource(listOf(
+                intakeIds("p407-r-a", "status-p407-r-a"),
+                intakeIds("p407-r-b", "status-p407-r-b").copy(
+                    duplicateIds = listOf(ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-p407-r"), ImportStatusHistoryId("duplicate-status-p407-r"))),
+                ),
+            ))
+            val store = SqlDelightImportSpineStore(database, driver)
+            val intake = ExecuteImportIntake(store, ids, ImportContentFingerprint())
+            assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-r-a")))
+            assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-r-b").copy(inputRef = "batch-p407-r-b")))
+            val review = ImportDuplicateReviewRequest(
+                ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-r")), ImportDuplicateCandidateId("duplicate-p407-r"),
+                driver.executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-r'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value,
+                ImportDuplicateStatus.CONFIRMED_DUPLICATE, "duplicate", "2026-08-19T10:00:00+08:00", "reviewer", "2026-08-19T10:01:00+08:00",
+                ImportDuplicateReviewId("review-p407-r"), ImportStatusHistoryId("review-history-p407-r"),
+            )
+            val reviewed = ReviewImportDuplicateCandidate(store).execute(review)
+            assertIs<ImportDuplicateReviewResult.Accepted>(reviewed)
+            assertIs<ImportDuplicateReviewResult.NoChange>(ReviewImportDuplicateCandidate(store).execute(review))
+            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_review_receipt", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+        } finally { driver.close() }
+    }
 
     private fun confirmOn(
         url: String,
