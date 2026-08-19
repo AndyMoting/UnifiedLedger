@@ -1,0 +1,47 @@
+-- P4-07 duplicate candidates and reviews: v23 -> v24 additive migration.
+ALTER TABLE import_source_record ADD COLUMN funding_state TEXT NOT NULL DEFAULT 'UNRESOLVED';
+ALTER TABLE import_source_record ADD COLUMN funding_rule_id TEXT NOT NULL DEFAULT 'migration-v24-unresolved';
+ALTER TABLE import_source_record ADD COLUMN funding_rule_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE import_source_record ADD COLUMN candidate_generated_at TEXT NOT NULL DEFAULT 'migration-v24-unresolved';
+CREATE TABLE import_duplicate_candidate (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, subject_source_id TEXT NOT NULL, possible_existing_source_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('EXACT_BUSINESS_TUPLE', 'CLOSED_OR_FAILED_NO_FUNDS')), comparison_fingerprint TEXT NOT NULL,
+  comparison_snapshot TEXT NOT NULL, provenance TEXT NOT NULL, confidence TEXT NOT NULL CHECK (confidence = 'exact'),
+  rule_id TEXT NOT NULL CHECK (rule_id = 'p407_exact_business_tuple_v1'), rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+  generated_at TEXT NOT NULL, creation_request_id TEXT NOT NULL, PRIMARY KEY (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, subject_source_id) REFERENCES import_source_record(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, possible_existing_source_id) REFERENCES import_source_record(ledger_id, source_id),
+  CHECK ((kind = 'EXACT_BUSINESS_TUPLE' AND possible_existing_source_id IS NOT NULL) OR (kind = 'CLOSED_OR_FAILED_NO_FUNDS' AND possible_existing_source_id IS NULL))
+);
+CREATE UNIQUE INDEX import_duplicate_exact_unique ON import_duplicate_candidate(ledger_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint) WHERE kind = 'EXACT_BUSINESS_TUPLE';
+CREATE UNIQUE INDEX import_duplicate_no_funds_unique ON import_duplicate_candidate(ledger_id, subject_source_id, kind) WHERE kind = 'CLOSED_OR_FAILED_NO_FUNDS';
+CREATE TABLE import_duplicate_status_history (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 1), history_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('DEFERRED', 'CONFIRMED_DUPLICATE', 'CONFIRMED_DISTINCT', 'DISMISSED_LOOKALIKE', 'REJECTED')),
+  request_id TEXT NOT NULL, operation_class TEXT NOT NULL, PRIMARY KEY (ledger_id, candidate_id, sequence), UNIQUE (ledger_id, history_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_duplicate_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE import_duplicate_review_request (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, operation TEXT NOT NULL CHECK (operation = 'review_duplicate'), input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'CONFLICT')), reason_code TEXT, PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE import_duplicate_review_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, expected_comparison_fingerprint TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('CONFIRMED_DUPLICATE', 'CONFIRMED_DISTINCT', 'DISMISSED_LOOKALIKE', 'REJECTED')),
+  reason_token TEXT NOT NULL, reviewed_at TEXT NOT NULL, reviewer_reference TEXT NOT NULL, generated_at TEXT NOT NULL, review_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id), UNIQUE (ledger_id, review_id), FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_duplicate_candidate(ledger_id, candidate_id)
+);
+CREATE TABLE import_duplicate_review_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, review_id TEXT NOT NULL, history_id TEXT NOT NULL, outcome TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id)
+);
+CREATE TRIGGER import_duplicate_candidate_guard_update BEFORE UPDATE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot update duplicate candidate'); END;
+CREATE TRIGGER import_duplicate_candidate_guard_delete BEFORE DELETE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate candidate'); END;
+CREATE TRIGGER import_duplicate_history_sequence BEFORE INSERT ON import_duplicate_status_history BEGIN
+ SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id) + 1 != new.sequence
+ OR (new.sequence = 1 AND new.status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history sequence') END;
+END;
+CREATE TRIGGER import_duplicate_history_terminal BEFORE INSERT ON import_duplicate_status_history BEGIN
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history terminal') END;
+END;

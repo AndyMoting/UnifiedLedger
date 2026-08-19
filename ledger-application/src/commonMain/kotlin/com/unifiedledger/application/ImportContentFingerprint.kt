@@ -32,6 +32,24 @@ class ImportContentFingerprint {
         "sha256:${Sha256.digestHex(canonicalJson(recordKind, facts).encodeToByteArray())}"
 }
 
+/** Exact, privacy-safe P4-07 comparison fingerprint. No provider payload is retained. */
+class ImportDuplicateComparisonFingerprint {
+    fun canonicalJson(snapshot: ImportDuplicateComparisonSnapshot): String = buildString {
+        append("{\"amount_minor\":").append(jcsString(snapshot.amountMinor.toString()))
+        append(",\"currency_code\":").append(jcsString(snapshot.currencyCode))
+        append(",\"currency_precision\":").append(jcsString(snapshot.currencyPrecision.toString()))
+        append(",\"direction_token\":").append(jcsString(snapshot.directionToken))
+        append(",\"occurred_at\":").append(jcsString(snapshot.occurredAt))
+        append(",\"record_kind\":").append(jcsString(snapshot.recordKind.storageValue))
+        append(",\"status_present\":").append(jcsString((snapshot.statusToken != null).toString()))
+        if (snapshot.statusToken != null) append(",\"status_token\":").append(jcsString(snapshot.statusToken))
+        append('}')
+    }
+
+    fun digest(snapshot: ImportDuplicateComparisonSnapshot): String =
+        "sha256:${Sha256.digestHex(canonicalJson(snapshot).encodeToByteArray())}"
+}
+
 internal fun formatDecimal(minorUnits: Long, precision: Int): String {
     require(precision >= 0) { "P4-02 currency precision must not be negative" }
     if (precision == 0) return minorUnits.toString()
