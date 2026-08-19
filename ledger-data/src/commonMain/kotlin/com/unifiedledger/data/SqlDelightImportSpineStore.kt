@@ -266,9 +266,9 @@ class SqlDelightImportSpineStore private constructor(
             if (current != "DEFERRED" || request.decision == ImportDuplicateStatus.DEFERRED) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotPending(ImportCandidateId(request.candidateId.value))))
             database.ledgerQueries.insertDuplicateReviewSnapshot(request.identity.ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.expectedComparisonFingerprint, request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference, request.generatedAt, request.reviewId.value)
             val seq = database.ledgerQueries.selectDuplicateLatestSequence(request.identity.ledgerId.value, request.candidateId.value).executeAsOne() + 1
+            database.ledgerQueries.updateDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value)
             database.ledgerQueries.insertDuplicateReviewStatus(request.identity.ledgerId.value, request.candidateId.value, seq, request.historyId.value, request.decision.name, request.identity.requestId.value)
             database.ledgerQueries.insertDuplicateReviewReceipt(request.identity.ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.reviewId.value, request.historyId.value, request.decision.name)
-            database.ledgerQueries.updateDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value)
             ImportDuplicateReviewResult.Accepted(ImportDuplicateReviewReceipt(request.identity.requestId, request.candidateId, request.reviewId, request.historyId, request.decision))
         } }
     }

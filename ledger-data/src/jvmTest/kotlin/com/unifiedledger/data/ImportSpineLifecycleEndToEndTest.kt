@@ -1196,14 +1196,28 @@ class ImportSpineLifecycleEndToEndTest {
             }
             execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',1,'history-create','DEFERRED','request-create','creation')")
             assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',1,'history-duplicate-create','DEFERRED','request-create','creation')")
+            }
+            assertFailsWith<SQLException> {
                 execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-orphan-review','CONFIRMED_DISTINCT','review-missing','status_transition')")
+            }
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-second-deferred','DEFERRED','request-create','creation')")
             }
             execute("INSERT INTO import_duplicate_review_request VALUES ('ledger-p407-owner','review-other','review_duplicate','fp-owner','PENDING',NULL)")
             assertFailsWith<SQLException> {
                 execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-mismatched-review','CONFIRMED_DISTINCT','review-other','status_transition')")
             }
             execute("INSERT INTO import_duplicate_review_snapshot VALUES ('ledger-p407-owner','review-other','duplicate-owner','sha256:owner','CONFIRMED_DISTINCT','manual','2026-08-20T00:00:00Z','reviewer','2026-08-20T00:00:00Z','review-owner')")
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-pending-review','CONFIRMED_DISTINCT','review-other','status_transition')")
+            }
+            execute("UPDATE import_duplicate_review_request SET outcome = 'ACCEPTED' WHERE ledger_id = 'ledger-p407-owner' AND request_id = 'review-other'")
             execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-review','CONFIRMED_DISTINCT','review-other','status_transition')")
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_review_receipt VALUES ('ledger-p407-owner','review-other','duplicate-owner','review-owner','history-wrong','CONFIRMED_DISTINCT')")
+            }
+            execute("INSERT INTO import_duplicate_review_receipt VALUES ('ledger-p407-owner','review-other','duplicate-owner','review-owner','history-review','CONFIRMED_DISTINCT')")
             assertEquals(2L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!) }, 0).value)
         } finally { driver.close() }
     }

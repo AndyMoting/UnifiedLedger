@@ -7571,7 +7571,9 @@ CREATE TRIGGER import_duplicate_review_receipt_guard_update BEFORE UPDATE ON imp
 CREATE TRIGGER import_duplicate_review_receipt_guard_delete BEFORE DELETE ON import_duplicate_review_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate review receipt'); END;
 CREATE TRIGGER import_duplicate_history_sequence BEFORE INSERT ON import_duplicate_status_history BEGIN
  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id) + 1 != new.sequence
- OR (new.sequence = 1 AND new.status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history sequence') END;
+ OR (new.sequence = 1 AND (new.status != 'DEFERRED' OR new.operation_class != 'creation'))
+ OR (new.sequence > 1 AND (new.status = 'DEFERRED' OR new.operation_class != 'status_transition'))
+ THEN RAISE(ABORT, 'duplicate history sequence') END;
 END;
 CREATE TRIGGER import_duplicate_history_terminal BEFORE INSERT ON import_duplicate_status_history BEGIN
  SELECT CASE WHEN EXISTS (SELECT 1 FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history terminal') END;
@@ -7590,8 +7592,23 @@ CREATE TRIGGER import_duplicate_history_review_owner BEFORE INSERT ON import_dup
    JOIN import_duplicate_review_snapshot snapshot
      ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
    WHERE request.ledger_id = new.ledger_id AND request.request_id = new.request_id
+     AND request.outcome = 'ACCEPTED'
      AND snapshot.candidate_id = new.candidate_id AND snapshot.decision = new.status
  ) THEN RAISE(ABORT, 'duplicate history review owner') END;
+END;
+CREATE TRIGGER import_duplicate_review_receipt_consistency BEFORE INSERT ON import_duplicate_review_receipt BEGIN
+ SELECT CASE WHEN NOT EXISTS (
+   SELECT 1 FROM import_duplicate_review_request request
+   JOIN import_duplicate_review_snapshot snapshot
+     ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
+   JOIN import_duplicate_status_history history
+     ON history.ledger_id = new.ledger_id AND history.history_id = new.history_id
+   WHERE request.ledger_id = new.ledger_id AND request.request_id = new.request_id
+     AND request.outcome = 'ACCEPTED'
+     AND snapshot.candidate_id = new.candidate_id AND snapshot.review_id = new.review_id
+     AND history.candidate_id = new.candidate_id AND history.request_id = new.request_id
+     AND history.status = new.outcome
+ ) THEN RAISE(ABORT, 'duplicate review receipt consistency') END;
 END;
 
 -- P4-08 shared reconciliation surface. Scenario cardinality is enforced by the
