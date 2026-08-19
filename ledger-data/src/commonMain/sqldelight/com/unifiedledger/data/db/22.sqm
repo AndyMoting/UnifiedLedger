@@ -1,0 +1,152 @@
+-- P4-08 shared reconciliation surface: additive v22 -> v23 migration.
+-- Existing rows and rgXX silos are preserved. No link is inferred from prior
+-- silo evidence; only current eligible real-account postings receive PENDING.
+CREATE TABLE reconciliation_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('confirm_link', 'invalidate_link', 'migration_seed')),
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('PENDING', 'ACCEPTED', 'NO_CHANGE', 'REJECTED', 'CONFLICT')),
+  reason_code TEXT,
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE reconciliation_request_snapshot (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL, posting_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL, currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  direction TEXT NOT NULL CHECK (direction IN ('in', 'out')), account_id TEXT NOT NULL,
+  responsibility TEXT NOT NULL CHECK (responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  basis_version INTEGER NOT NULL CHECK (basis_version = 1), match_basis TEXT NOT NULL,
+  window_days INTEGER NOT NULL CHECK (window_days >= 0), natural_day_distance INTEGER NOT NULL CHECK (natural_day_distance >= 0),
+  source_occurred_at TEXT NOT NULL, confirmed_at TEXT NOT NULL,
+  human_decision TEXT NOT NULL CHECK (human_decision = 'confirm_match'),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE evidence_link (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL, evidence_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  responsibility TEXT NOT NULL CHECK (responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  basis_version INTEGER NOT NULL CHECK (basis_version = 1), match_basis TEXT NOT NULL,
+  candidate_id TEXT NOT NULL, request_id TEXT NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, link_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+CREATE TABLE posting_reconciliation (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, posting_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'PARTIAL', 'DIFFERENCE', 'MISSING', 'CHECKED')),
+  latest_sequence INTEGER NOT NULL CHECK (latest_sequence >= 1),
+  PRIMARY KEY (ledger_id, reconciliation_id), UNIQUE (ledger_id, posting_id),
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE reconciliation_receipt (
+  ledger_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  link_id TEXT, reconciliation_id TEXT, history_sequence INTEGER,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES posting_reconciliation(ledger_id, reconciliation_id)
+);
+CREATE TABLE evidence_link_history (
+  ledger_id TEXT NOT NULL, link_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  state TEXT NOT NULL CHECK (state IN ('active', 'invalidated')),
+  reason TEXT NOT NULL CHECK (reason IN ('confirmed', 'posting_replaced', 'corrected')),
+  request_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, link_id, sequence),
+  FOREIGN KEY (ledger_id, link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+CREATE TABLE posting_reconciliation_history (
+  ledger_id TEXT NOT NULL, reconciliation_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'PARTIAL', 'DIFFERENCE', 'MISSING', 'CHECKED')),
+  evidence_link_id TEXT, request_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, reconciliation_id, sequence),
+  FOREIGN KEY (ledger_id, reconciliation_id) REFERENCES posting_reconciliation(ledger_id, reconciliation_id),
+  FOREIGN KEY (ledger_id, evidence_link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
+);
+
+CREATE INDEX evidence_link_by_evidence ON evidence_link(ledger_id, evidence_id);
+CREATE INDEX evidence_link_by_posting ON evidence_link(ledger_id, posting_id);
+CREATE INDEX posting_reconciliation_history_by_link ON posting_reconciliation_history(ledger_id, evidence_link_id);
+
+CREATE TRIGGER reconciliation_request_guard_update BEFORE UPDATE ON reconciliation_request BEGIN
+  SELECT CASE WHEN old.outcome != 'PENDING'
+      OR new.ledger_id != old.ledger_id OR new.request_id != old.request_id
+      OR new.operation != old.operation OR new.input_fingerprint != old.input_fingerprint
+      OR new.outcome NOT IN ('ACCEPTED', 'NO_CHANGE', 'REJECTED', 'CONFLICT')
+    THEN RAISE(ABORT, 'cannot update reconciliation request') END;
+END;
+CREATE TRIGGER reconciliation_request_guard_delete BEFORE DELETE ON reconciliation_request BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation request'); END;
+CREATE TRIGGER reconciliation_snapshot_guard_update BEFORE UPDATE ON reconciliation_request_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update reconciliation snapshot'); END;
+CREATE TRIGGER reconciliation_snapshot_guard_delete BEFORE DELETE ON reconciliation_request_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation snapshot'); END;
+CREATE TRIGGER reconciliation_receipt_guard_update BEFORE UPDATE ON reconciliation_receipt BEGIN SELECT RAISE(ABORT, 'cannot update reconciliation receipt'); END;
+CREATE TRIGGER reconciliation_receipt_guard_delete BEFORE DELETE ON reconciliation_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete reconciliation receipt'); END;
+CREATE TRIGGER evidence_link_guard_update BEFORE UPDATE ON evidence_link BEGIN SELECT RAISE(ABORT, 'cannot update evidence link'); END;
+CREATE TRIGGER evidence_link_guard_delete BEFORE DELETE ON evidence_link BEGIN SELECT RAISE(ABORT, 'cannot delete evidence link'); END;
+CREATE TRIGGER evidence_link_history_guard_update BEFORE UPDATE ON evidence_link_history BEGIN SELECT RAISE(ABORT, 'cannot update evidence link history'); END;
+CREATE TRIGGER evidence_link_history_guard_delete BEFORE DELETE ON evidence_link_history BEGIN SELECT RAISE(ABORT, 'cannot delete evidence link history'); END;
+CREATE TRIGGER posting_reconciliation_guard_delete BEFORE DELETE ON posting_reconciliation BEGIN SELECT RAISE(ABORT, 'cannot delete posting reconciliation'); END;
+CREATE TRIGGER posting_reconciliation_history_guard_update BEFORE UPDATE ON posting_reconciliation_history BEGIN SELECT RAISE(ABORT, 'cannot update posting reconciliation history'); END;
+CREATE TRIGGER posting_reconciliation_history_guard_delete BEFORE DELETE ON posting_reconciliation_history BEGIN SELECT RAISE(ABORT, 'cannot delete posting reconciliation history'); END;
+CREATE TRIGGER evidence_link_history_sequence_guard BEFORE INSERT ON evidence_link_history BEGIN
+  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM evidence_link_history WHERE ledger_id = new.ledger_id AND link_id = new.link_id) + 1 != new.sequence
+    OR (new.sequence = 1 AND new.state != 'active') THEN RAISE(ABORT, 'evidence link history sequence') END;
+END;
+CREATE TRIGGER evidence_link_history_transition_guard BEFORE INSERT ON evidence_link_history BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM evidence_link_history latest
+    WHERE latest.ledger_id = new.ledger_id AND latest.link_id = new.link_id
+      AND latest.sequence = (SELECT max(previous.sequence) FROM evidence_link_history previous
+        WHERE previous.ledger_id = new.ledger_id AND previous.link_id = new.link_id)
+      AND (latest.state = 'invalidated' OR (latest.state = 'active' AND new.state != 'invalidated'))
+  ) THEN RAISE(ABORT, 'evidence link history transition') END;
+END;
+CREATE TRIGGER posting_reconciliation_history_sequence_guard BEFORE INSERT ON posting_reconciliation_history BEGIN
+  SELECT CASE WHEN (SELECT COALESCE(MAX(sequence), 0) FROM posting_reconciliation_history WHERE ledger_id = new.ledger_id AND reconciliation_id = new.reconciliation_id) + 1 != new.sequence
+    THEN RAISE(ABORT, 'posting reconciliation sequence') END;
+END;
+CREATE TRIGGER posting_reconciliation_history_link_guard BEFORE INSERT ON posting_reconciliation_history BEGIN
+  SELECT CASE WHEN new.evidence_link_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM evidence_link link
+    JOIN posting_reconciliation reconciliation
+      ON reconciliation.ledger_id = link.ledger_id AND reconciliation.posting_id = link.posting_id
+    WHERE link.ledger_id = new.ledger_id AND link.link_id = new.evidence_link_id
+      AND reconciliation.reconciliation_id = new.reconciliation_id
+  ) THEN RAISE(ABORT, 'posting reconciliation evidence link target') END;
+END;
+CREATE TRIGGER posting_reconciliation_update_guard BEFORE UPDATE ON posting_reconciliation BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.reconciliation_id != old.reconciliation_id OR new.posting_id != old.posting_id
+      OR new.latest_sequence != old.latest_sequence + 1
+      OR NOT EXISTS (SELECT 1 FROM posting_reconciliation_history h WHERE h.ledger_id = new.ledger_id AND h.reconciliation_id = new.reconciliation_id AND h.sequence = new.latest_sequence AND h.status = new.status)
+    THEN RAISE(ABORT, 'posting reconciliation current projection') END;
+END;
+
+-- Internal migration owner. It is deliberately not exposed through an application receipt.
+INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome)
+SELECT DISTINCT p.ledger_id, 'migration-v23-seed', 'migration_seed', 'schema-v23-seed', 'ACCEPTED'
+FROM posting p
+JOIN transaction_version v ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version cv ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id AND cv.current_version_id = v.version_id
+JOIN ledger_transaction tx ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER';
+
+INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence)
+SELECT p.ledger_id, 'reconciliation-' || p.posting_id, p.posting_id, 'PENDING', 1
+FROM posting p
+JOIN transaction_version v ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version cv ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id AND cv.current_version_id = v.version_id
+JOIN ledger_transaction tx ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER';
+INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at)
+SELECT ledger_id, reconciliation_id, 1, 'PENDING', NULL, 'migration-v23-seed', 'schema-v23'
+FROM posting_reconciliation;

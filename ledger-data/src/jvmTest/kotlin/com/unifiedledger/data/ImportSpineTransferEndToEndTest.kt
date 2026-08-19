@@ -1872,7 +1872,7 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(22L, queryLongJdbc(url, "PRAGMA user_version"))
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(22, LedgerDatabase.Schema.version)
+                assertEquals(23, LedgerDatabase.Schema.version)
                 // Existing v21 ordinary rows keep contract_version 1.
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest("ledger-p404", "req-v21-intake").executeAsOne()
                 assertEquals(1L, source.contract_version)
@@ -1992,7 +1992,13 @@ class ImportSpineTransferEndToEndTest {
                 }
                 assertEquals(0L, queryLong(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
-            // Fresh schema equals the migrated schema (version 22).
+            // Bring the migrated database to the current v23 schema so the fresh
+            // v23 schema comparison includes the additive P4-08 shared objects.
+            JdbcSqliteDriver(url, migrationProps()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 22, 23)
+            }
+            // Fresh schema equals the migrated schema (version 23).
+
             JdbcSqliteDriver(freshUrl, migrationProps()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
             }
