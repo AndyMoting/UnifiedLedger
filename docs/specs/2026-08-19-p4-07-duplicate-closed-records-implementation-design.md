@@ -34,7 +34,7 @@
 
 新增 `ReviewImportDuplicateCandidate` 用例和 commit port。请求显式携带 ledger/request/candidate、预期比较快照、review decision、reason token、reviewed_at、reviewer reference 和由应用分配的 review/history IDs；`generated_at` 也必须由请求显式提供，禁止读取产品 Clock。`comparison_snapshot` 是 privacy-safe、结构化的不可变比较投影：record kind/version、amount/currency/precision、occurred-at、direction、status presence/value 和 subject/possible-existing source IDs；不复制原始 provider payload、订单、对手方或账户映射。
 
-review 使用专属 `import_duplicate_review_request` claim owner，而不改写共享 `import_request`。其主键为 `(ledger_id, request_id)`，operation 固定 `review_duplicate`，携带 immutable input fingerprint 与终态 outcome。store 必须 claim-first：先以 `PENDING` 插入 claim；竞争或重试方读取同一 claim 的 snapshot/receipt，完全等价则返回原 receipt，不等价将该 claim 终结为 `CONFLICT` 并返回 `SPINE_REQUEST_IDENTITY_CONFLICT`。任何 typed rejection 或失败注入回滚 claim、snapshot、history、receipt 和所有其他写入，使同一 request 可由已修正输入重试。首个成功路径在同一 outer transaction 内写 snapshot、status history、review receipt 并把 claim 转为 `ACCEPTED`；不得依靠裸 UNIQUE 异常推断 replay。
+review 使用专属 `import_duplicate_review_request` claim owner，而不改写共享 `import_request`。其主键为 `(ledger_id, request_id)`，operation 固定 `review_duplicate`，携带 immutable input fingerprint 与终态 outcome。store 必须 claim-first：先以 `PENDING` 插入 claim；竞争或重试方读取同一 claim 的 snapshot/receipt，完全等价则返回原 receipt，不等价只返回 `SPINE_REQUEST_IDENTITY_CONFLICT`，不得改写既有 `ACCEPTED` claim、snapshot 或 receipt。任何 typed rejection 或失败注入回滚 claim、snapshot、history、receipt 和所有其他写入，使同一 request 可由已修正输入重试。首个成功路径在同一 outer transaction 内写 snapshot、status history、review receipt 并把 claim 转为 `ACCEPTED`；不得依靠裸 UNIQUE 异常推断 replay。
 
 同 request 不同内容、candidate 不存在、fingerprint stale、跨 ledger、非 `DEFERRED` 或选择 `CONFIRMED_DUPLICATE` 时 subject source 不具备规则约束，均类型化拒绝并零写入。`CONFIRMED_DUPLICATE` 是唯一阻断 formalization 的决定：随后 `ConfirmImportCandidate` 必须返回 `SPINE_DUPLICATE_NOT_CONFIRMABLE`，不调用 formal factory、不分配 formal IDs、无 transaction/posting/confirmation/status residue。
 
@@ -56,7 +56,7 @@ review 使用专属 `import_duplicate_review_request` claim owner，而不改写
 - `import_duplicate_review_snapshot`：review request、candidate、expected comparison fingerprint、decision、reason token、reviewed_at、reviewer reference 与 explicit generated-at；snapshot/receipt 一对一。
 - `import_duplicate_review_receipt`：request、candidate、review/history references、outcome。
 
-`import_source_record` 追加 funding state/rule/version 只能以重建表方式进行，必须保留所有 v23 import 和 P4-08 FK/trigger/SQLDelight query 语义；迁移为既有 source 赋 `UNRESOLVED`，不回推 NO_FUNDS 或 duplicate candidate。所有新表具有 ledger-scoped FK、不可变 guard、sequence/transition guard 和 claim/snapshot/receipt 的 replay uniqueness。不得给 `import_candidate` 增加 second source、不得改变其 `UNIQUE(ledger_id, source_id)`。
+`ImportIntakeRequest`/snapshot 增加显式 `candidate_generated_at` 审计事实；由调用方提供、随 source intake request snapshot 持久化，不读取产品 Clock。新 source 的 exact-tuple 和 NO_FUNDS duplicate candidate 直接复制该值；raw identity replay 不写新候选。`import_source_record` 追加 funding state/rule/version 及 candidate-generated-at 只能以重建表方式进行，必须保留所有 v23 import 和 P4-08 FK/trigger/SQLDelight query 语义；迁移为既有 source 赋 `UNRESOLVED` 和不可用于新 candidate 的迁移 sentinel generated-at，不回推 NO_FUNDS 或 duplicate candidate。所有新表具有 ledger-scoped FK、不可变 guard、sequence/transition guard 和 claim/snapshot/receipt 的 replay uniqueness。不得给 `import_candidate` 增加 second source、不得改变其 `UNIQUE(ledger_id, source_id)`。
 
 确认路径的 duplicate block 使用 `EXISTS` 查询，只检查 subject source 对应的 `CONFIRMED_DUPLICATE`；这不是 evidence/reconciliation 关系，不能跨 ledger，也不改变既有 confirmation/replay 的行为。
 
