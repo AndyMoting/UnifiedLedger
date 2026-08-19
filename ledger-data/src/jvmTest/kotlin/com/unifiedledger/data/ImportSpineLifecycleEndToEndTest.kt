@@ -1127,12 +1127,44 @@ class ImportSpineLifecycleEndToEndTest {
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-a")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-b").copy(inputRef = "batch-p407-b")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-c").copy(inputRef = "batch-p407-c")))
-            val snapshot = driver.executeQuery(null,
-                "SELECT comparison_snapshot FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-b-a'",
-                { cursor -> app.cash.sqldelight.db.QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) }, 0,
+            val candidates = driver.executeQuery(
+                null,
+                """
+                    SELECT candidate.candidate_id, candidate.subject_source_id,
+                           candidate.possible_existing_source_id, candidate.kind,
+                           history.history_id, history.status
+                    FROM import_duplicate_candidate AS candidate
+                    JOIN import_duplicate_status_history AS history
+                      ON history.ledger_id = candidate.ledger_id
+                     AND history.candidate_id = candidate.candidate_id
+                    ORDER BY candidate.candidate_id
+                """.trimIndent(),
+                { cursor ->
+                    app.cash.sqldelight.db.QueryResult.Value(
+                        buildList {
+                            while (cursor.next().value) {
+                                add(
+                                    listOf(
+                                        cursor.getString(0), cursor.getString(1), cursor.getString(2),
+                                        cursor.getString(3), cursor.getString(4), cursor.getString(5),
+                                    ),
+                                )
+                            }
+                        },
+                    )
+                },
+                0,
             ).value
             assertEquals(3L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
-            check(snapshot!!.contains("\"subject_source_id\":\"source-p407-b\"") && snapshot.contains("\"possible_existing_source_id\":\"source-p407-a\""))
+            assertEquals(3L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(
+                listOf(
+                    listOf("duplicate-p407-b-a", "source-p407-b", "source-p407-a", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-b-a", "DEFERRED"),
+                    listOf("duplicate-p407-c-a", "source-p407-c", "source-p407-a", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-c-a", "DEFERRED"),
+                    listOf("duplicate-p407-c-b", "source-p407-c", "source-p407-b", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-c-b", "DEFERRED"),
+                ),
+                candidates,
+            )
         } finally { driver.close() }
     }
 
