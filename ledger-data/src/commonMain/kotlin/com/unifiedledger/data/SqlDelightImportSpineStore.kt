@@ -166,18 +166,24 @@ class SqlDelightImportSpineStore private constructor(
                         snapshot.facts.currencyPrecision.toLong(), snapshot.facts.occurredAt, snapshot.facts.directionToken,
                         snapshot.facts.statusToken ?: "",
                     ).executeAsList()
-                    existing.forEach { existingSourceId ->
-                        val duplicateId = "duplicate-${ids.sourceId.value}-$existingSourceId"
+                    if (ids.duplicateIds.size != existing.size) {
+                        abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
+                    }
+                    existing.zip(ids.duplicateIds).forEach { (existingSourceId, duplicateIds) ->
                         val projection = com.unifiedledger.application.ImportDuplicateComparisonSnapshot(ids.sourceId, ImportSourceId(existingSourceId), snapshot.recordKind, snapshot.facts.amountMinor, snapshot.facts.currencyCode, snapshot.facts.currencyPrecision, snapshot.facts.occurredAt, snapshot.facts.directionToken, snapshot.facts.statusToken)
-                        val comparison = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().canonicalJson(projection)
+                        val tupleSnapshot = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().canonicalJson(projection)
+                        val comparison = "{\"possible_existing_source_id\":\"$existingSourceId\",\"subject_source_id\":\"${ids.sourceId.value}\",\"tuple\":$tupleSnapshot}"
                         val fingerprint = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().digest(projection)
-                        database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateId, ids.sourceId.value, existingSourceId, "EXACT_BUSINESS_TUPLE", fingerprint, comparison, "source_declared + mechanical_decode + p407_exact_business_tuple_v1", snapshot.candidateGeneratedAt, identity.requestId.value)
-                        database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateId, "duplicate-status-$duplicateId", identity.requestId.value)
+                        database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, ids.sourceId.value, existingSourceId, "EXACT_BUSINESS_TUPLE", fingerprint, comparison, "source_declared + mechanical_decode + p407_exact_business_tuple_v1", snapshot.candidateGeneratedAt, identity.requestId.value)
+                        database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, duplicateIds.statusHistoryId.value, identity.requestId.value)
                     }
                 } else if (snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.NO_FUNDS) {
-                    val duplicateId = "duplicate-${ids.sourceId.value}-no-funds"
-                    database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateId, ids.sourceId.value, null, "CLOSED_OR_FAILED_NO_FUNDS", "sha256:no-funds-${ids.sourceId.value}", "{\"subject_source_id\":\"${ids.sourceId.value}\",\"kind\":\"CLOSED_OR_FAILED_NO_FUNDS\"}", "source_declared + mechanical_decode", snapshot.candidateGeneratedAt, identity.requestId.value)
-                    database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateId, "duplicate-status-$duplicateId", identity.requestId.value)
+                    if (ids.duplicateIds.size != 1) abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
+                    val duplicateIds = ids.duplicateIds.single()
+                    database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, ids.sourceId.value, null, "CLOSED_OR_FAILED_NO_FUNDS", "sha256:no-funds-${ids.sourceId.value}", "{\"subject_source_id\":\"${ids.sourceId.value}\",\"kind\":\"CLOSED_OR_FAILED_NO_FUNDS\"}", "source_declared + mechanical_decode", snapshot.candidateGeneratedAt, identity.requestId.value)
+                    database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, duplicateIds.statusHistoryId.value, identity.requestId.value)
+                } else if (ids.duplicateIds.isNotEmpty()) {
+                    abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
                 }
                 val status = if (snapshot.completeness == ImportCompleteness.VALID_COMPLETE &&
                     snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.SETTLED
@@ -243,7 +249,7 @@ class SqlDelightImportSpineStore private constructor(
 
     override fun commitReviewOnce(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult {
         require(request.identity.ledgerId.value.isNotEmpty())
-        val fingerprint = listOf(request.candidateId.value, request.expectedComparisonFingerprint, request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference, request.generatedAt).joinToString("|")
+        val fingerprint = com.unifiedledger.application.ImportDuplicateReviewFingerprint().digest(request)
         return rollbackTypedRejection { database.transactionWithResult {
             database.ledgerQueries.claimDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value, fingerprint)
             if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
@@ -256,7 +262,8 @@ class SqlDelightImportSpineStore private constructor(
             val candidate = database.ledgerQueries.selectDuplicateCandidate(request.identity.ledgerId.value, request.candidateId.value).executeAsOneOrNull()
                 ?: abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotFound(ImportCandidateId(request.candidateId.value))))
             if (candidate.comparison_fingerprint != request.expectedComparisonFingerprint) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.staleFingerprint(ImportCandidateId(request.candidateId.value))))
-            if (request.decision == ImportDuplicateStatus.DEFERRED) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotPending(ImportCandidateId(request.candidateId.value))))
+            val current = database.ledgerQueries.selectDuplicateCurrentStatus(request.identity.ledgerId.value, request.candidateId.value).executeAsOneOrNull()
+            if (current != "DEFERRED" || request.decision == ImportDuplicateStatus.DEFERRED) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotPending(ImportCandidateId(request.candidateId.value))))
             database.ledgerQueries.insertDuplicateReviewSnapshot(request.identity.ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.expectedComparisonFingerprint, request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference, request.generatedAt, request.reviewId.value)
             val seq = database.ledgerQueries.selectDuplicateLatestSequence(request.identity.ledgerId.value, request.candidateId.value).executeAsOne() + 1
             database.ledgerQueries.insertDuplicateReviewStatus(request.identity.ledgerId.value, request.candidateId.value, seq, request.historyId.value, request.decision.name, request.identity.requestId.value)

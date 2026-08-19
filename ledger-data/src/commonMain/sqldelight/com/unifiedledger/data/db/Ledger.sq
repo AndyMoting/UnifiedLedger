@@ -7807,6 +7807,8 @@ selectDuplicateReviewReceipt:
 SELECT request_id, candidate_id, review_id, history_id, outcome FROM import_duplicate_review_receipt WHERE ledger_id = ? AND request_id = ?;
 selectDuplicateLatestSequence:
 SELECT COALESCE(MAX(sequence), 0) FROM import_duplicate_status_history WHERE ledger_id = ? AND candidate_id = ?;
+selectDuplicateCurrentStatus:
+SELECT status FROM import_duplicate_status_history WHERE ledger_id = ? AND candidate_id = ? ORDER BY sequence DESC LIMIT 1;
 insertDuplicateReviewStatus:
 INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class) VALUES (?, ?, ?, ?, ?, ?, 'status_transition');
 

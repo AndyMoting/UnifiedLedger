@@ -296,6 +296,12 @@ data class ImportIntakeIds(
     val evidenceId: ImportEvidenceId,
     val candidateId: ImportCandidateId,
     val statusHistoryId: ImportStatusHistoryId,
+    val duplicateIds: List<ImportDuplicateIntakeIds> = emptyList(),
+)
+
+data class ImportDuplicateIntakeIds(
+    val candidateId: ImportDuplicateCandidateId,
+    val statusHistoryId: ImportStatusHistoryId,
 )
 
 fun interface ImportIntakeIdSource {

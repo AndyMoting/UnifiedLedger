@@ -50,6 +50,24 @@ class ImportDuplicateComparisonFingerprint {
         "sha256:${Sha256.digestHex(canonicalJson(snapshot).encodeToByteArray())}"
 }
 
+class ImportDuplicateReviewFingerprint {
+    fun digest(request: ImportDuplicateReviewRequest): String =
+        "sha256:${Sha256.digestHex(canonicalJson(request).encodeToByteArray())}"
+
+    private fun canonicalJson(request: ImportDuplicateReviewRequest): String = buildString {
+        append("{\"candidate_id\":").append(jcsString(request.candidateId.value))
+        append(",\"decision\":").append(jcsString(request.decision.name))
+        append(",\"expected_comparison_fingerprint\":").append(jcsString(request.expectedComparisonFingerprint))
+        append(",\"generated_at\":").append(jcsString(request.generatedAt))
+        append(",\"history_id\":").append(jcsString(request.historyId.value))
+        append(",\"reason_token\":").append(jcsString(request.reasonToken))
+        append(",\"review_id\":").append(jcsString(request.reviewId.value))
+        append(",\"reviewed_at\":").append(jcsString(request.reviewedAt))
+        append(",\"reviewer_reference\":").append(jcsString(request.reviewerReference))
+        append('}')
+    }
+}
+
 internal fun formatDecimal(minorUnits: Long, precision: Int): String {
     require(precision >= 0) { "P4-02 currency precision must not be negative" }
     if (precision == 0) return minorUnits.toString()
