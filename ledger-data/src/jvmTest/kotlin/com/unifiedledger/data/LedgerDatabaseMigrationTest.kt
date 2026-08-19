@@ -1,6 +1,9 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
 import java.nio.file.Path
@@ -12,6 +15,7 @@ import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 
 class LedgerDatabaseMigrationTest {
     @Test
@@ -354,6 +358,88 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(3L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
                 assertEquals(5L, queryCount(driver, "SELECT count(*) FROM posting"))
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun confirmationOnMigratedV23AdvancesSeededReconciliationRow() {
+        val path = Files.createTempFile("ledger-data-v22-v23-confirm-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 22)
+                val seed = listOf(
+                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                    "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
+                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                    "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
+                    "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                    "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
+                    "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')",
+                    "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
+                )
+                seed.forEach { driver.execute(null, it, 0) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 22, 23)
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightP408ReconciliationStore(database, driver)
+
+                val seeded = database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-out").executeAsOne()
+                assertEquals("PENDING", seeded.status)
+                assertEquals(1L, seeded.latest_sequence)
+
+                val accepted = assertIs<P408ReconciliationResult.Accepted>(
+                    store.confirmLink(
+                        P408ConfirmLinkRequest(
+                            ledgerId = "ledger-a",
+                            requestId = "request-a",
+                            evidenceId = "evidence-a",
+                            candidateId = "candidate-transient-a",
+                            postingId = "posting-transfer-out",
+                            transactionId = "tx-transfer",
+                            amountMinor = 1000,
+                            currencyCode = "CNY",
+                            currencyPrecision = 2,
+                            direction = "out",
+                            accountId = "account-bank-a",
+                            responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                            basisVersion = 1,
+                            matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
+                            windowDays = 2,
+                            naturalDayDistance = 0,
+                            sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+                            confirmedAt = "2026-08-10T13:00:00+08:00",
+                            linkId = "link-a",
+                            reconciliationId = "reconciliation-posting-transfer-out",
+                            createdAt = "2026-08-10T13:00:00+08:00",
+                        ),
+                    ),
+                )
+                assertEquals(2L, accepted.receipt.historySequence)
+                assertEquals("reconciliation-posting-transfer-out", accepted.receipt.reconciliationId)
+
+                val advanced = database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-out").executeAsOne()
+                assertEquals("CHECKED", advanced.status)
+                assertEquals(2L, advanced.latest_sequence)
+                assertEquals(
+                    1L,
+                    queryCount(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE reconciliation_id = 'reconciliation-posting-transfer-out' AND sequence = 1"),
+                )
+                assertEquals(
+                    1L,
+                    queryCount(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE reconciliation_id = 'reconciliation-posting-transfer-out' AND sequence = 2"),
+                )
+                assertEquals(
+                    1L,
+                    queryCount(driver, "SELECT count(*) FROM reconciliation_receipt WHERE request_id = 'request-a'"),
+                )
             }
         } finally {
             Files.deleteIfExists(path)

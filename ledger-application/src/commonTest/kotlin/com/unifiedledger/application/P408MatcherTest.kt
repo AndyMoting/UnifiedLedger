@@ -63,6 +63,31 @@ class P408MatcherTest {
     }
 
     @Test
+    fun ambiguousReasonTakesPrecedenceOverUnresolvedCompetitor() {
+        val unresolved = posting("p-unresolved", "2026-08-10T12:00:00+08:00").copy(
+            occurredAt = P408TemporalEvidence(
+                "2026-08-10 12:00:00",
+                "local_datetime",
+                false,
+                null,
+                null,
+            ),
+        )
+        val result = matcher.match(
+            evidence("e-amb", "2026-08-10T12:00:00+08:00"),
+            listOf(
+                posting("p-a", "2026-08-10T12:00:00+08:00"),
+                posting("p-b", "2026-08-11T12:00:00+08:00"),
+                unresolved,
+            ),
+        )
+
+        assertEquals(P408MatchDisposition.AMBIGUOUS, result.disposition)
+        assertEquals("ambiguous_multiple_candidates", result.reason)
+        assertEquals(listOf("p-a", "p-b"), result.candidates.map { it.posting.postingId })
+    }
+
+    @Test
     fun naturalDayUsesConfiguredLocalOffsetAcrossUtcMidnight() {
         val result = matcher.match(
             evidence("e-5", "2026-08-10T23:30:00+08:00"),

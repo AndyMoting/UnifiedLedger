@@ -30,7 +30,8 @@ class SqlDelightP408ReconciliationStore private constructor(
             return P408ReconciliationResult.Rejected("P408_WINDOW_DAYS_NOT_APPROVED")
         }
         val fingerprint = request.fingerprint()
-        return rollbackP408 { database.transactionWithResult {
+        return try {
+            rollbackP408 { database.transactionWithResult {
             database.ledgerQueries.claimP408ReconciliationRequest(
                 request.ledgerId,
                 request.requestId,
@@ -219,7 +220,14 @@ class SqlDelightP408ReconciliationStore private constructor(
                     historySequence = nextSequence,
                 ),
             )
-        } }
+            } }
+        } catch (failure: Throwable) {
+            if (isSqliteConstraintFailure(failure)) {
+                P408ReconciliationResult.Rejected("P408_RECONCILIATION_CONSTRAINT_VIOLATION")
+            } else {
+                throw failure
+            }
+        }
     }
 
     override fun readReconciliationReport(ledgerId: String): List<P408ReconciliationReportRow> {
@@ -279,8 +287,8 @@ class SqlDelightP408ReconciliationStore private constructor(
         val sourceInstant = runCatching { Instant.parse(source) }.getOrNull() ?: return null
         val postingInstant = runCatching { Instant.parse(posting) }.getOrNull() ?: return null
         val localOffsetSeconds = P408Matcher.DEFAULT_LOCAL_OFFSET_SECONDS
-        val sourceDay = Math.floorDiv(sourceInstant.epochSeconds + localOffsetSeconds, 24 * 60 * 60)
-        val postingDay = Math.floorDiv(postingInstant.epochSeconds + localOffsetSeconds, 24 * 60 * 60)
+        val sourceDay = floorDivEpochSeconds(sourceInstant.epochSeconds + localOffsetSeconds)
+        val postingDay = floorDivEpochSeconds(postingInstant.epochSeconds + localOffsetSeconds)
         val distance = kotlin.math.abs(sourceDay - postingDay)
         return distance.takeIf { it <= Int.MAX_VALUE.toLong() }?.toInt()
     }
@@ -298,6 +306,15 @@ class SqlDelightP408ReconciliationStore private constructor(
     private fun temporalShape(value: String): String = buildString(value.length) {
         value.forEach { append(if (it in '0'..'9') '#' else it) }
     }
+
+    private fun floorDivEpochSeconds(value: Long): Long {
+        val quotient = value / SECONDS_PER_DAY
+        return if (value % SECONDS_PER_DAY < 0) quotient - 1 else quotient
+    }
+
+    private companion object {
+        const val SECONDS_PER_DAY: Long = 24 * 60 * 60
+    }
 }
 
 private class P408TypedRollback(val result: Any) : RuntimeException()
@@ -309,4 +326,14 @@ private inline fun <T> rollbackP408(block: () -> T): T = try {
 } catch (failure: P408TypedRollback) {
     @Suppress("UNCHECKED_CAST")
     failure.result as T
+}
+
+private fun isSqliteConstraintFailure(failure: Throwable): Boolean {
+    var current: Throwable? = failure
+    while (current != null) {
+        val message = current.message ?: ""
+        if (message.contains("constraint failed")) return true
+        current = current.cause
+    }
+    return false
 }

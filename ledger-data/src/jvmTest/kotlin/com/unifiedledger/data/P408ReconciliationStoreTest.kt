@@ -352,6 +352,215 @@ class P408ReconciliationStoreTest {
         }
     }
 
+    @Test
+    fun duplicateLinkIdConstraintFailureIsTypedRejectedWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedTransfer(driver, includeSecondPosting = true)
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            assertIs<P408ReconciliationResult.Accepted>(
+                store.confirmLink(request(linkId = "link-a", reconciliationId = "reconciliation-posting-a")),
+            )
+            val linksBefore = count(driver, "SELECT count(*) FROM evidence_link")
+            val requestsBefore = count(driver, "SELECT count(*) FROM reconciliation_request")
+            val receiptsBefore = count(driver, "SELECT count(*) FROM reconciliation_receipt")
+            val reconciliationsBefore = count(driver, "SELECT count(*) FROM posting_reconciliation")
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(
+                    request(
+                        requestId = "request-b",
+                        evidenceId = "evidence-b",
+                        candidateId = "candidate-transient-b",
+                        postingId = "posting-b",
+                        direction = "in",
+                        accountId = "account-platform-b",
+                        responsibility = P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
+                        linkId = "link-a",
+                        reconciliationId = "reconciliation-posting-b",
+                        createdAt = "2026-08-10T14:00:00+08:00",
+                    ),
+                ),
+            )
+            assertEquals("P408_RECONCILIATION_CONSTRAINT_VIOLATION", rejected.code)
+            assertEquals(linksBefore, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(requestsBefore, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(receiptsBefore, count(driver, "SELECT count(*) FROM reconciliation_receipt"))
+            assertEquals(reconciliationsBefore, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun postingFactMismatchRejectsWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedSingleOutTransfer(driver)
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(request(accountId = "account-other")),
+            )
+            assertEquals("P408_POSTING_FACT_MISMATCH", rejected.code)
+            assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun postingTimeWindowMismatchRejectsWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedSingleOutTransfer(driver)
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(request(naturalDayDistance = 1)),
+            )
+            assertEquals("P408_POSTING_TIME_WINDOW_MISMATCH", rejected.code)
+            assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun postingResponsibilityAlreadyLinkedRejectsWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedSingleOutTransfer(driver)
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            assertIs<P408ReconciliationResult.Accepted>(store.confirmLink(request()))
+            driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','import-c','intake')", 0)
+            driver.execute(
+                null,
+                "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-a','source-c','import-c','batch-c',0,'ordinary_flow_source','hash-c',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')",
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO import_evidence VALUES ('ledger-a','evidence-c','source-c','source_observation','2026-08-10T12:00:01+08:00')",
+                0,
+            )
+            val linksBefore = count(driver, "SELECT count(*) FROM evidence_link")
+            val requestsBefore = count(driver, "SELECT count(*) FROM reconciliation_request")
+            val reconciliationsBefore = count(driver, "SELECT count(*) FROM posting_reconciliation")
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(
+                    request(
+                        requestId = "request-c",
+                        evidenceId = "evidence-c",
+                        candidateId = "candidate-c",
+                        postingId = "posting-a",
+                        linkId = "link-c",
+                        reconciliationId = "reconciliation-posting-a",
+                        createdAt = "2026-08-10T14:00:00+08:00",
+                    ),
+                ),
+            )
+            assertEquals("P408_POSTING_RESPONSIBILITY_ALREADY_LINKED", rejected.code)
+            assertEquals(linksBefore, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(requestsBefore, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(reconciliationsBefore, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun sourceFactUnresolvedRejectsWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedSingleOutTransfer(driver)
+            driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','import-unresolved','intake')", 0)
+            driver.execute(
+                null,
+                "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-a','source-unresolved','import-unresolved','batch-unresolved',0,'ordinary_flow_source','hash-unresolved',1,'valid_incomplete',NULL,NULL,NULL,NULL,NULL,NULL)",
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO import_evidence VALUES ('ledger-a','evidence-unresolved','source-unresolved','source_observation','2026-08-10T12:00:01+08:00')",
+                0,
+            )
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(
+                    request(
+                        requestId = "request-unresolved-source",
+                        evidenceId = "evidence-unresolved",
+                        candidateId = "candidate-unresolved-source",
+                    ),
+                ),
+            )
+            assertEquals("P408_SOURCE_FACT_UNRESOLVED", rejected.code)
+            assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun postingTimeUnresolvedRejectsWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seedSingleOutTransfer(driver)
+            driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','import-time','intake')", 0)
+            driver.execute(
+                null,
+                "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-a','source-time','import-time','batch-time',0,'ordinary_flow_source','hash-time',1,'valid_complete',1000,'CNY',2,'2026-08-10 12:00:00','out','settled')",
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO import_evidence VALUES ('ledger-a','evidence-time','source-time','source_observation','2026-08-10 12:00:01')",
+                0,
+            )
+            val store = SqlDelightP408ReconciliationStore(database, driver)
+
+            val rejected = assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(
+                    request(
+                        requestId = "request-unresolved-time",
+                        evidenceId = "evidence-time",
+                        candidateId = "candidate-time",
+                        sourceOccurredAt = "2026-08-10 12:00:00",
+                    ),
+                ),
+            )
+            assertEquals("P408_POSTING_TIME_UNRESOLVED", rejected.code)
+            assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            assertEquals(0L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+        } finally {
+            driver.close()
+        }
+    }
+
     private fun request(
         ledgerId: String = "ledger-a",
         requestId: String = "request-a",

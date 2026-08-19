@@ -136,8 +136,8 @@ class P408Matcher(
             else -> P408MatchDisposition.UNRESOLVED
         }
         val reason = when {
-            hasUnresolvedTime -> "source_time_unresolved"
             candidates.size > 1 -> "ambiguous_multiple_candidates"
+            hasUnresolvedTime -> "source_time_unresolved"
             candidates.isNotEmpty() -> null
             else -> "no_unique_funding_candidate"
         }
@@ -196,7 +196,6 @@ class P408Matcher(
                 temporal.rawText[temporal.rawText.length - 3] == ':')
         return when (temporal.kind) {
             "offset_datetime" -> temporal.offsetPresent && hasExplicitOffset
-            "local_datetime" -> !temporal.offsetPresent && !hasExplicitOffset
             else -> false
         }
     }
@@ -253,7 +252,7 @@ class P408Matcher(
         )
 
         private val DIRECTIONS = setOf("in", "out")
-        private val TEMPORAL_KINDS = setOf("offset_datetime", "local_datetime")
+        private val TEMPORAL_KINDS = setOf("offset_datetime")
 
         private const val SECONDS_PER_DAY: Long = 24 * 60 * 60
     }
