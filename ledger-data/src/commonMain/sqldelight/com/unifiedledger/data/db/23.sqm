@@ -35,6 +35,7 @@ CREATE TABLE import_duplicate_candidate (
   generated_at TEXT NOT NULL, creation_request_id TEXT NOT NULL, PRIMARY KEY (ledger_id, candidate_id),
   FOREIGN KEY (ledger_id, subject_source_id) REFERENCES import_source_record(ledger_id, source_id),
   FOREIGN KEY (ledger_id, possible_existing_source_id) REFERENCES import_source_record(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, creation_request_id) REFERENCES import_request(ledger_id, request_id),
   CHECK ((kind = 'EXACT_BUSINESS_TUPLE' AND possible_existing_source_id IS NOT NULL) OR (kind = 'CLOSED_OR_FAILED_NO_FUNDS' AND possible_existing_source_id IS NULL))
 );
 CREATE UNIQUE INDEX import_duplicate_exact_unique ON import_duplicate_candidate(ledger_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint) WHERE kind = 'EXACT_BUSINESS_TUPLE';
@@ -58,7 +59,10 @@ CREATE TABLE import_duplicate_review_snapshot (
 );
 CREATE TABLE import_duplicate_review_receipt (
   ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, review_id TEXT NOT NULL, history_id TEXT NOT NULL, outcome TEXT NOT NULL,
-  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id)
+  PRIMARY KEY (ledger_id, request_id), FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_duplicate_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, review_id) REFERENCES import_duplicate_review_snapshot(ledger_id, review_id),
+  FOREIGN KEY (ledger_id, history_id) REFERENCES import_duplicate_status_history(ledger_id, history_id)
 );
 CREATE TRIGGER import_duplicate_candidate_guard_update BEFORE UPDATE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot update duplicate candidate'); END;
 CREATE TRIGGER import_duplicate_candidate_guard_delete BEFORE DELETE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate candidate'); END;

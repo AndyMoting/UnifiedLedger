@@ -164,7 +164,7 @@ class SqlDelightImportSpineStore private constructor(
                         snapshot.identity.ledgerId.value, ids.sourceId.value, snapshot.recordKind.storageValue,
                         snapshot.recordKind.contractVersion.toLong(), snapshot.facts.amountMinor, snapshot.facts.currencyCode,
                         snapshot.facts.currencyPrecision.toLong(), snapshot.facts.occurredAt, snapshot.facts.directionToken,
-                        snapshot.facts.statusToken ?: "",
+                        snapshot.facts.statusToken, if (snapshot.facts.statusToken == null) 1L else 0L,
                     ).executeAsList()
                     if (ids.duplicateIds.size != existing.size) {
                         abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))

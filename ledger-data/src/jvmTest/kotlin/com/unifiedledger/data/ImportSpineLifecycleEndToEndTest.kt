@@ -1213,12 +1213,15 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(intakeIds("p407-no-funds", "status-p407-no-funds").copy(
-                duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
-                    com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-no-funds"),
-                    ImportStatusHistoryId("duplicate-status-p407-no-funds"),
-                )),
-            )))
+            val ids = BatchIntakeIdSource(listOf(
+                intakeIds("p407-no-funds", "status-p407-no-funds").copy(
+                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-no-funds"),
+                        ImportStatusHistoryId("duplicate-status-p407-no-funds"),
+                    )),
+                ),
+                intakeIds("p407-settled-after-no-funds", "status-p407-settled-after-no-funds"),
+            ))
             val request = r1("request-p407-no-funds").copy(
                 facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS, fundingRuleId = "source-contract-no-funds-v1"),
             )
@@ -1230,6 +1233,12 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(1L, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
             assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_candidate_status_history WHERE status='incomplete'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
             assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate WHERE kind='CLOSED_OR_FAILED_NO_FUNDS'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertIs<ImportIntakeResult.Accepted>(
+                ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint()).execute(
+                    r1("request-p407-settled-after-no-funds").copy(inputRef = "batch-p407-settled-after-no-funds"),
+                ),
+            )
+            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
         } finally { driver.close() }
     }

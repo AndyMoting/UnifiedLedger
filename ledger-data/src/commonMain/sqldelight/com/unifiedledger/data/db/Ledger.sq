@@ -7522,6 +7522,7 @@ CREATE TABLE import_duplicate_candidate (
   PRIMARY KEY (ledger_id, candidate_id),
   FOREIGN KEY (ledger_id, subject_source_id) REFERENCES import_source_record(ledger_id, source_id),
   FOREIGN KEY (ledger_id, possible_existing_source_id) REFERENCES import_source_record(ledger_id, source_id),
+  FOREIGN KEY (ledger_id, creation_request_id) REFERENCES import_request(ledger_id, request_id),
   CHECK ((kind = 'EXACT_BUSINESS_TUPLE' AND possible_existing_source_id IS NOT NULL) OR (kind = 'CLOSED_OR_FAILED_NO_FUNDS' AND possible_existing_source_id IS NULL))
 );
 CREATE UNIQUE INDEX import_duplicate_exact_unique ON import_duplicate_candidate(ledger_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint) WHERE kind = 'EXACT_BUSINESS_TUPLE';
@@ -7549,7 +7550,10 @@ CREATE TABLE import_duplicate_review_snapshot (
 CREATE TABLE import_duplicate_review_receipt (
   ledger_id TEXT NOT NULL, request_id TEXT NOT NULL, candidate_id TEXT NOT NULL, review_id TEXT NOT NULL, history_id TEXT NOT NULL, outcome TEXT NOT NULL,
   PRIMARY KEY (ledger_id, request_id),
-  FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id)
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_duplicate_review_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_duplicate_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, review_id) REFERENCES import_duplicate_review_snapshot(ledger_id, review_id),
+  FOREIGN KEY (ledger_id, history_id) REFERENCES import_duplicate_status_history(ledger_id, history_id)
 );
 CREATE TRIGGER import_duplicate_candidate_guard_update BEFORE UPDATE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot update duplicate candidate'); END;
 CREATE TRIGGER import_duplicate_candidate_guard_delete BEFORE DELETE ON import_duplicate_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete duplicate candidate'); END;
@@ -7801,8 +7805,9 @@ VALUES (?, ?, 1, ?, 'DEFERRED', ?, 'creation') ON CONFLICT DO NOTHING;
 selectDuplicateMatches:
 SELECT source_id FROM import_source_record WHERE ledger_id = ? AND source_id != ? AND record_kind = ? AND contract_version = ?
  AND amount_minor = ? AND currency_code = ? AND currency_precision = ? AND occurred_at = ? AND direction_token = ?
- AND COALESCE(status_token, '') = ?
- AND completeness = 'valid_complete' AND status_token != 'unresolved' ORDER BY source_id;
+ AND (status_token = ? OR (status_token IS NULL AND ? = 1))
+ AND funding_state = 'SETTLED'
+ AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved') ORDER BY source_id;
 selectDuplicateReviewRequest:
 SELECT input_fingerprint, outcome FROM import_duplicate_review_request WHERE ledger_id = ? AND request_id = ?;
 claimDuplicateReviewRequest:
