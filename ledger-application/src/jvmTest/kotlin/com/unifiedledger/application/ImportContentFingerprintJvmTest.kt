@@ -1,6 +1,7 @@
 package com.unifiedledger.application
 
 import java.security.MessageDigest
+import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -130,6 +131,19 @@ class ImportContentFingerprintJvmTest {
         assertEquals("1", formatDecimal(1, 0))
         assertEquals("0.05", formatDecimal(5, 2))
         assertEquals("-128.50", formatDecimal(-12850, 2))
+    }
+
+    @Test
+    fun `P4-07 review claim fingerprint is canonical and changes with every immutable input`() {
+        val request = ImportDuplicateReviewRequest(
+            ImportRequestIdentity(LedgerId("ledger-p407"), ImportRequestId("review-request")),
+            ImportDuplicateCandidateId("duplicate-1"), "sha256:comparison", ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+            "confirmed", "2026-08-19T10:00:00+08:00", "reviewer", "2026-08-19T10:01:00+08:00",
+            ImportDuplicateReviewId("review-1"), ImportStatusHistoryId("history-1"),
+        )
+        val digest = ImportDuplicateReviewFingerprint().digest(request)
+        assertEquals(digest, ImportDuplicateReviewFingerprint().digest(request))
+        kotlin.test.assertNotEquals(digest, ImportDuplicateReviewFingerprint().digest(request.copy(reasonToken = "different")))
     }
 
     private fun jvmSha256(bytes: ByteArray): String =
