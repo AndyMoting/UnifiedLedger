@@ -562,6 +562,89 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
+    fun populatedV23ToV24RebuildPreservesFormalAndP408GraphForeignKeysAndGuards() {
+        val path = Files.createTempFile("ledger-data-v23-v24-p408-populated-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        val p408Triggers = listOf(
+            "reconciliation_request_guard_update", "reconciliation_request_guard_delete",
+            "reconciliation_snapshot_guard_update", "reconciliation_snapshot_guard_delete",
+            "reconciliation_receipt_guard_update", "reconciliation_receipt_guard_delete",
+            "evidence_link_guard_update", "evidence_link_guard_delete",
+            "evidence_link_history_guard_update", "evidence_link_history_guard_delete",
+            "posting_reconciliation_guard_delete", "posting_reconciliation_history_guard_update",
+            "posting_reconciliation_history_guard_delete", "evidence_link_history_sequence_guard",
+            "evidence_link_history_transition_guard", "posting_reconciliation_history_sequence_guard",
+            "posting_reconciliation_history_link_guard", "posting_reconciliation_update_guard",
+        )
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 23)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','request-p408','intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id,source_id,owner_request_id,input_ref,record_ordinal,record_kind,content_hash,contract_version,completeness,amount_minor,currency_code,currency_precision,occurred_at,direction_token,status_token) VALUES ('ledger-a','source-p408','request-p408','batch-p408',0,'ordinary_flow_source','sha256:p408',1,'valid_complete',3580,'CNY',2,'2026-01-15T00:00:00Z','out','settled')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-a','evidence-p408','source-p408','source_observation','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request VALUES ('ledger-a','recon-request-p408','migration_seed','fp-p408','ACCEPTED',NULL)", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request_snapshot VALUES ('ledger-a','recon-request-p408','evidence-p408','candidate-p408','posting-expense-existing','tx-existing',3580,'CNY',2,'out','expense-account-breakfast','real_account_posting',1,'exact_amount',3,0,'2026-01-15T00:00:00Z','2026-01-15T00:00:00Z','confirm_match')", 0)
+                driver.execute(null, "INSERT INTO evidence_link VALUES ('ledger-a','link-p408','evidence-p408','posting-expense-existing','tx-existing','real_account_posting',1,'exact_amount','candidate-p408','recon-request-p408','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO evidence_link_history VALUES ('ledger-a','link-p408',1,'active','confirmed','recon-request-p408','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation VALUES ('ledger-a','reconciliation-p408','posting-expense-existing','PENDING',1)", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation_history VALUES ('ledger-a','reconciliation-p408',1,'PENDING','link-p408','recon-request-p408','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_receipt VALUES ('ledger-a','recon-request-p408','ACCEPTED','link-p408','reconciliation-p408',1)", 0)
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 23, 24) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction WHERE transaction_id='tx-existing'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_version WHERE version_id='version-existing-v1'"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting WHERE posting_set_id='posting-set-existing'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_request WHERE request_id='request-p408'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p408' AND funding_state='UNRESOLVED'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-p408'"))
+                listOf("reconciliation_request", "reconciliation_request_snapshot", "evidence_link", "evidence_link_history", "posting_reconciliation", "posting_reconciliation_history", "reconciliation_receipt").forEach { table ->
+                    assertEquals(1L, queryCount(driver, "SELECT count(*) FROM $table"))
+                }
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
+                p408Triggers.forEach { trigger -> assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='$trigger'")) }
+            }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
+    fun lateV23ToV24FailureRollsBackSourceRebuildAndP408Rows() {
+        val path = Files.createTempFile("ledger-data-v23-v24-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection -> connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) } }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 23)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','request-rollback','intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id,source_id,owner_request_id,input_ref,record_ordinal,record_kind,content_hash,contract_version,completeness,amount_minor,currency_code,currency_precision,occurred_at,direction_token,status_token) VALUES ('ledger-a','source-rollback','request-rollback','batch-rollback',0,'ordinary_flow_source','sha256:rollback',1,'valid_complete',100,'CNY',2,'2026-01-15T00:00:00Z','out','settled')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-a','evidence-rollback','source-rollback','source_observation','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request VALUES ('ledger-a','recon-rollback','migration_seed','fp-rollback','ACCEPTED',NULL)", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request_snapshot VALUES ('ledger-a','recon-rollback','evidence-rollback','candidate-rollback','posting-expense-existing','tx-existing',100,'CNY',2,'out','expense-account-breakfast','real_account_posting',1,'exact_amount',3,0,'2026-01-15T00:00:00Z','2026-01-15T00:00:00Z','confirm_match')", 0)
+                driver.execute(null, "INSERT INTO evidence_link VALUES ('ledger-a','link-rollback','evidence-rollback','posting-expense-existing','tx-existing','real_account_posting',1,'exact_amount','candidate-rollback','recon-rollback','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO evidence_link_history VALUES ('ledger-a','link-rollback',1,'active','confirmed','recon-rollback','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation VALUES ('ledger-a','reconciliation-rollback','posting-expense-existing','PENDING',1)", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation_history VALUES ('ledger-a','reconciliation-rollback',1,'PENDING','link-rollback','recon-rollback','2026-01-15T00:00:00Z')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_receipt VALUES ('ledger-a','recon-rollback','ACCEPTED','link-rollback','reconciliation-rollback',1)", 0)
+                driver.execute(null, "CREATE TABLE import_duplicate_candidate(blocker TEXT)", 0)
+                assertFailsWith<SQLException> { LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 23, 24) } }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_table_info('import_source_record') WHERE name='funding_state'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-rollback' AND amount_minor=100"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-rollback'"))
+                listOf("reconciliation_request", "reconciliation_request_snapshot", "evidence_link", "evidence_link_history", "posting_reconciliation", "posting_reconciliation_history", "reconciliation_receipt").forEach { table ->
+                    assertEquals(1L, queryCount(driver, "SELECT count(*) FROM $table"))
+                }
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='import_duplicate_candidate'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'import_duplicate_%'"))
+            }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
     fun populatedVersionNinePreservesFormalRowsAndAddsRg07OwnersAtVersionTen() {
         val path = Files.createTempFile("ledger-data-v9-v10-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
