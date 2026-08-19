@@ -406,6 +406,18 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(o01.returnedIds, o03.returnedIds)
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
+            // P407-Q-004: raw identity replay includes all persisted funding audit facts.
+            listOf(
+                r1(requestId = "req-a-funding-state").copy(facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS)),
+                r1(requestId = "req-a-funding-rule").copy(facts = r1().facts.copy(fundingRuleId = "source-contract-v2")),
+                r1(requestId = "req-a-funding-version").copy(facts = r1().facts.copy(fundingRuleVersion = 2)),
+                r1(requestId = "req-a-generated-at").copy(candidateGeneratedAt = "2026-08-20T00:00:00Z"),
+            ).forEach { changed ->
+                val rejected = assertIs<ImportIntakeResult.Rejected>(executor.intake(changed))
+                assertEquals("SPINE_IDENTITY_COLLISION", rejected.diagnostic.code)
+                assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
+            }
+
             // O-04: same raw identity, different content: hard collision.
             val o04 = assertIs<ImportIntakeResult.Rejected>(executor.intake(r1Prime(requestId = "req-a-intake-3")))
             assertEquals("SPINE_IDENTITY_COLLISION", o04.diagnostic.code)
@@ -1165,6 +1177,34 @@ class ImportSpineLifecycleEndToEndTest {
                 ),
                 candidates,
             )
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun p407DuplicateHistoryRejectsOrphanAndMismatchedOwners() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            fun execute(sql: String) = driver.execute(null, sql, 0)
+            execute("INSERT INTO import_request VALUES ('ledger-p407-owner','request-create','intake')")
+            execute("INSERT INTO import_request VALUES ('ledger-p407-owner','request-other','intake')")
+            execute("INSERT INTO import_source_record(ledger_id,source_id,owner_request_id,input_ref,record_ordinal,record_kind,content_hash,contract_version,completeness,amount_minor,currency_code,currency_precision,occurred_at,direction_token,status_token,funding_state,funding_rule_id,funding_rule_version,candidate_generated_at) VALUES ('ledger-p407-owner','source-owner','request-create','owner-batch',0,'ordinary_flow_source','sha256:owner',1,'valid_complete',100,'CNY',2,'2026-08-20T00:00:00Z','out','settled','SETTLED','owner-rule',1,'2026-08-20T00:00:00Z')")
+            execute("INSERT INTO import_duplicate_candidate VALUES ('ledger-p407-owner','duplicate-owner','source-owner',NULL,'CLOSED_OR_FAILED_NO_FUNDS','sha256:owner','{}','source_declared + mechanical_decode','exact','p407_exact_business_tuple_v1',1,'2026-08-20T00:00:00Z','request-create')")
+
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',1,'history-wrong-create','DEFERRED','request-other','creation')")
+            }
+            execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',1,'history-create','DEFERRED','request-create','creation')")
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-orphan-review','CONFIRMED_DISTINCT','review-missing','status_transition')")
+            }
+            execute("INSERT INTO import_duplicate_review_request VALUES ('ledger-p407-owner','review-other','review_duplicate','fp-owner','PENDING',NULL)")
+            assertFailsWith<SQLException> {
+                execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-mismatched-review','CONFIRMED_DISTINCT','review-other','status_transition')")
+            }
+            execute("INSERT INTO import_duplicate_review_snapshot VALUES ('ledger-p407-owner','review-other','duplicate-owner','sha256:owner','CONFIRMED_DISTINCT','manual','2026-08-20T00:00:00Z','reviewer','2026-08-20T00:00:00Z','review-owner')")
+            execute("INSERT INTO import_duplicate_status_history VALUES ('ledger-p407-owner','duplicate-owner',2,'history-review','CONFIRMED_DISTINCT','review-other','status_transition')")
+            assertEquals(2L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!) }, 0).value)
         } finally { driver.close() }
     }
 

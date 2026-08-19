@@ -7530,7 +7530,7 @@ CREATE UNIQUE INDEX import_duplicate_no_funds_unique ON import_duplicate_candida
 CREATE TABLE import_duplicate_status_history (
   ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 1), history_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('DEFERRED', 'CONFIRMED_DUPLICATE', 'CONFIRMED_DISTINCT', 'DISMISSED_LOOKALIKE', 'REJECTED')),
-  request_id TEXT NOT NULL, operation_class TEXT NOT NULL,
+  request_id TEXT NOT NULL, operation_class TEXT NOT NULL CHECK (operation_class IN ('creation', 'status_transition')),
   PRIMARY KEY (ledger_id, candidate_id, sequence), UNIQUE (ledger_id, history_id),
   FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_duplicate_candidate(ledger_id, candidate_id)
 );
@@ -7575,6 +7575,23 @@ CREATE TRIGGER import_duplicate_history_sequence BEFORE INSERT ON import_duplica
 END;
 CREATE TRIGGER import_duplicate_history_terminal BEFORE INSERT ON import_duplicate_status_history BEGIN
  SELECT CASE WHEN EXISTS (SELECT 1 FROM import_duplicate_status_history WHERE ledger_id = new.ledger_id AND candidate_id = new.candidate_id AND status != 'DEFERRED') THEN RAISE(ABORT, 'duplicate history terminal') END;
+END;
+CREATE TRIGGER import_duplicate_history_creation_owner BEFORE INSERT ON import_duplicate_status_history WHEN new.operation_class = 'creation' BEGIN
+ SELECT CASE WHEN NOT EXISTS (
+   SELECT 1 FROM import_duplicate_candidate candidate
+   JOIN import_request request ON request.ledger_id = candidate.ledger_id AND request.request_id = candidate.creation_request_id
+   WHERE candidate.ledger_id = new.ledger_id AND candidate.candidate_id = new.candidate_id
+     AND candidate.creation_request_id = new.request_id
+ ) THEN RAISE(ABORT, 'duplicate history creation owner') END;
+END;
+CREATE TRIGGER import_duplicate_history_review_owner BEFORE INSERT ON import_duplicate_status_history WHEN new.operation_class = 'status_transition' BEGIN
+ SELECT CASE WHEN NOT EXISTS (
+   SELECT 1 FROM import_duplicate_review_request request
+   JOIN import_duplicate_review_snapshot snapshot
+     ON snapshot.ledger_id = request.ledger_id AND snapshot.request_id = request.request_id
+   WHERE request.ledger_id = new.ledger_id AND request.request_id = new.request_id
+     AND snapshot.candidate_id = new.candidate_id AND snapshot.decision = new.status
+ ) THEN RAISE(ABORT, 'duplicate history review owner') END;
 END;
 
 -- P4-08 shared reconciliation surface. Scenario cardinality is enforced by the
@@ -7860,14 +7877,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 selectImportSourceByIdentity:
 SELECT source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
   contract_version, completeness, amount_minor, currency_code, currency_precision,
-  occurred_at, direction_token, status_token
+  occurred_at, direction_token, status_token, funding_state, funding_rule_id,
+  funding_rule_version, candidate_generated_at
 FROM import_source_record
 WHERE ledger_id = ? AND input_ref = ? AND record_ordinal = ?;
 
 selectImportSourceByOwnerRequest:
 SELECT source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
   contract_version, completeness, amount_minor, currency_code, currency_precision,
-  occurred_at, direction_token, status_token
+  occurred_at, direction_token, status_token, funding_state, funding_rule_id,
+  funding_rule_version, candidate_generated_at
 FROM import_source_record
 WHERE ledger_id = ? AND owner_request_id = ?;
 

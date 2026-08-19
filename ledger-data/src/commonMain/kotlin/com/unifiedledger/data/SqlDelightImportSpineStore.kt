@@ -718,6 +718,10 @@ class SqlDelightImportSpineStore private constructor(
         val occurredAt: String?,
         val directionToken: String?,
         val statusToken: String?,
+        val fundingState: String,
+        val fundingRuleId: String,
+        val fundingRuleVersion: Long,
+        val candidateGeneratedAt: String,
     )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByIdentity.toStoredFacts(): StoredSourceFacts =
@@ -732,6 +736,10 @@ class SqlDelightImportSpineStore private constructor(
             occurredAt = occurred_at,
             directionToken = direction_token,
             statusToken = status_token,
+            fundingState = funding_state,
+            fundingRuleId = funding_rule_id,
+            fundingRuleVersion = funding_rule_version,
+            candidateGeneratedAt = candidate_generated_at,
         )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByOwnerRequest.toStoredFacts(): StoredSourceFacts =
@@ -746,6 +754,10 @@ class SqlDelightImportSpineStore private constructor(
             occurredAt = occurred_at,
             directionToken = direction_token,
             statusToken = status_token,
+            fundingState = funding_state,
+            fundingRuleId = funding_rule_id,
+            fundingRuleVersion = funding_rule_version,
+            candidateGeneratedAt = candidate_generated_at,
         )
 
     private fun intakeEquivalent(
@@ -760,7 +772,11 @@ class SqlDelightImportSpineStore private constructor(
         stored.currencyPrecision == snapshot.facts.currencyPrecision.toLong() &&
         stored.occurredAt == snapshot.facts.occurredAt &&
         stored.directionToken == snapshot.facts.directionToken &&
-        stored.statusToken == snapshot.facts.statusToken
+        stored.statusToken == snapshot.facts.statusToken &&
+        stored.fundingState == snapshot.facts.fundingState.name &&
+        stored.fundingRuleId == snapshot.facts.fundingRuleId &&
+        stored.fundingRuleVersion == snapshot.facts.fundingRuleVersion.toLong() &&
+        stored.candidateGeneratedAt == snapshot.candidateGeneratedAt
 
     private fun confidenceFor(completeness: ImportCompleteness): String = when (completeness) {
         ImportCompleteness.VALID_COMPLETE -> "1.00"
