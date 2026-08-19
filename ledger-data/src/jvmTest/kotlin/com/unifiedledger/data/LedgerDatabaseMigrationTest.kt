@@ -318,34 +318,111 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 1, 22)
-                driver.execute(
-                    null,
-                    "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','posting-bank-existing','TRANSFER_PRINCIPAL_OUT',NULL,1)",
-                    0,
+                val seed = listOf(
+                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                    "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
+                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                    "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
+                    "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                    "INSERT INTO posting VALUES ('posting-transfer-in','posting-set-transfer','ledger-a',1,'account-platform-b',1000,'CNY',2)",
+                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer-stale','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                    "INSERT INTO posting_set VALUES ('posting-set-transfer-stale','ledger-a')",
+                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer-stale','tx-transfer-stale','ledger-a',1,'posting-set-transfer-stale','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00',NULL)",
+                    "INSERT INTO posting VALUES ('posting-transfer-stale','posting-set-transfer-stale','ledger-a',0,'account-bank-stale',-1000,'CNY',2)",
+                    "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','posting-expense-existing','TRANSFER_PRINCIPAL_OUT',NULL,1)",
                 )
-                driver.execute(
-                    null,
-                    "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','posting-expense-existing','TRANSFER_FEE','category-fee',0)",
-                    0,
-                )
+                seed.forEach { driver.execute(null, it, 0) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
                 val database = LedgerDatabase(driver)
-                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation"))
-                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation_history"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation_history"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM reconciliation_request WHERE request_id = 'migration-v23-seed'"))
                 assertEquals(
                     "PENDING",
-                    database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-bank-existing")
+                    database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-out")
                         .executeAsOne().status,
                 )
-                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
-                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
+                assertEquals(
+                    "PENDING",
+                    database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-in")
+                        .executeAsOne().status,
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation WHERE posting_id = 'posting-expense-existing'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation WHERE posting_id = 'posting-transfer-stale'"))
+                assertEquals(3L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
+                assertEquals(5L, queryCount(driver, "SELECT count(*) FROM posting"))
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
         } finally {
             Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun versionTwentyTwoToTwentyThreeDdlFailureRollsBackEverySharedP408Owner() {
+        val path = Files.createTempFile("ledger-data-v22-v23-p408-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 22)
+                driver.execute(null, "CREATE TABLE reconciliation_request(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction {
+                        LedgerDatabase.Schema.migrate(driver, 22, 23)
+                    }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                val sharedTables = driver.executeQuery(
+                    null,
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reconciliation_request','reconciliation_request_snapshot','evidence_link','evidence_link_history','posting_reconciliation','posting_reconciliation_history','reconciliation_receipt') ORDER BY name",
+                    { cursor ->
+                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                        app.cash.sqldelight.db.QueryResult.Value(names)
+                    },
+                    0,
+                ).value
+                assertEquals(listOf("reconciliation_request"), sharedTables)
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'reconciliation\\_%' ESCAPE '\\'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'evidence\\_link\\_%' ESCAPE '\\'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'posting\\_reconciliation\\_%' ESCAPE '\\'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun freshV23EqualsMigratedV23ForP408SharedObjects() {
+        val freshPath = Files.createTempFile("ledger-data-fresh-v23-p408-", ".db")
+        val migratedPath = Files.createTempFile("ledger-data-migrated-v23-p408-", ".db")
+        val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
+        val migratedUrl = "jdbc:sqlite:${migratedPath.absolutePathString()}"
+        try {
+            JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+            }
+            DriverManager.getConnection(migratedUrl).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 22)
+            }
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 22, 23)
+            }
+
+            assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
+        } finally {
+            Files.deleteIfExists(freshPath)
+            Files.deleteIfExists(migratedPath)
         }
     }
 
@@ -1862,7 +1939,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 22)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 23)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

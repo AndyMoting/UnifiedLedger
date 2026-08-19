@@ -59,6 +59,7 @@ class P408MatcherTest {
 
         assertEquals(P408MatchDisposition.AMBIGUOUS, result.disposition)
         assertEquals(listOf("p-1", "p-2"), result.candidates.map { it.posting.postingId })
+        assertEquals("ambiguous_multiple_candidates", result.reason)
     }
 
     @Test
@@ -195,6 +196,17 @@ class P408MatcherTest {
         val result = matcher.match(
             evidence("e-14", "2026-08-10T12:00:00+08:00").copy(accountId = "", currencyPrecision = -1),
             listOf(posting("p-incomplete", "2026-08-10T12:00:00+08:00")),
+        )
+
+        assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
+        assertEquals("funding_facts_unresolved", result.reason)
+    }
+
+    @Test
+    fun negativeSourceAmountFailsClosed() {
+        val result = matcher.match(
+            evidence("e-16", "2026-08-10T12:00:00+08:00").copy(amountMinor = -1),
+            listOf(posting("p-negative", "2026-08-10T12:00:00+08:00")),
         )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)

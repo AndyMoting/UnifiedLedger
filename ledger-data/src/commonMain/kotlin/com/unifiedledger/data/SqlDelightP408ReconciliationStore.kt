@@ -2,11 +2,14 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationCommitPort
 import com.unifiedledger.application.P408ReconciliationReadPort
 import com.unifiedledger.application.P408ReconciliationReceipt
-import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.P408ReconciliationReportRow
+import com.unifiedledger.application.P408ReconciliationResult
+import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.data.db.LedgerDatabase
 import kotlin.math.abs
 import kotlin.time.Instant
@@ -23,187 +26,200 @@ class SqlDelightP408ReconciliationStore private constructor(
     }
 
     override fun confirmLink(request: P408ConfirmLinkRequest): P408ReconciliationResult {
+        if (request.windowDays != P408Matcher.DEFAULT_WINDOW_DAYS) {
+            return P408ReconciliationResult.Rejected("P408_WINDOW_DAYS_NOT_APPROVED")
+        }
         val fingerprint = request.fingerprint()
-        return try {
-            rollbackP408 { database.transactionWithResult {
-                database.ledgerQueries.claimP408ReconciliationRequest(
+        return rollbackP408 { database.transactionWithResult {
+            database.ledgerQueries.claimP408ReconciliationRequest(
+                request.ledgerId,
+                request.requestId,
+                "confirm_link",
+                fingerprint,
+            )
+            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
+                return@transactionWithResult resolveReplay(request, fingerprint)
+            }
+
+            val evidenceLinks = database.ledgerQueries
+                .selectP408ActiveLinksForEvidence(request.ledgerId, request.evidenceId)
+                .executeAsList()
+            if (evidenceLinks.isNotEmpty()) {
+                abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_ALREADY_LINKED"))
+            }
+
+            val source = database.ledgerQueries
+                .selectP408EvidenceSourceFacts(request.ledgerId, request.evidenceId)
+                .executeAsOneOrNull()
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_NOT_FOUND"))
+            val sourceAmount = source.amount_minor
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
+            val sourceCurrency = source.currency_code
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
+            val sourcePrecision = source.currency_precision
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
+            val sourceOccurredAt = source.occurred_at
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
+            if (sourceAmount != request.amountMinor ||
+                sourceCurrency != request.currencyCode ||
+                sourcePrecision != request.currencyPrecision.toLong() ||
+                sourceOccurredAt != request.sourceOccurredAt ||
+                source.direction_token != request.direction
+            ) {
+                abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_MISMATCH"))
+            }
+
+            val posting = database.ledgerQueries
+                .selectP408PostingIntegrity(request.ledgerId, request.postingId)
+                .executeAsOneOrNull()
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_NOT_ELIGIBLE"))
+            if (posting.ledger_id != request.ledgerId ||
+                posting.amount_minor != signedAmount(request.amountMinor, request.direction) ||
+                posting.currency_code != request.currencyCode ||
+                posting.currency_precision != request.currencyPrecision.toLong() ||
+                posting.account_id != request.accountId
+            ) {
+                abortP408(P408ReconciliationResult.Rejected("P408_POSTING_FACT_MISMATCH"))
+            }
+            if (request.transactionId != posting.transaction_id) {
+                abortP408(P408ReconciliationResult.Rejected("P408_TRANSACTION_ID_MISMATCH"))
+            }
+            val responsibilityMatchesPostingSide =
+                (request.responsibility == P408EvidenceResponsibility.REAL_ACCOUNT_POSTING &&
+                    request.direction == "out" && posting.amount_minor < 0) ||
+                    (request.responsibility == P408EvidenceResponsibility.DESTINATION_ASSET_POSTING &&
+                        request.direction == "in" && posting.amount_minor > 0)
+            if (!responsibilityMatchesPostingSide) {
+                abortP408(P408ReconciliationResult.Rejected("P408_RESPONSIBILITY_POSTING_MISMATCH"))
+            }
+            val actualDistance = naturalDayDistance(request.sourceOccurredAt, posting.occurred_at)
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_UNRESOLVED"))
+            if (actualDistance != request.naturalDayDistance || actualDistance > request.windowDays) {
+                abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_WINDOW_MISMATCH"))
+            }
+
+            val responsibilityLinks = database.ledgerQueries
+                .selectP408ActiveLinksForPostingResponsibility(
                     request.ledgerId,
-                    request.requestId,
-                    "confirm_link",
-                    fingerprint,
-                )
-                if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
-                    return@transactionWithResult resolveReplay(request, fingerprint)
-                }
+                    request.postingId,
+                    request.responsibility.storageValue,
+                ).executeAsList()
+            if (responsibilityLinks.isNotEmpty()) {
+                abortP408(P408ReconciliationResult.Rejected("P408_POSTING_RESPONSIBILITY_ALREADY_LINKED"))
+            }
 
-                val source = database.ledgerQueries
-                    .selectP408EvidenceSourceFacts(request.ledgerId, request.evidenceId)
-                    .executeAsOneOrNull()
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_NOT_FOUND"))
-                val sourceAmount = source.amount_minor
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-                val sourceCurrency = source.currency_code
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-                val sourcePrecision = source.currency_precision
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-                val sourceOccurredAt = source.occurred_at
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-                if (sourceAmount != request.amountMinor ||
-                    sourceCurrency != request.currencyCode ||
-                    sourcePrecision != request.currencyPrecision.toLong() ||
-                    sourceOccurredAt != request.sourceOccurredAt ||
-                    source.direction_token != request.direction
-                ) {
-                    abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_MISMATCH"))
-                }
+            database.ledgerQueries.insertP408ReconciliationSnapshot(
+                ledger_id = request.ledgerId,
+                request_id = request.requestId,
+                evidence_id = request.evidenceId,
+                candidate_id = request.candidateId,
+                posting_id = request.postingId,
+                transaction_id = request.transactionId,
+                amount_minor = request.amountMinor,
+                currency_code = request.currencyCode,
+                currency_precision = request.currencyPrecision.toLong(),
+                direction = request.direction,
+                account_id = request.accountId,
+                responsibility = request.responsibility.storageValue,
+                basis_version = request.basisVersion.toLong(),
+                match_basis = request.matchBasis.toSortedSet().joinToString(","),
+                window_days = request.windowDays.toLong(),
+                natural_day_distance = request.naturalDayDistance.toLong(),
+                source_occurred_at = request.sourceOccurredAt,
+                confirmed_at = request.confirmedAt,
+                human_decision = "confirm_match",
+            )
+            database.ledgerQueries.insertP408EvidenceLink(
+                ledger_id = request.ledgerId,
+                link_id = request.linkId,
+                evidence_id = request.evidenceId,
+                posting_id = request.postingId,
+                transaction_id = request.transactionId,
+                responsibility = request.responsibility.storageValue,
+                basis_version = request.basisVersion.toLong(),
+                match_basis = request.matchBasis.toSortedSet().joinToString(","),
+                candidate_id = request.candidateId,
+                request_id = request.requestId,
+                created_at = request.createdAt,
+            )
+            database.ledgerQueries.insertP408EvidenceLinkHistory(
+                ledger_id = request.ledgerId,
+                link_id = request.linkId,
+                sequence = 1,
+                state = "active",
+                reason = "confirmed",
+                request_id = request.requestId,
+                occurred_at = request.confirmedAt,
+            )
 
-                val posting = database.ledgerQueries
-                    .selectP408PostingIntegrity(request.ledgerId, request.postingId)
-                    .executeAsOneOrNull()
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_NOT_ELIGIBLE"))
-                if (posting.ledger_id != request.ledgerId ||
-                    posting.amount_minor != signedAmount(request.amountMinor, request.direction) ||
-                    posting.currency_code != request.currencyCode ||
-                    posting.currency_precision != request.currencyPrecision.toLong() ||
-                    posting.account_id != request.accountId
-                ) {
-                    abortP408(P408ReconciliationResult.Rejected("P408_POSTING_FACT_MISMATCH"))
-                }
-                val actualDistance = naturalDayDistance(request.sourceOccurredAt, posting.occurred_at)
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_UNRESOLVED"))
-                if (actualDistance != request.naturalDayDistance || actualDistance > request.windowDays) {
-                    abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_WINDOW_MISMATCH"))
-                }
-
-                val evidenceLinks = database.ledgerQueries
-                    .selectP408ActiveLinksForEvidence(request.ledgerId, request.evidenceId)
-                    .executeAsList()
-                if (evidenceLinks.isNotEmpty()) {
-                    abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_ALREADY_LINKED"))
-                }
-                val responsibilityLinks = database.ledgerQueries
-                    .selectP408ActiveLinksForPostingResponsibility(
+            database.ledgerQueries.insertP408PostingReconciliation(
+                ledger_id = request.ledgerId,
+                reconciliation_id = request.reconciliationId,
+                posting_id = request.postingId,
+            )
+            val reconciliation = database.ledgerQueries
+                .selectP408PostingReconciliation(request.ledgerId, request.postingId)
+                .executeAsOneOrNull()
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_MISSING"))
+            if (request.reconciliationId != reconciliation.reconciliation_id) {
+                abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_ID_MISMATCH"))
+            }
+            if (database.ledgerQueries
+                    .selectP408PostingReconciliationHistory(
                         request.ledgerId,
-                        request.postingId,
-                        request.responsibility.storageValue,
-                    ).executeAsList()
-                if (responsibilityLinks.isNotEmpty()) {
-                    abortP408(P408ReconciliationResult.Rejected("P408_POSTING_RESPONSIBILITY_ALREADY_LINKED"))
-                }
-
-                database.ledgerQueries.insertP408ReconciliationSnapshot(
-                    ledger_id = request.ledgerId,
-                    request_id = request.requestId,
-                    evidence_id = request.evidenceId,
-                    candidate_id = request.candidateId,
-                    posting_id = request.postingId,
-                    amount_minor = request.amountMinor,
-                    currency_code = request.currencyCode,
-                    currency_precision = request.currencyPrecision.toLong(),
-                    direction = request.direction,
-                    account_id = request.accountId,
-                    responsibility = request.responsibility.storageValue,
-                    basis_version = request.basisVersion.toLong(),
-                    match_basis = request.matchBasis.toSortedSet().joinToString(","),
-                    window_days = request.windowDays.toLong(),
-                    natural_day_distance = request.naturalDayDistance.toLong(),
-                    source_occurred_at = request.sourceOccurredAt,
-                    confirmed_at = request.confirmedAt,
-                    human_decision = "confirm_match",
-                )
-                database.ledgerQueries.insertP408EvidenceLink(
-                    ledger_id = request.ledgerId,
-                    link_id = request.linkId,
-                    evidence_id = request.evidenceId,
-                    posting_id = request.postingId,
-                    responsibility = request.responsibility.storageValue,
-                    basis_version = request.basisVersion.toLong(),
-                    match_basis = request.matchBasis.toSortedSet().joinToString(","),
-                    candidate_id = request.candidateId,
-                    request_id = request.requestId,
-                    created_at = request.createdAt,
-                )
-                database.ledgerQueries.insertP408EvidenceLinkHistory(
-                    ledger_id = request.ledgerId,
-                    link_id = request.linkId,
-                    sequence = 1,
-                    state = "active",
-                    reason = "confirmed",
-                    request_id = request.requestId,
-                    occurred_at = request.confirmedAt,
-                )
-
-                database.ledgerQueries.insertP408PostingReconciliation(
-                    ledger_id = request.ledgerId,
-                    reconciliation_id = request.reconciliationId,
-                    posting_id = request.postingId,
-                )
-                val reconciliation = database.ledgerQueries
-                    .selectP408PostingReconciliation(request.ledgerId, request.postingId)
-                    .executeAsOneOrNull()
-                    ?: abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_MISSING"))
-                if (request.reconciliationId != reconciliation.reconciliation_id && reconciliation.status != "PENDING") {
-                    abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_ID_MISMATCH"))
-                }
-                if (database.ledgerQueries
-                        .selectP408PostingReconciliationHistory(
-                            request.ledgerId,
-                            reconciliation.reconciliation_id,
-                        ).executeAsList().isEmpty()
-                ) {
-                    database.ledgerQueries.insertP408PostingReconciliationHistory(
-                        ledger_id = request.ledgerId,
-                        reconciliation_id = reconciliation.reconciliation_id,
-                        sequence = 1,
-                        status = "PENDING",
-                        evidence_link_id = null,
-                        request_id = request.requestId,
-                        occurred_at = request.sourceOccurredAt,
-                    )
-                }
-                val nextSequence = reconciliation.latest_sequence + 1L
+                        reconciliation.reconciliation_id,
+                    ).executeAsList().isEmpty()
+            ) {
                 database.ledgerQueries.insertP408PostingReconciliationHistory(
                     ledger_id = request.ledgerId,
                     reconciliation_id = reconciliation.reconciliation_id,
-                    sequence = nextSequence,
-                    status = "CHECKED",
-                    evidence_link_id = request.linkId,
+                    sequence = 1,
+                    status = "PENDING",
+                    evidence_link_id = null,
                     request_id = request.requestId,
-                    occurred_at = request.confirmedAt,
+                    occurred_at = request.sourceOccurredAt,
                 )
-                database.ledgerQueries.updateP408PostingReconciliation(
-                    status = "CHECKED",
-                    latest_sequence = nextSequence,
-                    ledger_id = request.ledgerId,
-                    reconciliation_id = reconciliation.reconciliation_id,
-                )
-                database.ledgerQueries.updateP408ReconciliationRequest(
+            }
+            val nextSequence = reconciliation.latest_sequence + 1L
+            database.ledgerQueries.insertP408PostingReconciliationHistory(
+                ledger_id = request.ledgerId,
+                reconciliation_id = reconciliation.reconciliation_id,
+                sequence = nextSequence,
+                status = "CHECKED",
+                evidence_link_id = request.linkId,
+                request_id = request.requestId,
+                occurred_at = request.confirmedAt,
+            )
+            database.ledgerQueries.updateP408PostingReconciliation(
+                status = "CHECKED",
+                latest_sequence = nextSequence,
+                ledger_id = request.ledgerId,
+                reconciliation_id = reconciliation.reconciliation_id,
+            )
+            database.ledgerQueries.updateP408ReconciliationRequest(
+                outcome = "ACCEPTED",
+                reason_code = null,
+                ledger_id = request.ledgerId,
+                request_id = request.requestId,
+            )
+            database.ledgerQueries.insertP408ReconciliationReceipt(
+                ledger_id = request.ledgerId,
+                request_id = request.requestId,
+                outcome = "ACCEPTED",
+                link_id = request.linkId,
+                reconciliation_id = reconciliation.reconciliation_id,
+                history_sequence = nextSequence,
+            )
+            P408ReconciliationResult.Accepted(
+                P408ReconciliationReceipt(
+                    requestId = request.requestId,
                     outcome = "ACCEPTED",
-                    reason_code = null,
-                    ledger_id = request.ledgerId,
-                    request_id = request.requestId,
-                )
-                database.ledgerQueries.insertP408ReconciliationReceipt(
-                    ledger_id = request.ledgerId,
-                    request_id = request.requestId,
-                    outcome = "ACCEPTED",
-                    link_id = request.linkId,
-                    reconciliation_id = reconciliation.reconciliation_id,
-                    history_sequence = nextSequence,
-                )
-                P408ReconciliationResult.Accepted(
-                    P408ReconciliationReceipt(
-                        requestId = request.requestId,
-                        outcome = "ACCEPTED",
-                        linkId = request.linkId,
-                        reconciliationId = reconciliation.reconciliation_id,
-                        historySequence = nextSequence,
-                    ),
-                )
-            } }
-        } catch (_: Throwable) {
-            P408ReconciliationResult.Rejected("P408_RECONCILIATION_WRITE_FAILED")
-        }
+                    linkId = request.linkId,
+                    reconciliationId = reconciliation.reconciliation_id,
+                    historySequence = nextSequence,
+                ),
+            )
+        } }
     }
 
     override fun readReconciliationReport(ledgerId: String): List<P408ReconciliationReportRow> {
@@ -215,7 +231,7 @@ class SqlDelightP408ReconciliationStore private constructor(
                     postingId = key.first,
                     transactionId = key.second,
                     accountId = key.third,
-                    status = grouped.first().status,
+                    status = P408ReconciliationStatus.fromStorage(grouped.first().status),
                     activeLinkIds = grouped.mapNotNull { it.active_link_id }.sorted(),
                 )
             }
@@ -262,8 +278,9 @@ class SqlDelightP408ReconciliationStore private constructor(
         if (!temporalComparableRaw(source, posting)) return null
         val sourceInstant = runCatching { Instant.parse(source) }.getOrNull() ?: return null
         val postingInstant = runCatching { Instant.parse(posting) }.getOrNull() ?: return null
-        val sourceDay = Math.floorDiv(sourceInstant.epochSeconds + 8 * 60 * 60, 24 * 60 * 60)
-        val postingDay = Math.floorDiv(postingInstant.epochSeconds + 8 * 60 * 60, 24 * 60 * 60)
+        val localOffsetSeconds = P408Matcher.DEFAULT_LOCAL_OFFSET_SECONDS
+        val sourceDay = Math.floorDiv(sourceInstant.epochSeconds + localOffsetSeconds, 24 * 60 * 60)
+        val postingDay = Math.floorDiv(postingInstant.epochSeconds + localOffsetSeconds, 24 * 60 * 60)
         val distance = kotlin.math.abs(sourceDay - postingDay)
         return distance.takeIf { it <= Int.MAX_VALUE.toLong() }?.toInt()
     }

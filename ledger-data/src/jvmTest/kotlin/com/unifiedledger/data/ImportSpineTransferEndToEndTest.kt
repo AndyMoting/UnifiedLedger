@@ -1992,7 +1992,13 @@ class ImportSpineTransferEndToEndTest {
                 }
                 assertEquals(0L, queryLong(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
-            // Fresh schema equals the migrated schema (version 22).
+            // Bring the migrated database to the current v23 schema so the fresh
+            // v23 schema comparison includes the additive P4-08 shared objects.
+            JdbcSqliteDriver(url, migrationProps()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 22, 23)
+            }
+            // Fresh schema equals the migrated schema (version 23).
+
             JdbcSqliteDriver(freshUrl, migrationProps()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
             }

@@ -7526,6 +7526,7 @@ CREATE TABLE reconciliation_request_snapshot (
   evidence_id TEXT NOT NULL,
   candidate_id TEXT NOT NULL,
   posting_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
   amount_minor INTEGER NOT NULL,
   currency_code TEXT NOT NULL,
   currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
@@ -7542,7 +7543,8 @@ CREATE TABLE reconciliation_request_snapshot (
   PRIMARY KEY (ledger_id, request_id),
   FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
   FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
-  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE reconciliation_receipt (
@@ -7563,6 +7565,7 @@ CREATE TABLE evidence_link (
   link_id TEXT NOT NULL,
   evidence_id TEXT NOT NULL,
   posting_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
   responsibility TEXT NOT NULL CHECK (responsibility IN ('real_account_posting', 'destination_asset_posting')),
   basis_version INTEGER NOT NULL CHECK (basis_version = 1),
   match_basis TEXT NOT NULL,
@@ -7572,6 +7575,7 @@ CREATE TABLE evidence_link (
   PRIMARY KEY (ledger_id, link_id),
   FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
   FOREIGN KEY (posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id)
 );
 CREATE INDEX evidence_link_by_evidence ON evidence_link(ledger_id, evidence_id);
@@ -7838,17 +7842,17 @@ FROM reconciliation_request WHERE ledger_id = ? AND request_id = ?;
 
 insertP408ReconciliationSnapshot:
 INSERT INTO reconciliation_request_snapshot(
-  ledger_id, request_id, evidence_id, candidate_id, posting_id, amount_minor,
+  ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor,
   currency_code, currency_precision, direction, account_id, responsibility,
   basis_version, match_basis, window_days, natural_day_distance,
   source_occurred_at, confirmed_at, human_decision
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 insertP408EvidenceLink:
 INSERT INTO evidence_link(
-  ledger_id, link_id, evidence_id, posting_id, responsibility, basis_version,
+  ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version,
   match_basis, candidate_id, request_id, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 insertP408EvidenceLinkHistory:
 INSERT INTO evidence_link_history(
@@ -7882,7 +7886,7 @@ SELECT ledger_id, request_id, outcome, link_id, reconciliation_id, history_seque
 FROM reconciliation_receipt WHERE ledger_id = ? AND request_id = ?;
 
 selectP408EvidenceLinksForEvidence:
-SELECT ledger_id, link_id, evidence_id, posting_id, responsibility, basis_version,
+SELECT ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version,
   match_basis, candidate_id, request_id, created_at
 FROM evidence_link WHERE ledger_id = ? AND evidence_id = ? ORDER BY link_id;
 
@@ -7903,41 +7907,14 @@ JOIN transaction_version AS v
 JOIN ledger_transaction_current_version AS cv
   ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id
  AND cv.current_version_id = v.version_id
-WHERE p.ledger_id = ? AND p.posting_id = ?
-  AND EXISTS (
-    SELECT 1 FROM rg03_transfer_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg04_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg05_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg06_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg07_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg08_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg09_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg10_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg11_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg12_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  );
-
-selectP408ActiveLinkCountForPosting:
-SELECT count(*) FROM evidence_link AS link
-WHERE link.ledger_id = ? AND link.posting_id = ?
-  AND EXISTS (SELECT 1 FROM evidence_link_history AS history
-    WHERE history.ledger_id = link.ledger_id AND history.link_id = link.link_id
-      AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
-        WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
-      AND history.state = 'active');
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+ AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'
+WHERE p.ledger_id = ? AND p.posting_id = ?;
 
 selectP408ActiveLinksForEvidence:
-SELECT link.link_id, link.posting_id, link.responsibility, link.candidate_id, link.request_id
+SELECT link.link_id, link.posting_id, link.transaction_id, link.responsibility,
+  link.candidate_id, link.request_id
 FROM evidence_link AS link
 JOIN evidence_link_history AS history
   ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
@@ -7948,7 +7925,7 @@ WHERE link.ledger_id = ? AND link.evidence_id = ?
 ORDER BY link.link_id;
 
 selectP408ActiveLinksForPostingResponsibility:
-SELECT link.link_id, link.evidence_id, link.candidate_id, link.request_id
+SELECT link.link_id, link.evidence_id, link.transaction_id, link.candidate_id, link.request_id
 FROM evidence_link AS link
 JOIN evidence_link_history AS history
   ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
@@ -7957,20 +7934,6 @@ WHERE link.ledger_id = ? AND link.posting_id = ? AND link.responsibility = ?
     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
   AND history.state = 'active'
 ORDER BY link.link_id;
-
-selectP408ActiveResponsibilityCountForPosting:
-SELECT count(DISTINCT link.responsibility) FROM evidence_link AS link
-WHERE link.ledger_id = ? AND link.posting_id = ?
-  AND EXISTS (SELECT 1 FROM evidence_link_history AS history
-    WHERE history.ledger_id = link.ledger_id AND history.link_id = link.link_id
-      AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
-        WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
-      AND history.state = 'active');
-
-selectP408ActiveEvidenceLinkHistory:
-SELECT link_id, sequence, state, reason, request_id, occurred_at
-FROM evidence_link_history WHERE ledger_id = ? AND link_id = ?
-ORDER BY sequence DESC LIMIT 1;
 
 selectP408PostingReconciliation:
 SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence
@@ -7984,7 +7947,8 @@ ORDER BY sequence;
 selectP408ReconciliationReport:
 SELECT p.posting_id, v.transaction_id, p.account_id,
   COALESCE(reconciliation.status, 'PENDING') AS status,
-  link.link_id AS active_link_id
+  link.link_id AS active_link_id,
+  link.transaction_id AS active_link_transaction_id
 FROM posting AS p
 JOIN transaction_version AS v
   ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
@@ -7992,6 +7956,9 @@ JOIN ledger_transaction_current_version AS current_version
   ON current_version.ledger_id = v.ledger_id
  AND current_version.transaction_id = v.transaction_id
  AND current_version.current_version_id = v.version_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+ AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'
 LEFT JOIN posting_reconciliation AS reconciliation
   ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
 LEFT JOIN evidence_link AS link
@@ -8004,65 +7971,25 @@ LEFT JOIN evidence_link AS link
      AND link_history.state = 'active'
  )
 WHERE p.ledger_id = ?
-  AND EXISTS (
-    SELECT 1 FROM rg03_transfer_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg04_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg05_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg06_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg07_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg08_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg09_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg10_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg11_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-    UNION ALL SELECT 1 FROM rg12_posting_semantic s
-    WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  )
 ORDER BY p.posting_id, active_link_id;
 
 -- Fresh-schema counterpart of the v22->v23 migration seed. This runs after all
--- formal semantic tables have been declared, so fresh and migrated v23 start with
--- the same qualified current-posting PENDING projection.
+-- formal tables have been declared, so fresh and migrated v23 start with the same
+-- qualified current-ACCOUNT_TRANSFER posting PENDING projection.
 INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome)
 SELECT DISTINCT p.ledger_id, 'migration-v23-seed', 'migration_seed', 'schema-v23-seed', 'ACCEPTED'
 FROM posting p
-WHERE EXISTS (
-  SELECT 1 FROM rg03_transfer_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg04_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg05_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg06_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg07_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg08_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg09_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg10_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg11_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg12_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-);
+JOIN transaction_version v ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version cv ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id AND cv.current_version_id = v.version_id
+JOIN ledger_transaction tx ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER';
 INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence)
 SELECT p.ledger_id, 'reconciliation-' || p.posting_id, p.posting_id, 'PENDING', 1
 FROM posting p
 JOIN transaction_version v ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
 JOIN ledger_transaction_current_version cv ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id AND cv.current_version_id = v.version_id
-WHERE EXISTS (
-  SELECT 1 FROM rg03_transfer_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg04_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg05_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg06_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg07_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg08_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg09_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg10_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg11_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-  UNION ALL SELECT 1 FROM rg12_posting_semantic s WHERE s.ledger_id = p.ledger_id AND s.posting_id = p.posting_id AND s.reconciliation_eligible = 1
-);
+JOIN ledger_transaction tx ON tx.ledger_id = v.ledger_id AND tx.transaction_id = v.transaction_id
+  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER';
 INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at)
 SELECT ledger_id, reconciliation_id, 1, 'PENDING', NULL, 'migration-v23-seed', 'schema-v23'
 FROM posting_reconciliation;

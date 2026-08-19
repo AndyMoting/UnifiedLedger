@@ -6,12 +6,27 @@ enum class P408EvidenceResponsibility(val storageValue: String) {
     DESTINATION_ASSET_POSTING("destination_asset_posting"),
 }
 
+/** Product reconciliation statuses mapped from storage tokens to approved labels. */
+enum class P408ReconciliationStatus(val storageValue: String, val label: String) {
+    PENDING("PENDING", "待对账"),
+    PARTIAL("PARTIAL", "部分匹配"),
+    DIFFERENCE("DIFFERENCE", "有差异"),
+    MISSING("MISSING", "待补资料"),
+    CHECKED("CHECKED", "已核对");
+
+    companion object {
+        fun fromStorage(value: String): P408ReconciliationStatus =
+            values().first { it.storageValue == value }
+    }
+}
+
 data class P408ConfirmLinkRequest(
     val ledgerId: String,
     val requestId: String,
     val evidenceId: String,
     val candidateId: String,
     val postingId: String,
+    val transactionId: String,
     val amountMinor: Long,
     val currencyCode: String,
     val currencyPrecision: Int,
@@ -30,13 +45,14 @@ data class P408ConfirmLinkRequest(
 ) {
     init {
         require(ledgerId.isNotBlank() && requestId.isNotBlank())
-        require(evidenceId.isNotBlank() && candidateId.isNotBlank() && postingId.isNotBlank())
+        require(evidenceId.isNotBlank() && candidateId.isNotBlank() && postingId.isNotBlank() && transactionId.isNotBlank())
         require(currencyCode.isNotBlank() && currencyPrecision >= 0)
         require(direction == "in" || direction == "out")
         require(accountId.isNotBlank())
         require(basisVersion == 1)
         require(matchBasis == REQUIRED_MATCH_BASIS)
-        require(windowDays >= 0 && naturalDayDistance >= 0)
+        require(amountMinor >= 0)
+        require(naturalDayDistance >= 0 && naturalDayDistance <= windowDays)
         require(sourceOccurredAt.isNotBlank() && confirmedAt.isNotBlank() && createdAt.isNotBlank())
         require(linkId.isNotBlank() && reconciliationId.isNotBlank())
     }
@@ -48,6 +64,7 @@ data class P408ConfirmLinkRequest(
         append("evidence=").append(evidenceId).append('|')
         append("candidate=").append(candidateId).append('|')
         append("posting=").append(postingId).append('|')
+        append("transaction=").append(transactionId).append('|')
         append("amount_minor=").append(amountMinor).append('|')
         append("currency=").append(currencyCode).append('|')
         append("precision=").append(currencyPrecision).append('|')
@@ -59,10 +76,7 @@ data class P408ConfirmLinkRequest(
         append("window_days=").append(windowDays).append('|')
         append("natural_day_distance=").append(naturalDayDistance).append('|')
         append("source_occurred_at=").append(sourceOccurredAt).append('|')
-        append("confirmed_at=").append(confirmedAt).append('|')
-        append("link=").append(linkId).append('|')
-        append("reconciliation=").append(reconciliationId).append('|')
-        append("created_at=").append(createdAt)
+        append("confirmed_at=").append(confirmedAt)
     }
 }
 
@@ -88,7 +102,7 @@ data class P408ReconciliationReportRow(
     val postingId: String,
     val transactionId: String,
     val accountId: String,
-    val status: String,
+    val status: P408ReconciliationStatus,
     val activeLinkIds: List<String>,
 )
 

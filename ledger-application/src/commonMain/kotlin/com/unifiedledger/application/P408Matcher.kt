@@ -50,7 +50,7 @@ data class P408PostingFacts(
 
 enum class P408MatchDisposition { PROPOSED_MATCH, UNRESOLVED, AMBIGUOUS }
 
-enum class P408MatchConfidence { EXACT, NONE }
+enum class P408MatchConfidence { EXACT }
 
 data class P408MatchBasis(
     val fields: Set<String>,
@@ -137,6 +137,7 @@ class P408Matcher(
         }
         val reason = when {
             hasUnresolvedTime -> "source_time_unresolved"
+            candidates.size > 1 -> "ambiguous_multiple_candidates"
             candidates.isNotEmpty() -> null
             else -> "no_unique_funding_candidate"
         }
@@ -154,8 +155,9 @@ class P408Matcher(
         evidence.direction in DIRECTIONS
 
     private fun validFundingFacts(evidence: P408EvidenceFacts): Boolean =
-        evidence.accountId.isNotBlank() && evidence.currencyCode.isNotBlank() &&
-            evidence.currencyPrecision >= 0 && evidence.direction in DIRECTIONS
+        evidence.amountMinor >= 0 && evidence.accountId.isNotBlank() &&
+            evidence.currencyCode.isNotBlank() && evidence.currencyPrecision >= 0 &&
+            evidence.direction in DIRECTIONS
 
     private fun validFundingFacts(posting: P408PostingFacts): Boolean =
         posting.accountId.isNotBlank() && posting.currencyCode.isNotBlank() &&
