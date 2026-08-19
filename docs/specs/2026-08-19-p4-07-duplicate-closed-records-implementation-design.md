@@ -38,7 +38,7 @@
 
 ## 4. 来源状态与关闭记录
 
-来源 parser 必须只在已批准的 provider status contract 明确证明“没有资金变化”时传递 `NO_FUNDS`：首版为冻结的 WeChat/Alipay 关闭或失败 token；每个 token 保留 raw token、source rule id/version、`exact` confidence。退款、撤销中资金状态不确定、`不计收支`、未知 token 和缺少状态一律为 `UNRESOLVED`，不得借 `NO_FUNDS` 入账或关闭。
+来源 parser/adaptor 只有在一个已经单独批准的 provider status contract 明确证明“没有资金变化”时，才可以传递 `NO_FUNDS`。D-101/D-102 当前并未冻结 WeChat/Alipay 关闭或失败 token 的零资金语义，因此本实施批不新增或推断任何 provider token 映射；首版仅接受来源中立的显式 funding-state port 输入，并要求 raw status、source rule id/version、`exact` confidence 一并保存。退款、撤销中资金状态不确定、`不计收支`、未知 token 和缺少状态一律为 `UNRESOLVED`，不得借 `NO_FUNDS` 入账或关闭。provider token 映射另需来源契约修订和独立批准。
 
 `NO_FUNDS` intake 始终保存 source/evidence 与 provenance，但创建的 import candidate 不可 formalize，且其唯一 source-derived duplicate candidate 为 `CLOSED_OR_FAILED_NO_FUNDS`、初始状态 `DEFERRED`、`possible_existing_source_id = NULL`。它不与普通记录进行 tuple 比较，也不能用 review 产生退款、冲回、零金额 transaction 或 posting。
 
