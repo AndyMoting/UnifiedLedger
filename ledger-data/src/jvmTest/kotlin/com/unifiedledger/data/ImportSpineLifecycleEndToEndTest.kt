@@ -1116,15 +1116,22 @@ class ImportSpineLifecycleEndToEndTest {
                         ImportStatusHistoryId("duplicate-status-p407-b-a"),
                     )),
                 ),
+                intakeIds("p407-c", "status-p407-c").copy(
+                    duplicateIds = listOf(
+                        com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-a"), ImportStatusHistoryId("duplicate-status-p407-c-a")),
+                        com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-b"), ImportStatusHistoryId("duplicate-status-p407-c-b")),
+                    ),
+                ),
             ))
             val intake = ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-a")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-b").copy(inputRef = "batch-p407-b")))
+            assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-c").copy(inputRef = "batch-p407-c")))
             val snapshot = driver.executeQuery(null,
                 "SELECT comparison_snapshot FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-b-a'",
                 { cursor -> app.cash.sqldelight.db.QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) }, 0,
             ).value
-            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(3L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
             check(snapshot!!.contains("\"subject_source_id\":\"source-p407-b\"") && snapshot.contains("\"possible_existing_source_id\":\"source-p407-a\""))
         } finally { driver.close() }
     }
@@ -1158,12 +1165,13 @@ class ImportSpineLifecycleEndToEndTest {
             )
             assertIs<com.unifiedledger.application.ImportDuplicateReviewResult.Accepted>(review)
             val before = formalCounts(database)
+            val candidateHistoryBefore = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne()
             val blocked = executor.confirm(confirmRequest("confirm-p407-block", "candidate-p407-block-b", hashR1))
             assertIs<ImportCandidateDecisionResult.Rejected>(blocked)
             assertEquals("SPINE_DUPLICATE_NOT_CONFIRMABLE", (blocked as ImportCandidateDecisionResult.Rejected).diagnostic.code)
             assertEquals(before, formalCounts(database))
             assertEquals(0L, database.ledgerQueries.countImportConfirmations().executeAsOne())
-            assertEquals(1L, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
+            assertEquals(candidateHistoryBefore, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
         } finally { driver.close() }
     }
 
@@ -1220,6 +1228,10 @@ class ImportSpineLifecycleEndToEndTest {
             val reviewed = ReviewImportDuplicateCandidate(store).execute(review)
             assertIs<ImportDuplicateReviewResult.Accepted>(reviewed)
             assertIs<ImportDuplicateReviewResult.NoChange>(ReviewImportDuplicateCandidate(store).execute(review))
+            val conflict = assertIs<ImportDuplicateReviewResult.Rejected>(
+                ReviewImportDuplicateCandidate(store).execute(review.copy(reasonToken = "different-decision")),
+            )
+            assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
             assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_review_receipt", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
         } finally { driver.close() }
     }

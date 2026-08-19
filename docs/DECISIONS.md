@@ -1653,3 +1653,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 未实施。后续独立实施批仍需规格明确阈值、诊断码、候选持久化形状（必要时加性 schema/migration）和 runtime/tests，并经过高风险验收拓扑；本决定本身不授权这些变更。
 
 **关联决定：** `D-073`、`D-092`、`D-096`、`D-097`、`D-098`、`D-103`
+
+## D-105 P4-07 实施授权
+
+**状态：** 已批准（2026-08-19 用户批准）。
+
+**决定：** 授权按照 `docs/specs/2026-08-19-p4-07-duplicate-closed-records-implementation-design.md`（Status: approved）实施 D-104 的 P4-07 边界：非破坏性 duplicate candidate、专属 review claim/replay、`CONFIRMED_DUPLICATE` formalization 阻断、显式 `NO_FUNDS` 零经济效果，以及 v23 -> v24 加性持久化与匿名 RL-08 验证。
+
+**边界：** 本授权不改变 D-104 已批准的产品合同，不授权 P4-06、P4-08 matcher/evidence-link/reconciliation 写入、provider status token 映射、产品 Clock/ID 算法或整文件保留。
+
+**实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 和迁移事务性，并完成独立规格、质量与验证路径后才可接受。
+
+**关联决定：** `D-104`、`D-098`、`D-103`
