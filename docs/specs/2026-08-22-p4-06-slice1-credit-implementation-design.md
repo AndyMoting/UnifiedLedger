@@ -1,6 +1,6 @@
 # P4-06 片 1（RL-05 信用）实施规格
 
-**Status:** draft（待评审；用户已于 2026-08-22 授常设授权，评审通过后主代理定稿）
+**Status:** approved（2026-08-22 用户常设授权 + 契约 D-106；独立评审 findings P406S1-SPEC-001..009 已修复闭合）
 
 本规格按 D-106 契约（`docs/specs/2026-08-22-p4-06-credit-mixed-payment-contract-design.md`，Status: approved）§9 授权范围实施片 1（RL-05 信用），登记契约 §9 要求的全部实施批事项：kind token 标识符、白名单 token 清单、判定顺序与诊断码、列形状与迁移设计、全合成 fixtures 与 state oracle 粒度。粒度先例为 D-105 实施规格；任何超出 D-106 的默认行为均退回契约修订，不由实现静默发明（D-096 纪律）。
 
@@ -13,6 +13,8 @@
 本批同时执行 D-106 §2.2 对 P4-05 的两处已登记修订：列 7（收/付款方式）由「不持久化、不解析」改为「白名单路由列」（P4-05 规格 §2.4 该行的修订已在 D-106 登记，本批只实现）；「信用借还」由类型化拒行改为还款路由（P4-05 规格 §3.2 该行的修订已在 D-106 登记）。本批不改变 D-097 ordinary v1、D-100 transfer v2、D-104/D-105 重复候选与处置的已批准行为，只在其上层叠加信用行族。
 
 本批修改的既有测试面（契约强制的行为变化，非回归）：P4-05 合成 fixture 中的 `信用借还`×`不计收支`×`还款` 行（`AlipayCsvParserJvmTest.kt:108`、`ImportSpineAlipayEndToEndTest.kt:135`）由断言拒行改为断言信用还款源接受；其余 P4-05 fixture 断言不变。
+
+数据填充修订（P406S1-SPEC-001 登记）：两个测试构建器的列 7 缺省填充值由 `SYN-SECRET-METHOD` 改为空串——`AlipayCsvParserJvmTest.kt:64`（`recordRow`）与 `ImportSpineAlipayEndToEndTest.kt:120`（同款构建器）。理由：P4-05 冻结表未冻结 fixture 的列 7 值（该列当时不读取），本批列 7 成为白名单路由列后 `SYN-SECRET-METHOD` 属非白名单 token、会使全部既有 fixture 行触发腿门拒行；改为空串（= 无腿，腿门不触发）后，A-01…A-16 其余断言由此保持逐值不变（等价性说明见 §6.9）。
 
 ## 2. 解析层：白名单、括注剥离与判定顺序
 
@@ -30,10 +32,10 @@
 | 类 | 归一化 token（剥离后） | 依据 |
 | --- | --- | --- |
 | 信用腿 | `花呗` | RL-05 消费锚点即此形态（`花呗分期(##期)` 剥离分期括注后归并花呗族）；契约 §7.1 已冻结为信用腿 |
-| 资产腿 | `余额宝` | 行为证据汇编（还款行人工确认建议输入） |
-| 资产腿 | `账户余额` | 同上（`(个人余额)` 限定形剥离后归并） |
-| 资产腿 | `余额` | 同上 |
-| 资产腿 | `招商银行储蓄卡` | 同上（尾号括注剥离） |
+| 资产腿 | `余额宝` | P4-05b 规格 :142-143（余额宝族 9 真实样本行为证据与 golden 候选计数）；还款行人工确认建议输入 |
+| 资产腿 | `账户余额` | P4-05b 规格 :117（`账户余额` 通用 token 行为证据登记）+ :142（7/9 样本中 收/付款方式=账户余额 ×4）；`(个人余额)` 限定形剥离后归并 |
+| 资产腿 | `余额` | P4-05b 规格 :117（`余额` 通用 token 行为证据登记）+ :143（1/9 样本 收/付款方式=余额） |
+| 资产腿 | `招商银行储蓄卡` | 行为证据汇编（还款行付款列机构类；尾号括注剥离） |
 
 **明确不入白名单**（含此类腿的行类型化拒行，并登记为已知限制）：营销腿族（`红包`、`优惠`、`花呗立减`、`闪购支付红包`、`网上消费红包`、`支付宝随机立减`、`到店支付立减券`——非资金腿，证据不足）；`他人代付账户`（不导入本人账户）；微信侧 token `零钱`/`零钱通`（P4-03:141 冻结不解析维持）；`数字人民币钱包`、裸尾号形（如 `(1234)`）、`信用卡`（零证据）。
 
@@ -49,7 +51,7 @@
 
 | 括注形态 | 剥离规则 | 例 |
 | --- | --- | --- |
-| 数字掩码尾号 | 剥离恰 `(\d{4})`（4 位数字，P4-05 §3.1 定长取证） | `招商银行储蓄卡(0568)` → `招商银行储蓄卡` |
+| 数字掩码尾号 | 剥离恰 `(\d{4})`（4 位数字，P4-05 §3.1 定长取证；`####` 为占位记法，指任意 4 位合成数字掩码） | `招商银行储蓄卡(####)` → `招商银行储蓄卡` |
 | 限定词 | 剥离 `(个人余额)` | `账户余额(个人余额)` → `账户余额` |
 | 分期数 | 剥离 `(\d+期)` | `花呗分期(3期)` → `花呗`（归并花呗族） |
 
@@ -65,12 +67,12 @@
    b. 列 5 ≠ `不计收支` → `SPINE_ALIPAY_REFUND_UNSUPPORTED` 拒行（未列形态，维持 P4-05 处置）。
    c. 恰信用腿（≥1 信用腿、0 资产腿）→ **信用退款变体源**（§3.1 kind，contract_version=3）：状态 = `退款成功` → `refund_settled`、valid_complete；其余状态 token（含 `交易关闭`）→ 状态 raw 保留 + unresolved → valid_incomplete（不可确认，零拒行升级，契约 §2.2 状态门）。方向不读列 5，按 §2.5 冻结规则派生。
    d. 其余（仅资产腿、空、或资产+信用混合腿）→ `SPINE_ALIPAY_REFUND_UNSUPPORTED` 拒行（维持 P4-05；混合腿退款无契约分录形状——§3.3.3 冻结为单负债腿 费用−/负债+——故 fail-closed，登记 §7）。
-2. 投资理财分支（RL-04，不变）。
-3. **信用借还分支**（新增；`信用借还` 自 `REJECTED_TX_TYPES` 移出，进入专属分支）：
+2. 投资理财分支（RL-04，不变）。登记：白名单腿门只施于读取列 7 的分支（步骤 1 退款、步骤 3 信用借还、步骤 6 接受分类）；RL-04 投资理财分支不读列 7，D-102 冻结行为维持不变。
+3. **信用借还分支**（新增；`信用借还` 自 `REJECTED_TX_TYPES` 移出，进入专属分支）。族籍冻结读法（契约 §2.2 行 3）：本族族籍 = 分类 `信用借还` + 列 5 `不计收支`；腿构成与状态不参与族籍判定，由族内门 a–e 处置（非族籍形态即列 5 ≠ `不计收支`，在 3b 维持类型化拒行）：
    a. 列 7 腿解析：任一 token ∉ 白名单 → `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG` 拒行。
    b. 列 5 ≠ `不计收支` → `SPINE_ALIPAY_UNSUPPORTED_TX_TYPE` 拒行（族其余形态，维持 P4-05 处置与诊断码）。
    c. 含信用腿 → `SPINE_ALIPAY_UNSUPPORTED_TX_TYPE` 拒行（族其余形态，无锚点）。
-   d. 仅资产腿或空列 7 + 状态 = `还款` → **信用还款源**（valid_complete；状态映射 `settled`；方向按 §2.5 派生；资产腿 token 作建议输入持久化，见 §3.2）。
+   d. 前置门：去重后资产腿 > 1（多于一个不同资产 token，如 `余额宝&招商银行储蓄卡(####)`）→ `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG` 拒行（无锚点，fail-closed）。通过后：仅资产腿（恰一）或空列 7 + 状态 = `还款` → **信用还款源**（valid_complete；状态映射 `settled`；方向按 §2.5 派生；资产腿 token 作建议输入持久化，见 §3.2）。
    e. 仅资产腿或空列 7 + 其余状态 token → 信用还款源、状态 raw 保留 + unresolved → valid_incomplete（不可确认，零拒行升级）。
 4. 其余拒绝分类集（`账户存取`/`转账红包`/`亲友代付`）→ `SPINE_ALIPAY_UNSUPPORTED_TX_TYPE`（不变）。
 5. 未知分类 → `SPINE_ALIPAY_UNKNOWN_TOKEN`（不变）。
@@ -78,10 +80,10 @@
    a. 列 7 为空 → ordinary v1 原路径（列 7 零读取、零落盘，不变）。
    b. 腿解析：任一 token ∉ 白名单 → `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG` 拒行（契约 §2.2 末行对一切行通用）。
    c. 仅资产腿 → ordinary v1 原路径（列 7 零落盘维持，契约 §2.2 行 5）。
-   d. 资产腿 + 信用腿（混合）→ `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 拒行（片 1 fail-closed，契约 §9 片间状态，登记待片 2）。
+   d. 混合腿（资产腿 + 信用腿）且列 5 已解析为 `支出` → `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 拒行（片 1 fail-closed，契约 §9 片间状态，登记待片 2；方向未解析为 `支出` 的混合腿行走 f/g）。
    e. 恰信用腿 + 列 5 = `支出` → **信用消费源（直接变体）**：状态 = `交易成功` → `settled`、valid_complete；其余状态 → raw + unresolved → valid_incomplete（不可确认）。方向走既有 `支出`→`out` 映射。
-   f. 恰信用腿 + 列 5 = `收入` → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED` 拒行（无锚点，防御性 fail-closed，契约 §2.2 行 8）。
-   g. 恰信用腿 + 列 5 = `不计收支` 或其余 token → ordinary v1、方向 raw + unresolved → valid_incomplete（P4-05 A-04 冻结行为维持，不进任何 v3 源，腿 token 不持久化，契约 §2.2 行 9）。
+   f. 任一信用腿（恰信用或混合）+ 列 5 = `收入` → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED` 拒行（无锚点，防御性 fail-closed，契约 §2.2 行 8）。
+   g. 任一信用腿（恰信用或混合）+ 列 5 = `不计收支` 或其余未映射方向 token → ordinary v1、方向 raw + unresolved → valid_incomplete（P4-05 A-04 冻结行为维持，契约 §2.2 行 10；不进任何 v3 源，腿 token 不持久化）。
 
 金额/时间/币种/精度解析与 P4-05 §2.4 冻结完全一致（所有 v3 分支复用同一 `parseAmount`/`parseTime`/CNY/precision=2 常数）；拒行零 record、零 candidate、零 spine intake（D-099:1539 登记纪律）。
 
@@ -138,6 +140,8 @@
 
 store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile 变体判定决策字段类型——`credit_expense` + `CREDIT_EXPENSE_DIRECT` ⇒ 必须 `CreditExpenseFlow`；`credit_expense` + `CREDIT_EXPENSE_REFUND` ⇒ 必须 `CreditExpenseRefundFlow`（`originalTransactionId` 必填）；`credit_repayment` ⇒ 必须 `CreditRepaymentFlow`；`mixed_payment`（片 1 防御：不可能存在）⇒ 一律 `SPINE_DECISION_KIND_MISMATCH`。错配复用既有 `SPINE_DECISION_KIND_MISMATCH`。posting 数量门维持 `== 2`（三个信用生命周期确认均为 2 分录；混合 3 分录门属片 2 代码变更，零 schema 影响）。
 
+`CreditExpenseRefundFlow.categoryId` 语义（退款分类继承规则，ACCOUNTING_RULES.md:146 + D-078）：必须等于 `originalTransactionId` 所指原交易的**当前**二级支出分类；原交易分类错误时先经版本替代修正原交易再处理退款，不允许只为退款改用其他分类。违反 → 领域工厂失败 → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入（§3.4 工厂 3 校验 (ii)）。
+
 信用负债账户持有前置（契约 §3.2）：确认请求携带的负债账户未被用户持有、非 `LIABILITY`、跨账本或币种不符时，领域工厂返回 `DomainResult.Failure` → `SPINE_DOMAIN_VALIDATION_FAILED` 类型化拒绝、零写入、claim 回滚可重试——候选保持 `pending_confirmation`（不可确认路径，零正式写入）。解析器/spine/候选流程不自动创建信用负债账户；产品核心不内置默认负债账户或默认账户映射（D-053：共享负债账户属迁移配置）。
 
 ### 3.4 正式化工厂与领域服务（复用 D-072/D-078 冻结合同语义，不复制竖井 owner 表）
@@ -146,7 +150,7 @@ store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile �
 
 1. **信用消费（直接变体）**：领域新增 `createCreditExpense(catalog, command, ids)`（`MixedPayment.kt` 随附；`createMixedPaymentExpense` 冻结为恰 2 条 funding，单信用腿消费不能复用）。合同语义 = D-072 混合分录的信用腿单腿退化：二级活跃支出分类 + 其费用账户（+总额）；信用负债账户校验同 `createCreditPrincipalRepayment` 的负债校验（real/owned/`LIABILITY`/同账本/同币种）；分录 费用 `+` / 负债 `−`；`TransactionKind.EXPENSE`；新 posting role `CREDIT_EXPENSE_LIABILITY_FUNDING`；报告效应（D-058 算例）`consumption=total, ordinaryExpense=total, cashOutflow=0, income=0, netWorth=-total`（购买日现金流出为零、消费全额确认一次）。
 2. **信用还款**：直接复用既有 `createCreditPrincipalRepayment`（`CREDIT_REPAYMENT` 独立交易类型、资产 `−`/负债 `+`、`real/owned/kind/同账本/同币种` 校验、报告效应 cash=本金、消费与净资产变化为零；不得以 `ACCOUNT_TRANSFER` 代替，D-072）。
-3. **信用退款变体**：领域新增 `createCreditRefundReceipt(catalog, command, ids)`（`RefundReceipt.kt` 随附；既有 `createRefundReceipt` 冻结为 `ASSET` 目的地，不能复用）。合同语义 = D-078 退款收据的负债目的地变体：二级活跃支出分类 + 费用账户（`−` 退款额）；目的地 = 用户持有 real `LIABILITY` 账户（`+` 退款额，欠款减少）；`TransactionKind.REFUND_RECEIPT`；独立经济事件（非冲正、非版本修正、不吞并原消费版本）；`originalTransactionId` 随命令携带并由 §4 决策快照列 + FK 持久化（原期间消费不变，退款期冲减消费）。
+3. **信用退款变体**：领域新增 `createCreditRefundReceipt(catalog, command, ids)`（`RefundReceipt.kt` 随附；既有 `createRefundReceipt` 冻结为 `ASSET` 目的地，不能复用）。合同语义 = D-078 退款收据的负债目的地变体：二级活跃支出分类 + 费用账户（`−` 退款额）；目的地 = 用户持有 real `LIABILITY` 账户（`+` 退款额，欠款减少）；`TransactionKind.REFUND_RECEIPT`；独立经济事件（非冲正、非版本修正、不吞并原消费版本）；`originalTransactionId` 随命令携带并由 §4 决策快照列 + FK 持久化（原期间消费不变，退款期冲减消费）。两道原交易校验（违反任一 → `DomainResult.Failure` → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入）：(i) `originalTransactionId` 必须指向同账本、同币种、`EXPENSE` 族交易（kind = `EXPENSE`，含混合支付确认产物；跨账本由 §4 复合 FK 先拒）；(ii) `command.categoryId` 必须等于原交易当前版本费用分录账户所对应的二级支出分类（ACCOUNTING_RULES.md:146 分类继承 + D-078）。
 
 领域扩展为纯加性（新函数 + 新枚举值），不修改任何既有领域函数的已批准行为。三个工厂均不读产品 Clock；`explicitConfirmedAt` 由请求显式携带（既有纪律）。
 
@@ -154,7 +158,7 @@ store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile �
 
 迁移 `25.sqm`（v24→v25，恰一次版本推进；片 2 零 schema 变更）。caller 单一外层事务包裹；六阶段模板（20.sqm/21.sqm/23.sqm 先例）；重建表与 `Ledger.sq` fresh DDL 结构等同（SQLDelight migration verifier + `LedgerDatabaseMigrationTest` 强制）。append-only 守卫触发器风格沿用 23.sqm；既有 v24 funding 列（`funding_state`/`funding_rule_id`/`funding_rule_version`/`candidate_generated_at`）原语义保留、不回写。
 
-**重建表（3 张；`PRAGMA defer_foreign_keys = 1` + stage 拷贝 + 计数守卫，23.sqm 模板；后代行全部保留）**：
+**重建表（3 张；`PRAGMA defer_foreign_keys = 1` + stage 拷贝 = 23.sqm defer+stage 模板；重建计数守卫 = 21.sqm 模板；后代行全部保留）**：
 
 1. `import_source_record`：`record_kind` CHECK 追加 `credit_expense_source`/`credit_repayment_source`/`mixed_payment_source`；`contract_version` CHECK 追加 `3`；kind→version 配对 CHECK 追加三对 v3 配对（D-100 第 9 条先例）。其余列与 v24 形状不变。
 2. `import_candidate`：`candidate_kind` CHECK 追加 `credit_expense`/`credit_repayment`/`mixed_payment`。`UNIQUE(ledger_id, source_id)` 与单 source 约束不变（D-105 §5 纪律）；`rule` 仍存 record kind storageValue、`rule_version` 仍 = 1。
@@ -176,7 +180,9 @@ store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile �
    - `ledger_id, group_id, candidate_id TEXT NOT NULL, transaction_id TEXT NOT NULL, request_id TEXT NOT NULL, total_minor INTEGER NOT NULL CHECK (total_minor > 0), generated_at TEXT NOT NULL`（显式时间，不读产品 Clock），PK `(ledger_id, group_id)`，`UNIQUE (ledger_id, candidate_id)`、`UNIQUE (ledger_id, transaction_id)`，FK → `import_candidate`/`ledger_transaction`/`import_request`；update/delete 守卫触发器。
 6. `mixed_payment_group_leg`（关联组成员行；片 1 建而不用）：
    - `ledger_id, group_id, leg_index INTEGER NOT NULL CHECK (leg_index >= 1), leg_class TEXT NOT NULL CHECK (leg_class IN ('asset','liability')), account_id TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK (amount_minor > 0)`，PK `(ledger_id, group_id, leg_index)`，FK → `mixed_payment_group` **DEFERRABLE INITIALLY DEFERRED**（`import_confirmation` 交易 FK 先例：片 2 写入顺序为腿先、头后，头行 INSERT 触发器完成性校验）。
-   - 完成性触发器 `mixed_payment_group_complete`（BEFORE INSERT ON `mixed_payment_group`）：恰 1 `asset` 腿 + 恰 1 `liability` 腿（D-072 冻结恰 2 funding）且 `SUM(leg.amount_minor) = total_minor`，否则 ABORT；update/delete 守卫触发器。
+   - 完成性触发器 `mixed_payment_group_complete`（BEFORE INSERT ON `mixed_payment_group`）：恰 1 `asset` 腿 + 恰 1 `liability` 腿（D-072 冻结恰 2 funding）且 `SUM(leg.amount_minor) = total_minor`，否则 ABORT。
+   - 写序守卫触发器 `mixed_payment_group_leg_before_head`（BEFORE INSERT ON `mixed_payment_group_leg`：同 `(ledger_id, group_id)` 的头行已存在即 ABORT）——冻结「腿先、头后」写入序：头行 INSERT 即组完成（完成性触发器校验），此后腿不可再追加；与腿表 DEFERRABLE FK 兼容（腿先插入时头行尚不存在，FK 延迟到提交时检查）。
+   - 两表 update/delete 守卫触发器。
 
 **迁移阶段**：Stage 1 新建 3 表；Stage 2 回填空（新列以 NULL 重建写入，21.sqm 模板）；Stage 3 fail-closed 数据守卫（guard 表建拆于阶段内，21.sqm 模板：迁移前 `import_source_record.record_kind` ∉ v3 集、`import_candidate.candidate_kind` ∉ 信用/混合集、决策快照满足旧 XOR、新建 3 表可查询且空）；Stage 4 三表 staged 重建（子→父删、父→子建、显式列清单拷贝、计数守卫、stage 拆除；既有后代表行与 FK 语义全保留）；Stage 5 空（不删任何既有表；rgXX 竖井可查询守卫断言）；Stage 6 重建表守卫触发器复原 + 新表守卫触发器（与 fresh DDL 同文本）。`Ledger.sq` fresh DDL 同步全部上述结构（fresh = migrated）。
 
@@ -195,12 +201,12 @@ store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile �
 1. **RL-05 三锚点**（契约 §7.1，匿名代表值；真实金额/时间只在只读外部 fixture）：信用消费（分期形支付方式 `花呗分期(N期)`）确认 → 1 `EXPENSE` 交易恰 2 分录（费用 `+`/负债 `−`）、现金流出 0、消费=全额、净资产变化 `−`全额、`cash=0` 报告效应；信用还款 56.20 确认 → 独立 `CREDIT_REPAYMENT`、资产 `−5620`/负债 `+5620`、现金流出 56.20、消费与净资产变化 0、不重复原消费；信用退款 15.35 确认 → 独立 `REFUND_RECEIPT`、费用 `−1535`/负债 `+1535`、`original_transaction_id` 持久化且 FK 有效、原期间消费版本不变。
 2. **状态门负路径**：消费族 `交易关闭`、还款族 `交易成功`/`交易关闭`、退款变体非 `退款成功` → 各自 kind + valid_incomplete + 状态 raw 保留 + `SPINE_CANDIDATE_INCOMPLETE` 不可确认 + 零正式写入；断言无一条因状态升格为类型化拒行。
 3. **白名单外拒行**：营销腿（`红包`/`花呗立减`/`支付宝随机立减` 等）、`他人代付账户`、`零钱`/`零钱通`、`数字人民币钱包`、`信用卡`、裸尾号形、非冻结括注形态 → `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG` 拒行 + 零 source/candidate/profile；「花呗+营销腿」组合行拒行（已知限制）。
-4. **片间 fail-closed**：`余额宝&花呗` 混合腿行 → `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` + 零写入（含零半确认状态）。
-5. **负形态与防御**：空列 7 → 无腿（普通行零落盘、还款行可路由）；`收入`+信用腿 → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED`；`不计收支`+接受分类+信用腿 → ordinary valid_incomplete（A-04 维持）且 profile/腿零持久化；信用借还族其余形态（`支出`/`收入`方向、含信用腿）→ `SPINE_ALIPAY_UNSUPPORTED_TX_TYPE`。
-6. **括注剥离与隐私**：`花呗分期(3期)`→信用腿 `花呗`；`账户余额(个人余额)`/`余额宝(个人余额)`→资产腿；`招商银行储蓄卡(0568)`→`招商银行储蓄卡`；oracle 断言任何持久化行/快照/profile 不含掩码数字、括注原文与列 7 其他内容。
+4. **片间 fail-closed 与混合腿方向性**：`余额宝&花呗` 混合腿 + `支出` → `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` + 零写入（含零半确认状态，§2.3 6d）；混合腿 + `不计收支`（或未映射方向 token）→ ordinary v1、方向 raw + unresolved → valid_incomplete、零 v3 写入、腿 token 不持久化（契约 §2.2 行 10，§2.3 6g）；混合腿 + `收入` → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED`（§2.3 6f）。
+5. **负形态与防御**：空列 7 → 无腿（普通行零落盘、还款行可路由）；`收入`+信用腿 → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED`；`不计收支`+接受分类+信用腿 → ordinary valid_incomplete（A-04 维持）且 profile/腿零持久化；信用借还族其余形态（`支出`/`收入`方向、含信用腿）→ `SPINE_ALIPAY_UNSUPPORTED_TX_TYPE`；信用借还还款行去重后资产腿 > 1（如 `余额宝&招商银行储蓄卡(####)`，二者均白名单内）→ `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG` 拒行 + 零写入（§2.3 3d 前置门）。
+6. **括注剥离与隐私**：`花呗分期(3期)`→信用腿 `花呗`；`账户余额(个人余额)`/`余额宝(个人余额)`→资产腿；`招商银行储蓄卡(####)`（`####` 为任意 4 位合成数字掩码占位）→`招商银行储蓄卡`；oracle 断言任何持久化行/快照/profile 不含掩码数字、括注原文与列 7 其他内容。
 7. **重复与 replay**：同 request 重放与 raw identity 重放零新增行；两条等值信用行 → D-104 exact-tuple duplicate candidate 追加、无第二笔交易；确认后重放返回原 receipt；失败注入零残留。
-8. **确认负路径**：未指定/未持有/非 `LIABILITY`/跨账本/币种不符负债账户 → `SPINE_DOMAIN_VALIDATION_FAILED` + 候选保持 pending + claim 可重试；退款变体缺/跨账本 `originalTransactionId` → 类型化拒绝零写入；kind/变体/决策字段错配 → `SPINE_DECISION_KIND_MISMATCH`。
-9. **回归**：ordinary/transfer 全部既有断言（含 ordinary 行状态 `还款`/`退款成功` 仍 raw+unresolved）、P4-05 fixtures（除 §1 登记的契约强制更新行）、P4-07 全流程、P4-08 共存。
+8. **确认负路径**：未指定/未持有/非 `LIABILITY`/跨账本/币种不符负债账户 → `SPINE_DOMAIN_VALIDATION_FAILED` + 候选保持 pending + claim 可重试；退款变体缺/跨账本 `originalTransactionId` → 类型化拒绝零写入；退款变体确认分类 ≠ 原交易当前二级支出分类 → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入（§3.4 校验 (ii)，ACCOUNTING_RULES.md:146）；`originalTransactionId` 指向非 `EXPENSE` 族交易（如 `CREDIT_REPAYMENT`）或币种不符交易 → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入（§3.4 校验 (i)）；kind/变体/决策字段错配 → `SPINE_DECISION_KIND_MISMATCH`。
+9. **回归**：ordinary/transfer 全部既有断言（含 ordinary 行状态 `还款`/`退款成功` 仍 raw+unresolved）、P4-05 fixtures（除 §1 登记的契约强制更新行）、P4-07 全流程、P4-08 共存。等价性说明（P406S1-SPEC-001）：两个测试构建器列 7 缺省值改空串（§1 数据填充修订）后，A-01…A-16 行的列 7 = 无腿 → 腿门不触发，解析输出与 P4-05「列 7 不读取」行为逐值等价，故除 §1 登记的信用借还行外，A-01…A-16 全部既有断言逐值不变。
 10. **迁移**：fresh v25、v1→v25、v24→v25 populated 升级（v3 结构零行、v1/v2 行与 funding 列逐值不变）、reopen、迁移失败原子回滚。
 
 ## 7. 排除项

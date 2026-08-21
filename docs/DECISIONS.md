@@ -1699,10 +1699,12 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已批准（2026-08-22 用户常设授权 + 契约 D-106；本段授权片 1 实施）。
 
-**决定：** 授权按照 `docs/specs/2026-08-22-p4-06-slice1-credit-implementation-design.md`（Status: draft，待评审；评审通过后主代理定稿）实施 D-106 的片 1（RL-05 信用）边界：收/付款方式列白名单解冻与信用腿路由（含首批冻结白名单、三类括注剥离、判定顺序与 `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG`/`SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED`/`SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED` 诊断码）、恰三个 contract_version=3 kind（`credit_expense_source` 含退款变体、`credit_repayment_source`、`mixed_payment_source`）的候选与确认、信用负债账户显式持有前置、三腿生命周期中的信用消费/还款/退款变体正式化、evidence 基数场景登记（§5）、匿名 RL-05 锚点验收，以及承载契约 §6 冻结的完整 v24→v25 单个加性迁移（多腿 decision snapshot 扩展、信用/混合 candidate、`mixed_payment` 关联组产品表；混合结构建而不用，片 2 零 schema 变更）。
+**决定：** 授权按照 `docs/specs/2026-08-22-p4-06-slice1-credit-implementation-design.md`（Status: approved，2026-08-22 用户常设授权 + 契约 D-106；独立评审 findings P406S1-SPEC-001..009 已修复闭合）实施 D-106 的片 1（RL-05 信用）边界：收/付款方式列白名单解冻与信用腿路由（含首批冻结白名单、三类括注剥离、判定顺序与 `SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG`/`SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED`/`SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED` 诊断码）、恰三个 contract_version=3 kind（`credit_expense_source` 含退款变体、`credit_repayment_source`、`mixed_payment_source`）的候选与确认、信用负债账户显式持有前置、三腿生命周期中的信用消费/还款/退款变体正式化、evidence 基数场景登记（§5）、匿名 RL-05 锚点验收，以及承载契约 §6 冻结的完整 v24→v25 单个加性迁移（多腿 decision snapshot 扩展、信用/混合 candidate、`mixed_payment` 关联组产品表；混合结构建而不用，片 2 零 schema 变更）。
 
 **边界：** 本授权不含片 2 混合行为激活（混合腿行维持类型化拒行，fail-closed）；不含营销腿/非资金标注腿剥离语义（含此类腿的行拒行并登记已知限制）；不含 provider token 映射扩展（ordinary 状态映射子集不动，族内映射不外溢）；不改变 D-097/D-100/D-104/D-105 已批准行为，不写 P4-08 evidence link/reconciliation，不引入产品 Clock/随机 ID、默认或共享负债账户映射、微信侧信用路由。
 
 **实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 与迁移事务性（append-only 守卫触发器、fresh = migrated、funding 列不回写）；领域扩展纯加性（新增 `createCreditExpense`/`createCreditRefundReceipt` 与 posting role，不修改既有冻结函数）；全部 fixture 全合成且不落盘掩码尾号/括注原文；按规格 §8 顺序完成独立规格评审、质量评审、distinct verifier 与完整受影响套件后方可接受。
+
+**评审闭合：** 2026-08-22 独立规格评审 findings P406S1-SPEC-001..009（2 MAJOR、2 MINOR、3 LOW、1 INFO、1 数据填充修订）经主代理逐项裁决后全部修复于本提交，spec Status 转 approved。
 
 **关联决定：** `D-106`（主）、`D-072`、`D-073`、`D-078`、`D-097`、`D-100`、`D-102`、`D-104`、`D-105`
