@@ -1636,7 +1636,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 证据链：GOLDEN_TESTS.md:172/:176 与 CORE_ACCEPTANCE_PLAN:63-67/:66/:31/:91 确立 RL-07 验收锚点与对账状态断言体系；ACCOUNTING_RULES.md:239-253 对账专章确立 Posting 级、状态枚举、部分核对、四要素与补充重匹配语义（另 :202 实际资金时间主锚、:233 fully_reconciled）；D-096:1425（通道总额只诊断、不能满足 RL-07 逐记录镜像验收）、:1427（一 posting/一 evidence 基数由场景合同决定、不建全局 1:1）、:1429（matcher 字段/时间窗/歧义模型/基数须备选方案+匿名验收后批准）、:1435（未决不能由实现默认值冻结）与 IMPORT-002 暂停项（WORK_PLAN.local.md:61-65「any default matcher cardinality 被否决、matcher 语义是 P4-08 gate」）共同把 matcher 语义锁定为 P4-08 前置门；产品路径现状侦察（spec §1.1：零 matcher/evidence-link/reconciliation、状态语义首现 P4-08，WORK_PLAN:129）证明本批只冻结契约、不实施。
 
-**实施登记：** 契约已批准，尚未实施。本批仅登记 matcher 契约（spec + 本决定，无代码、无 schema）；实施属后续 P4-08 实施批，需在独立 worktree 拓扑、单一 writer 纪律下进行，并重新经过高风险 acceptance topology。matcher 行为/schema/report 引入将按 O-6 触发 v22→v23 加性迁移、独立规格/质量评审和 distinct verification。
+**实施登记：** 已实施并合入、推送 main（实施提交 `406fb8d`/`0f03ce8`/`0ca8688`/`875e011`，merge `fd57808`，2026-08-19）：matcher proposal/runtime 与最小加性 reconciliation 面（v22→v23：evidence link、posting reconciliation 及 append-only history）、confirm 链路 claim-first replay/conflict 与零写入拒绝、report reconciliation 维度、canonical 与 migrated-v23 测试覆盖。correction/successor invalidation 按实施规格明确延期，P4-08 不因此视为全量闭环。
 
 **关联决定：** `D-085`、`D-092`、`D-094`、`D-095`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`
 
@@ -1650,7 +1650,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 对齐 D-096 对 duplicate contract 的前置要求、D-098 raw identity/collision 已批准边界、ACCOUNTING_RULES.md 的来源/候选/正式账目分层与零副作用规则，以及 PRODUCT_REQUIREMENTS.md/GOLDEN_TESTS.md 的 RL-08 验收要求。该提案避免把业务指纹误当身份，也避免把关闭状态误当退款或成功。
 
-**实施登记：** 未实施。后续独立实施批仍需规格明确阈值、诊断码、候选持久化形状（必要时加性 schema/migration）和 runtime/tests，并经过高风险验收拓扑；本决定本身不授权这些变更。
+**实施登记：** 已实施并合入 main（2026-08-22，merge `e1ab7d4`；候选 `a4cb795`）：D-105 实施批交付 duplicate candidate 与 append-only 处置历史、专属 review claim/replay、`CONFIRMED_DUPLICATE` formalization 阻断（`SPINE_DUPLICATE_NOT_CONFIRMABLE`）、`CLOSED_OR_FAILED_NO_FUNDS` 零经济效果、v23→v24 加性迁移（`23.sqm`：重建 `import_source_record` 保留全部后代 + 5 张 duplicate 表与状态机/所有权/receipt 一致性触发器）及 `P407DuplicateClosedFullStateOracleTest` canonical full-state oracle。经独立规格增量复审（6 findings 修复后 CLOSURE APPROVE）、独立质量复审、全量 `:ledger-data:jvmTest`、Python 全套 806 tests、迁移 verifier、Android 编译与独立 verifier 6/6 后验收合并。
 
 **关联决定：** `D-073`、`D-092`、`D-096`、`D-097`、`D-098`、`D-103`
 
@@ -1663,5 +1663,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 本授权不改变 D-104 已批准的产品合同，不授权 P4-06、P4-08 matcher/evidence-link/reconciliation 写入、provider status token 映射、产品 Clock/ID 算法或整文件保留。
 
 **实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 和迁移事务性，并完成独立规格、质量与验证路径后才可接受。
+
+**实施登记：** 已实施并合入 main（2026-08-22，merge `e1ab7d4`）。书面偏差登记（闭环复审 OBS-001，行为惰性已证明）：现有 WeChat/Alipay parser 对 `VALID_INCOMPLETE` 行中继 `SETTLED`/`legacy-settled-v1`（与实施前默认行为一致）；该状态不进入任何 funding 门控路径，可观察行为与 `UNRESOLVED` 等价。provider token 的 funding 映射仍按本决定边界禁止，待来源契约修订后独立批准。
 
 **关联决定：** `D-104`、`D-098`、`D-103`
