@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateFormalFactory
@@ -15,6 +16,7 @@ import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -311,6 +313,7 @@ class ImportSpineAlipayEndToEndTest {
         recordKind = recordKind,
         facts = facts,
         completeness = completeness,
+        candidateGeneratedAt = "legacy-intake-v1",
     )
 
     private fun confirmRequest(
@@ -817,8 +820,8 @@ class ImportSpineAlipayEndToEndTest {
         // this batch (including the R3-style absent status_token member omission).
         val hashR1 = "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2"
         val hashR3 = "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35"
-        val r1Facts = com.unifiedledger.application.ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled")
-        val r3Facts = com.unifiedledger.application.ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null)
+        val r1Facts = com.unifiedledger.application.ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", com.unifiedledger.application.ImportFundingState.SETTLED, com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+        val r3Facts = com.unifiedledger.application.ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, com.unifiedledger.application.ImportFundingState.SETTLED, com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
         assertEquals(hashR1, fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1Facts))
         assertEquals(hashR3, fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3Facts))
         assertTrue(!fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3Facts).contains("status_token"))

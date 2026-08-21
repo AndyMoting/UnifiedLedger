@@ -364,6 +364,7 @@ class ImportSpineWechatEndToEndTest {
         recordKind = recordKind,
         facts = facts,
         completeness = completeness,
+        candidateGeneratedAt = "legacy-intake-v1",
     )
 
     private fun confirmRequest(

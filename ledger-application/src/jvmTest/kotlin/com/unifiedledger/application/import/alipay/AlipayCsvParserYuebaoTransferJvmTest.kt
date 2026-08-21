@@ -1,6 +1,8 @@
 package com.unifiedledger.application.import.alipay
 
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import java.nio.charset.Charset
@@ -126,7 +128,7 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         direction: String,
         occurredAt: String,
         status: String?,
-    ) = ImportSourceFacts(amountMinor, "CNY", 2, occurredAt, direction, status)
+    ) = ImportSourceFacts(amountMinor, "CNY", 2, occurredAt, direction, status, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
     // ---- T-01..T-07 / P-01..P-07: 余额宝-自动转入 (7 real-shaped rows) ----
 
@@ -347,7 +349,7 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         )
         val ordinary = accepted(mixed.rows, 0)
         assertEquals(ImportRecordKind.ORDINARY_FLOW_SOURCE, ordinary.recordKind)
-        assertEquals(ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled"), ordinary.facts)
+        assertEquals(ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), ordinary.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, ordinary.completeness)
         assertEquals(emptyList(), ordinary.diagnostics)
         assertEquals(

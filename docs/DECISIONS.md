@@ -1639,3 +1639,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 契约已批准，尚未实施。本批仅登记 matcher 契约（spec + 本决定，无代码、无 schema）；实施属后续 P4-08 实施批，需在独立 worktree 拓扑、单一 writer 纪律下进行，并重新经过高风险 acceptance topology。matcher 行为/schema/report 引入将按 O-6 触发 v22→v23 加性迁移、独立规格/质量评审和 distinct verification。
 
 **关联决定：** `D-085`、`D-092`、`D-094`、`D-095`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`
+
+## D-104 P4-07 重复候选与关闭记录契约
+
+**状态：** 已批准（2026-08-19 用户批准）；不授权实施代码。
+
+**决定提案：** 由 `docs/specs/2026-08-19-p4-07-duplicate-closed-records-design.md` 冻结 RL-08 的 duplicate candidate 数据合同、身份边界、同批次/跨批次行为、合法相似记录、关闭/失败记录、碰撞/歧义矩阵及匿名验收锚点。候选必须保存稳定引用、候选类型、provenance、confidence、rule/version、比较快照和人工处置历史；候选永远不能替代 raw identity，不能破坏性删除或折叠来源。
+
+同 request 或等价 raw identity replay 按既有合同返回稳定结果并零写入；不同 raw identity 的相似记录只生成候选，默认待人工处置；合法 lookalike 必须允许明确区分并保留两条来源。关闭、失败或状态未知记录若无可靠资金变化事实，正式资金分录数为零；退款、冲回和修正仍是独立经济事件。碰撞 hard reject，歧义 defer，后到重复来源仅追加 lineage/candidate，不创建第二笔交易、分录、余额、报表或对账效果。通道总额只作诊断。
+
+**理由：** 对齐 D-096 对 duplicate contract 的前置要求、D-098 raw identity/collision 已批准边界、ACCOUNTING_RULES.md 的来源/候选/正式账目分层与零副作用规则，以及 PRODUCT_REQUIREMENTS.md/GOLDEN_TESTS.md 的 RL-08 验收要求。该提案避免把业务指纹误当身份，也避免把关闭状态误当退款或成功。
+
+**实施登记：** 未实施。后续独立实施批仍需规格明确阈值、诊断码、候选持久化形状（必要时加性 schema/migration）和 runtime/tests，并经过高风险验收拓扑；本决定本身不授权这些变更。
+
+**关联决定：** `D-073`、`D-092`、`D-096`、`D-097`、`D-098`、`D-103`
+
+## D-105 P4-07 实施授权
+
+**状态：** 已批准（2026-08-19 用户批准）。
+
+**决定：** 授权按照 `docs/specs/2026-08-19-p4-07-duplicate-closed-records-implementation-design.md`（Status: approved）实施 D-104 的 P4-07 边界：非破坏性 duplicate candidate、专属 review claim/replay、`CONFIRMED_DUPLICATE` formalization 阻断、显式 `NO_FUNDS` 零经济效果，以及 v23 -> v24 加性持久化与匿名 RL-08 验证。
+
+**边界：** 本授权不改变 D-104 已批准的产品合同，不授权 P4-06、P4-08 matcher/evidence-link/reconciliation 写入、provider status token 映射、产品 Clock/ID 算法或整文件保留。
+
+**实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 和迁移事务性，并完成独立规格、质量与验证路径后才可接受。
+
+**关联决定：** `D-104`、`D-098`、`D-103`

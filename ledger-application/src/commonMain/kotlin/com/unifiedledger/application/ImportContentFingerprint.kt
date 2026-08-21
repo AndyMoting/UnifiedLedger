@@ -32,6 +32,48 @@ class ImportContentFingerprint {
         "sha256:${Sha256.digestHex(canonicalJson(recordKind, facts).encodeToByteArray())}"
 }
 
+/** Exact, privacy-safe P4-07 comparison fingerprint. No provider payload is retained. */
+class ImportDuplicateComparisonFingerprint {
+    /**
+     * Frozen P4-07 comparison projection (D-105 section 3): record kind/version,
+     * amount/currency/precision, occurred-at, direction, status presence/value. Members
+     * are ordered by ascending UTF-16 code units; every leaf is a JSON string.
+     */
+    fun canonicalJson(snapshot: ImportDuplicateComparisonSnapshot): String = buildString {
+        append("{\"amount_minor\":").append(jcsString(snapshot.amountMinor.toString()))
+        append(",\"contract_version\":").append(jcsString(snapshot.contractVersion.toString()))
+        append(",\"currency_code\":").append(jcsString(snapshot.currencyCode))
+        append(",\"currency_precision\":").append(jcsString(snapshot.currencyPrecision.toString()))
+        append(",\"direction_token\":").append(jcsString(snapshot.directionToken))
+        append(",\"occurred_at\":").append(jcsString(snapshot.occurredAt))
+        append(",\"record_kind\":").append(jcsString(snapshot.recordKind.storageValue))
+        append(",\"status_present\":").append(jcsString((snapshot.statusToken != null).toString()))
+        if (snapshot.statusToken != null) append(",\"status_token\":").append(jcsString(snapshot.statusToken))
+        append('}')
+    }
+
+    fun digest(snapshot: ImportDuplicateComparisonSnapshot): String =
+        "sha256:${Sha256.digestHex(canonicalJson(snapshot).encodeToByteArray())}"
+}
+
+class ImportDuplicateReviewFingerprint {
+    fun digest(request: ImportDuplicateReviewRequest): String =
+        "sha256:${Sha256.digestHex(canonicalJson(request).encodeToByteArray())}"
+
+    private fun canonicalJson(request: ImportDuplicateReviewRequest): String = buildString {
+        append("{\"candidate_id\":").append(jcsString(request.candidateId.value))
+        append(",\"decision\":").append(jcsString(request.decision.name))
+        append(",\"expected_comparison_fingerprint\":").append(jcsString(request.expectedComparisonFingerprint))
+        append(",\"generated_at\":").append(jcsString(request.generatedAt))
+        append(",\"history_id\":").append(jcsString(request.historyId.value))
+        append(",\"reason_token\":").append(jcsString(request.reasonToken))
+        append(",\"review_id\":").append(jcsString(request.reviewId.value))
+        append(",\"reviewed_at\":").append(jcsString(request.reviewedAt))
+        append(",\"reviewer_reference\":").append(jcsString(request.reviewerReference))
+        append('}')
+    }
+}
+
 internal fun formatDecimal(minorUnits: Long, precision: Int): String {
     require(precision >= 0) { "P4-02 currency precision must not be negative" }
     if (precision == 0) return minorUnits.toString()

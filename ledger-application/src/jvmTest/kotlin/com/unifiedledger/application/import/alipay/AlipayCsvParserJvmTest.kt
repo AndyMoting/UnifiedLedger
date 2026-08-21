@@ -1,6 +1,8 @@
 package com.unifiedledger.application.import.alipay
 
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import java.io.ByteArrayOutputStream
@@ -30,9 +32,9 @@ class AlipayCsvParserJvmTest {
     private val inputRef = "batch-p405-a"
     private val gb18030: Charset = Charset.forName("GB18030")
 
-    private val a01Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled")
-    private val a02Facts = ImportSourceFacts(1250, "CNY", 2, "2026-08-05T09:00:00+08:00", "out", "settled")
-    private val a03Facts = ImportSourceFacts(8800, "CNY", 2, "2026-08-06T18:45:15+08:00", "in", "settled")
+    private val a01Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val a02Facts = ImportSourceFacts(1250, "CNY", 2, "2026-08-05T09:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val a03Facts = ImportSourceFacts(8800, "CNY", 2, "2026-08-06T18:45:15+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
     // ---- Synthetic CSV builder (spec sections 1.1, 2.1-2.3) ----
 
@@ -202,7 +204,7 @@ class AlipayCsvParserJvmTest {
 
         val a04 = accepted(result.rows, 3)
         assertEquals(
-            ImportSourceFacts(4560, "CNY", 2, "2026-08-09T21:15:30+08:00", "不计收支", "settled"),
+            ImportSourceFacts(4560, "CNY", 2, "2026-08-09T21:15:30+08:00", "不计收支", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
             a04.facts,
         )
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, a04.completeness)
@@ -216,7 +218,7 @@ class AlipayCsvParserJvmTest {
 
         val a05 = accepted(result.rows, 4)
         assertEquals(
-            ImportSourceFacts(2000, "CNY", 2, "2026-08-10T09:30:00+08:00", "out", "交易关闭"),
+            ImportSourceFacts(2000, "CNY", 2, "2026-08-10T09:30:00+08:00", "out", "交易关闭", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
             a05.facts,
         )
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, a05.completeness)
@@ -230,7 +232,7 @@ class AlipayCsvParserJvmTest {
 
         val a06 = accepted(result.rows, 5)
         assertEquals(
-            ImportSourceFacts(0, "CNY", 2, "2026-08-10T08:00:20+08:00", "out", "settled"),
+            ImportSourceFacts(0, "CNY", 2, "2026-08-10T08:00:20+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
             a06.facts,
         )
         assertEquals(ImportCompleteness.VALID_COMPLETE, a06.completeness)

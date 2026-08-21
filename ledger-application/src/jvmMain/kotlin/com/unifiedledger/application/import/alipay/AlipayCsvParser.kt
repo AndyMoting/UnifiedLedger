@@ -1,6 +1,8 @@
 package com.unifiedledger.application.import.alipay
 
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import java.math.BigDecimal
@@ -145,6 +147,8 @@ object AlipayCsvParser {
             )
         }
         val completeness = if (diagnostics.isEmpty()) ImportCompleteness.VALID_COMPLETE else ImportCompleteness.VALID_INCOMPLETE
+        // D-105 section 4: no approved funding-state provider contract exists for Alipay
+        // tokens yet, so the parser relays only the frozen legacy-settled funding facts.
         val facts = ImportSourceFacts(
             amountMinor = amountMinor,
             currencyCode = AlipaySourceTokens.CURRENCY_CNY,
@@ -152,6 +156,9 @@ object AlipayCsvParser {
             occurredAt = occurredAt,
             directionToken = directionMapped ?: directionRaw,
             statusToken = statusMapped ?: statusRaw.ifEmpty { null },
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            fundingRuleVersion = 1,
         )
         return AlipayRowResult.Accepted(ordinal, ImportRecordKind.ORDINARY_FLOW_SOURCE, facts, completeness, diagnostics)
     }
@@ -193,6 +200,9 @@ object AlipayCsvParser {
                 occurredAt = occurredAt,
                 directionToken = directionMapped,
                 statusToken = statusRaw.ifEmpty { null },
+                fundingState = ImportFundingState.SETTLED,
+                fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+                fundingRuleVersion = 1,
             )
             return AlipayRowResult.Accepted(
                 ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_INCOMPLETE,
@@ -206,6 +216,9 @@ object AlipayCsvParser {
             occurredAt = occurredAt,
             directionToken = directionMapped,
             statusToken = statusMapped,
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            fundingRuleVersion = 1,
         )
         return AlipayRowResult.Accepted(
             ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_COMPLETE, emptyList(),

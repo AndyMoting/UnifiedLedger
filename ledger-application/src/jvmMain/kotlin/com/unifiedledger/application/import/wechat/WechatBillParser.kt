@@ -1,6 +1,8 @@
 package com.unifiedledger.application.import.wechat
 
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import org.apache.poi.ss.usermodel.Cell
@@ -175,6 +177,8 @@ object WechatBillParser {
             )
         }
         val completeness = if (diagnostics.isEmpty()) ImportCompleteness.VALID_COMPLETE else ImportCompleteness.VALID_INCOMPLETE
+        // D-105 section 4: no approved funding-state provider contract exists for WeChat
+        // tokens yet, so the parser relays only the frozen legacy-settled funding facts.
         val facts = ImportSourceFacts(
             amountMinor = amount.minor,
             currencyCode = WechatSourceTokens.CURRENCY_CNY,
@@ -182,6 +186,9 @@ object WechatBillParser {
             occurredAt = occurredAt,
             directionToken = directionMapped ?: directionRaw,
             statusToken = if (statusMapped) WechatSourceTokens.STATUS_SETTLED else statusTokenRaw.ifEmpty { null },
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            fundingRuleVersion = 1,
         )
         return WechatRowResult.Accepted(ordinal, recordKind, facts, completeness, diagnostics)
     }

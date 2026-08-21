@@ -26,6 +26,8 @@ data class ImportEvidenceId(val value: String)
 data class ImportCandidateId(val value: String)
 data class ImportConfirmationId(val value: String)
 data class ImportStatusHistoryId(val value: String)
+data class ImportDuplicateCandidateId(val value: String)
+data class ImportDuplicateReviewId(val value: String)
 
 data class ImportRawIdentity(val ledgerId: LedgerId, val inputRef: String, val recordOrdinal: Int)
 data class ImportRequestIdentity(val ledgerId: LedgerId, val requestId: ImportRequestId)
@@ -38,6 +40,15 @@ enum class ImportRecordKind(val storageValue: String, val contractVersion: Int) 
 
 enum class ImportCompleteness { VALID_COMPLETE, VALID_INCOMPLETE }
 
+enum class ImportFundingState { SETTLED, NO_FUNDS, UNRESOLVED }
+enum class ImportDuplicateCandidateKind { EXACT_BUSINESS_TUPLE, CLOSED_OR_FAILED_NO_FUNDS }
+enum class ImportDuplicateStatus { DEFERRED, CONFIRMED_DUPLICATE, CONFIRMED_DISTINCT, DISMISSED_LOOKALIKE, REJECTED }
+
+// P4-07 funding facts are explicit at every construction site (D-105 section 5): the
+// caller owns them; there is no silent default. The legacy-settled token is the frozen
+// relay value for sources without an approved funding-state provider contract.
+const val IMPORT_FUNDING_RULE_LEGACY_SETTLED = "legacy-settled-v1"
+
 data class ImportSourceFacts(
     val amountMinor: Long,
     val currencyCode: String,
@@ -45,6 +56,9 @@ data class ImportSourceFacts(
     val occurredAt: String,
     val directionToken: String,
     val statusToken: String?,
+    val fundingState: ImportFundingState,
+    val fundingRuleId: String,
+    val fundingRuleVersion: Int,
 )
 
 data class ImportIntakeRequest(
@@ -54,6 +68,7 @@ data class ImportIntakeRequest(
     val recordKind: ImportRecordKind,
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
+    val candidateGeneratedAt: String,
 )
 
 data class ImportIntakeSnapshot(
@@ -64,7 +79,48 @@ data class ImportIntakeSnapshot(
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
     val contentHash: String,
+    val candidateGeneratedAt: String,
 )
+
+data class ImportDuplicateComparisonSnapshot(
+    val subjectSourceId: ImportSourceId,
+    val possibleExistingSourceId: ImportSourceId?,
+    val recordKind: ImportRecordKind,
+    val contractVersion: Int,
+    val amountMinor: Long,
+    val currencyCode: String,
+    val currencyPrecision: Int,
+    val occurredAt: String,
+    val directionToken: String,
+    val statusToken: String?,
+)
+
+data class ImportDuplicateReviewRequest(
+    val identity: ImportRequestIdentity,
+    val candidateId: ImportDuplicateCandidateId,
+    val expectedComparisonFingerprint: String,
+    val decision: ImportDuplicateStatus,
+    val reasonToken: String,
+    val reviewedAt: String,
+    val reviewerReference: String,
+    val generatedAt: String,
+    val reviewId: ImportDuplicateReviewId,
+    val historyId: ImportStatusHistoryId,
+)
+
+data class ImportDuplicateReviewReceipt(
+    val requestId: ImportRequestId,
+    val candidateId: ImportDuplicateCandidateId,
+    val reviewId: ImportDuplicateReviewId,
+    val historyId: ImportStatusHistoryId,
+    val outcome: ImportDuplicateStatus,
+)
+
+sealed interface ImportDuplicateReviewResult {
+    data class Accepted(val receipt: ImportDuplicateReviewReceipt) : ImportDuplicateReviewResult
+    data class NoChange(val receipt: ImportDuplicateReviewReceipt, val reasonCode: String) : ImportDuplicateReviewResult
+    data class Rejected(val diagnostic: ImportDiagnostic) : ImportDuplicateReviewResult
+}
 
 enum class ImportCandidateDecision { CONFIRM, REJECT }
 
@@ -202,6 +258,12 @@ object SpineDiagnostics {
             "SPINE_DECISION_KIND_MISMATCH", "invalid", "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
+
+    fun duplicateNotConfirmable(candidateId: ImportCandidateId): ImportDiagnostic =
+        ImportDiagnosticRecord(
+            "SPINE_DUPLICATE_NOT_CONFIRMABLE", "invalid", "candidate",
+            ImportDiagnosticLocation(null, null, null, candidateId),
+        )
 }
 
 enum class ImportReturnedIdKind { SOURCE, EVIDENCE, CANDIDATE, CONFIRMATION, TRANSACTION }
@@ -239,6 +301,12 @@ data class ImportIntakeIds(
     val sourceId: ImportSourceId,
     val evidenceId: ImportEvidenceId,
     val candidateId: ImportCandidateId,
+    val statusHistoryId: ImportStatusHistoryId,
+    val duplicateIds: List<ImportDuplicateIntakeIds> = emptyList(),
+)
+
+data class ImportDuplicateIntakeIds(
+    val candidateId: ImportDuplicateCandidateId,
     val statusHistoryId: ImportStatusHistoryId,
 )
 
@@ -334,6 +402,18 @@ interface ImportCandidateCommitPort {
     ): ImportCandidateDecisionResult
 }
 
+/** P4-07 owns duplicate review request identity independently from import_request. */
+fun interface ImportDuplicateReviewCommitPort {
+    fun commitReviewOnce(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult
+}
+
+class ReviewImportDuplicateCandidate(
+    private val commitPort: ImportDuplicateReviewCommitPort,
+) {
+    fun execute(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult =
+        commitPort.commitReviewOnce(request)
+}
+
 class ExecuteImportIntake(
     private val commitPort: ImportIntakeCommitPort,
     private val idSource: ImportIntakeIdSource,
@@ -358,6 +438,7 @@ class ExecuteImportIntake(
             facts = request.facts,
             completeness = request.completeness,
             contentHash = contentHash,
+            candidateGeneratedAt = request.candidateGeneratedAt,
         )
         return commitPort.commitIntake(identity, snapshot) { idSource.next() }
     }

@@ -2,6 +2,11 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
 import com.unifiedledger.application.ImportCandidateCommitPort
+import com.unifiedledger.application.ImportDuplicateReviewCommitPort
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateReviewReceipt
+import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportCandidateDecision
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateDecisionSnapshot
@@ -36,7 +41,7 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.TransactionId
 
-internal enum class ImportSpineFailurePoint { INTAKE_AFTER_CANDIDATE, CONFIRM_AFTER_FORMAL }
+internal enum class ImportSpineFailurePoint { INTAKE_AFTER_CANDIDATE, CONFIRM_AFTER_FORMAL, REVIEW_AFTER_SNAPSHOT }
 internal fun interface ImportSpineFailureInjector { fun failAt(point: ImportSpineFailurePoint) }
 private val NO_IMPORT_SPINE_FAILURE = ImportSpineFailureInjector { }
 
@@ -57,7 +62,7 @@ class SqlDelightImportSpineStore private constructor(
     private val database: LedgerDatabase,
     private val failure: ImportSpineFailureInjector,
     private val fingerprint: ImportContentFingerprint,
-) : ImportIntakeCommitPort, ImportCandidateCommitPort {
+) : ImportIntakeCommitPort, ImportCandidateCommitPort, ImportDuplicateReviewCommitPort {
     constructor(database: LedgerDatabase, driver: SqlDriver) :
         this(database, NO_IMPORT_SPINE_FAILURE, ImportContentFingerprint()) {
         configureSqliteConnection(driver)
@@ -123,6 +128,10 @@ class SqlDelightImportSpineStore private constructor(
                     occurred_at = snapshot.facts.occurredAt,
                     direction_token = snapshot.facts.directionToken,
                     status_token = snapshot.facts.statusToken,
+                    funding_state = snapshot.facts.fundingState.name,
+                    funding_rule_id = snapshot.facts.fundingRuleId,
+                    funding_rule_version = snapshot.facts.fundingRuleVersion.toLong(),
+                    candidate_generated_at = snapshot.candidateGeneratedAt,
                 )
                 database.ledgerQueries.insertImportEvidence(
                     ledger_id = snapshot.identity.ledgerId.value,
@@ -150,7 +159,41 @@ class SqlDelightImportSpineStore private constructor(
                     requirement_index = 0L,
                     requirement = "formal_transaction_creation",
                 )
-                val status = if (snapshot.completeness == ImportCompleteness.VALID_COMPLETE) {
+                if (snapshot.completeness == ImportCompleteness.VALID_COMPLETE && snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.SETTLED) {
+                    val existing = database.ledgerQueries.selectDuplicateMatches(
+                        snapshot.identity.ledgerId.value, ids.sourceId.value, snapshot.recordKind.storageValue,
+                        snapshot.recordKind.contractVersion.toLong(), snapshot.facts.amountMinor, snapshot.facts.currencyCode,
+                        snapshot.facts.currencyPrecision.toLong(), snapshot.facts.occurredAt, snapshot.facts.directionToken,
+                        snapshot.facts.statusToken, if (snapshot.facts.statusToken == null) 1L else 0L,
+                    ).executeAsList()
+                    if (ids.duplicateIds.size != existing.size) {
+                        abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
+                    }
+                    existing.zip(ids.duplicateIds).forEach { (existingSourceId, duplicateIds) ->
+                        val projection = com.unifiedledger.application.ImportDuplicateComparisonSnapshot(ids.sourceId, ImportSourceId(existingSourceId), snapshot.recordKind, snapshot.recordKind.contractVersion, snapshot.facts.amountMinor, snapshot.facts.currencyCode, snapshot.facts.currencyPrecision, snapshot.facts.occurredAt, snapshot.facts.directionToken, snapshot.facts.statusToken)
+                        val tupleSnapshot = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().canonicalJson(projection)
+                        val comparison = "{\"possible_existing_source_id\":\"$existingSourceId\",\"subject_source_id\":\"${ids.sourceId.value}\",\"tuple\":$tupleSnapshot}"
+                        val fingerprint = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().digest(projection)
+                        database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, ids.sourceId.value, existingSourceId, "EXACT_BUSINESS_TUPLE", fingerprint, comparison, "source_declared + mechanical_decode + p407_exact_business_tuple_v1", snapshot.candidateGeneratedAt, identity.requestId.value)
+                        database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, duplicateIds.statusHistoryId.value, identity.requestId.value)
+                    }
+                } else if (snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.NO_FUNDS) {
+                    if (ids.duplicateIds.size != 1) abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
+                    val duplicateIds = ids.duplicateIds.single()
+                    // Same privacy-safe frozen projection as exact-tuple candidates, with a
+                    // NULL possible-existing target (D-105 sections 3/4); the fingerprint
+                    // stays the deterministic no-funds token keyed by the subject source.
+                    val noFundsProjection = com.unifiedledger.application.ImportDuplicateComparisonSnapshot(ids.sourceId, null, snapshot.recordKind, snapshot.recordKind.contractVersion, snapshot.facts.amountMinor, snapshot.facts.currencyCode, snapshot.facts.currencyPrecision, snapshot.facts.occurredAt, snapshot.facts.directionToken, snapshot.facts.statusToken)
+                    val noFundsTuple = com.unifiedledger.application.ImportDuplicateComparisonFingerprint().canonicalJson(noFundsProjection)
+                    val noFundsSnapshot = "{\"possible_existing_source_id\":null,\"subject_source_id\":\"${ids.sourceId.value}\",\"tuple\":$noFundsTuple}"
+                    database.ledgerQueries.insertDuplicateCandidate(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, ids.sourceId.value, null, "CLOSED_OR_FAILED_NO_FUNDS", "sha256:no-funds-${ids.sourceId.value}", noFundsSnapshot, "source_declared + mechanical_decode", snapshot.candidateGeneratedAt, identity.requestId.value)
+                    database.ledgerQueries.insertDuplicateStatus(snapshot.identity.ledgerId.value, duplicateIds.candidateId.value, duplicateIds.statusHistoryId.value, identity.requestId.value)
+                } else if (ids.duplicateIds.isNotEmpty()) {
+                    abortImportSpine(ImportIntakeResult.Rejected(SpineDiagnostics.referenceIntegrityViolation(ids.candidateId)))
+                }
+                val status = if (snapshot.completeness == ImportCompleteness.VALID_COMPLETE &&
+                    snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.SETTLED
+                ) {
                     "pending_confirmation"
                 } else {
                     "incomplete"
@@ -208,6 +251,42 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
         }
+    }
+
+    override fun commitReviewOnce(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult {
+        require(request.identity.ledgerId.value.isNotEmpty())
+        val fingerprint = com.unifiedledger.application.ImportDuplicateReviewFingerprint().digest(request)
+        return rollbackTypedRejection { database.transactionWithResult {
+            database.ledgerQueries.claimDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value, fingerprint)
+            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
+                val prior = database.ledgerQueries.selectDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value).executeAsOneOrNull()
+                if (prior?.input_fingerprint != fingerprint) return@transactionWithResult ImportDuplicateReviewResult.Rejected(SpineDiagnostics.requestIdentityConflict(request.identity.requestId))
+                val receipt = database.ledgerQueries.selectDuplicateReviewReceipt(request.identity.ledgerId.value, request.identity.requestId.value).executeAsOneOrNull()
+                    ?: return@transactionWithResult ImportDuplicateReviewResult.Rejected(SpineDiagnostics.requestIdentityConflict(request.identity.requestId))
+                return@transactionWithResult ImportDuplicateReviewResult.NoChange(ImportDuplicateReviewReceipt(ImportRequestId(receipt.request_id), com.unifiedledger.application.ImportDuplicateCandidateId(receipt.candidate_id), com.unifiedledger.application.ImportDuplicateReviewId(receipt.review_id), ImportStatusHistoryId(receipt.history_id), ImportDuplicateStatus.valueOf(receipt.outcome)), SPINE_NO_CHANGE_REASON_CODE)
+            }
+            val candidate = database.ledgerQueries.selectDuplicateCandidate(request.identity.ledgerId.value, request.candidateId.value).executeAsOneOrNull()
+                ?: abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotFound(ImportCandidateId(request.candidateId.value))))
+            if (candidate.comparison_fingerprint != request.expectedComparisonFingerprint) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.staleFingerprint(ImportCandidateId(request.candidateId.value))))
+            // D-105 section 3: CONFIRMED_DUPLICATE requires the rule constraint the
+            // candidate carries (a directed possible-existing target). A NULL-target
+            // CLOSED_OR_FAILED_NO_FUNDS candidate has none, so that decision is a typed
+            // rejection with zero writes (the claim rolls back and stays retryable).
+            if (candidate.kind == "CLOSED_OR_FAILED_NO_FUNDS" && request.decision == ImportDuplicateStatus.CONFIRMED_DUPLICATE) {
+                abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.decisionKindMismatch(ImportCandidateId(request.candidateId.value))))
+            }
+            val current = database.ledgerQueries.selectDuplicateCurrentStatus(request.identity.ledgerId.value, request.candidateId.value).executeAsOneOrNull()
+            if (current != "DEFERRED" || request.decision == ImportDuplicateStatus.DEFERRED) abortImportSpine(ImportDuplicateReviewResult.Rejected(SpineDiagnostics.candidateNotPending(ImportCandidateId(request.candidateId.value))))
+            database.ledgerQueries.insertDuplicateReviewSnapshot(request.identity.ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.expectedComparisonFingerprint, request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference, request.generatedAt, request.reviewId.value)
+            // Failure-injection seam for the review path (same pattern as intake): any
+            // throw here rolls back the claim, snapshot, history and receipt together.
+            failure.failAt(ImportSpineFailurePoint.REVIEW_AFTER_SNAPSHOT)
+            val seq = database.ledgerQueries.selectDuplicateLatestSequence(request.identity.ledgerId.value, request.candidateId.value).executeAsOne() + 1
+            database.ledgerQueries.updateDuplicateReviewRequest(request.identity.ledgerId.value, request.identity.requestId.value)
+            database.ledgerQueries.insertDuplicateReviewStatus(request.identity.ledgerId.value, request.candidateId.value, seq, request.historyId.value, request.decision.name, request.identity.requestId.value)
+            database.ledgerQueries.insertDuplicateReviewReceipt(request.identity.ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.reviewId.value, request.historyId.value, request.decision.name)
+            ImportDuplicateReviewResult.Accepted(ImportDuplicateReviewReceipt(request.identity.requestId, request.candidateId, request.reviewId, request.historyId, request.decision))
+        } }
     }
 
     override fun commitOnce(
@@ -283,6 +362,18 @@ class SqlDelightImportSpineStore private constructor(
                 abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
                         SpineDiagnostics.staleFingerprint(snapshot.candidateId),
+                    ),
+                )
+            }
+            // P4-07 is a narrow formalization gate: only the subject source's latest
+            // CONFIRMED_DUPLICATE review blocks confirmation. No formal IDs or factory
+            // callback may be consumed on this path.
+            if (database.ledgerQueries.hasConfirmedDuplicateForSource(
+                    identity.ledgerId.value, source.source_id,
+                ).executeAsOne()) {
+                abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.duplicateNotConfirmable(snapshot.candidateId),
                     ),
                 )
             }
@@ -643,6 +734,10 @@ class SqlDelightImportSpineStore private constructor(
         val occurredAt: String?,
         val directionToken: String?,
         val statusToken: String?,
+        val fundingState: String,
+        val fundingRuleId: String,
+        val fundingRuleVersion: Long,
+        val candidateGeneratedAt: String,
     )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByIdentity.toStoredFacts(): StoredSourceFacts =
@@ -657,6 +752,10 @@ class SqlDelightImportSpineStore private constructor(
             occurredAt = occurred_at,
             directionToken = direction_token,
             statusToken = status_token,
+            fundingState = funding_state,
+            fundingRuleId = funding_rule_id,
+            fundingRuleVersion = funding_rule_version,
+            candidateGeneratedAt = candidate_generated_at,
         )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByOwnerRequest.toStoredFacts(): StoredSourceFacts =
@@ -671,8 +770,16 @@ class SqlDelightImportSpineStore private constructor(
             occurredAt = occurred_at,
             directionToken = direction_token,
             statusToken = status_token,
+            fundingState = funding_state,
+            fundingRuleId = funding_rule_id,
+            fundingRuleVersion = funding_rule_version,
+            candidateGeneratedAt = candidate_generated_at,
         )
 
+    // Source-fact equivalence for replay (D-105 section 5): candidate_generated_at is an
+    // audit fact, not a source fact, so it never participates; funding facts are source
+    // facts and do. A replay carrying a different audit timestamp stays a zero-write
+    // NoChange; a changed funding fact is a hard identity collision.
     private fun intakeEquivalent(
         stored: StoredSourceFacts,
         snapshot: ImportIntakeSnapshot,
@@ -685,7 +792,10 @@ class SqlDelightImportSpineStore private constructor(
         stored.currencyPrecision == snapshot.facts.currencyPrecision.toLong() &&
         stored.occurredAt == snapshot.facts.occurredAt &&
         stored.directionToken == snapshot.facts.directionToken &&
-        stored.statusToken == snapshot.facts.statusToken
+        stored.statusToken == snapshot.facts.statusToken &&
+        stored.fundingState == snapshot.facts.fundingState.name &&
+        stored.fundingRuleId == snapshot.facts.fundingRuleId &&
+        stored.fundingRuleVersion == snapshot.facts.fundingRuleVersion.toLong()
 
     private fun confidenceFor(completeness: ImportCompleteness): String = when (completeness) {
         ImportCompleteness.VALID_COMPLETE -> "1.00"

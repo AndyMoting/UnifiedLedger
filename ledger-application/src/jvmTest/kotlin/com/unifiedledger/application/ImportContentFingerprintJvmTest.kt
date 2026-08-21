@@ -1,6 +1,7 @@
 package com.unifiedledger.application
 
 import java.security.MessageDigest
+import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -15,24 +16,19 @@ class ImportContentFingerprintJvmTest {
 
     private val r1 = ImportSourceFacts(
         amountMinor = 12850, currencyCode = "CNY", currencyPrecision = 2,
-        occurredAt = "2026-08-01T12:30:00+08:00", directionToken = "out", statusToken = "settled",
-    )
+        occurredAt = "2026-08-01T12:30:00+08:00", directionToken = "out", statusToken = "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val r2 = ImportSourceFacts(
         amountMinor = 1000000, currencyCode = "CNY", currencyPrecision = 2,
-        occurredAt = "2026-08-05T09:00:00+08:00", directionToken = "in", statusToken = "settled",
-    )
+        occurredAt = "2026-08-05T09:00:00+08:00", directionToken = "in", statusToken = "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val r3 = ImportSourceFacts(
         amountMinor = 4500, currencyCode = "CNY", currencyPrecision = 2,
-        occurredAt = "2026-08-06T18:45:00+08:00", directionToken = "out", statusToken = null,
-    )
+        occurredAt = "2026-08-06T18:45:00+08:00", directionToken = "out", statusToken = null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val r1Prime = ImportSourceFacts(
         amountMinor = 12851, currencyCode = "CNY", currencyPrecision = 2,
-        occurredAt = "2026-08-01T12:30:00+08:00", directionToken = "out", statusToken = "settled",
-    )
+        occurredAt = "2026-08-01T12:30:00+08:00", directionToken = "out", statusToken = "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val r5 = ImportSourceFacts(
         amountMinor = 888800, currencyCode = "CNY", currencyPrecision = 2,
-        occurredAt = "2026-08-08T10:00:00+08:00", directionToken = "in", statusToken = "settled",
-    )
+        occurredAt = "2026-08-08T10:00:00+08:00", directionToken = "in", statusToken = "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
     @Test
     fun `T-18 R1 canonical bytes and pinned digest match independent JVM SHA-256`() {
@@ -105,8 +101,7 @@ class ImportContentFingerprintJvmTest {
     fun `T-18 RFC 8785 named short escapes and u00XX escaping match the frozen emitter`() {
         val facts = ImportSourceFacts(
             amountMinor = 1, currencyCode = "CNY", currencyPrecision = 0,
-            occurredAt = "quote\"back\\slash", directionToken = "ctrl\u0001\u001f", statusToken = "tab\tnewline\nform\u000Creturn\r",
-        )
+            occurredAt = "quote\"back\\slash", directionToken = "ctrl\u0001\u001f", statusToken = "tab\tnewline\nform\u000Creturn\r", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
         val canonical = fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts)
         assertEquals(
             """{"amount":"1","currency_code":"CNY","currency_precision":"0","direction_token":"ctrl\u0001\u001f","occurred_at":"quote\"back\\slash","record_kind":"ordinary_flow_source","status_token":"tab\tnewline\nform\freturn\r"}""",
@@ -117,9 +112,9 @@ class ImportContentFingerprintJvmTest {
 
     @Test
     fun `T-18 unpaired surrogates fail closed`() {
-        val high = ImportSourceFacts(1, "CNY", 0, "\ud800", "out", "settled")
+        val high = ImportSourceFacts(1, "CNY", 0, "\ud800", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
         assertFailsWith<IllegalArgumentException> { fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, high) }
-        val low = ImportSourceFacts(1, "CNY", 0, "\udc00", "out", "settled")
+        val low = ImportSourceFacts(1, "CNY", 0, "\udc00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
         assertFailsWith<IllegalStateException> { fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, low) }
     }
 
@@ -130,6 +125,51 @@ class ImportContentFingerprintJvmTest {
         assertEquals("1", formatDecimal(1, 0))
         assertEquals("0.05", formatDecimal(5, 2))
         assertEquals("-128.50", formatDecimal(-12850, 2))
+    }
+
+    @Test
+    fun `P4-07 review claim fingerprint is canonical and changes with every immutable input`() {
+        val request = ImportDuplicateReviewRequest(
+            ImportRequestIdentity(LedgerId("ledger-p407"), ImportRequestId("review-request")),
+            ImportDuplicateCandidateId("duplicate-1"), "sha256:comparison", ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+            "confirmed", "2026-08-19T10:00:00+08:00", "reviewer", "2026-08-19T10:01:00+08:00",
+            ImportDuplicateReviewId("review-1"), ImportStatusHistoryId("history-1"),
+        )
+        val digest = ImportDuplicateReviewFingerprint().digest(request)
+        assertEquals(digest, ImportDuplicateReviewFingerprint().digest(request))
+        kotlin.test.assertNotEquals(digest, ImportDuplicateReviewFingerprint().digest(request.copy(reasonToken = "different")))
+    }
+
+    @Test
+    fun `P4-07 comparison fingerprint pins the frozen projection including contract_version`() {
+        // SPEC-004 (D-105 sections 2/3): the frozen comparison projection is record
+        // kind/version, amount/currency/precision, occurred-at, direction, status
+        // presence/value, subject/possible-existing IDs. contract_version participates in
+        // both the canonical bytes and the digest; versions of the same kind differ.
+        val comparison = ImportDuplicateComparisonFingerprint()
+        val v1 = ImportDuplicateComparisonSnapshot(
+            subjectSourceId = ImportSourceId("source-subject"), possibleExistingSourceId = ImportSourceId("source-existing"),
+            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE, contractVersion = 1,
+            amountMinor = 12850, currencyCode = "CNY", currencyPrecision = 2,
+            occurredAt = "2026-08-01T12:30:00+08:00", directionToken = "out", statusToken = "settled",
+        )
+        val canonical =
+            """{"amount_minor":"12850","contract_version":"1","currency_code":"CNY","currency_precision":"2","direction_token":"out","occurred_at":"2026-08-01T12:30:00+08:00","record_kind":"ordinary_flow_source","status_present":"true","status_token":"settled"}"""
+        assertEquals(canonical, comparison.canonicalJson(v1))
+        assertEquals("sha256:" + jvmSha256(canonical.encodeToByteArray()), comparison.digest(v1))
+
+        // Null status keeps presence semantics; the omitted value member still differs.
+        val noStatus = v1.copy(statusToken = null)
+        assertEquals(
+            """{"amount_minor":"12850","contract_version":"1","currency_code":"CNY","currency_precision":"2","direction_token":"out","occurred_at":"2026-08-01T12:30:00+08:00","record_kind":"ordinary_flow_source","status_present":"false"}""",
+            comparison.canonicalJson(noStatus),
+        )
+        assertNotEqualBytes(comparison.digest(v1), comparison.digest(noStatus))
+        assertNotEqualBytes(comparison.digest(v1), comparison.digest(v1.copy(contractVersion = 2)))
+        // The digest covers only the business tuple: subject/possible-existing source IDs
+        // are frozen into the persisted comparison_snapshot JSON (and the uniqueness
+        // index), never into the fingerprint.
+        assertEquals(comparison.digest(v1), comparison.digest(v1.copy(possibleExistingSourceId = null)))
     }
 
     private fun jvmSha256(bytes: ByteArray): String =

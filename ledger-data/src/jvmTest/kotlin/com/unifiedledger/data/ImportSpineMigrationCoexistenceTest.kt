@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteRg04ImportOperation
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateFormalFactory
@@ -17,6 +18,7 @@ import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -159,7 +161,7 @@ class ImportSpineMigrationCoexistenceTest {
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(23, LedgerDatabase.Schema.version)
+                assertEquals(24, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg04ImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportSourceRecords().executeAsOne())
@@ -249,8 +251,9 @@ class ImportSpineMigrationCoexistenceTest {
                 inputRef = "batch-p402-a",
                 recordOrdinal = 0,
                 recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+                facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
                 completeness = ImportCompleteness.VALID_COMPLETE,
+                candidateGeneratedAt = "legacy-intake-v1",
             )
             val intakeIds = object : ImportIntakeIdSource {
                 override fun next() = ImportIntakeIds(
