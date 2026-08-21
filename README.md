@@ -4,9 +4,9 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-项目当前处于阶段 4“导入与对账闭环”。P4-01 acceptance contract、P4-02 shared import spine 和 P4-03 微信 XLSX 普通收支解析均已闭环；P4-04 transfer formalization slice 的轮 A 契约经纯文档纠偏（scale 归一化、完整 report oracle、ID 绑定）后已于 2026-08-17 重新批准，轮 B 实施授权恢复、尚未启动实现。
+项目当前处于阶段 4“导入与对账闭环”。P4-01 acceptance contract、P4-02 shared import spine、P4-03 微信 XLSX 普通收支、P4-04 transfer formalization、P4-05 支付宝普通收支及 RL-04 余额宝转账路由均已闭环；P4-08 matcher 与 reconciliation persistence 已按 D-103 合入 `main`。P4-07 duplicate candidate/closed-records 已有实施候选，但尚未完成最终独立复审、完整验证和合并。
 
-Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v21（v1→v21 共 20 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
+Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v23（v1→v23 共 22 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
 
 阶段 3 的规则场景实现范围如下：
 
@@ -37,7 +37,7 @@ Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `le
 
 ## 验证
 
-Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 分别运行三个共享库模块的 JVM 测试：
+Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 分别运行三个共享库模块的 JVM 测试。16 GB Windows 主机上 Gradle/Kotlin 验证必须串行运行，使用单 worker 和 1 GB heap；每次运行结束后停止 daemon。完整约束与命令见[开发规范](docs/CONTRIBUTING.md)。
 
 ```powershell
 .\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all

@@ -34,7 +34,9 @@
 | v1 到 v2 迁移 | [`docs/migrations/golden-v2`](migrations/golden-v2) | mapping、path-map、expected draft | mapping、contract 和 semantic tests |
 | P4-02 共享导入 spine | [设计规格](specs/2026-08-13-p4-02-shared-import-spine-design.md)（approved） | `ledger-data` 的 20.sqm（v20→v21）、`Ledger.sq` 共享 `import_*` 表族 | migration verifier、`ImportSpineLifecycleEndToEndTest`、`ImportSpineMigrationCoexistenceTest` |
 | P4-03 微信普通收支 | [设计规格](specs/2026-08-14-p4-03-wechat-ordinary-flows-design.md)（approved） | `ledger-application` jvm 源集的 `WechatBillParser`、`WechatSourceTokens`、`WechatParserTypes`（POI 仅 jvm 作用域） | `WechatBillParserJvmTest`、`ImportSpineWechatEndToEndTest` |
-| P4-04 转账正式化切片 | [设计规格](specs/2026-08-14-p4-04-transfer-formalization-slice-design.md)（approved，2026-08-17 重新批准；D-100） | 轮 B 待实施：`21.sqm`（v21→v22）、`TransferFlowFormalFactory`、`ImportRecordKind` 判别确认链 | 随轮 B：`ImportSpineTransferEndToEndTest`、迁移 verifier 涟漪 |
+| P4-04 转账正式化切片 | [设计规格](specs/2026-08-14-p4-04-transfer-formalization-slice-design.md)（approved，2026-08-17 重新批准；D-100） | `21.sqm`（v21→v22）、`TransferFlowFormalFactory`、`ImportRecordKind` 判别确认链 | `ImportSpineTransferEndToEndTest`、迁移 verifier |
+| P4-05 支付宝普通收支与 RL-04 余额宝转账 | [普通收支规格](specs/2026-08-17-p4-05-alipay-ordinary-flows-design.md)（approved）与 [RL-04 规格](specs/2026-08-18-p4-05b-rl04-yuebao-transfer-routing-design.md)（approved） | `ledger-application` jvm 源集的支付宝解析器与余额宝转账路由；schema v22 不变 | `AlipayCsvParserJvmTest`、`ImportSpineAlipayEndToEndTest`、`ImportSpineAlipayYuebaoTransferEndToEndTest` |
+| P4-08 matcher 与对账持久化 | [设计规格](specs/2026-08-19-p4-08-matcher-contract-design.md)（approved；D-103） | schema v23 的 evidence link、posting reconciliation 及追加历史；matcher runtime | `ImportSpineLifecycleEndToEndTest`、`ImportSpineMigrationCoexistenceTest`、ledger-data JVM tests |
 | 开发和发布验证 | [开发规范](CONTRIBUTING.md) | Gradle Wrapper、Python validator | focused tests、affected full suite、文档验证 |
 
 `golden/rules/` 保存冻结输入或答案，`golden/rules-v2/` 只保存已进入正式 v2 发布边界的机器工件。`docs/migrations/golden-v2/` 保存迁移和审查材料；其中的 expected 只有在明确批准后才能成为发布工件。

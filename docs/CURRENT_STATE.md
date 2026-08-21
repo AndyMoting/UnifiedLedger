@@ -3,7 +3,7 @@
 ## 已完成
 
 - 建立 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块；账务核心继续保持无 Android、网络、同步或 AI 依赖。
-- SQLDelight schema 当前为 v21（v1→v21 共 20 个迁移文件）。v10 以 dedicated normalized owners 保存 RG-06 与 RG-07 operation、relation/lifecycle/installment、source/evidence/candidate 与 reconciliation；v11 保存 RG-06 candidate confirmation provenance；v12 保存 D-082 批准的 RG-09 normalized owners；v13 保存 D-083 批准的 RG-10 normalized owners；v14 从 RG-09 current adjustment owner 移除由 immutable original delta、allocations 与 latest history 推导的重复金额/状态列；v15 保存 D-084 批准的 RG-08 lending owners 并接入 `LEND`/`COLLECT` canonical kinds；v16 保存 D-085 批准的 RG-11 owners 并接入 `PREPAID_PURCHASE`/`PREPAID_RECOGNITION` canonical kinds（含共享 `appendVersion` 与 `transaction_version.confirmation_id`）；v17 保存 RG-12 posting-facts correction owners，并把 confirmation guard 扩展到 `EXPENSE`；v18 保存 D-087 批准的 RG-02 `category_rename` append-only name history（17.sqm）；v19 为 D-088 的 RG-12 guard 修复新边 18.sqm（重挂 rg12 guard trigger，纯 DDL）；v20 为 DATA-001（D-091）的 schema 统一新边 19.sqm（共享 `formal_transaction_metadata` 表，RG-08/09/10 私表精简为 source-only、RG-11/12 私表删除）；v21 为 P4-02（D-098）的共享导入 spine 新边 20.sqm（9 张非 rgXX_ `import_*` 表与不可变/追加-only/状态迁移守卫触发器）。逐版本 populated migration、child FK preservation、原子拒绝/回滚、fresh-v21 与 v1→v21 metadata equality 均有 JVM 测试和 migration verifier。
+- SQLDelight schema 当前为 v23（v1→v23 共 22 个迁移文件）。v10 以 dedicated normalized owners 保存 RG-06 与 RG-07 operation、relation/lifecycle/installment、source/evidence/candidate 与 reconciliation；v11 保存 RG-06 candidate confirmation provenance；v12 保存 D-082 批准的 RG-09 normalized owners；v13 保存 D-083 批准的 RG-10 normalized owners；v14 从 RG-09 current adjustment owner 移除由 immutable original delta、allocations 与 latest history 推导的重复金额/状态列；v15 保存 D-084 批准的 RG-08 lending owners 并接入 `LEND`/`COLLECT` canonical kinds；v16 保存 D-085 批准的 RG-11 owners 并接入 `PREPAID_PURCHASE`/`PREPAID_RECOGNITION` canonical kinds（含共享 `appendVersion` 与 `transaction_version.confirmation_id`）；v17 保存 RG-12 posting-facts correction owners，并把 confirmation guard 扩展到 `EXPENSE`；v18 保存 D-087 批准的 RG-02 `category_rename` append-only name history（17.sqm）；v19 为 D-088 的 RG-12 guard 修复新边 18.sqm（重挂 rg12 guard trigger，纯 DDL）；v20 为 DATA-001（D-091）的 schema 统一新边 19.sqm（共享 `formal_transaction_metadata` 表，RG-08/09/10 私表精简为 source-only、RG-11/12 私表删除）；v21 为 P4-02（D-098）的共享导入 spine 新边 20.sqm（9 张非 rgXX_ `import_*` 表与不可变/追加-only/状态迁移守卫触发器）；v22 落地 P4-04 transfer formalization；v23 按 D-103 增加 P4-08 evidence link、posting reconciliation 及其 append-only history。逐版本 populated migration、child FK preservation、原子拒绝/回滚、fresh schema 与 v1→v23 metadata equality 均有 JVM 测试和 migration verifier。
 - `RG-01` create、retry、distinct、7 个拒绝及 `note_update` runtime 已实现。备注替代保留 posting set 与经济事实，并覆盖 replay、request identity conflict、stale CAS 零写入和 operation oracle。完整 state/delta/status 比较已按 `D-087` 实现（`Rg01FullStateOracleTest`，8 roots/11 ops/19 states，merge `f9da4b6`）。
 - `RG-02` 完成 `D-071` 批准的 manual-income 最小 slice：create、retry、2 个独立变体与 8 个拒绝；`category_rename` 已按 `D-087` 实现最小闭环（append-only name history，17.sqm）。完整 state/delta/status 比较已实现（`Rg02FullStateOracleTest`，11 roots/13 ops/24 states）。
 - `RG-03` 当前冻结范围已实现：13 roots、20 operations 的 outcome、returned IDs、完整 state、deltas 与 status changes 均与 approved expected 精确比较；mapping gate 已 approved，v2 工件已发布（`dec854e`，D-086；13 roots/20 ops/33 states）。
@@ -27,9 +27,10 @@
 
 - Kotlin Multiplatform 插件版本为 `2.4.10`，Gradle Wrapper 版本为 `9.5.0`，JVM 工具链为 JDK 21。
 - 三个 KMP library 的 JVM 测试和根项目 Gradle 检查可在 Windows 上运行；`ledger-data` 的 SQLDelight 迁移验证与 Android target 编译也可独立运行。
+- 当前 16 GB Windows 主机上 Gradle/Kotlin 验证必须串行，使用单 worker 和 1 GB heap，并在每次运行后停止 Gradle daemon；具体命令见 `docs/CONTRIBUTING.md`。
 - Python 核心测试和文档验证可在 Windows 上运行。
 - `ledger-data` 已有 Android 编译目标，但 Android app 与 Desktop app 尚未建立，因此没有应用运行命令。
-- SQLDelight `2.3.2` 与 Android system SQLite 已确定用于当前正式持久化边界；当前 schema 为 v21。UI、导航、依赖注入、同步和更广泛查询方案尚未选择。
+- SQLDelight `2.3.2` 与 Android system SQLite 已确定用于当前正式持久化边界；当前 schema 为 v23。UI、导航、依赖注入、同步和更广泛查询方案尚未选择。
 
 ## 未完成门槛
 
@@ -37,8 +38,8 @@
 - RG-01、RG-02、RG-08 已全部发布（`D-089` A/B 批；A 批经 `D-090` LF 验收闭合，B 批含 LF gate 与 raw-byte hash 核验）；完整比较证据见 `D-087` 与 `D-088` R3 登记。
 - RG-05 完整状态 oracle、RG-06 publication 与 RG-07 closure 不表示全部黄金场景或正式账务核心已完成；RG-01、RG-02 的完整 state/delta/status 比较已实现（`D-087`，`f9da4b6`）且 v2 publication 已按 `D-089` A 批完成；RG-08 的 runtime 与 mapping gate 已按 `D-084` 完成（4 个 gap 已关闭），v2 expected 与工件已按 `D-089` B 批发布。
 - 其他 RG 的 v1 rewrite、v2 publication 和未完成完整比较仍分别受其现有 gate 约束；RG-03/05/10/11/12 已按 `D-086` 发布，RG-01/02 与 RG-08 已按 `D-089` 发布（`D-090` LF 验收闭合），12 case 集合完整；RG-09 已发布且历史 gaps 已 closed，mapping gate 已 approved，独立高风险 closure review 证据已记录。
-- P4-01、P4-02 与 P4-03 已分别由 `D-097`、`D-098` 与 `D-099` 闭环。P4-04 transfer formalization slice 的轮 A 曾于 2026-08-16 登记批准，但后续质量复核确认 `P404-QUAL-001` BLOCKER（source scale 被误作账户币种精度）、`P404-QUAL-002` MAJOR（完整 report oracle 缺预算与对外现金流）和 `P404-QUAL-003` MAJOR（pre-persist validator 未绑定应用分配的完整 ID 集）。纠偏修订已于 2026-08-17 经两轮独立复审、distinct verification 与主代理重新批准（提交 41c1a8d），轮 B 实施授权恢复、尚未启动。`D-096` 中第二来源 parser、duplicate、matcher、产品 ID 与 Clock 等其余门继续待决；整文件默认不保存，若提议保存则须先批准生命周期、加密、导出和删除。
+- P4-01、P4-02 与 P4-03 已分别由 `D-097`、`D-098` 与 `D-099` 闭环。P4-04 transfer formalization、P4-05 支付宝普通收支与 RL-04 余额宝转账路由已完成；P4-08 matcher 与 reconciliation persistence 已按 `D-103` 合入 `main`（`fd57808`，schema v23）。P4-07 duplicate candidate/closed-records 已有候选，但在最终规格增量复审、独立 verifier、`ledger-data:jvmTest` 全量与完整 Python 证据闭合前不得验收或合并。第二来源 parser、产品 ID 与 Clock 等其余门仍按适用决定和证据门推进；整文件默认不保存，若提议保存则须先批准生命周期、加密、导出和删除。
 
 ## 唯一下一步
 
-按重新批准的 D-100 契约（spec Status: approved，2026-08-17）启动 P4-04 轮 B 实施批：独立 worktree 唯一 writer，按规格 §1–§9 实现 ledger-application/ledger-data 源码、schema v21→v22（21.sqm）与测试，并按高风险拓扑复审验证；`D-096` 其余门维持待决。
+完成冻结的 P4-07 实施候选验收：先补齐最终规格增量复审、独立 verifier 与串行 `:ledger-data:jvmTest` 全量验证；证据全部通过后，才由主代理检查主工作树并取得 merge/push 授权。

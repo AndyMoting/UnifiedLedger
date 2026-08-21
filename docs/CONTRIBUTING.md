@@ -11,6 +11,19 @@
 
 所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个 library 模块；`ledger-data` 带 Android 编译目标，但没有 Android 或 Desktop 应用模块，因此没有应用运行命令。
 
+## 本机 Gradle 资源限制
+
+当前 16 GB Windows 主机上的 Gradle/Kotlin 验证必须串行执行；不得并发运行 Gradle、Kotlin 编译或共享测试输出的任务。每次 Gradle 验证前后使用以下命令。该限制仅适用于本机资源控制，不改变 CI 验证语义。
+
+```powershell
+.\gradlew.bat --stop
+$env:GRADLE_OPTS='-Xmx1024m'
+.\gradlew.bat <task> --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
+.\gradlew.bat --stop
+```
+
+将 `<task>` 替换为本节列出的单个 Gradle task；一次只运行一个命令。不要在同一主机上同时运行 `check` 与模块测试。
+
 ## Kotlin 验证
 
 确认 Gradle 使用 JDK 21：
