@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateFormalFactory
@@ -17,6 +18,7 @@ import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -99,10 +101,10 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
     private val gb18030: Charset = Charset.forName("GB18030")
     private val inputRef = "batch-rl04-a"
 
-    private val y01Facts = ImportSourceFacts(10000, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled")
-    private val y09Facts = ImportSourceFacts(90000, "CNY", 2, "2026-08-06T16:40:35+08:00", "in", "settled")
-    private val y12Facts = ImportSourceFacts(11111, "CNY", 2, "2026-08-08T09:00:00+08:00", "out", "交易关闭")
-    private val ordinaryFacts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled")
+    private val y01Facts = ImportSourceFacts(10000, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val y09Facts = ImportSourceFacts(90000, "CNY", 2, "2026-08-06T16:40:35+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val y12Facts = ImportSourceFacts(11111, "CNY", 2, "2026-08-08T09:00:00+08:00", "out", "交易关闭", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val ordinaryFacts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
     private val hashY01 = fingerprint.digest(ImportRecordKind.TRANSFER_FLOW_SOURCE, y01Facts)
     private val hashY09 = fingerprint.digest(ImportRecordKind.TRANSFER_FLOW_SOURCE, y09Facts)
@@ -283,6 +285,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
         recordKind = kind,
         facts = facts,
         completeness = completeness,
+        candidateGeneratedAt = "legacy-intake-v1",
     )
 
     private fun transferConfirmRequest(
@@ -791,7 +794,17 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
             val intakeIds = BatchIntakeIdSource(
                 listOf(
                     intakeIds("y09", "status-y09-1"),
-                    intakeIds("y09b", "status-y09b-1"),
+                    // P4-07: Y-09b is a fresh copy of Y-09's exact business tuple, so its
+                    // intake appends one directed duplicate candidate (subject y09b ->
+                    // possible existing y09) per D-105 section 2.
+                    intakeIds("y09b", "status-y09b-1").copy(
+                        duplicateIds = listOf(
+                            com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-y09b-y09"),
+                                ImportStatusHistoryId("duplicate-status-y09b-y09"),
+                            ),
+                        ),
+                    ),
                 ),
             )
             val commitIds = BatchCommitIdSource(
@@ -934,7 +947,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
 
             // T-21 extra vector: 余额宝-转出到余额 + 交易关闭 (inverted status-gate twin) also
             // intakes as an incomplete transfer candidate and refuses confirm.
-            val y09cFacts = ImportSourceFacts(5555, "CNY", 2, "2026-08-11T09:00:00+08:00", "in", "交易关闭")
+            val y09cFacts = ImportSourceFacts(5555, "CNY", 2, "2026-08-11T09:00:00+08:00", "in", "交易关闭", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
             val hashY09c = fingerprint.digest(ImportRecordKind.TRANSFER_FLOW_SOURCE, y09cFacts)
             executor.intake(intakeRequest("req-y09c-intake", "batch-rl04-t21", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, y09cFacts, ImportCompleteness.VALID_INCOMPLETE))
             expected.intake(ledgerId.value, "req-y09c-intake", "batch-rl04-t21", 0L, ImportRecordKind.TRANSFER_FLOW_SOURCE, hashY09c, y09cFacts, ImportCompleteness.VALID_INCOMPLETE, "source-y09c", "evidence-y09c", "candidate-y09c", "status-y09c-1")
@@ -1115,8 +1128,8 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
         assertEquals(1, ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion)
         val hashR1 = "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2"
         val hashR3 = "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35"
-        val r1Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled")
-        val r3Facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null)
+        val r1Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+        val r3Facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
         assertEquals(hashR1, fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r1Facts))
         assertEquals(hashR3, fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, r3Facts))
 

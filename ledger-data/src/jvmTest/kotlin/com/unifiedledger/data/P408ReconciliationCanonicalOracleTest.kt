@@ -211,7 +211,7 @@ class P408ReconciliationCanonicalOracleTest {
     private fun seedTransfer(driver: JdbcSqliteDriver, includeSecondPosting: Boolean) {
         val statements = buildList {
             add("INSERT INTO import_request VALUES ('ledger-a','import-a','intake')")
-            add("INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')")
+            add("INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
             add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')")
             add("INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)")
             add("INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')")
@@ -220,7 +220,7 @@ class P408ReconciliationCanonicalOracleTest {
             add("INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)")
             if (includeSecondPosting) {
                 add("INSERT INTO import_request VALUES ('ledger-a','import-b','intake')")
-                add("INSERT INTO import_source_record VALUES ('ledger-a','source-b','import-b','batch-b',0,'ordinary_flow_source','hash-b',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','in','settled')")
+                add("INSERT INTO import_source_record VALUES ('ledger-a','source-b','import-b','batch-b',0,'ordinary_flow_source','hash-b',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','in','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
                 add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-b','source-b','source_observation','2026-08-10T12:00:01+08:00')")
                 add("INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)")
             }

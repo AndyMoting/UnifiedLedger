@@ -1,6 +1,8 @@
 package com.unifiedledger.application.import.wechat
 
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportSourceFacts
 import org.apache.poi.xssf.usermodel.XSSFSheet
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
@@ -231,24 +233,24 @@ class WechatBillParserJvmTest {
         assertEquals(WechatBatchOutcome.PARTIAL, result.outcome)
 
         val w1 = accepted(result.rows, 0)
-        assertEquals(ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"), w1.facts)
+        assertEquals(ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w1.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, w1.completeness)
         assertEquals(emptyList(), w1.diagnostics)
 
         val w2 = accepted(result.rows, 1)
-        assertEquals(ImportSourceFacts(125, "CNY", 1, "2026-08-05T09:00:00+08:00", "out", "settled"), w2.facts)
+        assertEquals(ImportSourceFacts(125, "CNY", 1, "2026-08-05T09:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w2.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, w2.completeness)
 
         val w3 = accepted(result.rows, 2)
-        assertEquals(ImportSourceFacts(88, "CNY", 0, "2026-08-06T18:45:00+08:00", "in", "settled"), w3.facts)
+        assertEquals(ImportSourceFacts(88, "CNY", 0, "2026-08-06T18:45:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w3.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, w3.completeness)
 
         val w4 = accepted(result.rows, 3)
-        assertEquals(ImportSourceFacts(300, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled"), w4.facts)
+        assertEquals(ImportSourceFacts(300, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w4.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, w4.completeness)
 
         val w5 = accepted(result.rows, 4)
-        assertEquals(ImportSourceFacts(456, "CNY", 1, "2026-08-09T21:15:00+08:00", "out", "settled"), w5.facts)
+        assertEquals(ImportSourceFacts(456, "CNY", 1, "2026-08-09T21:15:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w5.facts)
         assertEquals(ImportCompleteness.VALID_COMPLETE, w5.completeness)
     }
 
@@ -257,13 +259,13 @@ class WechatBillParserJvmTest {
         val result = WechatBillParser.parse(inputRef, workbookA())
 
         val w6 = accepted(result.rows, 5)
-        assertEquals(ImportSourceFacts(0, "CNY", 2, "2026-08-10T08:00:00+08:00", "/", "settled"), w6.facts)
+        assertEquals(ImportSourceFacts(0, "CNY", 2, "2026-08-10T08:00:00+08:00", "/", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w6.facts)
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, w6.completeness)
         assertEquals(1, w6.diagnostics.size)
         assertDiagnostic(w6.diagnostics[0], "REQUIRED_FACT_UNRESOLVED", "incomplete", "field", 5, "direction")
 
         val w10 = accepted(result.rows, 9)
-        assertEquals(ImportSourceFacts(2000, "CNY", 2, "2026-08-11T13:00:00+08:00", "出账", "settled"), w10.facts)
+        assertEquals(ImportSourceFacts(2000, "CNY", 2, "2026-08-11T13:00:00+08:00", "出账", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w10.facts)
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, w10.completeness)
         assertEquals(1, w10.diagnostics.size)
         assertDiagnostic(w10.diagnostics[0], "REQUIRED_FACT_UNRESOLVED", "incomplete", "field", 9, "direction")
@@ -274,7 +276,7 @@ class WechatBillParserJvmTest {
         val result = WechatBillParser.parse(inputRef, workbookA())
 
         val w14 = accepted(result.rows, 13)
-        assertEquals(ImportSourceFacts(700, "CNY", 2, "2026-08-12T09:00:00+08:00", "out", "交易关闭"), w14.facts)
+        assertEquals(ImportSourceFacts(700, "CNY", 2, "2026-08-12T09:00:00+08:00", "out", "交易关闭", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), w14.facts)
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, w14.completeness)
         assertEquals(1, w14.diagnostics.size)
         assertDiagnostic(w14.diagnostics[0], "REQUIRED_FACT_UNRESOLVED", "incomplete", "field", 13, "status")

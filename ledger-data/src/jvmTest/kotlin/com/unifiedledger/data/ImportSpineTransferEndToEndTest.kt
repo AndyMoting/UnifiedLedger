@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateDecisionSnapshot
@@ -18,6 +19,7 @@ import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -104,12 +106,12 @@ class ImportSpineTransferEndToEndTest {
 
     // Source records T1..T10 (synthetic facts; occurred_at pinned for T1, deterministic
     // distinct instants for the rest).
-    private val t1Facts = ImportSourceFacts(10000, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "提现已到账")
-    private val t2Facts = ImportSourceFacts(20000, "CNY", 2, "2026-08-02T09:00:00+08:00", "in", "支付成功")
-    private val t3Facts = ImportSourceFacts(5000, "CNY", 2, "2026-08-03T10:15:00+08:00", "out", "支付成功")
-    private val t4Facts = ImportSourceFacts(6600, "CNY", 2, "2026-08-04T11:30:00+08:00", "in", "已存入零钱")
-    private val t6Facts = ImportSourceFacts(1000, "CNY", 2, "2026-08-06T12:00:00+08:00", "/", "提现已到账")
-    private val t10Facts = ImportSourceFacts(1200, "CNY", 2, "2026-08-10T13:45:00+08:00", "out", "支付成功")
+    private val t1Facts = ImportSourceFacts(10000, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "提现已到账", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val t2Facts = ImportSourceFacts(20000, "CNY", 2, "2026-08-02T09:00:00+08:00", "in", "支付成功", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val t3Facts = ImportSourceFacts(5000, "CNY", 2, "2026-08-03T10:15:00+08:00", "out", "支付成功", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val t4Facts = ImportSourceFacts(6600, "CNY", 2, "2026-08-04T11:30:00+08:00", "in", "已存入零钱", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val t6Facts = ImportSourceFacts(1000, "CNY", 2, "2026-08-06T12:00:00+08:00", "/", "提现已到账", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val t10Facts = ImportSourceFacts(1200, "CNY", 2, "2026-08-10T13:45:00+08:00", "out", "支付成功", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val t1PrimeFacts = t1Facts.copy(amountMinor = 10001)
 
     // Content hashes computed test-side from the frozen facts via the canonical digest
@@ -126,8 +128,8 @@ class ImportSpineTransferEndToEndTest {
     // prove ordinary v1 bytes are unchanged by the transfer contract extension.
     private val hashR1 = "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2"
     private val hashR3 = "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35"
-    private val r1Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled")
-    private val r3Facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null)
+    private val r1Facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+    private val r3Facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
     private val t1OccurredInstant = Instant.parse("2026-08-01T12:30:00+08:00")
 
@@ -336,6 +338,7 @@ class ImportSpineTransferEndToEndTest {
         recordKind = kind,
         facts = facts,
         completeness = completeness,
+        candidateGeneratedAt = "legacy-intake-v1",
     )
 
     private fun transferConfirmRequest(
@@ -1000,7 +1003,17 @@ class ImportSpineTransferEndToEndTest {
                     intakeIds("t4", "status-t4-1"),
                     intakeIds("t6", "status-t6-1"),
                     intakeIds("t1b", "status-t1b-1"),
-                    intakeIds("t1c", "status-t1c-1"),
+                    // P4-07: T-1c carries the same exact business tuple as T-1b, so its
+                    // intake appends one directed duplicate candidate (subject t1c ->
+                    // possible existing t1b) per D-105 section 2.
+                    intakeIds("t1c", "status-t1c-1").copy(
+                        duplicateIds = listOf(
+                            com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-t1c-t1b"),
+                                ImportStatusHistoryId("duplicate-status-t1c-t1b"),
+                            ),
+                        ),
+                    ),
                     intakeIds("t1o", "status-t1o-1"),
                 ),
             )
@@ -1331,7 +1344,20 @@ class ImportSpineTransferEndToEndTest {
             assertEquals("candidate-d1", e31Retry.receipt.candidateId.value)
 
             // E-32: confirm failure after the formal persist (new candidate @ batch-p404-d/1).
-            val intakeBatchD2 = BatchIntakeIdSource(listOf(intakeIds("d2", "status-d2-1")))
+            // P4-07: D-2 shares T-1's exact business tuple with D-1, so the intake also
+            // appends one directed duplicate candidate (subject d2 -> possible existing d1).
+            val intakeBatchD2 = BatchIntakeIdSource(
+                listOf(
+                    intakeIds("d2", "status-d2-1").copy(
+                        duplicateIds = listOf(
+                            com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-d2-d1"),
+                                ImportStatusHistoryId("duplicate-status-d2-d1"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), intakeBatchD2, ImportContentFingerprint()).execute(
                     intakeRequest("req-d2-intake", "batch-p404-d", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE),
@@ -1870,9 +1896,19 @@ class ImportSpineTransferEndToEndTest {
                 }
             }
             assertEquals(22L, queryLongJdbc(url, "PRAGMA user_version"))
+            // The E-40 step itself is 21 -> 22; the chain is then completed to the
+            // current schema before any current-runtime query runs (P4-07 v24 rebuilt
+            // import_source_record, so the generated queries need the final shape).
+            JdbcSqliteDriver(url, migrationProps()).use { driver ->
+                LedgerDatabase(driver).transaction {
+                    LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 24)
+                    driver.execute(null, "PRAGMA user_version = 24", 0)
+                }
+            }
+            assertEquals(24L, queryLongJdbc(url, "PRAGMA user_version"))
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(23, LedgerDatabase.Schema.version)
+                assertEquals(24, LedgerDatabase.Schema.version)
                 // Existing v21 ordinary rows keep contract_version 1.
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest("ledger-p404", "req-v21-intake").executeAsOne()
                 assertEquals(1L, source.contract_version)
@@ -1887,7 +1923,13 @@ class ImportSpineTransferEndToEndTest {
                 assertEquals(1L, queryLong(driver, "SELECT count(*) FROM rg03_operation_request"))
                 assertEquals(1L, queryLong(driver, "SELECT count(*) FROM rg04_import_request"))
                 assertEquals(1L, queryLong(driver, "SELECT count(*) FROM rg08_operation"))
-                // The v21 ordinary row replays through the unchanged intake equivalence.
+                // The v21 ordinary row replays through the intake equivalence once the
+                // replay presents the funding facts the v24 migration assigned
+                // (D-105 section 5: migrated sources carry UNRESOLVED + sentinel rule).
+                val migratedFacts = r1Facts.copy(
+                    fundingState = ImportFundingState.UNRESOLVED,
+                    fundingRuleId = "migration-v24-unresolved",
+                )
                 val replay = ExecuteImportIntake(
                     SqlDelightImportSpineStore(database, driver),
                     BatchIntakeIdSource(emptyList()),
@@ -1898,12 +1940,34 @@ class ImportSpineTransferEndToEndTest {
                         inputRef = "batch-p402-a",
                         recordOrdinal = 0,
                         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                        facts = r1Facts,
+                        facts = migratedFacts,
                         completeness = ImportCompleteness.VALID_COMPLETE,
+                        candidateGeneratedAt = "legacy-intake-v1",
                     ),
                 )
                 assertIs<ImportIntakeResult.NoChange>(replay)
                 assertEquals("equivalent_replay", replay.reasonCode)
+                // Funding facts are source facts (D-105 section 3): replaying the same
+                // row with legacy SETTLED facts against the persisted UNRESOLVED row is
+                // a hard collision with zero writes.
+                val collision = assertIs<ImportIntakeResult.Rejected>(
+                    ExecuteImportIntake(
+                        SqlDelightImportSpineStore(database, driver),
+                        BatchIntakeIdSource(emptyList()),
+                        ImportContentFingerprint(),
+                    ).execute(
+                        ImportIntakeRequest(
+                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-v21-collision")),
+                            inputRef = "batch-p402-a",
+                            recordOrdinal = 0,
+                            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                            facts = r1Facts,
+                            completeness = ImportCompleteness.VALID_COMPLETE,
+                            candidateGeneratedAt = "legacy-intake-v1",
+                        ),
+                    ),
+                )
+                assertEquals("SPINE_IDENTITY_COLLISION", collision.diagnostic.code)
 
                 // New transfer v2 operations are usable after the migration.
                 val cat = catalog(ledgerId)
@@ -1992,12 +2056,10 @@ class ImportSpineTransferEndToEndTest {
                 }
                 assertEquals(0L, queryLong(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
-            // Bring the migrated database to the current v23 schema so the fresh
-            // v23 schema comparison includes the additive P4-08 shared objects.
-            JdbcSqliteDriver(url, migrationProps()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 22, 23)
-            }
-            // Fresh schema equals the migrated schema (version 23).
+            // The migrated database is already at the current v24 schema (the chain
+            // completion above), so the fresh-schema comparison covers every additive
+            // P4-08 and P4-07 shared object.
+            // Fresh schema equals the migrated schema (version 24).
 
             JdbcSqliteDriver(freshUrl, migrationProps()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
@@ -2106,6 +2168,7 @@ class ImportSpineTransferEndToEndTest {
                         facts = t1Facts,
                         completeness = ImportCompleteness.VALID_COMPLETE,
                         contentHash = hashT1,
+                        candidateGeneratedAt = "legacy-intake-v1",
                     ),
                 ) { error("must not allocate") }
             }
@@ -2340,7 +2403,7 @@ class ImportSpineTransferEndToEndTest {
                 // would throw in the CurrencyUnit init, so a typed rejection below also
                 // proves no such construction happened).
                 val persistedScale = if (vector.sourceScale < 0) 0 else vector.sourceScale
-                val facts = ImportSourceFacts(vector.amountMinor, "CNY", persistedScale, t1Facts.occurredAt, "out", "支付成功")
+                val facts = ImportSourceFacts(vector.amountMinor, "CNY", persistedScale, t1Facts.occurredAt, "out", "支付成功", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
                 val hash = fingerprint.digest(ImportRecordKind.TRANSFER_FLOW_SOURCE, facts)
                 val intakeIds = BatchIntakeIdSource(listOf(scaleIntakeIds(caseId)))
                 val commitIds = BatchCommitIdSource(listOf(scaleCommitIds(caseId)))

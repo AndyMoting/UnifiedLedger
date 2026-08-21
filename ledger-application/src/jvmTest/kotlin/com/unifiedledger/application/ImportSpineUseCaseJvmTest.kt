@@ -44,8 +44,9 @@ class ImportSpineUseCaseJvmTest {
         inputRef = "batch-p402-a",
         recordOrdinal = 0,
         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
         completeness = ImportCompleteness.VALID_COMPLETE,
+        candidateGeneratedAt = "legacy-intake-v1",
     )
 
     private class RecordingIntakePort(

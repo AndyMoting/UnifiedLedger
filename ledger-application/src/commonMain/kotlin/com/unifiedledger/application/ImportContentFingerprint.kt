@@ -34,8 +34,14 @@ class ImportContentFingerprint {
 
 /** Exact, privacy-safe P4-07 comparison fingerprint. No provider payload is retained. */
 class ImportDuplicateComparisonFingerprint {
+    /**
+     * Frozen P4-07 comparison projection (D-105 section 3): record kind/version,
+     * amount/currency/precision, occurred-at, direction, status presence/value. Members
+     * are ordered by ascending UTF-16 code units; every leaf is a JSON string.
+     */
     fun canonicalJson(snapshot: ImportDuplicateComparisonSnapshot): String = buildString {
         append("{\"amount_minor\":").append(jcsString(snapshot.amountMinor.toString()))
+        append(",\"contract_version\":").append(jcsString(snapshot.contractVersion.toString()))
         append(",\"currency_code\":").append(jcsString(snapshot.currencyCode))
         append(",\"currency_precision\":").append(jcsString(snapshot.currencyPrecision.toString()))
         append(",\"direction_token\":").append(jcsString(snapshot.directionToken))

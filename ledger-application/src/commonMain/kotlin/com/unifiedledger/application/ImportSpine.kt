@@ -44,6 +44,11 @@ enum class ImportFundingState { SETTLED, NO_FUNDS, UNRESOLVED }
 enum class ImportDuplicateCandidateKind { EXACT_BUSINESS_TUPLE, CLOSED_OR_FAILED_NO_FUNDS }
 enum class ImportDuplicateStatus { DEFERRED, CONFIRMED_DUPLICATE, CONFIRMED_DISTINCT, DISMISSED_LOOKALIKE, REJECTED }
 
+// P4-07 funding facts are explicit at every construction site (D-105 section 5): the
+// caller owns them; there is no silent default. The legacy-settled token is the frozen
+// relay value for sources without an approved funding-state provider contract.
+const val IMPORT_FUNDING_RULE_LEGACY_SETTLED = "legacy-settled-v1"
+
 data class ImportSourceFacts(
     val amountMinor: Long,
     val currencyCode: String,
@@ -51,9 +56,9 @@ data class ImportSourceFacts(
     val occurredAt: String,
     val directionToken: String,
     val statusToken: String?,
-    val fundingState: ImportFundingState = ImportFundingState.SETTLED,
-    val fundingRuleId: String = "legacy-settled-v1",
-    val fundingRuleVersion: Int = 1,
+    val fundingState: ImportFundingState,
+    val fundingRuleId: String,
+    val fundingRuleVersion: Int,
 )
 
 data class ImportIntakeRequest(
@@ -63,7 +68,7 @@ data class ImportIntakeRequest(
     val recordKind: ImportRecordKind,
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
-    val candidateGeneratedAt: String = "legacy-intake-v1",
+    val candidateGeneratedAt: String,
 )
 
 data class ImportIntakeSnapshot(
@@ -74,13 +79,14 @@ data class ImportIntakeSnapshot(
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
     val contentHash: String,
-    val candidateGeneratedAt: String = "legacy-intake-v1",
+    val candidateGeneratedAt: String,
 )
 
 data class ImportDuplicateComparisonSnapshot(
     val subjectSourceId: ImportSourceId,
     val possibleExistingSourceId: ImportSourceId?,
     val recordKind: ImportRecordKind,
+    val contractVersion: Int,
     val amountMinor: Long,
     val currencyCode: String,
     val currencyPrecision: Int,

@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecision
 import com.unifiedledger.application.ImportCandidateDecisionResult
@@ -23,6 +24,7 @@ import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -104,12 +106,13 @@ class ImportSpineLifecycleEndToEndTest {
         inputRef = "batch-p402-a",
         recordOrdinal = 0,
         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
         completeness = ImportCompleteness.VALID_COMPLETE,
+        candidateGeneratedAt = "2026-08-19T08:00:00Z",
     )
 
     private fun r1Prime(requestId: String) = r1(requestId = requestId).copy(
-        facts = ImportSourceFacts(12851, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+        facts = ImportSourceFacts(12851, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
     )
 
     private fun r2() = ImportIntakeRequest(
@@ -117,8 +120,9 @@ class ImportSpineLifecycleEndToEndTest {
         inputRef = "batch-p402-a",
         recordOrdinal = 1,
         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled"),
+        facts = ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
         completeness = ImportCompleteness.VALID_COMPLETE,
+        candidateGeneratedAt = "2026-08-19T08:00:00Z",
     )
 
     private fun r3() = ImportIntakeRequest(
@@ -126,8 +130,9 @@ class ImportSpineLifecycleEndToEndTest {
         inputRef = "batch-p402-b",
         recordOrdinal = 0,
         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null),
+        facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
         completeness = ImportCompleteness.VALID_INCOMPLETE,
+        candidateGeneratedAt = "2026-08-19T08:00:00Z",
     )
 
     private fun r5() = ImportIntakeRequest(
@@ -135,8 +140,9 @@ class ImportSpineLifecycleEndToEndTest {
         inputRef = "batch-p402-c",
         recordOrdinal = 0,
         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled"),
+        facts = ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
         completeness = ImportCompleteness.VALID_COMPLETE,
+        candidateGeneratedAt = "2026-08-19T08:00:00Z",
     )
 
     private fun intakeIds(prefix: String, statusId: String) = ImportIntakeIds(
@@ -406,17 +412,26 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(o01.returnedIds, o03.returnedIds)
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
-            // P407-Q-004: raw identity replay includes all persisted funding audit facts.
+            // P407-Q-004: raw identity replay includes all persisted funding source facts.
             listOf(
                 r1(requestId = "req-a-funding-state").copy(facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS)),
                 r1(requestId = "req-a-funding-rule").copy(facts = r1().facts.copy(fundingRuleId = "source-contract-v2")),
                 r1(requestId = "req-a-funding-version").copy(facts = r1().facts.copy(fundingRuleVersion = 2)),
-                r1(requestId = "req-a-generated-at").copy(candidateGeneratedAt = "2026-08-20T00:00:00Z"),
             ).forEach { changed ->
                 val rejected = assertIs<ImportIntakeResult.Rejected>(executor.intake(changed))
                 assertEquals("SPINE_IDENTITY_COLLISION", rejected.diagnostic.code)
                 assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
             }
+
+            // SPEC-003 (D-105 section 5): candidate_generated_at is an audit fact, not a
+            // source fact. A raw-identity replay carrying a different audit timestamp is a
+            // zero-write NoChange, never a collision.
+            val generatedAtReplay = assertIs<ImportIntakeResult.NoChange>(
+                executor.intake(r1(requestId = "req-a-generated-at").copy(candidateGeneratedAt = "2026-08-20T00:00:00Z")),
+            )
+            assertNull(generatedAtReplay.receipt)
+            assertEquals("equivalent_replay", generatedAtReplay.reasonCode)
+            assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
             // O-04: same raw identity, different content: hard collision.
             val o04 = assertIs<ImportIntakeResult.Rejected>(executor.intake(r1Prime(requestId = "req-a-intake-3")))
@@ -1050,9 +1065,10 @@ class ImportSpineLifecycleEndToEndTest {
                         inputRef = "batch-p402-a",
                         recordOrdinal = 0,
                         recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled"),
+                        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
                         completeness = ImportCompleteness.VALID_COMPLETE,
                         contentHash = "sha256:test",
+                        candidateGeneratedAt = "2026-08-19T08:00:00Z",
                     ),
                 ) { error("must not allocate") }
             }
@@ -1294,6 +1310,85 @@ class ImportSpineLifecycleEndToEndTest {
             )
             assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun p407NoFundsCandidateRejectsConfirmedDuplicateDecisionWithZeroWrites() {
+        // SPEC-001 (D-105 section 3): CONFIRMED_DUPLICATE requires a directed rule
+        // constraint; a NULL-target CLOSED_OR_FAILED_NO_FUNDS candidate has none, so the
+        // review is a typed rejection with zero writes and a retryable request identity.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val ids = BatchIntakeIdSource(listOf(
+                intakeIds("p407-nf-review", "status-p407-nf-review").copy(
+                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                        ImportStatusHistoryId("duplicate-status-p407-nf-review"),
+                    )),
+                ),
+            ))
+            val store = SqlDelightImportSpineStore(database, driver)
+            assertIs<ImportIntakeResult.Accepted>(
+                ExecuteImportIntake(store, ids, ImportContentFingerprint()).execute(
+                    r1("request-p407-nf-review").copy(
+                        facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS),
+                    ),
+                ),
+            )
+            fun duplicateReviewRows(): List<Long> = listOf(
+                "import_duplicate_review_request",
+                "import_duplicate_review_snapshot",
+                "import_duplicate_review_receipt",
+            ).map { table ->
+                driver.executeQuery(null, "SELECT count(*) FROM $table", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value
+            }
+            val noFundsFingerprint = driver.executeQuery(
+                null,
+                "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id = 'duplicate-p407-nf-review'",
+                { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0,
+            ).value
+            val rejected = assertIs<ImportDuplicateReviewResult.Rejected>(
+                ReviewImportDuplicateCandidate(store).execute(
+                    com.unifiedledger.application.ImportDuplicateReviewRequest(
+                        ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                        noFundsFingerprint,
+                        ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                        "closed-no-funds",
+                        "2026-08-19T12:00:00+08:00",
+                        "reviewer-p407",
+                        "2026-08-19T12:00:00+08:00",
+                        com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
+                        ImportStatusHistoryId("review-history-p407-nf-review"),
+                    ),
+                ),
+            )
+            assertEquals("SPINE_DECISION_KIND_MISMATCH", rejected.diagnostic.code)
+            assertEquals(listOf(0L, 0L, 0L), duplicateReviewRows())
+            // The candidate stays DEFERRED and the rolled-back claim keeps the identity
+            // retryable: the corrected decision accepts on the same request id.
+            assertEquals("DEFERRED", database.ledgerQueries.selectDuplicateCurrentStatus(ledgerId.value, "duplicate-p407-nf-review").executeAsOne())
+            val corrected = assertIs<ImportDuplicateReviewResult.Accepted>(
+                ReviewImportDuplicateCandidate(store).execute(
+                    com.unifiedledger.application.ImportDuplicateReviewRequest(
+                        ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                        noFundsFingerprint,
+                        ImportDuplicateStatus.DISMISSED_LOOKALIKE,
+                        "manual-dismissal",
+                        "2026-08-19T12:30:00+08:00",
+                        "reviewer-p407",
+                        "2026-08-19T12:30:00+08:00",
+                        com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
+                        ImportStatusHistoryId("review-history-p407-nf-review"),
+                    ),
+                ),
+            )
+            assertEquals(ImportDuplicateStatus.DISMISSED_LOOKALIKE, corrected.receipt.outcome)
+            assertEquals(listOf(1L, 1L, 1L), duplicateReviewRows())
         } finally { driver.close() }
     }
 
