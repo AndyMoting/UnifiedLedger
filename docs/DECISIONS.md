@@ -1672,7 +1672,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已批准（2026-08-22 用户批准 O-1..O-8 全部方案 A）；本决定批准契约，不授权实施代码。
 
-**决定提案：** 由 `docs/specs/2026-08-22-p4-06-credit-mixed-payment-contract-design.md`（Status: draft，待独立评审后定稿 approved）冻结 RL-05 信用生命周期与 RL-06 混合支付的核心语义契约：收/付款方式列白名单解冻（仅提取支付腿种类 token，掩码账号/尾号不提取不持久化，白名单+UNKNOWN fail-closed，fixture 全合成）；恰三个新 kind 固定 contract_version=3（信用消费含退款变体、信用还款、混合支付，kind→version 封闭派生）；信用负债账户必须先由用户显式持有、不得猜测或自动建户、共享负债属迁移配置；三腿生命周期（消费 费用+/负债余额转负零现金流出、还款独立 `CREDIT_REPAYMENT` 资产−/负债+、退款独立经济事件 费用−/负债冲减并关联原交易、利息/手续费/逾期费 future_rule）；混合支付候选默认 `pending_confirmation`、缺腿保持资料不足不补平、`constraint_solved` 反推只作人工确认输入建议、禁止基线与调整重复计入；evidence 基数一行来源 ↔ 一笔交易、混合支付交易内 1 evidence:N postings；全部持久化恰一次 v24→v25 加性迁移，复用 RG-04/RG-07 合同语义而不复制 `rg04_*`/`rg07_*` 竖井 owner 表。
+**决定提案：** 由 `docs/specs/2026-08-22-p4-06-credit-mixed-payment-contract-design.md`（Status: approved，2026-08-22 用户批准 O-1..O-8；独立规格评审 findings P406-SPEC-001..007 已修复闭合）冻结 RL-05 信用生命周期与 RL-06 混合支付的核心语义契约：收/付款方式列白名单解冻（仅提取支付腿种类 token，掩码账号/尾号不提取不持久化，白名单+UNKNOWN fail-closed，fixture 全合成）；恰三个新 kind 固定 contract_version=3（信用消费含退款变体、信用还款、混合支付，kind→version 封闭派生）；信用负债账户必须先由用户显式持有、不得猜测或自动建户、共享负债属迁移配置；三腿生命周期（消费 费用+/负债余额转负零现金流出、还款独立 `CREDIT_REPAYMENT` 资产−/负债+、退款独立经济事件 费用−/负债冲减并关联原交易、利息/手续费/逾期费 future_rule）；混合支付候选默认 `pending_confirmation`、缺腿保持资料不足不补平、`constraint_solved` 反推只作人工确认输入建议、禁止基线与调整重复计入；evidence 基数一行来源 ↔ 一笔交易、混合支付交易内 1 evidence:N postings；全部持久化恰一次 v24→v25 加性迁移，复用 RG-04/RG-07 合同语义而不复制 `rg04_*`/`rg07_*` 竖井 owner 表。
 
 **O-1..O-8 已批准裁决（2026-08-22，全部方案 A）：**
 
@@ -1691,4 +1691,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施登记：** 未实施（实施分两片，各需独立实施授权与规格）。
 
-**关联决定：** `D-008`、`D-011`、`D-040`、`D-049`、`D-053`、`D-058`、`D-072`、`D-073`、`D-078`、`D-097`、`D-100`、`D-103`、`D-104`
+**评审闭合：** 2026-08-22 独立规格评审 APPROVE with findings（P406-SPEC-001..007），全部已修复于本提交。
+
+**关联决定：** `D-008`、`D-011`、`D-032`、`D-040`、`D-049`、`D-053`、`D-058`、`D-072`、`D-073`、`D-078`、`D-096`、`D-097`、`D-100`、`D-102`、`D-103`、`D-104`、`D-105`
