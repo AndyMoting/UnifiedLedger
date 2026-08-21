@@ -1705,6 +1705,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 与迁移事务性（append-only 守卫触发器、fresh = migrated、funding 列不回写）；领域扩展纯加性（新增 `createCreditExpense`/`createCreditRefundReceipt` 与 posting role，不修改既有冻结函数）；全部 fixture 全合成且不落盘掩码尾号/括注原文；按规格 §8 顺序完成独立规格评审、质量评审、distinct verifier 与完整受影响套件后方可接受。
 
-**评审闭合：** 2026-08-22 独立规格评审 findings P406S1-SPEC-001..009（2 MAJOR、2 MINOR、3 LOW、1 INFO、1 数据填充修订）经主代理逐项裁决后全部修复于本提交，spec Status 转 approved。
+**评审闭合：** 2026-08-22 独立规格评审 findings P406S1-SPEC-001..009（3 MAJOR——其中 SPEC-001 为数据填充修订类、2 MINOR、3 LOW、1 INFO）经主代理逐项裁决后全部修复，spec Status 转 approved；闭环终审 CLOSURE APPROVE。
 
 **关联决定：** `D-106`（主）、`D-072`、`D-073`、`D-078`、`D-097`、`D-100`、`D-102`、`D-104`、`D-105`
