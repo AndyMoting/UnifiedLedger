@@ -539,6 +539,10 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
                 ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
                 ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
                 ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                // P4-06 v3 kinds: unused by this P4-04/P4-05b oracle, mapped for exhaustiveness.
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+                ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+                ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
             }
             val complete = completeness == ImportCompleteness.VALID_COMPLETE
             requests += rlRow(ledgerId, requestId, "intake")

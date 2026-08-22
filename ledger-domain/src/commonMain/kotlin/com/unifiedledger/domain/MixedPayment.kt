@@ -34,12 +34,32 @@ data class CreditPrincipalRepaymentIds(
     val liabilityPostingId: PostingId,
 )
 
+// P4-06 slice 1 (RL-05 credit, D-107): single credit-leg expense degeneration of the
+// D-072 mixed-entry contract. createMixedPaymentExpense stays frozen at exactly two
+// funding legs, so a single-credit-leg consumption gets its own additive command.
+data class CreditExpenseCommand(
+    val ledgerId: LedgerId,
+    val total: Money,
+    val categoryId: CategoryId,
+    val creditLiabilityAccountId: AccountId,
+    val times: TransactionTimes,
+)
+
+data class CreditExpenseIds(
+    val transactionId: TransactionId,
+    val versionId: TransactionVersionId,
+    val postingSetId: PostingSetId,
+    val expensePostingId: PostingId,
+    val liabilityPostingId: PostingId,
+)
+
 enum class MixedPaymentPostingRole {
     EXPENSE,
     MIXED_EXPENSE_ASSET_FUNDING,
     MIXED_EXPENSE_CREDIT_FUNDING,
     CREDIT_REPAYMENT_ASSET_OUTFLOW,
     CREDIT_REPAYMENT_LIABILITY_PRINCIPAL,
+    CREDIT_EXPENSE_LIABILITY_FUNDING,
 }
 
 data class MixedPaymentPosting(val posting: Posting, val role: MixedPaymentPostingRole, val categoryId: CategoryId? = null)
@@ -59,6 +79,12 @@ data class MixedPaymentExpense(
 )
 
 data class CreditPrincipalRepayment(
+    val formalTransaction: FormalTransaction,
+    val postings: List<MixedPaymentPosting>,
+    val reportEffects: MixedPaymentReportEffects,
+)
+
+data class CreditExpense(
     val formalTransaction: FormalTransaction,
     val postings: List<MixedPaymentPosting>,
     val reportEffects: MixedPaymentReportEffects,
@@ -158,6 +184,69 @@ fun createCreditPrincipalRepayment(
     val formal = formal(command.ledgerId, TransactionKind.CREDIT_REPAYMENT, command.times, ids.transactionId, ids.versionId, ids.postingSetId, typed.map { it.posting })
     if (formal is DomainResult.Failure) return formal
     return DomainResult.Success(CreditPrincipalRepayment((formal as DomainResult.Success).value, typed, MixedPaymentReportEffects(0, 0, command.principal.minorUnits, 0, 0)))
+}
+
+/**
+ * P4-06 slice 1 (D-107 section 3.4): credit-leg-only consumption. Contract semantics =
+ * the single-credit-leg degeneration of the D-072 mixed entry: a secondary active
+ * expense category with its expense account (+ total) funded by one user-held real
+ * LIABILITY account (- total). The liability validation is identical to
+ * [createCreditPrincipalRepayment] (real / owned / LIABILITY / same ledger / same
+ * currency). Report effects follow the D-058 algorithm: consumption = total,
+ * ordinary expense = total, cash outflow = 0, income = 0, net-worth change = -total
+ * (zero cash leaves on purchase day; the consumption is recognized once in full).
+ */
+fun createCreditExpense(
+    catalog: LedgerCatalog,
+    command: CreditExpenseCommand,
+    ids: CreditExpenseIds,
+): DomainResult<CreditExpense> {
+    val category = catalog.category(command.categoryId)
+        ?: return DomainResult.Failure(MixedPaymentViolation.SecondaryCategoryRequired)
+    val parentId = category.parentId ?: return DomainResult.Failure(MixedPaymentViolation.SecondaryCategoryRequired)
+    if (!category.active) return DomainResult.Failure(MixedPaymentViolation.CategoryInactive)
+    if (category.kind != CategoryKind.EXPENSE) return DomainResult.Failure(MixedPaymentViolation.ExpenseCategoryRequired)
+    val expenseAccount = category.postingAccountId?.let(catalog::account)
+        ?: return DomainResult.Failure(MixedPaymentViolation.ExpenseCategoryRequired)
+    if (expenseAccount.kind != AccountKind.EXPENSE) return DomainResult.Failure(MixedPaymentViolation.ExpenseCategoryRequired)
+
+    if (command.total.minorUnits <= 0) return DomainResult.Failure(MixedPaymentViolation.AmountMustBePositive)
+
+    val liability = catalog.account(command.creditLiabilityAccountId)
+        ?: return DomainResult.Failure(MixedPaymentViolation.UnknownRealAccount)
+    if (!liability.realAccount) return DomainResult.Failure(MixedPaymentViolation.RealFinancialAccountRequired)
+    if (!liability.ownedByUser) return DomainResult.Failure(MixedPaymentViolation.OwnedAccountRequired)
+    if (liability.kind != AccountKind.LIABILITY) return DomainResult.Failure(MixedPaymentViolation.AssetAndCreditLiabilityRequired)
+    if (liability.ledgerId != command.ledgerId || liability.currency != command.total.currency) {
+        return DomainResult.Failure(MixedPaymentViolation.SingleCurrencyRequired)
+    }
+
+    val parent = catalog.category(parentId) ?: return DomainResult.Failure(DomainViolation.InvalidMixedPayment)
+    if (parent.ledgerId != command.ledgerId || parent.parentId != null || parent.kind != CategoryKind.EXPENSE) {
+        return DomainResult.Failure(DomainViolation.InvalidMixedPayment)
+    }
+    if (expenseAccount.ledgerId != command.ledgerId || expenseAccount.realAccount || expenseAccount.currency != command.total.currency) {
+        return DomainResult.Failure(DomainViolation.InvalidMixedPayment)
+    }
+
+    val liabilityMinor = checkedNegate(command.total.minorUnits)
+        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val typed = listOf(
+        MixedPaymentPosting(Posting(ids.expensePostingId, expenseAccount.id, command.total), MixedPaymentPostingRole.EXPENSE, command.categoryId),
+        MixedPaymentPosting(
+            Posting(ids.liabilityPostingId, liability.id, Money.ofMinor(liabilityMinor, command.total.currency)),
+            MixedPaymentPostingRole.CREDIT_EXPENSE_LIABILITY_FUNDING,
+        ),
+    )
+    val formal = formal(command.ledgerId, TransactionKind.EXPENSE, command.times, ids.transactionId, ids.versionId, ids.postingSetId, typed.map { it.posting })
+    if (formal is DomainResult.Failure) return formal
+    return DomainResult.Success(
+        CreditExpense(
+            (formal as DomainResult.Success).value,
+            typed,
+            MixedPaymentReportEffects(command.total.minorUnits, command.total.minorUnits, 0, 0, -command.total.minorUnits),
+        ),
+    )
 }
 
 private fun formal(ledgerId: LedgerId, kind: TransactionKind, times: TransactionTimes, transactionId: TransactionId, versionId: TransactionVersionId, postingSetId: PostingSetId, postings: List<Posting>): DomainResult<FormalTransaction> {

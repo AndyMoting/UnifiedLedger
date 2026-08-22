@@ -1,6 +1,7 @@
 package com.unifiedledger.application.import.alipay
 
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportPaymentProfile
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 
@@ -33,6 +34,8 @@ sealed interface AlipayRowResult {
         val facts: ImportSourceFacts,
         val completeness: ImportCompleteness,
         override val diagnostics: List<AlipayDiagnostic>,
+        /** P4-06 slice 1: non-null exactly for v3 kinds; carries only normalized whitelist tokens. */
+        val paymentProfile: ImportPaymentProfile? = null,
     ) : AlipayRowResult
 
     /** Rejected rows carry exactly one diagnostic and produce no record (zero write). */
@@ -73,6 +76,18 @@ object AlipayDiagnostics {
 
     fun unknownToken(inputRef: String, ordinal: Int): AlipayDiagnostic =
         AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_TOKEN", "unsupported", "record", inputRef, ordinal, null)
+
+    /** P4-06 slice 1 (D-107 section 2.4): any non-whitelist payment-leg token. */
+    fun unknownPaymentLeg(inputRef: String, ordinal: Int): AlipayDiagnostic =
+        AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG", "unsupported", "record", inputRef, ordinal, null)
+
+    /** P4-06 slice 1: slice-2 fail-closed asset+credit mixed leg with an 支出 direction. */
+    fun mixedPaymentUnsupported(inputRef: String, ordinal: Int): AlipayDiagnostic =
+        AlipayDiagnostic("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
+
+    /** P4-06 slice 1: defensive credit leg with an 收入 direction (no anchor). */
+    fun creditIncomeUnsupported(inputRef: String, ordinal: Int): AlipayDiagnostic =
+        AlipayDiagnostic("SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
 
     fun fieldAmountInvalid(inputRef: String, ordinal: Int): AlipayDiagnostic =
         AlipayDiagnostic("FIELD_AMOUNT_INVALID", "record_error", "field", inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_AMOUNT)

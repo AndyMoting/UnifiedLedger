@@ -1,0 +1,325 @@
+-- P4-06 slice 1 (RL-05 credit, D-107): v24 -> v25.
+-- Single additive migration delivering all three credit/mixed structures at once
+-- (contract D-106 section 6; slice 2 has zero schema changes). The caller wraps
+-- Schema.migrate in one outer transaction; deferring FK checks lets the rebuilt
+-- parents be replaced while all descendant rows survive (23.sqm defer template).
+-- Six stages (21.sqm template): create, empty backfill, fail-closed data guard
+-- (created and dropped inside the stage), staged rebuild of 3 tables, empty delete
+-- with silo guard, trigger restoration. Rebuilt tables match the fresh schema in
+-- Ledger.sq (fresh = migrated).
+
+PRAGMA defer_foreign_keys = 1;
+
+-- Stage 1: create the three new tables. mixed_payment_group and
+-- mixed_payment_group_leg are built-but-unused in slice 1 (zero rows); only
+-- import_candidate_payment_profile is populated by the runtime store.
+CREATE TABLE import_candidate_payment_profile (
+  ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
+  variant TEXT NOT NULL CHECK (variant IN ('credit_expense_direct', 'credit_expense_refund', 'credit_repayment', 'mixed_payment')),
+  asset_leg_kind_token TEXT, credit_leg_kind_token TEXT,
+  PRIMARY KEY (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  CHECK (
+    (variant IN ('credit_expense_direct', 'credit_expense_refund') AND credit_leg_kind_token IS NOT NULL AND asset_leg_kind_token IS NULL)
+    OR (variant = 'credit_repayment' AND credit_leg_kind_token IS NULL)
+    OR (variant = 'mixed_payment' AND credit_leg_kind_token IS NOT NULL AND asset_leg_kind_token IS NOT NULL)
+  )
+);
+CREATE TABLE mixed_payment_group (
+  ledger_id TEXT NOT NULL, group_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  total_minor INTEGER NOT NULL CHECK (total_minor > 0), generated_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, group_id),
+  UNIQUE (ledger_id, candidate_id), UNIQUE (ledger_id, transaction_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id)
+);
+CREATE TABLE mixed_payment_group_leg (
+  ledger_id TEXT NOT NULL, group_id TEXT NOT NULL, leg_index INTEGER NOT NULL CHECK (leg_index >= 1),
+  leg_class TEXT NOT NULL CHECK (leg_class IN ('asset', 'liability')), account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  PRIMARY KEY (ledger_id, group_id, leg_index),
+  FOREIGN KEY (ledger_id, group_id) REFERENCES mixed_payment_group(ledger_id, group_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+-- Stage 2: backfill. Intentionally empty: no cross-table data movement. The five new
+-- decision-snapshot columns are introduced as NULL via the Stage 4 rebuild, and the
+-- Stage 1 tables start empty (21.sqm template).
+
+-- Stage 3: fail-closed data guard (20.sqm/21.sqm precedent). Asserts the pre-migration
+-- v24 data satisfies the old shape invariants: no v3 record kinds, no credit/mixed
+-- candidate kinds, every decision snapshot satisfies the v24 XOR, and the three new
+-- Stage 1 tables are empty. The guard is created and dropped inside this stage.
+CREATE TABLE p406_migration_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_source_record WHERE record_kind IN ('credit_expense_source', 'credit_repayment_source', 'mixed_payment_source')) != 0;
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate WHERE candidate_kind IN ('credit_expense', 'credit_repayment', 'mixed_payment')) != 0;
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_decision_snapshot WHERE decision = 'confirm') != (SELECT count(*) FROM import_candidate_decision_snapshot WHERE decision = 'confirm' AND ((category_id IS NOT NULL AND funding_account_id IS NOT NULL AND from_account_id IS NULL AND to_account_id IS NULL) OR (category_id IS NULL AND funding_account_id IS NULL AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL)));
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_decision_snapshot WHERE decision = 'reject' AND (category_id IS NOT NULL OR funding_account_id IS NOT NULL OR from_account_id IS NOT NULL OR to_account_id IS NOT NULL)) != 0;
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_payment_profile) != 0;
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM mixed_payment_group) != 0;
+INSERT INTO p406_migration_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM mixed_payment_group_leg) != 0;
+DROP TABLE p406_migration_guard;
+
+-- Stage 4: staged rebuild of 3 spine tables (21.sqm template: stage copies, drop in
+-- child->parent order, create in parent->child order, explicit column copy, count
+-- guards, stage teardown). Existing descendant rows and FK semantics are fully
+-- preserved; the v24 funding columns keep their semantics and are never rewritten.
+
+CREATE TABLE import_source_record_stage AS SELECT * FROM import_source_record;
+CREATE TABLE import_candidate_stage AS SELECT * FROM import_candidate;
+CREATE TABLE import_candidate_decision_snapshot_stage AS SELECT * FROM import_candidate_decision_snapshot;
+
+DROP TABLE import_candidate_decision_snapshot;
+DROP TABLE import_candidate;
+DROP TABLE import_source_record;
+
+-- import_source_record: record_kind/contract_version CHECKs extended with the three
+-- v3 kinds and version 3, plus the three new kind->version pairs.
+CREATE TABLE import_source_record (
+  ledger_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  owner_request_id TEXT NOT NULL,
+  input_ref TEXT NOT NULL,
+  record_ordinal INTEGER NOT NULL CHECK (record_ordinal >= 0),
+  record_kind TEXT NOT NULL CHECK (record_kind IN ('ordinary_flow_source', 'transfer_flow_source', 'transfer_flow_source_missing_leg', 'credit_expense_source', 'credit_repayment_source', 'mixed_payment_source')),
+  content_hash TEXT NOT NULL,
+  contract_version INTEGER NOT NULL CHECK (contract_version IN (1, 2, 3)),
+  completeness TEXT NOT NULL CHECK (completeness IN ('valid_complete', 'valid_incomplete')),
+  amount_minor INTEGER,
+  currency_code TEXT,
+  currency_precision INTEGER CHECK (currency_precision IS NULL OR currency_precision >= 0),
+  occurred_at TEXT,
+  direction_token TEXT,
+  status_token TEXT,
+  funding_state TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  funding_rule_id TEXT NOT NULL DEFAULT 'migration-v24-unresolved',
+  funding_rule_version INTEGER NOT NULL DEFAULT 1,
+  candidate_generated_at TEXT NOT NULL DEFAULT 'migration-v24-unresolved',
+  PRIMARY KEY (ledger_id, source_id),
+  UNIQUE (ledger_id, input_ref, record_ordinal),
+  UNIQUE (ledger_id, owner_request_id),
+  FOREIGN KEY (ledger_id, owner_request_id) REFERENCES import_request(ledger_id, request_id),
+  CHECK (completeness != 'valid_complete' OR (amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_precision IS NOT NULL AND occurred_at IS NOT NULL AND direction_token IS NOT NULL AND status_token IS NOT NULL)),
+  CHECK (amount_minor IS NULL OR (currency_code IS NOT NULL AND currency_precision IS NOT NULL)),
+  CHECK ((record_kind = 'ordinary_flow_source' AND contract_version = 1) OR (record_kind IN ('transfer_flow_source', 'transfer_flow_source_missing_leg') AND contract_version = 2) OR (record_kind IN ('credit_expense_source', 'credit_repayment_source', 'mixed_payment_source') AND contract_version = 3))
+);
+INSERT INTO import_source_record(
+  ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
+  contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at,
+  direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at
+)
+SELECT
+  ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
+  contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at,
+  direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at
+FROM import_source_record_stage;
+
+-- import_candidate: candidate_kind CHECK extended with the credit/mixed kinds.
+CREATE TABLE import_candidate (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  candidate_kind TEXT NOT NULL CHECK (candidate_kind IN ('ordinary_flow', 'transfer_flow', 'transfer_flow_missing_leg', 'credit_expense', 'credit_repayment', 'mixed_payment')),
+  confidence TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  rule_version INTEGER NOT NULL CHECK (rule_version = 1),
+  PRIMARY KEY (ledger_id, candidate_id),
+  UNIQUE (ledger_id, source_id),
+  FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id)
+);
+INSERT INTO import_candidate(
+  ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version
+)
+SELECT
+  ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version
+FROM import_candidate_stage;
+
+-- import_candidate_decision_snapshot: five new nullable columns (three shared credit
+-- columns, two mixed leg amounts) plus the refund original-transaction FK; the confirm
+-- XOR CHECK evolves additively (20.sqm precedent) to exactly one of the six frozen
+-- shapes and the reject CHECK extends to all new columns.
+CREATE TABLE import_candidate_decision_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('confirm', 'reject')),
+  candidate_id TEXT NOT NULL,
+  expected_content_hash TEXT NOT NULL,
+  category_id TEXT,
+  funding_account_id TEXT,
+  from_account_id TEXT,
+  to_account_id TEXT,
+  credit_liability_account_id TEXT,
+  asset_account_id TEXT,
+  original_transaction_id TEXT,
+  asset_leg_minor INTEGER,
+  credit_leg_minor INTEGER,
+  explicit_confirmed_at TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (original_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
+  CHECK (decision != 'confirm' OR
+         (category_id IS NOT NULL AND funding_account_id IS NOT NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NOT NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NOT NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NOT NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NOT NULL AND credit_leg_minor IS NOT NULL)),
+  CHECK (decision != 'reject' OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL))
+);
+INSERT INTO import_candidate_decision_snapshot(
+  ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id,
+  funding_account_id, from_account_id, to_account_id, explicit_confirmed_at
+)
+SELECT
+  ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id,
+  funding_account_id, from_account_id, to_account_id, explicit_confirmed_at
+FROM import_candidate_decision_snapshot_stage;
+
+-- Rebuild count guards (21.sqm template).
+CREATE TABLE p406_rebuild_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p406_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_source_record) != (SELECT count(*) FROM import_source_record_stage);
+INSERT INTO p406_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate) != (SELECT count(*) FROM import_candidate_stage);
+INSERT INTO p406_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM import_candidate_decision_snapshot) != (SELECT count(*) FROM import_candidate_decision_snapshot_stage);
+DROP TABLE p406_rebuild_guard;
+
+DROP TABLE import_candidate_decision_snapshot_stage;
+DROP TABLE import_candidate_stage;
+DROP TABLE import_source_record_stage;
+
+-- Stage 5: drops. Intentionally empty: this migration deletes no existing table.
+-- Guarded assertion that the frozen rg03/rg04/rg08 silo owners stay queryable
+-- (21.sqm template).
+CREATE TABLE p406_silo_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_operation_request) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_source_record) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_evidence) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_transfer_candidate) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_confirmation) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg03_operation_receipt) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_request) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_source) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_evidence) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_candidate) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_confirmation) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg04_import_receipt) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_operation) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_source_record) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_evidence) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_candidate) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_confirmation) < (SELECT 0);
+INSERT INTO p406_silo_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM rg08_formal_transaction_metadata) < (SELECT 0);
+DROP TABLE p406_silo_guard;
+
+-- Stage 6: guard-trigger restoration for the rebuilt tables plus the new-table
+-- guards and the two mixed-payment write-order/behavioral triggers. Same shape and
+-- text as the fresh schema in Ledger.sq.
+DROP TRIGGER IF EXISTS import_source_record_guard_update;
+CREATE TRIGGER import_source_record_guard_update BEFORE UPDATE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot update import source record'); END;
+DROP TRIGGER IF EXISTS import_source_record_guard_delete;
+CREATE TRIGGER import_source_record_guard_delete BEFORE DELETE ON import_source_record BEGIN SELECT RAISE(ABORT, 'cannot delete import source record'); END;
+DROP TRIGGER IF EXISTS import_candidate_guard_update;
+CREATE TRIGGER import_candidate_guard_update BEFORE UPDATE ON import_candidate BEGIN SELECT RAISE(ABORT, 'cannot update import candidate'); END;
+DROP TRIGGER IF EXISTS import_candidate_guard_delete;
+CREATE TRIGGER import_candidate_guard_delete BEFORE DELETE ON import_candidate BEGIN SELECT RAISE(ABORT, 'cannot delete import candidate'); END;
+DROP TRIGGER IF EXISTS import_candidate_decision_snapshot_guard_update;
+CREATE TRIGGER import_candidate_decision_snapshot_guard_update BEFORE UPDATE ON import_candidate_decision_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update import decision snapshot'); END;
+DROP TRIGGER IF EXISTS import_candidate_decision_snapshot_guard_delete;
+CREATE TRIGGER import_candidate_decision_snapshot_guard_delete BEFORE DELETE ON import_candidate_decision_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete import decision snapshot'); END;
+DROP TRIGGER IF EXISTS import_candidate_payment_profile_guard_update;
+CREATE TRIGGER import_candidate_payment_profile_guard_update BEFORE UPDATE ON import_candidate_payment_profile BEGIN SELECT RAISE(ABORT, 'cannot update candidate payment profile'); END;
+DROP TRIGGER IF EXISTS import_candidate_payment_profile_guard_delete;
+CREATE TRIGGER import_candidate_payment_profile_guard_delete BEFORE DELETE ON import_candidate_payment_profile BEGIN SELECT RAISE(ABORT, 'cannot delete candidate payment profile'); END;
+DROP TRIGGER IF EXISTS mixed_payment_group_guard_update;
+CREATE TRIGGER mixed_payment_group_guard_update BEFORE UPDATE ON mixed_payment_group BEGIN SELECT RAISE(ABORT, 'cannot update mixed payment group'); END;
+DROP TRIGGER IF EXISTS mixed_payment_group_guard_delete;
+CREATE TRIGGER mixed_payment_group_guard_delete BEFORE DELETE ON mixed_payment_group BEGIN SELECT RAISE(ABORT, 'cannot delete mixed payment group'); END;
+DROP TRIGGER IF EXISTS mixed_payment_group_leg_guard_update;
+CREATE TRIGGER mixed_payment_group_leg_guard_update BEFORE UPDATE ON mixed_payment_group_leg BEGIN SELECT RAISE(ABORT, 'cannot update mixed payment group leg'); END;
+DROP TRIGGER IF EXISTS mixed_payment_group_leg_guard_delete;
+CREATE TRIGGER mixed_payment_group_leg_guard_delete BEFORE DELETE ON mixed_payment_group_leg BEGIN SELECT RAISE(ABORT, 'cannot delete mixed payment group leg'); END;
+-- Completeness: a group head row completes exactly at its INSERT (legs were written
+-- first); it must hold exactly one asset leg + one liability leg (D-072 frozen two
+-- funding legs) summing to total_minor.
+CREATE TRIGGER mixed_payment_group_complete BEFORE INSERT ON mixed_payment_group BEGIN
+  SELECT CASE WHEN (
+    SELECT count(*) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id AND leg_class = 'asset'
+  ) != 1 OR (
+    SELECT count(*) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id AND leg_class = 'liability'
+  ) != 1 OR (
+    SELECT COALESCE(SUM(amount_minor), 0) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id
+  ) != new.total_minor THEN RAISE(ABORT, 'mixed payment group incomplete') END;
+END;
+-- Frozen legs-first write order: once the head row exists the group is complete and
+-- no leg can be appended (compatible with the deferred leg FK: legs insert before the
+-- head exists and the FK is checked at commit).
+CREATE TRIGGER mixed_payment_group_leg_before_head BEFORE INSERT ON mixed_payment_group_leg BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM mixed_payment_group WHERE ledger_id = new.ledger_id AND group_id = new.group_id
+  ) THEN RAISE(ABORT, 'mixed payment group leg after head') END;
+END;

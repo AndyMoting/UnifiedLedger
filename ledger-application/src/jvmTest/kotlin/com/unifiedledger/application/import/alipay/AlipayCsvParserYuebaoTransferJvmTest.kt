@@ -341,7 +341,7 @@ class AlipayCsvParserYuebaoTransferJvmTest {
                 listOf(
                     listOf(
                         "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-                        "SYN-SECRET-PRODUCT", "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
+                        "SYN-SECRET-PRODUCT", "支出", "128.50", "", "交易成功",
                         "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
                     ).joinToString(",") + ",",
                 ) + batchARows(),

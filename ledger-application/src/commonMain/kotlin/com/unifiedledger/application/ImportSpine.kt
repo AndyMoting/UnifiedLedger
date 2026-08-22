@@ -36,6 +36,47 @@ enum class ImportRecordKind(val storageValue: String, val contractVersion: Int) 
     ORDINARY_FLOW_SOURCE("ordinary_flow_source", 1),
     TRANSFER_FLOW_SOURCE("transfer_flow_source", 2),
     TRANSFER_FLOW_SOURCE_MISSING_LEG("transfer_flow_source_missing_leg", 2),
+    CREDIT_EXPENSE_SOURCE("credit_expense_source", 3),
+    CREDIT_REPAYMENT_SOURCE("credit_repayment_source", 3),
+    MIXED_PAYMENT_SOURCE("mixed_payment_source", 3),
+}
+
+/**
+ * P4-06 slice 1 (D-107 section 3.2): candidate-layer semantic marker carried by every
+ * v3 intake row. The refund variant of a credit expense is not a fourth record kind:
+ * it is marked here and formalized under the D-078 refund contract semantics.
+ */
+enum class ImportPaymentVariant(val storageValue: String) {
+    CREDIT_EXPENSE_DIRECT("credit_expense_direct"),
+    CREDIT_EXPENSE_REFUND("credit_expense_refund"),
+    CREDIT_REPAYMENT("credit_repayment"),
+    MIXED_PAYMENT("mixed_payment"),
+}
+
+/**
+ * Payment-leg provenance for v3 rows (D-107 section 2.1 privacy boundary): only the
+ * normalized whitelist leg-kind tokens ever leave the parser; masked tails, accounts
+ * and raw bracket annotations never persist. [assetLegKindToken] is nullable for a
+ * repayment row (advisory input; column 7 may be empty) and [creditLegKindToken] is
+ * always null for a repayment row.
+ */
+data class ImportPaymentProfile(
+    val variant: ImportPaymentVariant,
+    val assetLegKindToken: String?,
+    val creditLegKindToken: String?,
+)
+
+/** Frozen variant-shape rules (D-107 section 3.2); violations are SPINE_INTAKE_INVALID. */
+fun importPaymentProfileShapeValid(profile: ImportPaymentProfile?): Boolean {
+    if (profile == null) return false
+    return when (profile.variant) {
+        ImportPaymentVariant.CREDIT_EXPENSE_DIRECT,
+        ImportPaymentVariant.CREDIT_EXPENSE_REFUND,
+        -> profile.creditLegKindToken != null && profile.assetLegKindToken == null
+        ImportPaymentVariant.CREDIT_REPAYMENT -> profile.creditLegKindToken == null
+        ImportPaymentVariant.MIXED_PAYMENT ->
+            profile.creditLegKindToken != null && profile.assetLegKindToken != null
+    }
 }
 
 enum class ImportCompleteness { VALID_COMPLETE, VALID_INCOMPLETE }
@@ -69,6 +110,8 @@ data class ImportIntakeRequest(
     val facts: ImportSourceFacts,
     val completeness: ImportCompleteness,
     val candidateGeneratedAt: String,
+    /** Non-null iff recordKind is a v3 kind (spine validation gate, D-107 section 3.2). */
+    val paymentProfile: ImportPaymentProfile? = null,
 )
 
 data class ImportIntakeSnapshot(
@@ -80,6 +123,7 @@ data class ImportIntakeSnapshot(
     val completeness: ImportCompleteness,
     val contentHash: String,
     val candidateGeneratedAt: String,
+    val paymentProfile: ImportPaymentProfile? = null,
 )
 
 data class ImportDuplicateComparisonSnapshot(
@@ -133,6 +177,25 @@ sealed interface ImportConfirmDecisionFields {
     data class TransferFlow(
         val fromAccountId: AccountId,
         val toAccountId: AccountId,
+    ) : ImportConfirmDecisionFields
+
+    /** P4-06 slice 1 (D-107 section 3.3): credit expense direct variant. */
+    data class CreditExpenseFlow(
+        val categoryId: CategoryId,
+        val creditLiabilityAccountId: AccountId,
+    ) : ImportConfirmDecisionFields
+
+    /** P4-06 slice 1: credit expense refund variant (links the original transaction). */
+    data class CreditExpenseRefundFlow(
+        val categoryId: CategoryId,
+        val creditLiabilityAccountId: AccountId,
+        val originalTransactionId: TransactionId,
+    ) : ImportConfirmDecisionFields
+
+    /** P4-06 slice 1: credit repayment (asset leg pays the liability principal). */
+    data class CreditRepaymentFlow(
+        val assetAccountId: AccountId,
+        val creditLiabilityAccountId: AccountId,
     ) : ImportConfirmDecisionFields
 }
 
@@ -427,7 +490,7 @@ class ExecuteImportIntake(
         // intake boundary: the injected fingerprint canonicalizes here (and fails closed
         // on ill-formed tokens), while the commit port persists the same canonical value
         // derived from the snapshot facts.
-        val contentHash = fingerprint.digest(request.recordKind, request.facts)
+        val contentHash = fingerprint.digest(request.recordKind, request.facts, request.paymentProfile)
 
         val identity = request.identity
         val snapshot = ImportIntakeSnapshot(
@@ -439,6 +502,7 @@ class ExecuteImportIntake(
             completeness = request.completeness,
             contentHash = contentHash,
             candidateGeneratedAt = request.candidateGeneratedAt,
+            paymentProfile = request.paymentProfile,
         )
         return commitPort.commitIntake(identity, snapshot) { idSource.next() }
     }
@@ -466,6 +530,16 @@ class ExecuteImportIntake(
             return SpineDiagnostics.intakeInvalid(request.inputRef, request.recordOrdinal)
         }
         if (request.completeness == ImportCompleteness.VALID_COMPLETE && request.facts.statusToken == null) {
+            return SpineDiagnostics.intakeInvalid(request.inputRef, request.recordOrdinal)
+        }
+        // P4-06 slice 1 payment-profile gate (D-107 section 3.2), symmetric to the
+        // five-fact checks above: a v3 kind must carry a non-null shape-valid profile;
+        // a v1/v2 kind must carry none.
+        val v3 = request.recordKind.contractVersion == 3
+        if (v3 != (request.paymentProfile != null)) {
+            return SpineDiagnostics.intakeInvalid(request.inputRef, request.recordOrdinal)
+        }
+        if (request.paymentProfile != null && !importPaymentProfileShapeValid(request.paymentProfile)) {
             return SpineDiagnostics.intakeInvalid(request.inputRef, request.recordOrdinal)
         }
         // VALID_INCOMPLETE records carry at least one present fact by the frozen type

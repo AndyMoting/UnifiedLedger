@@ -117,7 +117,7 @@ class ImportSpineAlipayEndToEndTest {
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
     ): String = listOf(
         time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        "SYN-SECRET-PRODUCT", direction, amount, "SYN-SECRET-METHOD", status,
+        "SYN-SECRET-PRODUCT", direction, amount, "", status,
         "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
     ).joinToString(",") + ","
 
@@ -306,6 +306,7 @@ class ImportSpineAlipayEndToEndTest {
         facts: com.unifiedledger.application.ImportSourceFacts,
         completeness: ImportCompleteness,
         recordKind: ImportRecordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+        paymentProfile: com.unifiedledger.application.ImportPaymentProfile? = null,
     ) = ImportIntakeRequest(
         identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
         inputRef = inputRef,
@@ -314,6 +315,7 @@ class ImportSpineAlipayEndToEndTest {
         facts = facts,
         completeness = completeness,
         candidateGeneratedAt = "legacy-intake-v1",
+        paymentProfile = paymentProfile,
     )
 
     private fun confirmRequest(
@@ -652,7 +654,7 @@ class ImportSpineAlipayEndToEndTest {
     // ---- E-12 batch ledger ----
 
     @Test
-    fun e12BatchLedgerIntakesSixRecordsAndRejectsTenRowsWithZeroWrites() {
+    fun e12BatchLedgerIntakesSevenRecordsAndRejectsNineRowsWithZeroWrites() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
@@ -661,11 +663,11 @@ class ImportSpineAlipayEndToEndTest {
             assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
             val acceptedRows = result.rows.filterIsInstance<AlipayRowResult.Accepted>()
             val rejectedRows = result.rows.filterIsInstance<AlipayRowResult.Rejected>()
-            assertEquals(6, acceptedRows.size)
-            assertEquals(10, rejectedRows.size)
+            assertEquals(7, acceptedRows.size)
+            assertEquals(9, rejectedRows.size)
             rejectedRows.forEach { assertEquals(1, it.diagnostics.size, "rejected row carries exactly one diagnostic") }
 
-            // The parse diagnostic multiset is the frozen P-17 12-entry set (message is
+            // The parse diagnostic multiset is the frozen P-17 11-entry set (message is
             // never compared, D-097:1459); diagnostics never reach any persistence.
             val multiset = result.rows
                 .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
@@ -677,7 +679,6 @@ class ImportSpineAlipayEndToEndTest {
                     Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 6, null),
                     Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 7, null),
                     Triple("SPINE_ALIPAY_REFUND_UNSUPPORTED", 8, null),
-                    Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 9, null),
                     Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 10, null),
                     Triple("SPINE_ALIPAY_UNKNOWN_TOKEN", 11, null),
                     Triple("FIELD_AMOUNT_INVALID", 12, "amount"),
@@ -688,8 +689,8 @@ class ImportSpineAlipayEndToEndTest {
                 multiset,
             )
 
-            // Six intakes in workbook order under the D-series naming; the ID source holds
-            // exactly six batches, so any rejected-row intake would exhaust it and fail.
+            // Seven intakes in workbook order under the D-series naming; the ID source holds
+            // exactly seven batches, so any rejected-row intake would exhaust it and fail.
             val batches = acceptedRows.mapIndexed { index, _ -> intakeIds("d${index + 1}", "status-d${index + 1}-1") }
             val executor = Executor(
                 database, driver, batchLedgerId, catalog(batchLedgerId),
@@ -697,17 +698,22 @@ class ImportSpineAlipayEndToEndTest {
             )
             acceptedRows.forEach { row ->
                 assertIs<ImportIntakeResult.Accepted>(
-                    executor.intake(intakeRequest(batchLedgerId, "req-batch-${row.recordOrdinal}", row.recordOrdinal, row.facts, row.completeness, row.recordKind)),
+                    executor.intake(
+                        intakeRequest(
+                            batchLedgerId, "req-batch-${row.recordOrdinal}", row.recordOrdinal, row.facts, row.completeness,
+                            row.recordKind, row.paymentProfile,
+                        ),
+                    ),
                 )
             }
-            // Rejected rows (A-07..A-16) produced no intake call and no write: only six
-            // owners exist.
-            assertEquals(listOf(6L, 6L, 6L, 6L, 6L, 0L, 0L, 6L), spineCounts(database))
+            // Rejected rows (A-07..A-16 except A-10) produced no intake call and no write:
+            // only seven owners exist.
+            assertEquals(listOf(7L, 7L, 7L, 7L, 7L, 0L, 0L, 7L), spineCounts(database))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
 
-            // D1/A-01, D2/A-02, D3/A-03, D6/A-06 pending_confirmation; D4/A-04 and D5/A-05
-            // are the two incomplete candidates.
-            listOf(1, 2, 3, 6).forEach { index ->
+            // D1/A-01, D2/A-02, D3/A-03, D6/A-06, D7/A-10 pending_confirmation; D4/A-04 and
+            // D5/A-05 are the two incomplete candidates.
+            listOf(1, 2, 3, 6, 7).forEach { index ->
                 val history = database.ledgerQueries.selectImportStatusHistoryByCandidate(batchLedgerId.value, "candidate-d$index").executeAsList()
                 assertEquals(1, history.size)
                 assertEquals("pending_confirmation", history[0].status)
@@ -717,6 +723,28 @@ class ImportSpineAlipayEndToEndTest {
                 assertEquals(1, history.size)
                 assertEquals("incomplete", history[0].status)
             }
+
+            // D7/A-10 carries the v3 credit repayment kind + profile (exactly one profile
+            // row per v3 candidate; both profile leg tokens stay null for an empty column 7).
+            assertEquals(
+                "credit_repayment_source|3|credit_repayment",
+                scalarText(
+                    driver,
+                    "SELECT source.record_kind || '|' || source.contract_version || '|' || candidate.candidate_kind " +
+                        "FROM import_source_record AS source JOIN import_candidate AS candidate " +
+                        "ON candidate.ledger_id = source.ledger_id AND candidate.source_id = source.source_id " +
+                        "WHERE source.ledger_id = '${batchLedgerId.value}' AND source.record_ordinal = 9",
+                ),
+            )
+            assertEquals(
+                "credit_repayment||",
+                scalarText(
+                    driver,
+                    "SELECT variant || '|' || COALESCE(asset_leg_kind_token, '') || '|' || COALESCE(credit_leg_kind_token, '') " +
+                        "FROM import_candidate_payment_profile WHERE ledger_id = '${batchLedgerId.value}' AND candidate_id = 'candidate-d7'",
+                ),
+            )
+            assertEquals(1L, database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne())
 
             // Privacy: the metadata area and the non-persisted columns (交易对方/对方账号/商品说明/
             // 收/付款方式/交易订单号/商家订单号/备注 — the real layout has no 交易号 column, spec §9.2)
