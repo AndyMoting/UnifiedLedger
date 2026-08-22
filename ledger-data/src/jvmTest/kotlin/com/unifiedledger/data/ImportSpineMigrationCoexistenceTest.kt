@@ -68,7 +68,8 @@ import kotlin.time.Instant
 /**
  * T-24/T-25: v20 -> v21 migration (fresh = migrated, silo rows preserved, guards in
  * place, DDL-failure atomic rollback) and the RG-04 silo / shared spine coexistence
- * in one database (D-092:1335).
+ * in one database (D-092:1335). The 12-silo + full-spine coexistence acceptance is
+ * P409SiloSpineCoexistenceTest (D-110 D3).
  */
 class ImportSpineMigrationCoexistenceTest {
     private val ledgerId = LedgerId("ledger-p402")
