@@ -720,6 +720,12 @@ class P409PhaseClosureFullStateOracleTest {
                 "INCOME" -> tx.postings.forEach { (accountId, amount, _) ->
                     if (accountKindById[accountId] == AccountKind.ASSET && amount > 0L) cashInflow += amount
                 }
+                // Repayment moves real funds out of an asset account (P406 precedent:
+                // purchase-day credit cash flow is zero, repayment cash flow is the
+                // asset leg).
+                "CREDIT_REPAYMENT" -> tx.postings.forEach { (accountId, amount, _) ->
+                    if (accountKindById[accountId] == AccountKind.ASSET && amount < 0L) cashOutflow += -amount
+                }
                 else -> Unit
             }
         }
@@ -910,6 +916,12 @@ class P409PhaseClosureFullStateOracleTest {
             postings += row("posting-$prefix-0", "posting-set-$prefix", ledgerId.value, 0L, firstLeg.first, firstLeg.second, firstLeg.third, 2L)
             postings += row("posting-$prefix-1", "posting-set-$prefix", ledgerId.value, 1L, secondLeg.first, secondLeg.second, secondLeg.third, 2L)
             reportTxs += ReportTx(kind, listOf(firstLeg, secondLeg))
+            // The reconciliation report virtualizes every ACCOUNT_TRANSFER posting as a
+            // PENDING row until a posting_reconciliation row exists (COALESCE discipline).
+            if (kind == "ACCOUNT_TRANSFER") {
+                reconciliationDimension += ReconciliationDimensionRow("posting-$prefix-0", "tx-$prefix", firstLeg.first, "PENDING", emptyList())
+                reconciliationDimension += ReconciliationDimensionRow("posting-$prefix-1", "tx-$prefix", secondLeg.first, "PENDING", emptyList())
+            }
         }
 
         /** A 3-posting mixed EXPENSE (posting 0 = expense +, 1 = asset -, 2 = credit -). */
@@ -996,9 +1008,13 @@ class P409PhaseClosureFullStateOracleTest {
             postingReconciliationHistory += row(ledgerId.value, request.reconciliationId, 1L, "PENDING", null, request.requestId, request.sourceOccurredAt)
             postingReconciliationHistory += row(ledgerId.value, request.reconciliationId, 2L, "CHECKED", request.linkId, request.requestId, request.confirmedAt)
             reconciliationReceipts += row(ledgerId.value, request.requestId, "ACCEPTED", request.linkId, request.reconciliationId, 2L)
-            reconciliationDimension += ReconciliationDimensionRow(
+            // The linked posting's dimension row flips to CHECKED (the unlinked leg of
+            // the same transfer keeps its virtual PENDING row).
+            val checkedRow = ReconciliationDimensionRow(
                 request.postingId, request.transactionId, request.accountId, P408ReconciliationStatus.CHECKED.name, listOf(request.linkId),
             )
+            val rowIndex = reconciliationDimension.indexOfFirst { it.postingId == request.postingId }
+            if (rowIndex >= 0) reconciliationDimension[rowIndex] = checkedRow else reconciliationDimension += checkedRow
         }
 
         /** A raw pre-seeded evidence_link row plus its owning request (ruling 8 leg 2 host). */
@@ -1013,7 +1029,7 @@ class P409PhaseClosureFullStateOracleTest {
             reconciliationRequests += row(ledgerId.value, requestId, "confirm_link", "fp-$requestId", "ACCEPTED", null)
             evidenceLinks += row(
                 ledgerId.value, linkId, evidenceId, postingId, transactionId, responsibility, 1L,
-                "account,amount,currency,direction,occurred_at_window", "candidate-raw", requestId, confirmedAt,
+                "account,amount,currency,direction,occurred_at_window", "candidate-rl07-preseed", requestId, confirmedAt,
             )
         }
 
@@ -1084,7 +1100,7 @@ class P409PhaseClosureFullStateOracleTest {
             expected.intake("req-rl01", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null, "rl01")
             expected.confirm(
                 "req-rl01-confirm", "rl01",
-                decisionRow = row(ledgerId.value, "req-rl01-confirm", "confirm", "candidate-rl01", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, null, confirmedAt),
+                decisionRow = row(ledgerId.value, "req-rl01-confirm", "confirm", "candidate-rl01", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl01", "EXPENSE", rl01Facts.occurredAt, Triple("expense-account-food", 4580L, "CNY"), Triple("account-asset-a", -4580L, "CNY"))
             var state = expected.state(accounts())
@@ -1158,7 +1174,7 @@ class P409PhaseClosureFullStateOracleTest {
             expected.intake("req-rl02", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null, "rl02")
             expected.confirm(
                 "req-rl02-confirm", "rl02",
-                decisionRow = row(ledgerId.value, "req-rl02-confirm", "confirm", "candidate-rl02", hashRl02, "category-salary", "account-asset-a", null, null, null, null, null, null, null, null, confirmedAt),
+                decisionRow = row(ledgerId.value, "req-rl02-confirm", "confirm", "candidate-rl02", hashRl02, "category-salary", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl02", "INCOME", rl02Facts.occurredAt, Triple("account-asset-a", 7250L, "CNY"), Triple("income-account-salary", -7250L, "CNY"))
             var state = expected.state(accounts())
@@ -1209,19 +1225,27 @@ class P409PhaseClosureFullStateOracleTest {
             expected.intake("req-rl03c", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rl03c")
             expected.confirm(
                 "req-rl03c-confirm", "rl03c",
-                decisionRow = row(ledgerId.value, "req-rl03c-confirm", "confirm", "candidate-rl03c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, null, confirmedAt),
+                decisionRow = row(ledgerId.value, "req-rl03c-confirm", "confirm", "candidate-rl03c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl03c", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
             var state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "rl03-complete-confirmed")
 
             // Checkpoint 2: confirmLink on the out posting advances PENDING -> CHECKED with
-            // the full link/snapshot/receipt row set.
+            // the full link/snapshot/receipt row set. The linking evidence is a same-instant
+            // mirror of the RL-03 source carried in the posting's own Z-shaped temporal text:
+            // the P4-08 store only links source and posting texts of equal temporal shape
+            // (P408Matcher/store shared discipline), and the spine persists formal times as
+            // UTC Z-form instants.
+            val mirror = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("rl03x"))), BatchCommitIdSource(emptyList()))
+            val rl03MirrorFacts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+            assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rl03x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl03MirrorFacts, ImportCompleteness.VALID_COMPLETE, null)))
+            expected.intake("req-rl03x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl03MirrorFacts, ImportCompleteness.VALID_COMPLETE, null, "rl03x")
             val p408Store = SqlDelightP408ReconciliationStore(database, driver)
             val linkRequest = confirmLinkRequest(
-                "req-rl03-link", "evidence-rl03c", "posting-rl03c-0", "tx-rl03c", 3000,
+                "req-rl03-link", "evidence-rl03x", "posting-rl03c-0", "tx-rl03c", 3000,
                 "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                rl03CompleteFacts.occurredAt, "link-rl03", "reconciliation-posting-rl03c-0",
+                rl03MirrorFacts.occurredAt, "link-rl03", "reconciliation-posting-rl03c-0",
             )
             val linked = assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(linkRequest))
             assertEquals(2L, linked.receipt.historySequence)
@@ -1291,18 +1315,24 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rl04c-confirm", "candidate-rl04c", hashComplete)))
             expected.confirm(
                 "req-rl04c-confirm", "rl04c",
-                decisionRow = row(ledgerId.value, "req-rl04c-confirm", "confirm", "candidate-rl04c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, null, confirmedAt),
+                decisionRow = row(ledgerId.value, "req-rl04c-confirm", "confirm", "candidate-rl04c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl04c", "ACCOUNT_TRANSFER", rl04CompleteFacts.occurredAt, Triple("account-asset-a", -2000L, "CNY"), Triple("account-asset-b", 2000L, "CNY"))
             state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "rl04-complete-confirmed")
 
             // Both ends carry balances; confirmLink advances the yuebao-anchored to leg.
+            // The linking evidence mirrors the source at the posting's Z-shaped instant
+            // (equal temporal shape is the P4-08 linking discipline).
+            val mirror = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("rl04x"))), BatchCommitIdSource(emptyList()))
+            val rl04MirrorFacts = ImportSourceFacts(2000, "CNY", 2, "2026-08-05T04:00:00Z", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+            assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rl04x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl04MirrorFacts, ImportCompleteness.VALID_COMPLETE, null)))
+            expected.intake("req-rl04x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl04MirrorFacts, ImportCompleteness.VALID_COMPLETE, null, "rl04x")
             val p408Store = SqlDelightP408ReconciliationStore(database, driver)
             val linkRequest = confirmLinkRequest(
-                "req-rl04-link", "evidence-rl04c", "posting-rl04c-1", "tx-rl04c", 2000,
+                "req-rl04-link", "evidence-rl04x", "posting-rl04c-1", "tx-rl04c", 2000,
                 "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                rl04CompleteFacts.occurredAt, "link-rl04", "reconciliation-posting-rl04c-1",
+                rl04MirrorFacts.occurredAt, "link-rl04", "reconciliation-posting-rl04c-1",
             )
             assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(linkRequest))
             expected.confirmLink(linkRequest)
@@ -1463,6 +1493,7 @@ class P409PhaseClosureFullStateOracleTest {
                         listOf(
                             intakeIds("rl07a"), intakeIds("rl07b"),
                             intakeIds("rl07i"), intakeIds("rl07pre"),
+                            intakeIds("rl07x1"), intakeIds("rl07x2"), intakeIds("rl07x3"),
                         ),
                     ),
                     BatchCommitIdSource(listOf(commitIds("rl07a"), commitIds("rl07b"))),
@@ -1472,7 +1503,7 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.intake("req-rl07a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rl07a")
                 expected.confirm(
                     "req-rl07a-confirm", "rl07a",
-                    decisionRow = row(ledgerId.value, "req-rl07a-confirm", "confirm", "candidate-rl07a", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, null, confirmedAt),
+                    decisionRow = row(ledgerId.value, "req-rl07a-confirm", "confirm", "candidate-rl07a", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rl07a", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07b", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04SecondFacts, ImportCompleteness.VALID_COMPLETE, null)))
@@ -1480,7 +1511,7 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.intake("req-rl07b", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04SecondFacts, ImportCompleteness.VALID_COMPLETE, null, "rl07b")
                 expected.confirm(
                     "req-rl07b-confirm", "rl07b",
-                    decisionRow = row(ledgerId.value, "req-rl07b-confirm", "confirm", "candidate-rl07b", hashRl04Second, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, null, confirmedAt),
+                    decisionRow = row(ledgerId.value, "req-rl07b-confirm", "confirm", "candidate-rl07b", hashRl04Second, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rl07b", "ACCOUNT_TRANSFER", rl04SecondFacts.occurredAt, Triple("account-asset-a", -2500L, "CNY"), Triple("account-asset-b", 2500L, "CNY"))
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07i", 2, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04IncompleteFacts, ImportCompleteness.VALID_INCOMPLETE, null)))
@@ -1488,6 +1519,19 @@ class P409PhaseClosureFullStateOracleTest {
                 val preHostFacts = ImportSourceFacts(500, "CNY", 2, "2026-08-05T14:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07pre", 3, ImportRecordKind.ORDINARY_FLOW_SOURCE, preHostFacts, ImportCompleteness.VALID_COMPLETE, null)))
                 expected.intake("req-rl07pre", 3, ImportRecordKind.ORDINARY_FLOW_SOURCE, preHostFacts, ImportCompleteness.VALID_COMPLETE, null, "rl07pre")
+                // Mirror evidences in the postings' Z-shaped temporal text (equal temporal
+                // shape is the P4-08 linking discipline; spine formal times are UTC
+                // Z-form instants): x1 feeds leg 1 (out 3000 on tx-rl07a), x2 feeds leg 2
+                // (in 3000 on the tx-rl07a to leg), x3 feeds leg 3 (out 2500 on tx-rl07b).
+                val rl07x1Facts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+                val rl07x2Facts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+                val rl07x3Facts = ImportSourceFacts(2500, "CNY", 2, "2026-08-05T06:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+                assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07x1", 4, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x1Facts, ImportCompleteness.VALID_COMPLETE, null)))
+                assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07x2", 5, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x2Facts, ImportCompleteness.VALID_COMPLETE, null)))
+                assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07x3", 6, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x3Facts, ImportCompleteness.VALID_COMPLETE, null)))
+                expected.intake("req-rl07x1", 4, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x1Facts, ImportCompleteness.VALID_COMPLETE, null, "rl07x1")
+                expected.intake("req-rl07x2", 5, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x2Facts, ImportCompleteness.VALID_COMPLETE, null, "rl07x2")
+                expected.intake("req-rl07x3", 6, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl07x3Facts, ImportCompleteness.VALID_COMPLETE, null, "rl07x3")
                 var state = expected.state(accounts())
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-fixtures")
 
@@ -1496,9 +1540,9 @@ class P409PhaseClosureFullStateOracleTest {
                 // Leg 1 (main path): synthetic mirror evidence -> exact posting decision ->
                 // link/status change and zero second transaction.
                 val leg1 = confirmLinkRequest(
-                    "req-rl07-leg1", "evidence-rl07a", "posting-rl07a-0", "tx-rl07a", 3000,
+                    "req-rl07-leg1", "evidence-rl07x1", "posting-rl07a-0", "tx-rl07a", 3000,
                     "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl03CompleteFacts.occurredAt, "link-rl07-leg1", "reconciliation-posting-rl07a-0",
+                    rl07x1Facts.occurredAt, "link-rl07-leg1", "reconciliation-posting-rl07a-0",
                 )
                 val accepted = assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(leg1))
                 expected.confirmLink(leg1)
@@ -1515,7 +1559,7 @@ class P409PhaseClosureFullStateOracleTest {
                 // link occupies the target link_id; the confirm fails on the write-phase
                 // PK constraint, is typed-rejected with zero residue, the identity stays
                 // retryable and the corrected retry accepts.
-                driver.execute(null, "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('${ledgerId.value}','req-rl07-preseed','confirm_link','fp-rl07-preseed','ACCEPTED')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('${ledgerId.value}','req-rl07-preseed','confirm_link','fp-req-rl07-preseed','ACCEPTED')", 0)
                 driver.execute(
                     null,
                     "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES " +
@@ -1526,17 +1570,17 @@ class P409PhaseClosureFullStateOracleTest {
                 state = expected.state(accounts())
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg2-preseed")
                 val failingRequest = confirmLinkRequest(
-                    "req-rl07-leg2", "evidence-rl07i", "posting-rl07a-1", "tx-rl07a", 3000,
+                    "req-rl07-leg2", "evidence-rl07x2", "posting-rl07a-1", "tx-rl07a", 3000,
                     "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                    rl04IncompleteFacts.occurredAt, "link-rl07-b", "reconciliation-posting-rl07a-1",
+                    rl07x2Facts.occurredAt, "link-rl07-b", "reconciliation-posting-rl07a-1",
                 )
                 val constraintRejected = assertIs<P408ReconciliationResult.Rejected>(p408Store.confirmLink(failingRequest))
                 assertEquals("P408_RECONCILIATION_CONSTRAINT_VIOLATION", constraintRejected.code)
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg2-constraint-zero-residue")
                 val corrected = confirmLinkRequest(
-                    "req-rl07-leg2", "evidence-rl07i", "posting-rl07a-1", "tx-rl07a", 3000,
+                    "req-rl07-leg2", "evidence-rl07x2", "posting-rl07a-1", "tx-rl07a", 3000,
                     "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                    rl04IncompleteFacts.occurredAt, "link-rl07-leg2", "reconciliation-posting-rl07a-1",
+                    rl07x2Facts.occurredAt, "link-rl07-leg2", "reconciliation-posting-rl07a-1",
                 )
                 assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(corrected))
                 expected.confirmLink(corrected)
@@ -1546,14 +1590,14 @@ class P409PhaseClosureFullStateOracleTest {
                 // Leg 3 (F5): concurrent confirmLink on the same posting — single winner,
                 // loser typed conflict with zero residue.
                 val leg3a = confirmLinkRequest(
-                    "req-rl07-leg3a", "evidence-rl07b", "posting-rl07b-0", "tx-rl07b", 2500,
+                    "req-rl07-leg3a", "evidence-rl07x3", "posting-rl07b-0", "tx-rl07b", 2500,
                     "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl04SecondFacts.occurredAt, "link-rl07-leg3a", "reconciliation-posting-rl07b-0",
+                    rl07x3Facts.occurredAt, "link-rl07-leg3a", "reconciliation-posting-rl07b-0",
                 )
                 val leg3b = confirmLinkRequest(
-                    "req-rl07-leg3b", "evidence-rl07b", "posting-rl07b-0", "tx-rl07b", 2500,
+                    "req-rl07-leg3b", "evidence-rl07x3", "posting-rl07b-0", "tx-rl07b", 2500,
                     "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl04SecondFacts.occurredAt, "link-rl07-leg3b", "reconciliation-posting-rl07b-0",
+                    rl07x3Facts.occurredAt, "link-rl07-leg3b", "reconciliation-posting-rl07b-0",
                 )
                 val results = concurrentP408(url, listOf(leg3a, leg3b))
                 val winner: P408ConfirmLinkRequest
@@ -1568,7 +1612,9 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.confirmLink(winner)
                 state = expected.state(accounts())
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg3-single-winner")
-                assertEquals(3L, database.ledgerQueries.countTransactions().executeAsOne())
+                // Zero second transaction: the concurrent links create no formal rows,
+                // the two fixture transfers remain the whole formal chain.
+                assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
                 preReopen = state
             }
 
@@ -1649,9 +1695,10 @@ class P409PhaseClosureFullStateOracleTest {
                     listOf(
                         intakeIds("crd-a"),
                         intakeIds("crd-b", duplicates = listOf("duplicate-crd" to "history-duplicate-crd")),
+                        intakeIds("mix-a"),
                     ),
                 ),
-                BatchCommitIdSource(listOf(commitIds("crd-a"), commitIds3("mix-a"))),
+                BatchCommitIdSource(listOf(commitIds("crd-a"), commitIds3("mix-b"))),
             )
             assertIs<ImportIntakeResult.Accepted>(creditRun.intake(intakeRequest("req-crd-a", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
             expected.intake("req-crd-a", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "crd-a")
@@ -1760,7 +1807,7 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.intake("req-rz1", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null, "rz1")
                 expected.confirm(
                     "req-rz1-confirm", "rz1",
-                    decisionRow = row(ledgerId.value, "req-rz1-confirm", "confirm", "candidate-rz1", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, null, confirmedAt),
+                    decisionRow = row(ledgerId.value, "req-rz1-confirm", "confirm", "candidate-rz1", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rz1", "EXPENSE", rl01Facts.occurredAt, Triple("expense-account-food", 4580L, "CNY"), Triple("account-asset-a", -4580L, "CNY"))
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rz3", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null)))
@@ -1768,17 +1815,22 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.intake("req-rz3", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rz3")
                 expected.confirm(
                     "req-rz3-confirm", "rz3",
-                    decisionRow = row(ledgerId.value, "req-rz3-confirm", "confirm", "candidate-rz3", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, null, confirmedAt),
+                    decisionRow = row(ledgerId.value, "req-rz3-confirm", "confirm", "candidate-rz3", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rz3", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
                 val p408Store = SqlDelightP408ReconciliationStore(database, driver)
+                // Mirror evidence in the posting's Z-shaped temporal text (the P4-08
+                // store only links source and posting texts of equal temporal shape).
+                val mirror = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("rzx"))), BatchCommitIdSource(emptyList()))
+                val rzxFacts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+                assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rzx", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rzxFacts, ImportCompleteness.VALID_COMPLETE, null)))
+                expected.intake("req-rzx", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rzxFacts, ImportCompleteness.VALID_COMPLETE, null, "rzx")
                 val linkRequest = confirmLinkRequest(
-                    "req-rz3-link", "evidence-rz3", "posting-rz3-0", "tx-rz3", 3000,
+                    "req-rz3-link", "evidence-rzx", "posting-rz3-0", "tx-rz3", 3000,
                     "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl03CompleteFacts.occurredAt, "link-rz3", "reconciliation-posting-rz3-0",
+                    rzxFacts.occurredAt, "link-rz3", "reconciliation-posting-rz3-0",
                 )
                 val linkResult = p408Store.confirmLink(linkRequest)
-                if (linkResult is P408ReconciliationResult.Rejected) println("DEBUG-RL07-CODE: " + linkResult.code)
                 assertIs<P408ReconciliationResult.Accepted>(linkResult)
                 expected.confirmLink(linkRequest)
                 preReopen = expected.state(accounts())

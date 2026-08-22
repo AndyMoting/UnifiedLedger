@@ -172,6 +172,20 @@ class P409SiloSpineCoexistenceTest {
     private val comboBCreditFacts = ImportSourceFacts(2000, "CNY", 2, "2026-08-14T12:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
     private val comboBMixedFacts = ImportSourceFacts(1500, "CNY", 2, "2026-08-15T12:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
+    /**
+     * The formal-writing early silos (rg01/02/03/05/07) run on their own ledger id.
+     * RG-08's D-091 full-load design loads EVERY transaction on its ledger and demands
+     * a formal_transaction_metadata row for each, and only the RG-08..RG-12 stores
+     * write those rows (MultiRgStoreCoexistenceTest precedent keeps ledger-a to the
+     * metadata-writing stores; rg04's representative op is an intake with no formal
+     * writes, rg06 stages without formalizing). Different ledger ids sharing the
+     * formal chain are legal (rg04 precedent).
+     */
+    private val earlySiloLedger = LedgerId("ledger-p409-early-silos")
+
+    /** Mirror evidence for the spine RL-03 confirmLink: the posting's own Z-shaped instant. */
+    private val rl03MirrorFacts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
+
     private val directProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "花呗")
     private val repaymentProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, "余额宝", null)
     private val refundProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "花呗")
@@ -532,13 +546,19 @@ class P409SiloSpineCoexistenceTest {
         run1(database, driver, spineIntakeIds("sp-rl03m"), spineCommitIds("unused")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl03m", 4, ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, rl03MissingFacts, ImportCompleteness.VALID_COMPLETE, null)))
         }
+        // The linking evidence mirrors the RL-03 source at the posting's Z-shaped
+        // instant (equal temporal shape is the P4-08 linking discipline; spine formal
+        // times persist as UTC Z-form instants).
+        run1(database, driver, spineIntakeIds("sp-rl03x"), spineCommitIds("unused")).apply {
+            assertAccepted(intake(spineIntakeRequest("req-sp-rl03x", 19, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl03MirrorFacts, ImportCompleteness.VALID_COMPLETE, null)))
+        }
         assertIs<P408ReconciliationResult.Accepted>(
             SqlDelightP408ReconciliationStore(database, driver).confirmLink(
                 P408ConfirmLinkRequest(
                     ledgerId = coexistLedgerId.value,
                     requestId = "req-sp-rl03-link",
-                    evidenceId = "evidence-sp-rl03c",
-                    candidateId = "candidate-sp-rl03c",
+                    evidenceId = "evidence-sp-rl03x",
+                    candidateId = "candidate-sp-rl03x",
                     postingId = "posting-sp-rl03c-0",
                     transactionId = "tx-sp-rl03c",
                     amountMinor = 3000,
@@ -551,7 +571,7 @@ class P409SiloSpineCoexistenceTest {
                     matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
                     windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
                     naturalDayDistance = 0,
-                    sourceOccurredAt = rl03CompleteFacts.occurredAt,
+                    sourceOccurredAt = rl03MirrorFacts.occurredAt,
                     confirmedAt = confirmedAt,
                     linkId = "link-sp-rl03",
                     reconciliationId = "reconciliation-sp-rl03c-0",
@@ -742,7 +762,7 @@ class P409SiloSpineCoexistenceTest {
     // ---------- silo fixtures (i)-layer wiring ----------
 
     private fun rg01Commit(): Triple<com.unifiedledger.application.ManualExpenseRequestIdentity, com.unifiedledger.application.ManualExpenseRequestSnapshot, com.unifiedledger.application.ConfirmedManualExpenseCommit> {
-        val ledger = LedgerId("ledger-a")
+        val ledger = earlySiloLedger
         val identity = com.unifiedledger.application.ManualExpenseRequestIdentity(ledger, RequestId("request-p409-rg01"))
         val snapshot = com.unifiedledger.application.ManualExpenseRequestSnapshot(
             ledgerId = ledger,
@@ -802,7 +822,7 @@ class P409SiloSpineCoexistenceTest {
 
     private fun rg02SaveInputOn() = assertIs<com.unifiedledger.application.Rg02ManualIncomeAdaptResult.Success>(
         adaptRg02ManualIncomeInput(
-            Rg02ManualIncomeContext(ledgerId = LedgerId("ledger-a"), currency = cny, caseTimeZone = "Asia/Shanghai"),
+            Rg02ManualIncomeContext(ledgerId = earlySiloLedger, currency = cny, caseTimeZone = "Asia/Shanghai"),
             Rg02DecodedManualIncomeInput(
                 requestId = Rg02JsonField.Value("request-p409-rg02"),
                 occurredAt = Rg02JsonField.Value("2026-01-16T09:00:00+08:00"),
@@ -833,7 +853,7 @@ class P409SiloSpineCoexistenceTest {
     )
 
     private fun rg03ManualSnapshot() = Rg03ManualTransferSnapshot(
-        LedgerId("ledger-a"), RequestId("request-p409-rg03"), Instant.parse("2026-01-20T02:00:00Z"),
+        earlySiloLedger, RequestId("request-p409-rg03"), Instant.parse("2026-01-20T02:00:00Z"),
         AccountId("asset-bank-a"), AccountId("asset-wallet-b"),
         Money.ofMinor(6_000, cny), Money.ofMinor(5_900, cny), Money.ofMinor(100, cny),
         CategoryId("expense-category-transfer-fee"),
@@ -855,7 +875,7 @@ class P409SiloSpineCoexistenceTest {
     )
 
     private fun rg07ExpenseOperation() = Rg07Operation.ManualExpense(
-        LedgerId("ledger-a"),
+        earlySiloLedger,
         Rg07ManualExpenseInput(
             RequestId("request-p409-rg07"), Money.ofMinor(1_000, cny), CategoryId("ledger-a-daily"),
             AccountId("ledger-a-asset"), Instant.parse("2026-01-10T04:00:00Z"), "", true,
@@ -865,14 +885,14 @@ class P409SiloSpineCoexistenceTest {
     private fun rg03Catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
         LedgerCatalog.create(
             listOf(
-                Account(AccountId("asset-bank-a"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, true),
-                Account(AccountId("asset-wallet-b"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, true),
-                Account(AccountId("liability-credit-c"), LedgerId("ledger-a"), AccountKind.LIABILITY, cny, true, true),
-                Account(AccountId("expense-account-transfer-fee"), LedgerId("ledger-a"), AccountKind.EXPENSE, cny, false, false),
+                Account(AccountId("asset-bank-a"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                Account(AccountId("asset-wallet-b"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                Account(AccountId("liability-credit-c"), earlySiloLedger, AccountKind.LIABILITY, cny, true, true),
+                Account(AccountId("expense-account-transfer-fee"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
             ),
             listOf(
-                Category(CategoryId("expense-category-financial"), LedgerId("ledger-a"), null, null, true),
-                Category(CategoryId("expense-category-transfer-fee"), LedgerId("ledger-a"), CategoryId("expense-category-financial"), AccountId("expense-account-transfer-fee"), true),
+                Category(CategoryId("expense-category-financial"), earlySiloLedger, null, null, true),
+                Category(CategoryId("expense-category-transfer-fee"), earlySiloLedger, CategoryId("expense-category-financial"), AccountId("expense-account-transfer-fee"), true),
             ),
         ),
     ).value
@@ -896,21 +916,21 @@ class P409SiloSpineCoexistenceTest {
     private fun rg05Catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
         LedgerCatalog.create(
             listOf(
-                Account(AccountId("asset"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, true),
-                Account(AccountId("expense-a-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, cny, false, false),
-                Account(AccountId("expense-b-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, cny, false, false),
+                Account(AccountId("asset"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                Account(AccountId("expense-a-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
+                Account(AccountId("expense-b-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
             ),
             listOf(
-                Category(CategoryId("root"), LedgerId("ledger-a"), null, null, true),
-                Category(CategoryId("daily"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-a-account"), true),
-                Category(CategoryId("service"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-b-account"), true),
+                Category(CategoryId("root"), earlySiloLedger, null, null, true),
+                Category(CategoryId("daily"), earlySiloLedger, CategoryId("root"), AccountId("expense-a-account"), true),
+                Category(CategoryId("service"), earlySiloLedger, CategoryId("root"), AccountId("expense-b-account"), true),
             ),
         ),
     ).value
 
     private fun rg05ManualOperation(): Rg05PreparedOperation.Manual {
         val snapshot = Rg05ManualSnapshot(
-            LedgerId("ledger-a"), RequestId("request-p409-rg05"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z",
+            earlySiloLedger, RequestId("request-p409-rg05"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z",
             Money.ofMinor(10_000, cny), AccountId("asset"),
             listOf(
                 MergedPaymentItem("a", Money.ofMinor(4_000, cny), CategoryId("daily"), "daily", Instant.parse("2026-04-10T09:00:00Z")),
@@ -948,7 +968,7 @@ class P409SiloSpineCoexistenceTest {
     ).value
 
     private fun rg07Catalog(): LedgerCatalog {
-        val ledger = LedgerId("ledger-a")
+        val ledger = earlySiloLedger
         return assertIs<DomainResult.Success<LedgerCatalog>>(
             LedgerCatalog.create(
                 listOf(

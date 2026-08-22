@@ -138,27 +138,30 @@ class P409SingleChainMigrationTest {
             // postings and the migration-v23-seed request.
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
-                // Stage 8: v23 rows — P4-08 link state on the in posting only; the
-                // seeded posting_reconciliation rows are never hand-updated (the update
-                // guard is already in place; the advance belongs to the store segment).
+                // Stage 8: v23 rows — the manual link state sits on the missing-leg
+                // evidence so the complete-leg evidence stays free for the store segment
+                // below (one active link per evidence); the seeded posting_reconciliation
+                // rows are never hand-updated (the update guard is already in place; the
+                // advance belongs to the store segment).
                 driver.execute(null, "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('$ledger','request-mig-v3','confirm_link','fp-mig-v3','ACCEPTED')", 0)
-                driver.execute(null, "INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match')", 0)
-                driver.execute(null, "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('$ledger','link-mig','evidence-mig-v2','posting-mig-transfer-in','tx-mig-transfer','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window','candidate-mig','request-mig-v3','2026-08-05T13:00:00+08:00')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2m','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match')", 0)
+                driver.execute(null, "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('$ledger','link-mig','evidence-mig-v2m','posting-mig-transfer-in','tx-mig-transfer','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window','candidate-mig','request-mig-v3','2026-08-05T13:00:00+08:00')", 0)
                 driver.execute(null, "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) VALUES ('$ledger','link-mig',1,'active','confirmed','request-mig-v3','2026-08-05T13:00:00+08:00')", 0)
                 driver.execute(null, "INSERT INTO reconciliation_receipt(ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence) VALUES ('$ledger','request-mig-v3','ACCEPTED','link-mig','reconciliation-posting-mig-transfer-in',2)", 0)
             }
             // Stage 9: v24 — the duplicate family, the funding columns and the backfill.
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 23, 24) }
-                // Stage 10: v24 rows — one duplicate pair and one spine chain with
-                // explicit funding columns.
+                // Stage 10: v24 rows — the spine chain with explicit funding columns
+                // first (the duplicate pair's subject-source FK needs the source row),
+                // then one duplicate pair.
                 driver.execute(null, "INSERT INTO import_request VALUES ('$ledger','request-mig-v4','intake')", 0)
-                driver.execute(null, "INSERT INTO import_duplicate_candidate(ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id) VALUES ('$ledger','duplicate-mig','source-mig-v4','source-mig-v1','EXACT_BUSINESS_TUPLE','sha256:mig-duplicate','{\"subject\":\"source-mig-v4\"}','source_declared + mechanical_decode + p407_exact_business_tuple_v1','exact','p407_exact_business_tuple_v1',1,'2026-08-10T08:00:00Z','request-mig-v4')", 0)
-                driver.execute(null, "INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class) VALUES ('$ledger','duplicate-mig',1,'history-duplicate-mig','DEFERRED','request-mig-v4','creation')", 0)
                 driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) VALUES ('$ledger','source-mig-v4','request-mig-v4','batch-p409-mig',3,'ordinary_flow_source','sha256:mig-v4',1,'valid_complete',4500,'CNY',2,'2026-08-09T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'generated-mig-v4')", 0)
                 driver.execute(null, "INSERT INTO import_evidence VALUES ('$ledger','evidence-mig-v4','source-mig-v4','source_observation','2026-08-09T12:00:00+08:00')", 0)
                 driver.execute(null, "INSERT INTO import_candidate VALUES ('$ledger','candidate-mig-v4','source-mig-v4','ordinary_flow','1.00','ordinary_flow_source',1)", 0)
                 driver.execute(null, "INSERT INTO import_candidate_status_history VALUES ('$ledger','candidate-mig-v4',1,'history-mig-v4','pending_confirmation','request-mig-v4','creation')", 0)
+                driver.execute(null, "INSERT INTO import_duplicate_candidate(ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id) VALUES ('$ledger','duplicate-mig','source-mig-v4','source-mig-v1','EXACT_BUSINESS_TUPLE','sha256:mig-duplicate','{\"subject\":\"source-mig-v4\"}','source_declared + mechanical_decode + p407_exact_business_tuple_v1','exact','p407_exact_business_tuple_v1',1,'2026-08-10T08:00:00Z','request-mig-v4')", 0)
+                driver.execute(null, "INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class) VALUES ('$ledger','duplicate-mig',1,'history-duplicate-mig','DEFERRED','request-mig-v4','creation')", 0)
             }
             // Stage 11: v25 — the credit/mixed structures and the v3 kind rebuild.
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
@@ -317,8 +320,18 @@ class P409SingleChainMigrationTest {
         JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
             LedgerDatabase.Schema.create(driver)
             val execute: (String) -> Unit = { sql -> driver.execute(null, sql, 0) }
-            // The v1 seed rows (the INSERT statements of VERSION_ONE_STATEMENTS).
-            VERSION_ONE_STATEMENTS.filter { it.trim().startsWith("INSERT") }.forEach(execute)
+            // The v1 seed rows, restated with explicit column lists: the v25 table
+            // carries the extra nullable confirmation_id column (15.sqm), so the bare
+            // 9-value VALUES form of VERSION_ONE_STATEMENTS cannot run on a fresh v25.
+            execute("INSERT INTO posting_set VALUES ('posting-set-existing', 'ledger-a')")
+            execute("INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-existing', 'ledger-a', 'EXPENSE')")
+            execute(
+                "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) " +
+                    "VALUES ('version-existing-v1', 'tx-existing', 'ledger-a', 1, 'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z', NULL)",
+            )
+            execute("INSERT INTO ledger_transaction_current_version VALUES ('tx-existing', 'ledger-a', 'version-existing-v1')")
+            execute("INSERT INTO posting VALUES ('posting-expense-existing', 'posting-set-existing', 'ledger-a', 0, 'expense-account-breakfast', 3580, 'CNY', 2)")
+            execute("INSERT INTO posting VALUES ('posting-bank-existing', 'posting-set-existing', 'ledger-a', 1, 'asset-bank-a', -3580, 'CNY', 2)")
             // Silo rows.
             execute("INSERT INTO rg03_operation_request VALUES ('$ledger','rg03-existing','MANUAL_ACCOUNT_TRANSFER')")
             execute("INSERT INTO rg04_import_request VALUES ('$ledger','rg04-existing','IMPORT_SOURCE')")
@@ -350,20 +363,20 @@ class P409SingleChainMigrationTest {
             execute("INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) VALUES ('$ledger','reconciliation-posting-mig-transfer-in','posting-mig-transfer-in','PENDING',1)")
             execute("INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('$ledger','reconciliation-posting-mig-transfer-out',1,'PENDING',NULL,'$migrationV23SeedRequest','$migrationV23SeedOccurredAt')")
             execute("INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('$ledger','reconciliation-posting-mig-transfer-in',1,'PENDING',NULL,'$migrationV23SeedRequest','$migrationV23SeedOccurredAt')")
-            // The v23 hand-written P4-08 link rows.
+            // The v23 hand-written P4-08 link rows (on the missing-leg evidence; see stage 8).
             execute("INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('$ledger','request-mig-v3','confirm_link','fp-mig-v3','ACCEPTED')")
-            execute("INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match')")
-            execute("INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('$ledger','link-mig','evidence-mig-v2','posting-mig-transfer-in','tx-mig-transfer','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window','candidate-mig','request-mig-v3','2026-08-05T13:00:00+08:00')")
+            execute("INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2m','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match')")
+            execute("INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('$ledger','link-mig','evidence-mig-v2m','posting-mig-transfer-in','tx-mig-transfer','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window','candidate-mig','request-mig-v3','2026-08-05T13:00:00+08:00')")
             execute("INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) VALUES ('$ledger','link-mig',1,'active','confirmed','request-mig-v3','2026-08-05T13:00:00+08:00')")
             execute("INSERT INTO reconciliation_receipt(ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence) VALUES ('$ledger','request-mig-v3','ACCEPTED','link-mig','reconciliation-posting-mig-transfer-in',2)")
             // v24 rows.
             execute("INSERT INTO import_request VALUES ('$ledger','request-mig-v4','intake')")
-            execute("INSERT INTO import_duplicate_candidate(ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id) VALUES ('$ledger','duplicate-mig','source-mig-v4','source-mig-v1','EXACT_BUSINESS_TUPLE','sha256:mig-duplicate','{\"subject\":\"source-mig-v4\"}','source_declared + mechanical_decode + p407_exact_business_tuple_v1','exact','p407_exact_business_tuple_v1',1,'2026-08-10T08:00:00Z','request-mig-v4')")
-            execute("INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class) VALUES ('$ledger','duplicate-mig',1,'history-duplicate-mig','DEFERRED','request-mig-v4','creation')")
             execute("INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) VALUES ('$ledger','source-mig-v4','request-mig-v4','batch-p409-mig',3,'ordinary_flow_source','sha256:mig-v4',1,'valid_complete',4500,'CNY',2,'2026-08-09T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'generated-mig-v4')")
             execute("INSERT INTO import_evidence VALUES ('$ledger','evidence-mig-v4','source-mig-v4','source_observation','2026-08-09T12:00:00+08:00')")
             execute("INSERT INTO import_candidate VALUES ('$ledger','candidate-mig-v4','source-mig-v4','ordinary_flow','1.00','ordinary_flow_source',1)")
             execute("INSERT INTO import_candidate_status_history VALUES ('$ledger','candidate-mig-v4',1,'history-mig-v4','pending_confirmation','request-mig-v4','creation')")
+            execute("INSERT INTO import_duplicate_candidate(ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id) VALUES ('$ledger','duplicate-mig','source-mig-v4','source-mig-v1','EXACT_BUSINESS_TUPLE','sha256:mig-duplicate','{\"subject\":\"source-mig-v4\"}','source_declared + mechanical_decode + p407_exact_business_tuple_v1','exact','p407_exact_business_tuple_v1',1,'2026-08-10T08:00:00Z','request-mig-v4')")
+            execute("INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class) VALUES ('$ledger','duplicate-mig',1,'history-duplicate-mig','DEFERRED','request-mig-v4','creation')")
             // v25 rows (the credit row uses the same default-sentinel funding shape as
             // the migrated side's funding-omitting insert).
             execute("INSERT INTO import_request VALUES ('$ledger','request-mig-v5c','intake')")
