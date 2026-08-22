@@ -20,7 +20,7 @@
 
 **裁决**：新建 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P409PhaseClosureFullStateOracleTest.kt`，仿 `P406CreditFullStateOracleTest.kt` 的 Executor/BatchIntakeIdSource/BatchCommitIdSource/captureFullState/Expected 纪律重建脚手架，比较面为收口超集（§3.3）。
 
-**依据**：契约 §1.2.1 的缺口本体就是「没有任何单一 oracle 按 WORK_PLAN:120-127 矩阵逐 RL 声明覆盖闭合」——收口 oracle 的身份是 RL 矩阵闭合，与任一既有批的切片身份不同。比较面也不同：P406 oracle 只读 P4-08 7 表中的 3 表与 P4-07 5 表中的 2 表（`P406CreditFullStateOracleTest.kt:539-543` 只选 reconciliation_request/evidence_link/posting_reconciliation；duplicate 只选 :517-522 两表；P406S1-CLO-004 已登记此限制），且其 report 投影（`CreditReportProjection` :416-421，四维）无收入/转账维度，无法承载 RL-02/RL-03/RL-04。既有类全部为各批冻结验收面（P4-04 E2E 2533 行、P406 oracle 1743 行），扩展即翻搅。脚手架分叉成本 ≈ 四百行（slice2 §5.2 同量级评估），换全部既有 oracle 零扰动。
+**依据**：契约 §1.2.1 的缺口本体就是「没有任何单一 oracle 按 WORK_PLAN:120-127 矩阵逐 RL 声明覆盖闭合」——收口 oracle 的身份是 RL 矩阵闭合，与任一既有批的切片身份不同。比较面也不同：P406 oracle 只读 P4-08 7 表中的 3 表与 P4-07 5 表中的 2 表（`P406CreditFullStateOracleTest.kt:539-543` 只选 reconciliation_request/evidence_link/posting_reconciliation；duplicate 只选 :517-522 两表；P406S1-CLO-004 已登记此限制），且其 report 投影（`CreditReportProjection` :416-421，四维）无收入/转账维度，无法承载 RL-02/RL-03/RL-04。既有类全部为各批冻结验收面（P4-04 E2E 2606 行、P406 oracle 1743 行），扩展即翻搅。脚手架分叉成本 ≈ 四百行（slice2 §5.2 同量级评估），换全部既有 oracle 零扰动。
 
 **替代方案（否决）**：扩展 `P406CreditFullStateOracleTest`——比较面缺收入/转账维度与 7+5 表全量面，且把收口矩阵塞进 P4-06 批文件，批界混乱。**替代方案（否决）**：把 capture/Expected 提升为共享 jvmTest 基类再让各 oracle 继承——重构全部既有 oracle（10+ 类），与「零翻搅」目标相反。
 
@@ -54,13 +54,13 @@
 
 **替代方案（否决）**：聚合/计数投影（每表 count + 金额和）——契约 §1.2.2 明言既有缺口就是缺「数据级」，聚合回到计数级。**替代方案（否决）**：把 store 推进段放进等价快照——fresh 侧须精确复刻 store 时序（PENDING 由迁移播种 vs 由 store 首建，reconciliation_id 不同源），等价构造不可判定。
 
-**风险**：v25 重建后列可空性（:589 插入省略 funding 列成功）使 fresh 侧 sentinel 值依赖人工对齐。缓解 = §4.3 行集表把每行的 sentinel 列值逐一列出；测试断言迁移侧 sentinel 值来自实际 SELECT（非测试侧常量先写入再比较），即先捕迁移终态、再按捕获值构造 fresh，两库逐行相等为通过条件。
+**风险**：v25 重建后列可空性（:589 插入省略 funding 列成功）使 fresh 侧 sentinel 值依赖人工对齐。缓解（冻结构造纪律，消除循环性）：sentinel 一律以**命名常量**定义（`FUNDING_BACKFILL_STATE = "UNRESOLVED"`、`FUNDING_BACKFILL_GENERATED_AT = "migration-v24-unresolved"`、v23 播种行标识常量）；**fresh 侧** = §4.1 行集 + 上述常量显式写入构造；**迁移侧** = 先以同名常量独立断言其 sentinel 实际值（`:644` 先例：SELECT 实际值 == 常量，防测试常量与迁移行为意外同漂移的第二来源 = 既有逐边 populated 测试已冻结这些值）；两侧构造/断言独立完成后**再**逐行比较。非 sentinel 列若出现未预期的迁移改写（本规格未登记任何此类改写），逐行比较即失败暴露——不存在「先看迁移结果再照抄构造 fresh」的路径。
 
 ### 裁决 5：D3 最小充分集 = 每竖井一个代表性 operation + 其 replay（分层接入规则），非全语料回放
 
 **裁决**：D3 新类 `P409SiloSpineCoexistenceTest`（落点同上目录）对 12 套竖井按分层规则接入：(i) 竖井具备可对任意 `(LedgerDatabase, driver)` 构造的 store/适配器（rg01 提交端口、rg02 `Rg02ManualIncomeAdapter`、rg03 `SqlDelightRg03TransferStore`、rg04 `ExecuteRg04ImportOperation`+`decodedCase()`（`Rg04ImportLifecycleEndToEndTest.kt:855`）、rg05/06/07 `SqlDelightRgXXStore`、rg08..rg12 `FixtureReplay` 适配 + `SqlDelightRgXXStore`，`SqlDelightRg08StoreTest.kt:58` main-path 先例）→ 从冻结语料取一个 accepted 主路径 operation 在共享库执行 + 同请求 replay 断言 NoChange/原 receipt；(ii) 若某竖井 typed operation 需要该竖井 oracle 的 private harness 状态才能驱动，则回退为按迁移 populated 测试先例以 raw SQL 播种该竖井代表性持久行，并逐竖井登记回退理由。量级：12 竖井 × (1 op + 1 replay) + spine 完整形态（§5.2 行集，约 14 个 spine 侧操作含确认/link/review）≈ 40 次操作，单测试单内存库，复杂度与 `Rg04FullStateOracleTest` 单根回放同量级。
 
-**依据**：全语料（12 竖井合计 357 operations，CURRENT_STATE:7-14 计数）在单库回放结构性不可行——`GoldenV2Oracle.executeGoldenV2Root` 每根新建内存库（`GoldenV2Oracle.kt:74-77`），rg08/09/10/11/12 的 FullStateOracle 驱动纯 runtime 无 store（`Rg08FullStateOracleTest.kt:55`「no store」），其语料-vs-DB 等价本就由各自 Store 测试承载；D3 的 WHAT 是共存/零串音/reopen 保持（契约 §3.3），不是语料重验证。rg04 先例（`ImportSpineMigrationCoexistenceTest.kt:222` 取 importOperations[0]/[2] 两个 operation）即为此形态。
+**依据**：全语料（12 竖井合计 357 operations，CURRENT_STATE:7-14 计数）在单库回放结构性不可行——`GoldenV2Oracle.executeGoldenV2Root` 每根新建内存库（`GoldenV2Oracle.kt:74-77`），rg08/09/10/11/12 的 FullStateOracle 驱动纯 runtime 无 store（`Rg08FullStateOracleTest.kt:55`「no store」），其语料-vs-DB 等价本就由各自 Store 测试承载；D3 的 WHAT 是共存/零串音/reopen 保持（契约 §3.3），不是语料重验证。rg04 先例（`ImportSpineMigrationCoexistenceTest.kt:222` 取 importOperations[0]/[2] 两个 operation）与 **rg08-12 先例**（`MultiRgStoreCoexistenceTest.kt`，579 行：五 store 共享单一 `LedgerDatabase`、各 commit 其典型正式路径、reopen 后逐 store 快照逐字节相等；含 `adaptRg08/09/10/12Fixture` + rg11 create-input/catalog 全套 wiring）共同证明「多竖井同库 + 代表路径 + reopen 快照稳定」形态既有先例，本裁决是将其扩展到 12 竖井 + spine 共存。
 
 **替代方案（否决）**：全 357-op 语料单库回放——须重构 `GoldenV2Oracle` 与 10 套 private harness 并为 5 个纯 runtime 竖井新建 DB 驱动层，扩面超出零翻搅边界一个量级，且重复各自 oracle 已闭合的证明。**替代方案（否决）**：纯 raw SQL 播种每竖井一行——丢失「竖井 runtime 在共享库可执行 + replay 稳定」的证明强度，弱于 rg04 先例。
 
@@ -96,6 +96,8 @@
 
 **风险**：约束驱动与异常注入的路径覆盖不完全同构（约束失败走 SQLException→typed reject 分支，异常注入走事务回滚分支）。缓解 = 收口 oracle 断言面含两分支共同不变量（零残留、身份可重试、重试成功、reopen 保持），并在矩阵格登记触发器差异；若独立评审认定语义缺口实质，处置出口 = O-2 评审路由（生产注入参数作为独立缺陷修复提案），不在本批默认。
 
+**替代方案（否决，补记）**：jvmTest 侧以委托包装 `JdbcSqliteDriver` 在目标语句上注入真实异常——store 构造绑定 `LedgerDatabase(driver)`，包装驱动须穿过 `LedgerDatabase` 与 store 的全部构造路径并保持 SQLDelight 内部事务语义不变，单为矩阵一格引入贯穿式测试基建改动，侵入面与复杂度不成比例；且异常注入分支的不变量已由 spine 侧注入点（§3.1）与 P406 :1017/:1430 在同一事务纪律下证明。否决。
+
 ## 3. D1 逐 RL 全状态 oracle（`P409PhaseClosureFullStateOracleTest`）
 
 ### 3.1 类骨架与驱动面
@@ -118,19 +120,22 @@
 | RL-05 退款 | `credit_expense_source` v3（refund 变体标记）+ profile `CREDIT_EXPENSE_REFUND` | 1535 | 2026-08-08T12:00:00 | in / refund_settled | `CreditExpenseRefundFlow(category-food, account-credit-huabei, tx-原消费)` | 费用 −1535 / 负债 +1535；独立经济事件、快照 `original_transaction_id` 关联 |
 | RL-06 | `mixed_payment_source` v3 + profile `MIXED_PAYMENT(余额宝, 花呗)` | 1240（=360+880） | 2026-08-09T12:00:00 | out / settled | `MixedPaymentFlow(category-food, account-asset-a, account-credit-huabei, 360, 880)` | 费用 +1240 / 资产 −360 / 负债 −880；group 头 + 两腿（leg_index 1=asset/2=liability） |
 | RL-07 | 平台侧适用子集：复用 RL-03 确认后的 transfer posting + spine evidence | 3000 | 同 RL-03 | — | `P408ConfirmLinkRequest`（形状 = `P408ReconciliationCanonicalOracleTest.kt:187-209`，matchBasis 五元集） | 恰一笔正式转账（既有）；link + posting_reconciliation PENDING→CHECKED；零第二笔交易 |
-| RL-08 关闭行 | `ordinary_flow_source` v1（+ 转账/信用/混合各一关闭变体，状态 token raw 保留） | 900 | 2026-08-10T12:00:00 | out / raw(未成功 token) | 无（`VALID_INCOMPLETE`/`incomplete`，不可确认） | 零资金影响、零正式写入；重复导入幂等（与 RL-01 重导入共用机制面） |
+| RL-08 关闭行 | `ordinary_flow_source` v1 | 900 | 2026-08-10T12:00:00 | out / `closed`（raw 保留） | 无（`VALID_INCOMPLETE`/`incomplete`，不可确认） | 零资金影响、零正式写入；`ImportFundingState.NO_FUNDS` + rule `source-contract-closed-v1`、duplicate kind `CLOSED_OR_FAILED_NO_FUNDS`（P407 oracle :115-118/:533 冻结形态）；重复导入幂等（与 RL-01 重导入共用机制面） |
+| RL-08 关闭变体·转账 | `transfer_flow_source` v2 | 1200 | 2026-08-11T12:00:00 | out / `closed`（raw 保留） | 无 | 同上形态，kind 维度登记（跨 kind 关闭格） |
+| RL-08 关闭变体·信用 | `credit_expense_source` v3 + profile `CREDIT_EXPENSE_DIRECT` | 2400 | 2026-08-12T12:00:00 | out / `closed`（raw 保留） | 无 | 同上形态 |
+| RL-08 关闭变体·混合 | `mixed_payment_source` v3 + profile `MIXED_PAYMENT(余额宝, 花呗)` | 1860 | 2026-08-13T12:00:00 | out / `closed`（raw 保留） | 无 | 同上形态（状态 raw 保留 + unresolved + `VALID_INCOMPLETE`，零拒行升级 = slice2 §3.2 状态门纪律） |
 
-RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值原样重述（收口矩阵登记引用 + 收口序列内重申，契约 D1 表「既有覆盖登记」列）。
+RL-05/RL-06 的**金额与 profile 原样重述**（`P406CreditFullStateOracleTest.kt:96-119`：10000/5620/1535/1240=360+880 与三 profile token）；**时间不沿用 P406 原日期**，采用本 oracle 顺序合成日期（以表列为准：消费 08-06、还款 08-07、退款 08-08、混合 08-09）。RL-08 关闭行族的状态 token/funding 形态取自 P407 冻结语料（statusToken `"closed"`、`NO_FUNDS`、`source-contract-closed-v1`，`P407DuplicateClosedFullStateOracleTest.kt:115-118`）。
 
 ### 3.3 断言面（收口 full-state 定义，冻结）
 
-`P409FullState` = 30 个行列表 + 2 个投影，全部排序后逐行比较（P406 纪律 :449-463/:581-609）：
+`P409FullState` = 29 个行列表 + 2 个投影（9 spine + 1 profile + 5 duplicate + 7 P4-08 + 5 formal + 2 mixed group），全部排序后逐行比较（P406 纪律 :449-463/:581-609）：
 
 1. spine 9 表（import_request / import_source_record / import_evidence / import_candidate / import_candidate_requires_confirmation / import_candidate_status_history / import_candidate_decision_snapshot / import_confirmation / import_receipt；列清单 = P406 :495-516）；
 2. profile 1 表（import_candidate_payment_profile，:503-507）；
 3. P4-07 duplicate 5 表（import_duplicate_candidate / import_duplicate_status_history :517-522 + **import_duplicate_review_request / import_duplicate_review_snapshot / import_duplicate_review_receipt**，列 = `P407DuplicateClosedFullStateOracleTest.kt:361-363`——P406 未读的 3 表在本 oracle 全读）；
 4. P4-08 7 表全量（reconciliation_request / reconciliation_request_snapshot / evidence_link / evidence_link_history / posting_reconciliation / posting_reconciliation_history / reconciliation_receipt；列 = `P408ReconciliationCanonicalOracleTest.kt:231-267`）；
-5. formal 6 表（ledger_transaction / posting_set / transaction_version / ledger_transaction_current_version / posting；= P406 :523-527）；
+5. formal 5 表（ledger_transaction / posting_set / transaction_version / ledger_transaction_current_version / posting；= P406 :523-527）；
 6. mixed group 2 表（:528-537）；
 7. report 投影（裁决 2 十维 + 余额）；
 8. reconciliation 维度（readReconciliationReport 投影）。
@@ -145,9 +150,9 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 4. `rl04SecondSourceRoutingBothEndsAndReconciliationAdvance`：VALID_COMPLETE 变体确认两端余额 → confirmLink 推进；VALID_INCOMPLETE 变体保持资料不足。
 5. `rl05CreditThreeAnchorsLifecycleRestated`：消费→还款→退款三锚点单序列串联（含 `original_transaction_id` 快照关联与三时点余额/报告），断言面含 P4-07/P4-08 全表（重申 P406 锚点，契约 D1「收口增量 = 在收口 oracle 内重申」）。
 6. `rl06MixedThreePostingsAndGroupRestated`：12.40=3.60+8.80 三分录 + group 两表 + 报告效应重申。
-7. `rl07PlatformSideMirrorSubsetZeroSecondTransaction`：合成镜像 evidence → 精确 posting 判定 → link/状态变化/零第二笔交易；银行侧真实维度以断言旁注释登记延期指针（O-8/D-099:1540），不做银行侧行。
+7. `rl07PlatformSideMirrorSubsetZeroSecondTransaction`（含两条 RL-07 新增腿）：主路径 = 合成镜像 evidence → 精确 posting 判定 → link/状态变化/零第二笔交易 → replay NoChange；**腿 2（F3 新格）** = 约束驱动 confirm 失败（预置冲突 link_id 使 `confirmLink` 在写入段约束失败）→ 零残留 + 身份可重试 → 纠正重试成功 → reopen 后保持（裁决 8）；**腿 3（F5 新格）** = 并发 confirmLink（同 posting 两请求）→ 单赢家 Accepted、输家类型化冲突零残留（`changedRequestRetry` :198 语义的并发形态）；银行侧真实维度以断言旁注释登记延期指针（O-8/D-099:1540），不做银行侧行。
 8. `rl08ClosedRowsAcrossKindsStayZeroFunds`：普通/转账/信用/混合四 kind 关闭变体（状态 token raw 保留）零资金影响 + 重复导入幂等重放。
-9. `creditAndMixedDuplicateReviewClaimDispositionFinalStates`（**组合锚点 b**，契约 :82 残余格）：两条等值信用行 → duplicate → review-claim `CONFIRMED_DUPLICATE` → 第二候选阻断正式化（`p407ConfirmedDuplicateBlocksFormalFactory` 先例 `ImportSpineLifecycleEndToEndTest.kt:1242`）；两条等值混合行 → duplicate → `DISMISSED_LOOKALIKE` → distinct 重入可正式化（`matrix3b` 先例 :691）；两处置终态全状态。
+9. `creditAndMixedDuplicateReviewClaimDispositionFinalStates`（**组合锚点 b**，契约 :82 残余格）：两条等值信用行 → duplicate → review-claim `CONFIRMED_DUPLICATE` → 第二候选阻断正式化（`p407ConfirmedDuplicateBlocksFormalFactory` 先例 `ImportSpineLifecycleEndToEndTest.kt:1242`）；两条等值混合行 → duplicate → `DISMISSED_LOOKALIKE` → distinct 重入可正式化（`P407DuplicateClosedFullStateOracleTest.matrix3bNoWinnerAndDistinctOrDismissedSourcesStillFormalize` 先例，P407 :691）；两处置终态全状态。
 10. `closureFormSurvivesReopenAndReplaysOriginalReceipts`：文件库（`Files.createTempFile`，P408 reopen 先例 :148-185）承载 §5.2 之外的收口形态行集，reopen 后全状态相等 + replay 原 receipt。
 11. `concurrentCreditAndMixedConfirmsHaveSingleWinnerAndLoserReplay`（F5 新格）：双线程并发确认同一信用候选与同一混合候选，单赢家、输家零写入且不消耗提交 id（BatchCommitIdSource 剩余断言）、输家重放返回赢家 receipt（P4-02 :659 先例形态）。
 12. `ordinaryAndIncomeConfirmDomainFailuresStayPendingZeroWrites`（F4 新格）：未知分类/未持有 funding 账户/跨账本 → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入、候选保持待确认、claim 可重试。
@@ -179,11 +184,21 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 
 ### 4.2 reopen 断言
 
-种子与插入行逐值保持（v1 核心链、rg03/rg04 行、各代 spine 行、sentinel 值、P4-08 行）；守卫有效 = 32 个收口域触发器在位计数（v21 8 个 import 守卫 + v23 17 个 P408 触发器（`:655-665` 清单）+ v24 duplicate 守卫 + v25 8 触发器（`:579-586` 清单），以 sqlite_master 计数断言）+ 一次 append-only 探针（对 import_candidate_status_history 的 UPDATE 须抛 SQLException，`spineOwnersAreAppendOnlyAndStatusTransitionsAreGuarded` :891 同族）；`pragma_foreign_key_check` = 0；`schemaMetadata(fresh) == schemaMetadata(migrated)` 前置（:519-531 同法）。
+种子与插入行逐值保持（v1 核心链、rg03/rg04 行、各代 spine 行、sentinel 值、P4-08 行）；`pragma_foreign_key_check` = 0；`schemaMetadata(fresh) == schemaMetadata(migrated)` 前置（:519-531 同法）。守卫断言 = **按家族逐名枚举**（`:584-586`/`:695` 形态）+ sqlite_master 触发器总数，分组为本人从 `20.sqm`..`24.sqm` 逐文件枚举核实（每文件 `CREATE TRIGGER` 全名清点）：
+
+| 边 | 迁移文件 | 触发器数 | 构成（核实） | 断言先例 |
+| --- | --- | --- | --- | --- |
+| →v21 | 20.sqm | 20 | 9 张 import 表 ×2 update/delete 守卫（18）+ `import_status_history_sequence_guard` + `import_status_history_transition_guard` | `ImportSpineMigrationCoexistenceTest.kt:175-176`（两 history 守卫逐名） |
+| →v22 | 21.sqm | 20（同名重建） | 同上 20 个同名重建（v22 重建边不改守卫集） | E40 测试族 |
+| →v23 | 22.sqm | 18 | P4-08 全部 18 个（`LedgerDatabaseMigrationTest.kt:655-665` 清单 18 项；断言循环 :695；其中 `posting_reconciliation` 仅 delete 守卫 + `posting_reconciliation_update_guard` 语义守卫） | :695 |
+| →v24 | 23.sqm | 17 | `import_source_record` 守卫 ×2 同名重建 + duplicate 家族 15（5 表 ×2 守卫 + `import_duplicate_history_sequence`/`_terminal`/`_creation_owner`/`_review_owner`/`import_duplicate_review_receipt_consistency`） | P407 oracle 迁移段 |
+| →v25 | 24.sqm | 14 | 同名重建 6（`import_source_record`/`import_candidate`/`import_candidate_decision_snapshot` 各 ×2）+ 新增 8（profile ×2、group/leg guard ×4、`mixed_payment_group_complete`、`mixed_payment_group_leg_before_head`） | `:579-586`（8 新增逐名） |
+
+v25 终态**去重后独立触发器名合计 = 20（import 家族）+ 18（P4-08）+ 15（duplicate 家族）+ 8（v25 新增）= 61**；测试以逐名枚举 + `SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (61 名清单)` = 61 断言，另加一次 append-only 探针（对 import_candidate_status_history 的 UPDATE 须抛 SQLException，`spineOwnersAreAppendOnlyAndStatusTransitionsAreGuarded` :891 同族）。
 
 ### 4.3 数据级等价投影（裁决 4 细化）
 
-逐行比较的表集合（两库共有）：formal 6 表、rg03/rg04 插入行所在表、spine 9 表、profile、duplicate 5 表、P4-08 7 表、mixed group 2 表（空表相等）。fresh 侧构造 = 同 §4.1 行集 + 显式 sentinel（funding 列写 UNRESOLVED/migration-v24-unresolved 于 v21/v22 行；v23 播种行与 migration-v23-seed request 显式插入）。比较实现 = 每表 `SELECT * ORDER BY 1,2` 列表相等（`selectRows` + `rowComparator` 纪律）；**零聚合投影**。
+逐行比较的表集合（两库共有）：formal 5 表、rg03/rg04 插入行所在表、spine 9 表、profile、duplicate 5 表、P4-08 7 表、mixed group 2 表（空表相等）。fresh 侧构造 = §4.1 行集 + 命名常量 sentinel（裁决 4 冻结纪律；funding 列写 UNRESOLVED/migration-v24-unresolved 于 v21/v22 行；v23 播种行与 migration-v23-seed request 显式插入）。比较实现 = 每表 `SELECT` 全列后以**全行比较器排序**（`selectRows` + `sortedWith(rowComparator)`，P406 :449-463 纪律）再列表相等，**不依赖 SQL ORDER BY**——四张 history 表（import_candidate_status_history / import_duplicate_status_history / evidence_link_history / posting_reconciliation_history）首两列（ledger_id + 拥有者 id）非唯一（sequence 才唯一），`ORDER BY 1,2` 不足以确定行序；全行比较器与排序键无关地保证齐一比较。**零聚合投影**。
 
 ## 5. D3 RG 竖井 + 完整 spine v25 + P4-08 表同库共存（`P409SiloSpineCoexistenceTest`）
 
@@ -206,6 +221,8 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 
 每竖井执行 accepted op + 同请求 replay（NoChange/原 receipt）。
 
+**rg08-12 接入与 reopen 纪律先例**：`MultiRgStoreCoexistenceTest.kt`（579 行）已验证五 store 共享单一 `LedgerDatabase`、各 commit 典型正式路径（RG-08 lend / RG-09 main / RG-10 main / RG-11 create / RG-12 correction）、reopen 后逐 store 快照逐字节相等，且其 `adaptRg08/09/10/12Fixture` + rg11 create-input/catalog wiring 可直接复用为本表 (i) 层 rg08-12 的接入蓝本；本测试把该形态扩展到 12 竖井 + spine + P4-08 同库（§5.3 断言面相应扩展为零串音 + 反向 id 过滤 + 竖井 replay）。
+
 ### 5.2 spine 完整形态行集（同库）
 
 §3.2 全部 RL 行（六 kind 全覆盖 + 关闭变体）+ 每可确认 kind 一次确认（普通/收入/转账完整/信用三锚/混合）+ RL-01 duplicate→review + RL-07 confirmLink + 组合锚点 a/b 的最小重演。ledger 与各竖井 ledger 不同 id（rg04 先例 :74/:230 不同 ledger 共享 formal 链合法）。
@@ -222,18 +239,18 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 
 | RL | F1 解析 fatal | F2 intake 注入 | F3 confirm 注入 | F4 领域拒绝 | F5 并发输家 | F6 迁移 late-stage |
 | --- | --- | --- | --- | --- | --- | --- |
-| RL-01 | WechatBillParserJvmTest fatal 容器族（D-097 P401-FATAL 传承） | ImportSpineLifecycleEndToEndTest.injectedFailuresRollBackEverySpineOwnerAndKeepIdentityUsable（:730，INTAKE_AFTER_CANDIDATE 点） | 同左（:730，CONFIRM_AFTER_FORMAL 点） | **新增** rl01…+ ordinaryAndIncomeConfirmDomainFailures（§3.4.12）；既有类型化拒绝 :1052/:1082 | ImportSpineLifecycleEndToEndTest.concurrentIntakes/Confirms（:595/:659） | LedgerDatabaseMigrationTest.lateV24ToV25FailureRollsBackCreditStructuresAndSpineRows（:596，普通行保持）+ lateV23ToV24（:701） |
-| RL-02 | AlipayCsvParserJvmTest T 族 fatal | 同 RL-01（:730） | 同 RL-01（:730） | ImportSpineLifecycleEndToEndTest.incomeDomainFailureLeavesZeroResidueAndCorrectedRetryAccepts（:811） | 同 RL-01（:595/:659） | 同 RL-01（:596/:701；schema 级行级） |
-| RL-03 | WechatBillParserJvmTest fatal 容器族（行级路由 fatal 不存在：结构错 = 容器 fatal） | :730 | ImportSpineTransferEndToEndTest.executesE31E32InjectedFailuresWithFullRollbackAndCorrectedRetries（:1316） | 同左 E17-E28（:997 域失败/门失败族） | executesE29E30ConcurrentTransferConfirmsWithSingleWinner（:1184） | executesE41LateStageMigrationFailureRollsBackCompletely（:2079） |
-| RL-04 | AlipayCsvParserJvmTest/AlipayCsvParserYuebaoTransferJvmTest fatal 族 | :730 | :1316 | 同左（:997 族，绑定失配向量 B01-B13 :1598） | :1184 | :2079（同 transfer kind 族） |
-| RL-05 | AlipayCsvParserCreditJvmTest fatal 族 | P406CreditFullStateOracleTest.injectedIntakeFailureAfterCandidateRollsBackAllV3RowsAndAcceptsOnRetry（:973） | …injectedConfirmFailureAfterFormalRollsBackDecisionAndAcceptsOnRetry（:1017） | …creditConfirmationNegativePathsStayPendingWithZeroWritesAndClaimRetry（:1160） | **新增** concurrentCreditAndMixedConfirms（§3.4.11） | lateV24ToV25（:596，信用结构回滚） |
-| RL-06 | AlipayCsvParserCreditJvmTest fatal 族 | 同 RL-05（:973） | …mixedConfirmInjectionRollsBackGroupTablesAndReplayReturnsOriginalReceipt（:1430） | …mixedConfirmationNegativePaths（:1534）+ MixedPaymentTest | **新增**（§3.4.11） | lateV24ToV25（:596） |
-| RL-07 | 平台侧 = 两 parser fatal 族（来源侧）；银行侧真实维度 = 已登记延期（O-8 → D-099:1540 银行 parser 门仍开） | spine evidence 侧 = :730（evidence 随 intake 注入） | **新增** 约束驱动 confirm 失败 + 重试 + reopen（裁决 8；P408ReconciliationStoreTest :356 同构先例；触发器 = 约束而非异常，格内登记差异） | P408ReconciliationStoreTest 类型化拒绝族（:55-:273/:280-:526） | **新增** rl07 并发 confirmLink 单赢家 + 输家类型化冲突零残留（changedRequestRetry 语义 :198 的并发形态） | versionTwentyTwoToTwentyThreeDdlFailureRollsBackEverySharedP408Owner（:450） |
-| RL-08 | 两 parser fatal 容器族（行级关闭形态归 F4/正路径列：rl08ClosedRows…） | P407DuplicateClosedFullStateOracleTest.matrix5cReviewFailuresLeaveZeroResidueAndRetryableIdentities（:772，REVIEW_AFTER_SNAPSHOT 点） | 同左（:772）+ p407ConfirmedDuplicateBlocksFormalFactory（lifecycle :1242） | matrix7UnknownRefundAndNonSettledAmbiguityStayUnresolved（lifecycle :1009）+ p407NoFunds…（:1281/:1317） | matrix5cConcurrentReviewClaimsHaveSingleWinnerAndLoserReplay（:841）+ matrix5dConcurrentSameRequestIntakesKeepOneDuplicateRow（:977） | lateV23ToV24FailureRollsBackSourceRebuildAndP408Rows（:701，duplicate 表属 v24 对象） |
+| RL-01 | WechatBillParserJvmTest fatal 容器/结构族（:354-465；D-097 P401-FATAL 传承） | ImportSpineLifecycleEndToEndTest.injectedFailuresRollBackEverySpineOwnerAndKeepIdentityUsable（:730，INTAKE_AFTER_CANDIDATE 点） | 同左（:730，CONFIRM_AFTER_FORMAL 点） | **新增** rl01…+ ordinaryAndIncomeConfirmDomainFailures（§3.4.12）；既有类型化拒绝 :1052/:1082 | ImportSpineLifecycleEndToEndTest.concurrentIntakes/Confirms（:595/:659） | LedgerDatabaseMigrationTest.lateV24ToV25FailureRollsBackCreditStructuresAndSpineRows（:596，普通行保持）+ lateV23ToV24（:701） |
+| RL-02 | AlipayCsvParserJvmTest fatal 容器/结构族（:407-509） | 同 RL-01（:730） | 同 RL-01（:730） | ImportSpineLifecycleEndToEndTest.incomeDomainFailureLeavesZeroResidueAndCorrectedRetryAccepts（:811） | 同 RL-01（:595/:659） | 同 RL-01（:596/:701；schema 级行级） |
+| RL-03 | WechatBillParserJvmTest fatal 容器/结构族（:354-465；行级路由 fatal 不存在：结构错 = 容器 fatal） | :730 | ImportSpineTransferEndToEndTest.executesE31E32InjectedFailuresWithFullRollbackAndCorrectedRetries（:1316） | 同左 E17-E28（:997 域失败/门失败族） | executesE29E30ConcurrentTransferConfirmsWithSingleWinner（:1184） | executesE41LateStageMigrationFailureRollsBackCompletely（:2079） |
+| RL-04 | AlipayCsvParserJvmTest fatal 容器/结构族（:407-509）；行级路由形态另列 AlipayCsvParserYuebaoTransferJvmTest（行级类型化，非 fatal） | :730 | :1316 | 同左（:997 族，绑定失配向量 B01-B13 :1598） | :1184 | :2079（同 transfer kind 族） |
+| RL-05 | AlipayCsvParserJvmTest fatal 容器/结构族（:407-509，来源容器级）；信用路由行级类型化拒行另列 AlipayCsvParserCreditJvmTest（行级，非 fatal） | P406CreditFullStateOracleTest.injectedIntakeFailureAfterCandidateRollsBackAllV3RowsAndAcceptsOnRetry（:973） | …injectedConfirmFailureAfterFormalRollsBackDecisionAndAcceptsOnRetry（:1017） | …creditConfirmationNegativePathsStayPendingWithZeroWritesAndClaimRetry（:1160） | **新增** concurrentCreditAndMixedConfirms（§3.4.11） | lateV24ToV25（:596，信用结构回滚） |
+| RL-06 | 同 RL-05（fatal = AlipayCsvParserJvmTest :407-509 容器级；AlipayCsvParserCreditJvmTest 为行级类型化，非 fatal） | 同 RL-05（:973） | …mixedConfirmInjectionRollsBackGroupTablesAndReplayReturnsOriginalReceipt（:1430） | …mixedConfirmationNegativePaths（:1534）+ MixedPaymentTest | **新增**（§3.4.11） | lateV24ToV25（:596） |
+| RL-07 | 平台侧 = WechatBillParserJvmTest（:354-465）与 AlipayCsvParserJvmTest（:407-509）fatal 容器/结构族（来源侧）；银行侧真实维度 = 已登记延期（O-8 → D-099:1540 银行 parser 门仍开） | spine evidence 侧 = :730（evidence 随 intake 注入） | **新增** 约束驱动 confirm 失败 + 重试 + reopen（裁决 8；P408ReconciliationStoreTest :356 同构先例；触发器 = 约束而非异常，格内登记差异） | P408ReconciliationStoreTest 类型化拒绝族（:55-:273/:280-:526） | **新增** rl07 并发 confirmLink 单赢家 + 输家类型化冲突零残留（changedRequestRetry 语义 :198 的并发形态） | versionTwentyTwoToTwentyThreeDdlFailureRollsBackEverySharedP408Owner（:450） |
+| RL-08 | WechatBillParserJvmTest（:354-465）与 AlipayCsvParserJvmTest（:407-509）fatal 容器/结构族；行级关闭形态归正路径锚点 rl08ClosedRows…（本行 F4 括注登记） | P407DuplicateClosedFullStateOracleTest.matrix5cReviewFailuresLeaveZeroResidueAndRetryableIdentities（:772，REVIEW_AFTER_SNAPSHOT 点） | 同左（:772）+ lifecycle p407ConfirmedDuplicateBlocksFormalFactory（:1242） | P407DuplicateClosedFullStateOracleTest.matrix7UnknownRefundAndNonSettledAmbiguityStayUnresolved（P407 :1009）+ lifecycle p407NoFunds…（:1281/:1317）；正路径关闭行覆盖 = **新增** rl08ClosedRowsAcrossKindsStayZeroFunds（§3.4.8，四 kind 关闭变体，正路径格登记） | P407DuplicateClosedFullStateOracleTest.matrix5cConcurrentReviewClaimsHaveSingleWinnerAndLoserReplay（:841）+ …matrix5dConcurrentSameRequestIntakesKeepOneDuplicateRow（:977） | lateV23ToV24FailureRollsBackSourceRebuildAndP408Rows（:701，duplicate 表属 v24 对象） |
 
 ### 6.2 新增锚点落点汇总
 
-全部新增格落 D1 收口 oracle（§3.4 测试 3/4/7/9/11/12 内），**不**向既有模块测试追加；F6 列零新增（逐边 late 系列已闭合，D2 单链为正路径验收）。GOLDEN_TESTS.md 新节文本 = 上表去掉裁决括注后的登记版 + 每格锚点全名 + 本规格指针。
+全部新增格落 D1 收口 oracle（§3.4 测试 3/4/7/9/11/12 内），**不**向既有模块测试追加；F6 列零新增（逐边 late 系列已闭合，D2 单链为正路径验收）。测试 8（`rl08ClosedRowsAcrossKindsStayZeroFunds`）为**正路径覆盖**（关闭行零资金影响 + 跨 kind 关闭变体 + 重复导入幂等），非失败注入格，其矩阵登记位置 = §6.1 RL-08 行 F4 格括注（正路径格登记），GOLDEN_TESTS 版同步。GOLDEN_TESTS.md 新节文本 = §6.1 表去掉裁决括注后的登记版 + 每格锚点全名 + 本规格指针 + 矩阵下方**显式延期登记行**：「语义维度延期：P4-08 correction/successor invalidation → D-103:1639，延期至后续独立批（O-5-A；属语义维度而非失败模式列，故不设列、以本行登记）」。
 
 ## 7. D5 文档同步清单（实施批编辑动作；措辞基准冻结）
 
@@ -241,6 +258,7 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 | --- | --- | --- |
 | CURRENT_STATE.md:41（段内） | 「已合并 `main`，merge `df34388`，push 待用户明示」 | 改既成事实：merge `df34388` + `b19a6c1` 已推送 origin/main；同段追加 P4-09 收口登记（D-110 实施登记指针 + 阶段 4 收口证据面一句话） |
 | CURRENT_STATE.md:45 | 「`main` 领先 origin，push 需用户明示授权。push 后，P4-09 阶段收口门等待用户开启」 | 改为：推送已完成；P4-09 收口已完成（判据声明以 ROADMAP:41 原文为唯一基准：「支持的标准来源能够从导入走到正式账目与可解释对账状态，重复导入不产生重复账目」，证据 = D1..D5）；Phase 5 进入为独立用户门（ROADMAP:47） |
+| WORK_PLAN.local.md:15 | 阶段总览行「…slice 1 (D-107) merged to main (7cf9b79, v25; push pending user)」 | 改「pushed」（slice 1 推送为既成事实；同源滞后措辞一并修正） |
 | WORK_PLAN.local.md:99 | 「push pending user」 | 「pushed」 |
 | WORK_PLAN.local.md:102 | 「Gate open: …（P4-06 slice 2 merged df34388; push pending user）; awaits user to open the closure batch」 | 「Done: P4-09 阶段收口按 D-109 契约 + D-110 实施完成（RL-01~08 全 oracle、单链迁移、12 竖井共存、失败矩阵、全量回归；D-110 实施登记）」；行终态 = 收口完成 |
 | WORK_PLAN.local.md:150 | 「DONE pending push」 | 「DONE (pushed)」 |
@@ -259,7 +277,7 @@ RL-05/RL-06 值表 = `P406CreditFullStateOracleTest.kt:96-119` 既有锚点值�
 ## 9. 排除项（契约边界重申 + 本批已知约束）
 
 1. **O-2/O-6 全部边界重申**：零 schema、零生产语义、不发布 golden 工件、不自动授权 publication/Phase 5；十四项欠账逐条维持登记落点不实现不关闭（constraint_solved 产出、null explicitConfirmedAt 类型化门、store :440 清理、营销腿剥离、微信信用负证据、分期 D-049、利息/手续费/逾期费、拆单/代付、仅资产腿退款与信用借还其余形态、银行 PDF 门、共享负债账户、provider token funding 映射、整文件保留生命周期、产品 ID/Clock/组装）。
-2. **O-5**：P4-08 correction/successor invalidation 维持延期，矩阵无此列（属语义维度非失败模式），登记指针不变。
+2. **O-5**：P4-08 correction/successor invalidation 维持延期；其在矩阵基线的登记形态 = GOLDEN_TESTS 新节矩阵下方显式延期登记行（§6.2 措辞），不设失败模式列（属语义维度而非失败模式）但**必须登记**（契约 O-5-A「在 D4 矩阵中显式标注延期」），指针 D-103:1639 不变。
 3. **实施批已知约束登记**：fixture 全合成（中性 token、固定 +08:00 合成时间、整数最小单位金额；不落盘掩码原文/括号原文/绝对路径）；Gradle 串行 + 单 worker + 1 GB heap + 每轮停 daemon（CONTRIBUTING 本机资源限制）；D3 若某竖井回退 raw SQL 播种须逐竖井登记理由（裁决 5）；P408 store 无异常注入钩子的现状与不加生产注入参数的处置（§6.1 RL-07 F3 格）；contract 分支 `feat/p409-phase-closure`（`28d7913`）随实施批一并合并（PROJECT_STATE.local.md:9 既定策略）。
 4. 本批不做 release scope（版本/tag/发布工件，O-9 范围外）。
 
