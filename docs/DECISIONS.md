@@ -1745,3 +1745,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 未实施。本决定为契约批准（2026-08-22），仅授权起草 P4-09 实施规格；用户已指示暂停，实施规格起草待恢复指令。
 
 **关联决定：** `D-092`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-106`、`D-107`、`D-108`
+
+## D-110 P4-09 阶段收口实施授权
+
+**状态：** proposed（2026-08-23 由 P4-09 实施规格起草批提案，待用户批准；依 D-109 §8 批准链，本规格经独立规格评审 + 质量评审双闭环后即可实施，无需再开新决定）。
+
+**决定：** 授权按照 `docs/specs/2026-08-22-p409-phase-closure-implementation-design.md`（Status: proposed → 双评审闭环后 approved）实施 D-109 契约的 P4-09 阶段收口批（全部 HOW 已在该规格冻结）：D1 新建独立收口 oracle `P409PhaseClosureFullStateOracleTest`（逐 RL-01..RL-08 合成 fixture 值表、十维 report 投影 + reconciliation 维度、30 表 + 2 投影全状态比较面、约 12 测试，含两组合锚点 = RL-03 × P4-08 evidence link 全链与信用/混合 duplicate review-claim 处置终态）；D2 新建 `P409SingleChainMigrationTest`（populated v1 起步 13 步 stage 编排单链迁到 v25 + reopen + 守卫 + 全部共有表逐行数据级 fresh 等价，零聚合投影，store 推进段比较后独立断言）；D3 新建 `P409SiloSpineCoexistenceTest`（12 竖井各一个代表性 operation + replay 的最小充分集 ≈ 40 操作，非全 357-op 语料回放；spine 六 kind 完整形态同库；零串音 + reopen + 竖井 replay 不受影响）；D4 失败矩阵落 `docs/GOLDEN_TESTS.md` 新节作覆盖登记基线（8 RL × 6 模式逐格锚点，新增格全部落 D1 oracle，F6 零新增）；D5 逐文件文档同步清单（CURRENT_STATE:41/:45 既成事实化、WORK_PLAN:99/:102/:150/:153、ROADMAP:41 判据原文为唯一声明基准）。八项 HOW 裁决（独立类 vs 扩展、报告投影、D2/D3 落点、fresh 等价构造、最小充分集、矩阵落点、O-1 勾选门登记位置、P408 注入格约束驱动处置）各配替代方案与风险，见规格 §2。
+
+**边界：** 零 schema、零生产语义变更（不新增 `.sqm`、`Ledger.sq` 零改动、生产三模块源码零改动；全部新增代码落 `ledger-data` jvmTest 与 tracked 文档；唯一例外 = `ImportSpineMigrationCoexistenceTest.kt` 头注释一行指向登记，零断言变化）；不发布 golden 工件、不自动授权 publication 或 Phase 5；不实现 O-6 十四项排除清单任何项、不扩权 D-103 matcher 语义、不动 12 套 rgXX 竖井（O-7）、真实来源数据不入仓（O-1 仓库外必选勾选门）；缺陷发现即停止走 O-2 评审路由，不与本批混编；release scope 留给真实发布门（O-9）。
+
+**实施门：** (1) 零 schema 证据四条 = 无新 `.sqm`、DDL 零字节改动、版本钉 v25、迁移 verifier fresh=migrated 原样通过；(2) 全量验证矩阵按规格 §10 八层时序执行（三新类聚焦 → 迁移 verifier → 三 JVM 模块全量 → Android 编译 → Python 全套 → project_docs → verify-project full → push 前 trace），并经独立规格评审 + 质量评审双闭环、distinct verifier 实际执行、主代理最终检查与全量受影响套件；(3) O-1 必选勾选门 = 用户侧仓库外真实来源验证在主 checkout `docs/PROJECT_STATE.local.md` 收口验收清单留痕，不勾选即收口不完成（判据定义以规格 §8 tracked 文本为唯一基准）；(4) D3 竖井回退与 D4 新增格差异逐项登记，不静默跳过。
+
+**实施登记：** 未实施。本决定为实施授权提案；规格双评审 findings 与实施证据待实施批补全本段。
+
+**关联决定：** `D-109`（主，契约）、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-106`、`D-107`、`D-108`
