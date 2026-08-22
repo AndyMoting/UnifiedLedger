@@ -7983,6 +7983,14 @@ SELECT variant, asset_leg_kind_token, credit_leg_kind_token
 FROM import_candidate_payment_profile
 WHERE ledger_id = ? AND candidate_id = ?;
 
+insertMixedPaymentGroup:
+INSERT INTO mixed_payment_group(ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertMixedPaymentGroupLeg:
+INSERT INTO mixed_payment_group_leg(ledger_id, group_id, leg_index, leg_class, account_id, amount_minor)
+VALUES (?, ?, ?, ?, ?, ?);
+
 insertImportCandidateRequirement:
 INSERT INTO import_candidate_requires_confirmation(ledger_id, candidate_id, requirement_index, requirement)
 VALUES (?, ?, ?, ?);
