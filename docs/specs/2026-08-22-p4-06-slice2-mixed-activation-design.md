@@ -1,6 +1,6 @@
 # P4-06 片 2（RL-06 混合支付激活）实施规格
 
-**Status:** proposal（draft；2026-08-22 起草，待独立规格评审闭环与用户批准后转 approved）
+**Status:** approved（2026-08-22 用户批准"唯一下一步以及之后的工作"开启片 2 实施授权门 + 契约 D-106；独立规格评审 findings P406S2-SPEC-001..006 已修复/登记闭合，闭环复审 CLOSURE APPROVE）
 
 本规格按 D-106 契约（`docs/specs/2026-08-22-p4-06-credit-mixed-payment-contract-design.md`，Status: approved）§9 :154 片 2 授权范围起草；前置 = 片 1 已合入（D-107，merge `7cf9b79`）。粒度与密度先例为片 1 规格（`docs/specs/2026-08-22-p4-06-slice1-credit-implementation-design.md`）。本批交付混合支付路由启用、多腿 decision snapshot 确认、`mixed_payment` 关联组产品表行为、缺腿资料不足路径与 `constraint_solved` 反推建议边界、§7.2/§7.3 锚点验收（契约 §9 :154），并登记契约 §9 :156 要求的全部实施批事项。任何超出 D-106 的默认行为均退回契约修订，不由实现静默发明（D-096 纪律）。
 

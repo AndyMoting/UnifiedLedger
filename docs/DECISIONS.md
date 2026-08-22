@@ -1713,14 +1713,16 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-108 P4-06 片 2（RL-06 混合支付激活）实施授权
 
-**状态：** proposed（草案，2026-08-22；待独立规格评审闭环与用户批准后转 已批准并授权实施）。
+**状态：** 已批准（2026-08-22 用户批准 push 与其后工作，构成片 2 实施授权；本段授权片 2 按已 approved 规格实施）。
 
-**决定：** 授权按照 `docs/specs/2026-08-22-p4-06-slice2-mixed-activation-design.md`（Status: proposal 草案，随本决定闭环转 approved）实施 D-106 的片 2（RL-06 混合支付激活）边界：解析层 6d 混合路由激活（恰 1 资产腿 + 1 信用腿 + 支出方向 + `交易成功` → `mixed_payment_source` v3 候选、intake 即 `pending_confirmation`）；多腿构成门（去重后资产腿 >1 或信用腿 >1 → 类型化拒行，对齐片 1 3d 先例）与 `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 语义收窄（混合腿构成不合法，非恰 1 资产 + 1 信用）；`MixedPaymentFlow` 决策形状（显式负债账户 + 资产账户 + 二级分类 + 两腿精确金额）与确认门（决策腿金额缺失 → `SPINE_CANDIDATE_INCOMPLETE` 拒确认、候选保持待确认、零写入；片 1 `SPINE_DECISION_KIND_MISMATCH` 防御解除并登记）；纯复用既有 `createMixedPaymentExpense` 的三分录正式化（费用 + / 资产 − / 信用 −，恰一套最终分录、禁双记）；确认事务内启用 `mixed_payment_group` 两表（腿先头后写序、leg_index 1=asset/2=liability、确定性 group_id 派生、generated_at = 决策 confirmedAt，无 Clock/随机 ID）；决策快照腿金额列启用（替换 store 硬编码 null）与 confirm replay 等价比较翻转；evidence 基数 1 evidence : 2 funding postings 以 oracle 断言固化（不写 P4-08 表）；`constraint_solved` 候选级建议边界冻结（provenance + confidence、永不自动入账、不回写来源事实；本批不产出建议，登记已知限制）；匿名 §7.2/§7.3 锚点验收（合成 fixture 12.40 = 3.60 + 8.80：费用 +12.40 / 资产 −3.60 / 负债 −8.80）。主代理已裁决的四项缺口（混合候选初始状态由确认门承载腿金额缺失、多腿构成门、诊断码归宿收窄、建议只冻结边界不产出）按规格 §2 各裁决条款与替代方案风险登记执行。
+**决定：** 授权按照 `docs/specs/2026-08-22-p4-06-slice2-mixed-activation-design.md`（Status: approved，2026-08-22）实施 D-106 的片 2（RL-06 混合支付激活）边界：解析层 6d 混合路由激活（恰 1 资产腿 + 1 信用腿 + 支出方向 + `交易成功` → `mixed_payment_source` v3 候选、intake 即 `pending_confirmation`）；多腿构成门（去重后资产腿 >1 或信用腿 >1 → 类型化拒行，对齐片 1 3d 先例）与 `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 语义收窄（混合腿构成不合法，非恰 1 资产 + 1 信用）；`MixedPaymentFlow` 决策形状（显式负债账户 + 资产账户 + 二级分类 + 两腿精确金额）与确认门（决策腿金额缺失 → `SPINE_CANDIDATE_INCOMPLETE` 拒确认、候选保持待确认、零写入；片 1 `SPINE_DECISION_KIND_MISMATCH` 防御解除并登记）；纯复用既有 `createMixedPaymentExpense` 的三分录正式化（费用 + / 资产 − / 信用 −，恰一套最终分录、禁双记）；确认事务内启用 `mixed_payment_group` 两表（腿先头后写序、leg_index 1=asset/2=liability、确定性 group_id 派生、generated_at = 决策 confirmedAt，无 Clock/随机 ID）；决策快照腿金额列启用（替换 store 硬编码 null）与 confirm replay 等价比较翻转；evidence 基数 1 evidence : 2 funding postings 以 oracle 断言固化（不写 P4-08 表）；`constraint_solved` 候选级建议边界冻结（provenance + confidence、永不自动入账、不回写来源事实；本批不产出建议，登记已知限制）；匿名 §7.2/§7.3 锚点验收（合成 fixture 12.40 = 3.60 + 8.80：费用 +12.40 / 资产 −3.60 / 负债 −8.80）。主代理已裁决的四项缺口（混合候选初始状态由确认门承载腿金额缺失、多腿构成门、诊断码归宿收窄、建议只冻结边界不产出）按规格 §2 各裁决条款与替代方案风险登记执行。
 
 **边界：** 零 schema 变更（不新增 `.sqm`、`Ledger.sq` DDL 零改动、schema 版本钉 v25、迁移 verifier fresh = migrated 原样通过；`Ledger.sq` 仅新增 `insertMixedPaymentGroup`/`insertMixedPaymentGroupLeg` 两个命名查询，查询非 DDL）；不产出 `constraint_solved` 反推建议；多腿 >2 形态拒行（已知限制：白名单扩张须经契约修订重估构成门）；混合腿退款维持 `SPINE_ALIPAY_REFUND_UNSUPPORTED`（与 D-106 契约 §2.2 行 1 的字面偏差在规格 §3.1 显式登记）；不改变 D-097/D-100/D-102/D-104/D-105/D-107 已批准行为，不写 P4-08 evidence link/reconciliation，不引入产品 Clock/随机 ID、默认或共享负债账户映射、微信侧信用路由、营销腿/非资金标注腿剥离语义。
 
 **实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 与确认事务性（`mixed_payment_group` 写入与正式分录同事务、失败注入回滚含 group 两表、append-only 守卫触发器不绕过）；领域零改动（纯复用 `createMixedPaymentExpense`）；全部 fixture 全合成且不落盘掩码尾号/括注原文；按规格 §5.3/§7 顺序完成独立规格评审、质量评审、distinct verifier 与完整受影响套件后方可接受（对齐 D-107 实施门）。
 
-**实施登记：** 未实施（本决定为 proposed 草案；评审闭环与用户批准后转 已批准并进入实施）。
+**评审闭合：** 2026-08-22 独立规格评审 APPROVE with findings——P406S2-SPEC-001（MAJOR，§4.4 replay 等价比较链不完整：:727/:731/:732 三处比较与 `categoryDecisionValue`/`creditLiabilityDecisionValue` 两辅助函数须扩展 `MixedPaymentFlow`，否则合法混合确认重放误判身份冲突）、P406S2-SPEC-002（MINOR，1c 退款变体同款 `single()` 已知限制登记）、P406S2-SPEC-003/004（LOW，行 7 映射改写 + 7 处行号勘正）、P406S2-SPEC-005（INFO，裁决 4 对契约 §7.4 :137「保留独立推断证据」的延期原为开放式；处理 = WORK_PLAN backlog 已指派推断证据产出的未来落点（有可推理来源的独立批 + 届时契约修订），D-108 批准构成对该契约验收承接缺口的显式裁决与留痕）、P406S2-SPEC-006（INFO，白名单全清单重述）。修复冻结 `d0a5307`，闭环复审（原评审）逐项 CLOSED、CLOSURE APPROVE。
+
+**实施登记：** 未实施（2026-08-22 本决定批准后片 2 实施未开始；实施完成后在此登记）。
 
 **关联决定：** `D-106`（主）、`D-107`、`D-072`、`D-073`、`D-078`、`D-097`、`D-100`、`D-102`、`D-103`、`D-104`、`D-105`
