@@ -1,6 +1,6 @@
 # P4-09 阶段收口实施规格
 
-**Status:** proposed（D-110 提案；本规格冻结 P4-09 收口批的 HOW。依 D-109 §8 批准链：本规格经独立规格评审 + 质量评审双闭环后即可实施，无需再开新决定；实施仍须 distinct verifier 与主代理最终检查）。
+**Status:** approved（2026-08-22 依 D-109 §8 批准链：独立规格评审 + 质量评审双闭环（P409IMPSPEC-001..011 / P409IMPQUAL-001..006 全部闭合或登记）后实施授权生效；用户"恢复"指令 2026-08-22 启动实施）。
 
 本规格按已批准契约 `docs/specs/2026-08-22-p409-phase-closure-contract-design.md`（Status: approved，D-109：O-1..O-9 全 A）起草，**只冻结实施 HOW，不变更契约 D1..D5 的 WHAT 语义与 O 组合**。结构与密度先例 = `docs/specs/2026-08-22-p4-06-slice2-mixed-activation-design.md`。行号依据：worktree `feat/p409-phase-closure` 基线 `28d7913`（代码文件与契约引用基线 `b19a6c1` 之间仅 docs 差异，代码行号一致）；`.local.md` 文档以主 checkout 为准。测试基础设施先例：`P406CreditFullStateOracleTest.kt`（Executor/captureFullState/Expected/12 测试）、`LedgerDatabaseMigrationTest.kt`（VERSION_ONE_STATEMENTS :2920、逐边 populated/late 系列、migrate(1,25) 用法 :519-531）、`ImportSpineMigrationCoexistenceTest.kt:222`（rg04 共存先例）、`P408ReconciliationCanonicalOracleTest.kt`（matcher/link 直驱方式）、各 RG FullStateOracle/Store 测试（竖井语料形态）。
 
@@ -13,6 +13,17 @@
 - 不新增任何 `.sqm`；schema 版本钉 v25；`Ledger.sq` 全部 DDL 与命名查询零字节改动；`docs/migrations` 注册表与本批无交集。验证方式 = 迁移 verifier 与 `LedgerDatabaseMigrationTest` 原样通过（D-108 先例）。
 - 生产源码（`ledger-domain`/`ledger-application`/`ledger-data` 的 `commonMain`/`jvmMain`）零改动。全部新增代码落点 = `ledger-data/src/jvmTest`（新测试类）+ tracked 文档（GOLDEN_TESTS.md 新节、CURRENT_STATE/WORK_PLAN 同步、DECISIONS.md 实施登记）。若实施中发现任何生产缺陷：停止、登记、走 O-2 评审路由，不得与本批混编。
 - 例外登记（唯一允许触碰的既有测试文件）：`ImportSpineMigrationCoexistenceTest.kt` 头注释补一行指向 D3 新验收（注释级，零断言变化）；除此以外既有测试文件一律不改、不删、不断言翻转。
+
+## 评审闭合
+
+双评审（规格 + 质量）均 APPROVE with findings（P409IMPSPEC-001..011 / P409IMPQUAL-001..006），两位评审对裁决 4/5/8 与三项 writer 异议均给出同意判断，全部 findings 修复或登记后双闭环复审 CLOSURE APPROVE：
+
+- **P409IMPSPEC-001（MAJOR）**：O-5 延期标注落入矩阵基线——§6.2 增 GOLDEN_TESTS 新节矩阵下方显式延期登记行（D-103:1639 指针），§9.2 措辞同步（保留「语义维度非失败模式」理由但不再排除登记）。
+- **P409IMPSPEC-003/P409IMPQUAL-001（MAJOR）**：§4.2 触发器计数全部勘正——按 20.sqm..24.sqm 逐文件逐名枚举分组（→v21 20 / →v22 20 同名重建 / →v23 18 / →v24 17（含 2 重建）/ →v25 14（含 6 重建）），v25 终态去重合计 61，断言形态 = 逐名枚举 + 总数。**行号仲裁**：P408 触发器清单字面量经 writer 复核为 `LedgerDatabaseMigrationTest.kt:655-665`（18 项，断言循环 :695），登记以复核值为准。
+- **其余 findings（P409IMPSPEC-002/004/005/006/007/008/010 与 P409IMPQUAL-002/003/004/005/006）**：全部为文本精度与遗漏项修复——§3.3 formal 5 表/29 行列表（002）；§3.2 重述措辞 + RL-08 四 kind 关闭变体补齐（004/QUAL-004）；矩阵 F1 fatal 归属勘正为两 parser fatal 区间、credit/yuebao 行级另列不称 fatal（005）；matrix7/matrix3b 文件归属与 2606 行勘正（006/QUAL-005）；测试 7 双腿扩充与测试 8 正路径落点（007）；§7 增 WORK_PLAN:15 行（008）；裁决 4 命名常量 sentinel 纪律消解循环表述（QUAL-002）；§4.3 全行比较器不依赖 ORDER BY（QUAL-003）；裁决 5/§5.1 补引 MultiRgStoreCoexistenceTest 先例（QUAL-006）；裁决 8 补记第三替代方案与否决理由（010）。
+- **P409IMPSPEC-011**：登记备查项，无需修复，维持原登记。
+
+修复冻结 `42bdd27`（2026-08-23，仅本规格文件，12 处修复覆盖 13 项 findings，P409IMPSPEC-011 无需修复；DECISIONS.md D-110 未触碰）；修复后双评审闭环复审均 CLOSURE APPROVE，本规格 Status 转 approved，D-110 实施授权生效。
 
 ## 2. 裁决（HOW 缺口八项；各配替代方案与风险）
 
