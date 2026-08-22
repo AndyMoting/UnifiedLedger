@@ -1689,7 +1689,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 排除项按 spec §8 登记：分期付款（多期未来扣款）future_rule（`D-049`；分摊边界按 ACCOUNTING_RULES.md:196 区分）；微信侧负证据登记与「信用卡还款」形态 future_rule；拆单支付（商家订单号 1:N）与亲友代付=未分配批次（`D-040` 关联组框架覆盖，无锚点）；不实现 P4-08 matcher 写入之外的对账新语义（`D-103` 边界维持）；不引入产品 Clock/随机 ID；利息/手续费/逾期费分录 future_rule；仅资产腿退款与信用借还族其余形态维持类型化拒行（未分配批次）。
 
-**实施登记：** 未实施（实施分两片，各需独立实施授权与规格）。
+**实施登记：** 分片推进中：片 1（RL-05 信用）已按 D-107 实施并合入 main（2026-08-22，merge `7cf9b79`；明细见 D-107 实施登记）；片 2（RL-06 混合支付激活）未实施，需独立实施授权与规格（契约冻结的混合结构建而不用，fail-closed）。
 
 **评审闭合：** 2026-08-22 独立规格评审 APPROVE with findings（P406-SPEC-001..008），全部已修复于本提交。
 
@@ -1706,5 +1706,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施门：** 实现须保持 source/candidate/formal 分层、原子 claim/replay 与迁移事务性（append-only 守卫触发器、fresh = migrated、funding 列不回写）；领域扩展纯加性（新增 `createCreditExpense`/`createCreditRefundReceipt` 与 posting role，不修改既有冻结函数）；全部 fixture 全合成且不落盘掩码尾号/括注原文；按规格 §8 顺序完成独立规格评审、质量评审、distinct verifier 与完整受影响套件后方可接受。
 
 **评审闭合：** 2026-08-22 独立规格评审 findings P406S1-SPEC-001..009（3 MAJOR——其中 SPEC-001 为数据填充修订类、2 MINOR、3 LOW、1 INFO）经主代理逐项裁决后全部修复，spec Status 转 approved；闭环终审 CLOSURE APPROVE。
+
+**实施登记：** 已实施并合入 main（2026-08-22，merge `7cf9b79`；实施候选 `9435b8f`，28 文件 +3021/-111；评审补测 `d5442f5`，+161/-9 仅该测试文件；规格/评审链提交 `bfe1be0`→`33b049e`→`075741f`）：交付收/付款方式列白名单解冻与信用腿路由、三类 contract_version=3 kind（`credit_expense_source` 含退款变体、`credit_repayment_source`、`mixed_payment_source`）候选/确认生命周期、v24→v25 单个加性迁移 `24.sqm` 及 `P406CreditFullStateOracleTest` canonical full-state oracle。实施双评审（暂停前完成）规格增量+质量均 APPROVE with findings：P406S1-SPEC-010..021 全 LOW 登记接受；QUAL-001（Medium，v3 失败注入回滚未测）与 QUAL-002（Medium，P4-08 空表断言偏弱）由补测 `d5442f5` 闭环——两个失败注入回滚+重试 oracle 测试（注入点 `INTAKE_AFTER_CANDIDATE` 与 `CONFIRM_AFTER_FORMAL`，与产品事务边界一致，重试接受+全状态比对）、assertFullState 显式 evidence_link/posting_reconciliation 空断言与 P4-08 所有权边界注释、`Expected.confirm` 的 requestPrefix/candidatePrefix 命名空间分离（candidate id 由接入批次生成，status-2/confirmation/tx id 由提交批次生成，默认参数保持既有调用点逐值不变）。补测过程缺陷已修复入 `d5442f5`、登记不隐瞒：4 个既有调用点曾漏适配新签名（编译失败）；请求级 token 曾误改为 `confirm`（已恢复 `confirm_candidate`，与产品 store :315、schema CHECK Ledger.sq:7385、P407 oracle :550 一致）。闭环 delta 评审（2026-08-22，独立 reviewer）APPROVE with findings，4 条全 Low 登记接受、不改代码：P406S1-CLO-001（intake 注入测试中 hashExpense 声明未用）、CLO-002（intake 注入注释称 receipt 回滚，实际注入点在 receipt 插入前，证据核心应为 claim 行回滚）、CLO-003（显式空断言缺第三条 reconciliation_request，强度等价但与澄清意图不对称）、CLO-004（登记性：本 oracle 仅读 P4-08 7 表中 3 表，全表覆盖归 P408 canonical oracle；片 1 产品零 P4-08 写入，风险纯理论）。验证（冻结候选 `d5442f5`）：聚焦 `P406CreditFullStateOracleTest` 7/7（writer 跑、verifier 在全量套件内实际执行、主代理复跑，三轮）；全量 `:ledger-data:jvmTest` 实际执行 28m2s，56 类 374/374，0 失败/0 错误/0 跳过。片 2（混合支付激活，RL-06）未开始；D-106 契约中混合结构建而不用（fail-closed）维持。
 
 **关联决定：** `D-106`（主）、`D-072`、`D-073`、`D-078`、`D-097`、`D-100`、`D-102`、`D-104`、`D-105`
