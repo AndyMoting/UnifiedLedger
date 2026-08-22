@@ -33,7 +33,7 @@
 | P4-07 重复/关闭 | D-104/D-105（`e1ab7d4`，v24） | `P407DuplicateClosedFullStateOracleTest.kt`（canonical full-state）；`LedgerDatabaseMigrationTest.kt` v23→v24 系列 | RL-08 维度 |
 | P4-08 镜像/对账 | D-103（`fd57808`，v23） | `P408ReconciliationCanonicalOracleTest.kt`、`P408ReconciliationStoreTest.kt`、`P408MatcherTest.kt`；`LedgerDatabaseMigrationTest.kt` :316/:368/:450/:489 v22→v23 系列 | RL-07 维度（合成双侧镜像） |
 
-schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。逐版本 populated migration、原子拒绝/回滚、fresh=v25 metadata equality 均有既有测试与 migration verifier；但均为**逐边**（vN→vN+1）形态，无 D2 要求的单链 populated 数据级等价测试。
+schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。既有覆盖 = 逐边（vN→vN+1）数据级 populated/late-failure 测试 + **单链 schema 级 metadata 等价**（`LedgerDatabaseMigrationTest.kt:519-531` `freshV25EqualsMigratedV25ForP406CreditAndP407Owners`：populated v1 上单次 `migrate(1, 25)` 走完全链后比较 schemaMetadata）+ migration verifier；无 D2 要求的单链 populated **数据级**等价测试。
 
 ### 1.2 既有覆盖之外的收口缺口（本契约 D1..D5 的由来）
 
@@ -51,11 +51,12 @@ schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。逐
 4. **完整比较纪律**：比较 outcome、returned IDs、complete state、deltas、status changes，不只比总额或选中字段（WORK_PLAN:137）；失败路径零副作用、并发输家不消耗应用物化值（WORK_PLAN:138）；持久化变更验证 reopen/migration/coexistence（WORK_PLAN:139）。
 5. **RG 竖井纪律**：12 套 rgXX 竖井是冻结回放语料；产品承载一律为非 `rgXX_` 前缀共享表，不复用不挂接（D-092:1325-1340；D-098:1493）。竖井不因阶段收口退役（O-7）。
 6. **诊断与金额/时间语义**：诊断复用 D-097:1459 taxonomy 与各批冻结码，message 不比较；金额精确十进制 + source scale、时间按 source token/kind/components/offset presence（D-097:1457）。收口批零新增 severity/scope（P4-08 契约 §5 纪律沿用）。
-7. **matcher/对账边界不扩张**：matcher 语义以 D-103 O-1..O-6 批准组合为唯一基线；通道总额只诊断（D-096:1425）；reconciliation 状态不参与余额与报表计算（ACCOUNTING_RULES:33，经 D-103 落地形态为 report 独立维度）。收口批只验收、不改语义。
+7. **matcher/对账边界不扩张**：matcher 语义以 D-103 O-1..O-6 批准组合为唯一基线；通道总额只诊断（D-096:1425）；reconciliation 状态不参与余额计算（**ACCOUNTING_RULES:33 字面仅覆盖余额**），亦不改变报表金额维度——该后半句依据为 D-103 落地形态（D-103:1634：reconciliation 以 report 独立维度呈现，不改其余九维度），非 ACCOUNTING_RULES:33 字面。收口批只验收、不改语义。
 8. **零 schema 默认**：schema 钉 v25（CURRENT_STATE:6；D-108 先例）；若收口过程发现必须的 schema 演进，即超出本契约范围，须退回用户重开契约（O-2）。
 9. **未决不由实现默认值冻结**（D-096:1435）：O-6 排除清单中的每项欠账维持其登记落点，收口批不得顺手实现或静默丢弃。
 10. **产品 ID/Clock/平台组装默认 Phase 5**（WORK_PLAN:112/:163）：收口 oracle 全部使用确定性合成 ID 与显式时间事实，不引入产品 Clock/随机 ID。
 11. **publication 独立授权**（WORK_PLAN:164；golden v2 publication 先例门 = D-086/D-089/D-090）：收口批不发布任何 golden 工件（O-3）。
+12. **批界禁止的追溯链**：P4-03/P4-04/P4-05（含 RL-04 路由批）不得创建 mirror evidence link、不得产生 posting reconciliation effect（WORK_PLAN:129；PHASE4_DESIGN_PACKAGE:128）。该条是**批界禁止**而非永久语义禁止——evidence-link/reconciliation 状态变更语义首现于 P4-08，并已获 D-103 matcher gate 授权落地（v23）。因此 D1 新增的 RL-03 × P4-08 组合锚点串联的是 D-103 已批准语义，不构成对 :129 字面禁止的扩权或追溯违反。
 
 ## 3. 交付面 WHAT 冻结（D1..D5）
 
@@ -73,7 +74,7 @@ schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。逐
 | RL-04 第二来源一对一 | 余额宝路由两腿确认、两端余额、对账证据 | P4-05b E2E、P4-08 oracle（合成） | 串联：路由→确认→P4-08 posting reconciliation 推进（组合锚点） |
 | RL-05 信用 | 三锚点生命周期串联：消费（费用+/负债转负）→还款（资产−/负债+）→退款（独立经济事件、关联原交易） | `P406CreditFullStateOracleTest.kt`（三锚点 + duplicates/replay + 基数登记） | 在收口 oracle 内重申三锚点串联与失败矩阵映射；组合维度按既有覆盖登记依据（见下） |
 | RL-06 混合 | 三分录 + `mixed_payment_group`（合成 12.40 = 3.60 + 8.80 形态：费用+/资产−/负债−）、无重复调整 | 同上（mixed 场景） | 同 RL-05 |
-| RL-07 镜像/对账 | 平台侧适用子集：合成镜像 evidence → 精确 posting 判定 → link/状态变化/零第二笔交易 | P4-08 全部 oracle（合成双侧） | 收口按**平台侧适用子集**冻结（O-8）；银行侧来源维度显式登记延期至银行 parser 门（D-099:1540 仍开） |
+| RL-07 镜像/对账 | 平台侧适用子集：合成镜像 evidence → 精确 posting 判定 → link/状态变化/零第二笔交易 | P4-08 全部 oracle（合成双侧） | 收口按**平台侧适用子集**冻结（O-8）；银行侧**真实来源**维度显式登记延期至银行 parser 门（D-099:1540 仍开）；合成银行侧镜像语义维持 D-103 oracle 验收，不随子集延期（与 O-8-A 一致） |
 | RL-08 重复导入 | 关闭/失败记录零资金影响、重复导入幂等、状态解释 | `P407DuplicateClosedFullStateOracleTest.kt` | 跨 kind 组合：普通/转账/信用/混合行各自的关闭与重复形态在收口矩阵逐格登记（新格补齐） |
 
 **跨 RL 组合维度归属裁决（契约冻结）**：
@@ -96,7 +97,7 @@ schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。逐
 ### 3.5 D5 全量回归 + 正式状态文档同步
 
 1. 全量受影响回归按 §5 验证矩阵执行并留痕。
-2. 正式状态文档同步（收口批一并修正）：CURRENT_STATE.md:41/:45 的「push 待用户明示」滞后措辞（`b19a6c1` 已在 `origin/main`）改为既成事实陈述；CURRENT_STATE 登记阶段 4 收口状态；WORK_PLAN.local.md P4-09 行（:102）状态更新为收口完成。阶段 4 判据满足的声明以 ROADMAP:41 原文为唯一基准（O-4）。
+2. 正式状态文档同步（收口批一并修正**全部同源滞后措辞**，`b19a6c1` 已在 `origin/main` 为既成事实）：CURRENT_STATE.md:41/:45 的「push 待用户明示」及 :45「`main` 领先 origin」表述改为既成事实陈述；WORK_PLAN.local.md:99（P4-06 行「push pending user」）、:102 P4-09 行内括注（「P4-06 slice 2 merged df34388; push pending user」）、:150（P4-06 片 1 行「DONE pending push」）、:153（片 2 行「push pending user」）同步修正；CURRENT_STATE 登记阶段 4 收口状态；WORK_PLAN.local.md P4-09 行（:102）状态更新为收口完成。阶段 4 判据满足的声明以 ROADMAP:41 原文为唯一基准（O-4）。
 
 ## 4. 裁决点（O-1..O-9）
 
@@ -146,7 +147,7 @@ schema 现状 = v25（CURRENT_STATE:6；D-108 零 schema 钉 v25 先例）。逐
 
 **条款：** 全部已登记欠账在收口契约中的处置。
 
-- **A. 逐条显式排除 + 指针（推荐）**：以下各项不属于 P4-09 范围，维持各自登记落点，收口批不实现、不关闭、不丢弃：① constraint_solved 推断证据产出落点（WORK_PLAN:154；D-106 §7.4；P406S2-SPEC-005/D-108 闭合登记）；② mixed confirm 的 null explicitConfirmedAt 类型化门（WORK_PLAN:155；P406S2-IMPSPEC-002/P406S2-QUAL-002；当前仅测试侧可达）；③ store :440 冗余 safe-call 清理（D-108 非阻塞观察，挂 backlog）；④ 营销腿/他人代付剥离（D-107 边界）；⑤ 微信侧信用负证据与「信用卡还款」形态（D-106 边界 future_rule）；⑥ 分期付款（D-049，D-106 边界）；⑦ 利息/手续费/逾期费分录（D-106 O-5 future_rule）；⑧ 拆单支付/亲友代付（D-106 边界，未分配批次）；⑨ 仅资产腿退款与信用借还其余形态（D-106 边界维持类型化拒行）；⑩ 银行 PDF 来源门（D-099:1540 仍开，联动 O-8）；⑪ 共享负债账户映射（D-106 O-4，属迁移配置）；⑫ provider token funding 映射（D-105:1667 禁止，待来源契约修订独立批准）；⑬ 整文件保留生命周期（D-098:1494 独立门禁）；⑭ 产品随机 ID 算法/平台 Clock/应用组装（WORK_PLAN:112/:163，Phase 5）。风险：排除清单长可能被读作收口含糊——缓解 = 每条带唯一指针，D4 矩阵相应格标「登记延期/范围外」。
+- **A. 逐条显式排除 + 指针（推荐）**：以下各项不属于 P4-09 范围，维持各自登记落点，收口批不实现、不关闭、不丢弃：① constraint_solved 推断证据产出落点（WORK_PLAN:154；D-106 §7.4；P406S2-SPEC-005/D-108 闭合登记）；② mixed confirm 的 null explicitConfirmedAt 类型化门（WORK_PLAN:155；P406S2-IMPSPEC-002/P406S2-QUAL-002；当前仅测试侧可达）；③ store :440 冗余 safe-call 清理（D-108 非阻塞观察，挂 backlog）；④ 营销腿/非资金标注腿剥离（D-107:1704 边界）；⑤ 微信侧信用负证据与「信用卡还款」形态（D-106 边界 future_rule）；⑥ 分期付款（D-049，D-106 边界）；⑦ 利息/手续费/逾期费分录（D-106 O-5 future_rule）；⑧ 拆单支付/他人代付/亲友代付（D-106:1690 边界，未分配批次）；⑨ 仅资产腿退款与信用借还其余形态（D-106 边界维持类型化拒行）；⑩ 银行 PDF 来源门（D-099:1540 仍开，联动 O-8）；⑪ 共享负债账户映射（D-106 O-4，属迁移配置）；⑫ provider token funding 映射（D-105:1667 禁止，待来源契约修订独立批准）；⑬ 整文件保留生命周期（D-098:1494 独立门禁）；⑭ 产品随机 ID 算法/平台 Clock/应用组装（WORK_PLAN:112/:163，Phase 5）。风险：排除清单长可能被读作收口含糊——缓解 = 每条带唯一指针，D4 矩阵相应格标「登记延期/范围外」。
 - **B. 静默不提**：违反登记纪律（D-096:1435 精神），否决。
 - **C. 收口批逐项关闭**：批面失控，且多项需自身契约门；否决。
 
