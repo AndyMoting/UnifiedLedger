@@ -61,6 +61,7 @@ import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -192,6 +193,24 @@ class P406CreditFullStateOracleTest {
         }
     }
 
+    private fun spineCounts(database: LedgerDatabase) = listOf(
+        database.ledgerQueries.countImportRequests().executeAsOne(),
+        database.ledgerQueries.countImportSourceRecords().executeAsOne(),
+        database.ledgerQueries.countImportEvidence().executeAsOne(),
+        database.ledgerQueries.countImportCandidates().executeAsOne(),
+        database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne(),
+        database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
+        database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
+        database.ledgerQueries.countImportConfirmations().executeAsOne(),
+        database.ledgerQueries.countImportReceipts().executeAsOne(),
+    )
+
+    private fun formalCounts(database: LedgerDatabase) = listOf(
+        database.ledgerQueries.countTransactions().executeAsOne(),
+        database.ledgerQueries.countVersions().executeAsOne(),
+        database.ledgerQueries.countPostings().executeAsOne(),
+    )
+
     /** Ordinary v1 factory for the regression fixtures (USD original expense, §6.8). */
     private class OrdinaryOutFactory(private val catalog: LedgerCatalog) : ImportCandidateFormalFactory {
         override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
@@ -271,6 +290,17 @@ class P406CreditFullStateOracleTest {
         commitIds: ImportIdSource,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver)
+        return Executor(database, driver, store, CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)), intakeIds, commitIds)
+    }
+
+    private fun executor(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        intakeIds: ImportIntakeIdSource,
+        commitIds: ImportIdSource,
+        failure: ImportSpineFailureInjector,
+    ): Executor {
+        val store = SqlDelightImportSpineStore(database, driver, failure)
         return Executor(database, driver, store, CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)), intakeIds, commitIds)
     }
 
@@ -497,6 +527,12 @@ class P406CreditFullStateOracleTest {
         assertEquals(expected.mixedPaymentGroup, actual.mixedPaymentGroup, "$checkpoint: mixed_payment_group")
         assertEquals(expected.mixedPaymentGroupLeg, actual.mixedPaymentGroupLeg, "$checkpoint: mixed_payment_group_leg")
         assertEquals(expected.report, actual.report, "$checkpoint: report projection")
+        // Slice 1 (D-107) writes no P4-08 reconciliation state: the two real tables
+        // below are spec-boundary assertions, not a P4-08 regression surface. P4-08
+        // end-to-end coverage is owned by P408ReconciliationStoreTest and
+        // P408ReconciliationCanonicalOracleTest.
+        assertEquals(emptyList(), actual.reconciliation.getValue("evidence_link"), "$checkpoint: evidence_link must be empty (slice 1)")
+        assertEquals(emptyList(), actual.reconciliation.getValue("posting_reconciliation"), "$checkpoint: posting_reconciliation must be empty (slice 1)")
         assertEquals(expected.reconciliation, actual.reconciliation, "$checkpoint: P4-08 reconciliation state")
     }
 
@@ -621,14 +657,15 @@ class P406CreditFullStateOracleTest {
 
         fun confirm(
             requestId: String,
-            candidatePrefix: String,
+            requestPrefix: String,
+            candidatePrefix: String = requestPrefix,
             decisionRow: List<Any?>,
         ) {
             requests += row(ledgerId.value, requestId, "confirm_candidate")
             decisions += decisionRow
-            statusHistory += row(ledgerId.value, "candidate-$candidatePrefix", 2L, "status-$candidatePrefix-2", "confirmed", requestId, "creation")
-            confirmations += row(ledgerId.value, "confirmation-$candidatePrefix", requestId, "candidate-$candidatePrefix", "status-$candidatePrefix-2", "tx-$candidatePrefix", "creation", confirmedAt)
-            receipts += row(ledgerId.value, requestId, "accepted", null, null, "candidate-$candidatePrefix", "confirmation-$candidatePrefix", "tx-$candidatePrefix")
+            statusHistory += row(ledgerId.value, "candidate-$candidatePrefix", 2L, "status-$requestPrefix-2", "confirmed", requestId, "creation")
+            confirmations += row(ledgerId.value, "confirmation-$requestPrefix", requestId, "candidate-$candidatePrefix", "status-$requestPrefix-2", "tx-$requestPrefix", "creation", confirmedAt)
+            receipts += row(ledgerId.value, requestId, "accepted", null, null, "candidate-$candidatePrefix", "confirmation-$requestPrefix", "tx-$requestPrefix")
         }
 
         fun state(accounts: List<Account>): P406FullState {
@@ -655,7 +692,12 @@ class P406CreditFullStateOracleTest {
                 mixedPaymentGroup = emptyList(),
                 mixedPaymentGroupLeg = emptyList(),
                 report = mapOf(ledgerId.value to reduceReport(reportTxs, ledgerAccounts, accountKindById)),
-                // P4-06 slice 1 writes no P4-08 state: every reconciliation owner stays empty.
+                // Slice 1 writes no P4-08 reconciliation state (D-107 specification
+                // boundary): every reconciliation owner stays empty. This is not a P4-08
+                // regression surface — the empty-table assertions below are a contract
+                // assertion that slice 1 keeps its scope, not a substitute for P4-08
+                // end-to-end oracle coverage (owned by P408ReconciliationStoreTest /
+                // P408ReconciliationCanonicalOracleTest).
                 reconciliation = mapOf(
                     "reconciliation_request" to emptyList(),
                     "evidence_link" to emptyList(),
@@ -695,7 +737,7 @@ class P406CreditFullStateOracleTest {
             expected.intake("req-expense", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "expense")
             expected.confirm(
                 "req-expense-confirm", "expense",
-                row(
+                decisionRow = row(
                     ledgerId.value, "req-expense-confirm", "confirm", "candidate-expense", hashExpense,
                     "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
                 ),
@@ -715,7 +757,7 @@ class P406CreditFullStateOracleTest {
             expected.intake("req-repay", 1, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile, "repay")
             expected.confirm(
                 "req-repay-confirm", "repay",
-                row(
+                decisionRow = row(
                     ledgerId.value, "req-repay-confirm", "confirm", "candidate-repay", hashRepay,
                     null, null, null, null, "account-credit-huabei", "account-asset-a", null, null, null, confirmedAt,
                 ),
@@ -735,7 +777,7 @@ class P406CreditFullStateOracleTest {
             expected.intake("req-refund", 2, ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts, ImportCompleteness.VALID_COMPLETE, refundProfile, "refund")
             expected.confirm(
                 "req-refund-confirm", "refund",
-                row(
+                decisionRow = row(
                     ledgerId.value, "req-refund-confirm", "confirm", "candidate-refund", hashRefund,
                     "category-food", null, null, null, "account-credit-huabei", null, "tx-expense", null, null, confirmedAt,
                 ),
@@ -816,6 +858,116 @@ class P406CreditFullStateOracleTest {
         }
     }
 
+    // ---------- Failure-injection rollback (QUAL-001: v3 rollback covers the profile row) ----------
+
+    @Test
+    fun injectedIntakeFailureAfterCandidateRollsBackAllV3RowsAndAcceptsOnRetry() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashExpense = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, directProfile)
+
+            // Intake failure after the candidate (and its payment profile) insert: the
+            // whole transaction — source, evidence, candidate, profile, requirement,
+            // status, duplicate state, request claim and receipt — rolls back together.
+            val attempt1 = BatchIntakeIdSource(listOf(intakeIds("inj-expense")))
+            val failingRun = executor(
+                database, driver, attempt1, BatchCommitIdSource(emptyList()),
+                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
+            )
+            assertFailsWith<IllegalStateException> {
+                failingRun.intake(intakeRequest("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile))
+            }
+            assertEquals(1, attempt1.calls.get())
+            // Zero rows in every import owner, including the P4-06 v3 profile table and
+            // the P4-02 requirement table that does not expose a generated count query.
+            assertEquals(listOf(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L), spineCounts(database))
+            assertEquals(listOf(0L), selectRows(driver, "SELECT count(*) FROM import_candidate_requires_confirmation WHERE ledger_id = '${ledgerId.value}'", listOf(true)).single())
+
+            // The claim was rolled back with everything else: the same request identity
+            // is retryable and now accepts with a fresh id batch.
+            val attempt2 = BatchIntakeIdSource(listOf(intakeIds("req-ok")))
+            val retryRun = executor(database, driver, attempt2, BatchCommitIdSource(emptyList()))
+            val accepted = assertIs<ImportIntakeResult.Accepted>(
+                retryRun.intake(intakeRequest("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+            )
+            assertEquals(listOf("source-req-ok", "evidence-req-ok", "candidate-req-ok"), accepted.returnedIds.map { it.id })
+            assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
+
+            // Full-state expected for the retried intake (the only committed operation).
+            val expected = Expected()
+            expected.intake("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "req-ok")
+            assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "injected-intake-rollback")
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun injectedConfirmFailureAfterFormalRollsBackDecisionAndAcceptsOnRetry() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashExpense = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, directProfile)
+
+            // Setup: one credit-expense candidate pending.
+            val setup = executor(
+                database, driver,
+                BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), BatchCommitIdSource(emptyList()),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                setup.intake(intakeRequest("req-conf-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+            )
+
+            // Confirm failure after the formal graph persists: the whole transaction —
+            // decision snapshot, status sequence 2, confirmation, receipt, the formal
+            // graph (transaction/version/posting set/postings) and the request claim —
+            // rolls back together.
+            val attempt1 = BatchCommitIdSource(listOf(commitIds("conf-injected")))
+            val failingRun = executor(
+                database, driver, BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), attempt1,
+                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+            )
+            assertFailsWith<IllegalStateException> {
+                failingRun.confirmCredit(creditExpenseConfirmRequest("req-conf-injected", "candidate-inj-conf", hashExpense))
+            }
+            assertEquals(1, attempt1.calls.get())
+            assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
+            assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
+            // No decision snapshot and no second status history row survive the rollback.
+            assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
+            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-inj-conf").executeAsOne().status)
+
+            // The claim was rolled back: the same request identity retries and accepts
+            // with a fresh commit id batch.
+            val attempt2 = BatchCommitIdSource(listOf(commitIds("conf-ok")))
+            val retryRun = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), attempt2)
+            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
+                retryRun.confirmCredit(creditExpenseConfirmRequest("req-conf-injected", "candidate-inj-conf", hashExpense)),
+            )
+            assertEquals("tx-conf-ok", confirmed.receipt.transactionId?.value)
+            // import_request carries both the intake claim and the retried confirm claim.
+            assertEquals(listOf(2L, 1L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
+            assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
+
+            val expected = Expected()
+            expected.intake("req-conf-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "inj-conf")
+            expected.confirm(
+                "req-conf-injected", "conf-ok", candidatePrefix = "inj-conf",
+                decisionRow = row(
+                    ledgerId.value, "req-conf-injected", "confirm", "candidate-inj-conf", hashExpense,
+                    "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
+                ),
+            )
+            expected.formal("conf-ok", "EXPENSE", expenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
+            assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "injected-confirm-rollback")
+        } finally {
+            driver.close()
+        }
+    }
+
     // ---------- Matrix 7: duplicates, replay and collision ----------
 
     @Test
@@ -881,7 +1033,7 @@ class P406CreditFullStateOracleTest {
             )
             expected.confirm(
                 "req-dup-1-confirm", "dup1",
-                row(
+                decisionRow = row(
                     ledgerId.value, "req-dup-1-confirm", "confirm", "candidate-dup1", hashExpense,
                     "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
                 ),
