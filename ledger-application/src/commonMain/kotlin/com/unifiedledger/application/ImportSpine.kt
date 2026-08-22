@@ -197,6 +197,19 @@ sealed interface ImportConfirmDecisionFields {
         val assetAccountId: AccountId,
         val creditLiabilityAccountId: AccountId,
     ) : ImportConfirmDecisionFields
+
+    /**
+     * P4-06 slice 2 (D-108 section 4.1): mixed payment (asset leg + credit liability
+     * leg). A null leg amount means incomplete decision data: the candidate stays
+     * pending and the confirmation gate rejects with zero writes until completed.
+     */
+    data class MixedPaymentFlow(
+        val categoryId: CategoryId,
+        val assetAccountId: AccountId,
+        val creditLiabilityAccountId: AccountId,
+        val assetLegMinor: Long?,
+        val creditLegMinor: Long?,
+    ) : ImportConfirmDecisionFields
 }
 
 data class ImportCandidateDecisionSnapshot(

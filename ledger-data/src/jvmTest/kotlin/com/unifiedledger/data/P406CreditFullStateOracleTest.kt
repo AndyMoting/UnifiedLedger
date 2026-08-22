@@ -36,6 +36,7 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
+import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
@@ -109,6 +110,14 @@ class P406CreditFullStateOracleTest {
     private val repaymentProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, "余额宝", null)
     private val refundProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "花呗")
 
+    // RL-06 anchor (anonymous synthetic values, D-106 section 7.2 via D-108):
+    // mixed 12.40 = 3.60 (asset) + 8.80 (credit liability).
+    private val mixedFacts = ImportSourceFacts(
+        1240, "CNY", 2, "2026-08-20T12:00:00+08:00", "out", "settled",
+        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
+    )
+    private val mixedProfile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "余额宝", "花呗")
+
     /** The five original kinds of the legacy ledger_transaction.kind CHECK (insertTransaction mapping). */
     private val legacyTransactionKinds = setOf("OPENING_BALANCE", "EXPENSE", "INCOME", "ACCOUNT_TRANSFER", "CREDIT_REPAYMENT")
 
@@ -175,6 +184,18 @@ class P406CreditFullStateOracleTest {
         ),
     )
 
+    /** P4-06 slice 2: the mixed-payment confirm allocates three posting ids. */
+    private fun commitIds3(prefix: String) = ImportCommitIds(
+        confirmationId = ImportConfirmationId("confirmation-$prefix"),
+        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+        formalIds = ImportFormalIds(
+            transactionId = TransactionId("tx-$prefix"),
+            versionId = TransactionVersionId("version-$prefix-v1"),
+            postingSetId = PostingSetId("posting-set-$prefix"),
+            postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1"), PostingId("posting-$prefix-2")),
+        ),
+    )
+
     private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
         override fun next(): ImportIntakeIds {
@@ -236,6 +257,15 @@ class P406CreditFullStateOracleTest {
         }
     }
 
+    /** P4-06 slice 2: factory-call counter for the posting-count gate zero-call proof. */
+    private class CountingFactory(private val inner: ImportCandidateFormalFactory) : ImportCandidateFormalFactory {
+        var calls = 0
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
+            calls += 1
+            return inner.create(input, ids)
+        }
+    }
+
     /**
      * Store-backed original-expense reader for the refund variant: resolves the original
      * transaction's kind/ledger/currency and the current version's positive (expense)
@@ -270,6 +300,7 @@ class P406CreditFullStateOracleTest {
         driver: JdbcSqliteDriver,
         val store: SqlDelightImportSpineStore,
         val creditFactory: ImportCandidateFormalFactory,
+        val mixedFactory: ImportCandidateFormalFactory,
         val intakeIds: ImportIntakeIdSource,
         val commitIds: ImportIdSource,
     ) {
@@ -278,6 +309,9 @@ class P406CreditFullStateOracleTest {
 
         fun confirmCredit(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
             ConfirmImportCandidate(store, commitIds, creditFactory).execute(request)
+
+        fun confirmMixed(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
+            ConfirmImportCandidate(store, commitIds, mixedFactory).execute(request)
 
         fun confirmOrdinary(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory): ImportCandidateDecisionResult =
             ConfirmImportCandidate(store, commitIds, factory).execute(request)
@@ -290,7 +324,12 @@ class P406CreditFullStateOracleTest {
         commitIds: ImportIdSource,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver)
-        return Executor(database, driver, store, CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)), intakeIds, commitIds)
+        return Executor(
+            database, driver, store,
+            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(catalog()),
+            intakeIds, commitIds,
+        )
     }
 
     private fun executor(
@@ -301,7 +340,12 @@ class P406CreditFullStateOracleTest {
         failure: ImportSpineFailureInjector,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver, failure)
-        return Executor(database, driver, store, CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)), intakeIds, commitIds)
+        return Executor(
+            database, driver, store,
+            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(catalog()),
+            intakeIds, commitIds,
+        )
     }
 
     private fun creditExpenseConfirmRequest(
@@ -345,6 +389,26 @@ class P406CreditFullStateOracleTest {
         expectedContentHash = hash,
         explicitConfirmedAt = confirmedAt,
         decisionFields = ImportConfirmDecisionFields.CreditExpenseRefundFlow(CategoryId(category), AccountId(liability), TransactionId(original)),
+    )
+
+    /** P4-06 slice 2 (D-108 section 4.1): the mixed decision shape; legs default to the 12.40 anchor split. */
+    private fun mixedConfirmRequest(
+        requestId: String,
+        candidate: String,
+        hash: String,
+        category: String = "category-food",
+        asset: String = "account-asset-a",
+        liability: String = "account-credit-huabei",
+        assetLegMinor: Long? = 360L,
+        creditLegMinor: Long? = 880L,
+    ) = ImportCandidateConfirmRequest(
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        candidateId = ImportCandidateId(candidate),
+        expectedContentHash = hash,
+        explicitConfirmedAt = confirmedAt,
+        decisionFields = ImportConfirmDecisionFields.MixedPaymentFlow(
+            CategoryId(category), AccountId(asset), AccountId(liability), assetLegMinor, creditLegMinor,
+        ),
     )
 
     // ---------- canonical capture (every P4-06/P4-07/P4-02/P4-08 owner) ----------
@@ -461,8 +525,16 @@ class P406CreditFullStateOracleTest {
             transactionVersion = selectRows(driver, "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false)).sortedWith(rowComparator),
             ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
             posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
-            mixedPaymentGroup = selectRows(driver, "SELECT ledger_id, group_id FROM mixed_payment_group", listOf(false, false)).sortedWith(rowComparator),
-            mixedPaymentGroupLeg = selectRows(driver, "SELECT ledger_id, group_id, leg_index FROM mixed_payment_group_leg", listOf(false, false, true)).sortedWith(rowComparator),
+            mixedPaymentGroup = selectRows(
+                driver,
+                "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group",
+                listOf(false, false, false, false, false, true, false),
+            ).sortedWith(rowComparator),
+            mixedPaymentGroupLeg = selectRows(
+                driver,
+                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg",
+                listOf(false, false, true, false, false, true),
+            ).sortedWith(rowComparator),
             report = mapOf(ledgerId.value to report),
             reconciliation = mapOf(
                 "reconciliation_request" to selectRows(driver, "SELECT ledger_id, request_id FROM reconciliation_request", listOf(false, false)),
@@ -565,6 +637,8 @@ class P406CreditFullStateOracleTest {
         val versions = mutableListOf<List<Any?>>()
         val currentVersions = mutableListOf<List<Any?>>()
         val postings = mutableListOf<List<Any?>>()
+        val groups = mutableListOf<List<Any?>>()
+        val groupLegs = mutableListOf<List<Any?>>()
         val reportTxs = mutableListOf<ReportTx>()
 
         fun intake(
@@ -655,6 +729,41 @@ class P406CreditFullStateOracleTest {
             reportTxs += ReportTx(kind, listOf(firstLeg, secondLeg))
         }
 
+        /** A 3-posting mixed EXPENSE (posting 0 = expense +, 1 = asset -, 2 = credit -). */
+        fun formal3(
+            prefix: String,
+            occurredAt: String,
+            expense: Triple<String, Long, String>,
+            assetFunding: Triple<String, Long, String>,
+            creditFunding: Triple<String, Long, String>,
+        ) {
+            val timeText = Instant.parse(occurredAt).toString()
+            transactions += row("tx-$prefix", ledgerId.value, "EXPENSE", null)
+            postingSets += row("posting-set-$prefix", ledgerId.value)
+            versions += row("version-$prefix-v1", "tx-$prefix", ledgerId.value, 1L, "posting-set-$prefix", timeText, timeText, timeText, "")
+            currentVersions += row("tx-$prefix", ledgerId.value, "version-$prefix-v1")
+            postings += row("posting-$prefix-0", "posting-set-$prefix", ledgerId.value, 0L, expense.first, expense.second, expense.third, 2L)
+            postings += row("posting-$prefix-1", "posting-set-$prefix", ledgerId.value, 1L, assetFunding.first, assetFunding.second, assetFunding.third, 2L)
+            postings += row("posting-$prefix-2", "posting-set-$prefix", ledgerId.value, 2L, creditFunding.first, creditFunding.second, creditFunding.third, 2L)
+            reportTxs += ReportTx("EXPENSE", listOf(expense, assetFunding, creditFunding))
+        }
+
+        /** P4-06 slice 2 (D-108 section 4.3): group head + legs-first rows for a confirmed mixed candidate. */
+        fun group(
+            requestId: String,
+            requestPrefix: String,
+            candidatePrefix: String = requestPrefix,
+            totalMinor: Long,
+            assetAccount: String,
+            assetLegMinor: Long,
+            creditAccount: String,
+            creditLegMinor: Long,
+        ) {
+            groups += row(ledgerId.value, "group-tx-$requestPrefix", "candidate-$candidatePrefix", "tx-$requestPrefix", requestId, totalMinor, confirmedAt)
+            groupLegs += row(ledgerId.value, "group-tx-$requestPrefix", 1L, "asset", assetAccount, assetLegMinor)
+            groupLegs += row(ledgerId.value, "group-tx-$requestPrefix", 2L, "liability", creditAccount, creditLegMinor)
+        }
+
         fun confirm(
             requestId: String,
             requestPrefix: String,
@@ -689,8 +798,8 @@ class P406CreditFullStateOracleTest {
                 transactionVersion = versions.sortedWith(rowComparator),
                 ledgerTransactionCurrentVersion = currentVersions.sortedWith(rowComparator),
                 posting = postings.sortedWith(rowComparator),
-                mixedPaymentGroup = emptyList(),
-                mixedPaymentGroupLeg = emptyList(),
+                mixedPaymentGroup = groups.sortedWith(rowComparator),
+                mixedPaymentGroupLeg = groupLegs.sortedWith(rowComparator),
                 report = mapOf(ledgerId.value to reduceReport(reportTxs, ledgerAccounts, accountKindById)),
                 // Slice 1 writes no P4-08 reconciliation state (D-107 specification
                 // boundary): every reconciliation owner stays empty. This is not a P4-08
@@ -1165,6 +1274,402 @@ class P406CreditFullStateOracleTest {
                 run.confirmCredit(creditExpenseConfirmRequest("req-neg-1", "candidate-neg-expense", hashExpense)),
             )
             assertEquals("tx-neg-attempt-9", corrected.receipt.transactionId?.value)
+        } finally {
+            driver.close()
+        }
+    }
+
+    // ---------- Matrix (D-108 slice 2, RL-06): mixed payment activation ----------
+
+    @Test
+    fun mixedPaymentAnchorConfirmsThreePostingsGroupRowsAndReportEffects() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
+
+            val run = executor(
+                database, driver,
+                BatchIntakeIdSource(listOf(intakeIds("mixed"))), BatchCommitIdSource(listOf(commitIds3("mixed"))),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                run.intake(intakeRequest("req-mixed", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
+            )
+            // Intake state (D-106 section 7.3 row 2): the mixed candidate is pending
+            // confirmation at intake; leg amounts live on the decision, not the row.
+            val candidateState = database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed").executeAsOne()
+            assertEquals("mixed_payment", candidateState.candidate_kind)
+            assertEquals("pending_confirmation", candidateState.status)
+
+            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-confirm", "candidate-mixed", hashMixed)),
+            )
+            assertEquals("tx-mixed", confirmed.receipt.transactionId?.value)
+
+            val expected = Expected()
+            expected.intake("req-mixed", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed")
+            expected.confirm(
+                "req-mixed-confirm", "mixed",
+                decisionRow = row(
+                    ledgerId.value, "req-mixed-confirm", "confirm", "candidate-mixed", hashMixed,
+                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
+                ),
+            )
+            expected.formal3(
+                "mixed", mixedFacts.occurredAt,
+                Triple("expense-account-food", 1240L, "CNY"),
+                Triple("account-asset-a", -360L, "CNY"),
+                Triple("account-credit-huabei", -880L, "CNY"),
+            )
+            expected.group(
+                "req-mixed-confirm", "mixed", totalMinor = 1240L,
+                assetAccount = "account-asset-a", assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+            )
+            val actual = captureFullState(driver, accounts())
+            assertFullState(expected.state(accounts()), actual, "mixed-anchor")
+
+            // Report effects (D-106 section 7.2 anchor, anonymous values): consumption
+            // and ordinary expense = 1240, purchase-day cash outflow only the asset leg
+            // 360, net-worth change -1240.
+            val projection = actual.report.getValue(ledgerId.value)
+            assertEquals(1240L, projection.consumptionMinor)
+            assertEquals(-360L, projection.cashOutflowMinor)
+            assertEquals(-1240L, projection.netWorthChangeMinor)
+            assertEquals(1240L, projection.balancesByAccount.getValue("expense-account-food"))
+            assertEquals(-360L, projection.balancesByAccount.getValue("account-asset-a"))
+            assertEquals(-880L, projection.balancesByAccount.getValue("account-credit-huabei"))
+
+            // Exactly one final entry set, no second transaction (D-106 sections 4/7.2).
+            assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+            assertEquals(3L, database.ledgerQueries.countPostings().executeAsOne())
+
+            // Evidence cardinality (D-108 section 4.5): one evidence row; the three
+            // postings carry exactly the two decision real funding accounts.
+            assertEquals(1L, database.ledgerQueries.countImportEvidence().executeAsOne())
+            val txPostings = actual.posting.filter { (it[1] as String) == "posting-set-mixed" }
+            assertEquals(3, txPostings.size)
+            assertEquals(
+                setOf("account-asset-a", "account-credit-huabei"),
+                txPostings.map { it[4] as String }.filter { it != "expense-account-food" }.toSet(),
+            )
+            assertEquals(
+                listOf(-360L, -880L),
+                txPostings.filter { it[4] != "expense-account-food" }.map { it[5] as Long },
+            )
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun mixedMissingLegAmountRejectsConfirmKeepsPendingAndAcceptsAfterRetry() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
+            val run = executor(
+                database, driver,
+                BatchIntakeIdSource(listOf(intakeIds("mixed-leg"))), BatchCommitIdSource(listOf(commitIds3("mixed-leg"))),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                run.intake(intakeRequest("req-mixed-leg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
+            )
+
+            // Either null leg is insufficient decision data (D-108 ruling 1): typed
+            // rejection, zero writes, claim rolls back and stays retryable.
+            val missingAsset = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed, assetLegMinor = null)),
+            )
+            assertEquals("SPINE_CANDIDATE_INCOMPLETE", missingAsset.diagnostic.code)
+            val missingCredit = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm-2", "candidate-mixed-leg", hashMixed, creditLegMinor = null)),
+            )
+            assertEquals("SPINE_CANDIDATE_INCOMPLETE", missingCredit.diagnostic.code)
+            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-leg").executeAsOne().status)
+            assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
+            assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
+            assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
+            assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
+
+            // The same identity retries with the completed decision (D-106 section 4).
+            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed)),
+            )
+            assertEquals("tx-mixed-leg", confirmed.receipt.transactionId?.value)
+
+            val expected = Expected()
+            expected.intake("req-mixed-leg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-leg")
+            expected.confirm(
+                "req-mixed-leg-confirm", "mixed-leg",
+                decisionRow = row(
+                    ledgerId.value, "req-mixed-leg-confirm", "confirm", "candidate-mixed-leg", hashMixed,
+                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
+                ),
+            )
+            expected.formal3(
+                "mixed-leg", mixedFacts.occurredAt,
+                Triple("expense-account-food", 1240L, "CNY"),
+                Triple("account-asset-a", -360L, "CNY"),
+                Triple("account-credit-huabei", -880L, "CNY"),
+            )
+            expected.group(
+                "req-mixed-leg-confirm", "mixed-leg", totalMinor = 1240L,
+                assetAccount = "account-asset-a", assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+            )
+            assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-missing-leg-retry")
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun mixedConfirmInjectionRollsBackGroupTablesAndReplayReturnsOriginalReceipt() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
+            val run = executor(
+                database, driver,
+                BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), BatchCommitIdSource(emptyList()),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                run.intake(intakeRequest("req-mixed-inj", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
+            )
+            // Raw-identity replay of the intake stays a zero-write NoChange.
+            assertIs<ImportIntakeResult.NoChange>(
+                run.intake(intakeRequest("req-mixed-inj-b", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
+            )
+
+            // The frozen stale-fingerprint gate applies to the mixed kind as-is.
+            val stale = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-inj-stale", "candidate-mixed-inj", "sha256:not-the-hash")),
+            )
+            assertEquals("SPINE_STALE_FINGERPRINT", stale.diagnostic.code)
+
+            // Confirm failure after the formal graph persists: the group tables, the
+            // decision snapshot and the formal graph roll back with the claim.
+            val attempt1 = BatchCommitIdSource(listOf(commitIds3("mixed-injected")))
+            val failingRun = executor(
+                database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), attempt1,
+                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+            )
+            assertFailsWith<IllegalStateException> {
+                failingRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed))
+            }
+            assertEquals(1, attempt1.calls.get())
+            assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
+            assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
+            assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
+            assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
+            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-inj").executeAsOne().status)
+
+            // The rolled-back claim retries on the same identity and accepts.
+            val commitIds = BatchCommitIdSource(listOf(commitIds3("mixed-inj")))
+            val retryRun = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), commitIds)
+            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
+                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
+            )
+            assertEquals("tx-mixed-inj", confirmed.receipt.transactionId?.value)
+
+            // Confirm replay returns the original receipt with zero new writes,
+            // including the group tables (the claim is not re-won).
+            val confirmReplay = assertIs<ImportCandidateDecisionResult.NoChange>(
+                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
+            )
+            assertEquals(confirmed.receipt, confirmReplay.receipt)
+            assertEquals(1, commitIds.calls.get())
+            assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
+            assertEquals(2L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
+
+            // The same request id with different leg amounts is a hard identity
+            // conflict (the leg columns are decision values): zero new writes, the
+            // ID source still runs once.
+            val conflict = assertIs<ImportCandidateDecisionResult.Rejected>(
+                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed, assetLegMinor = 300L)),
+            )
+            assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
+            assertEquals(1, commitIds.calls.get())
+            assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
+            assertEquals(2L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
+
+            // After confirmation the candidate is no longer pending: a fresh request
+            // on the same candidate keeps the frozen not-pending rejection.
+            val notPending = assertIs<ImportCandidateDecisionResult.Rejected>(
+                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm-2", "candidate-mixed-inj", hashMixed)),
+            )
+            assertEquals("SPINE_CANDIDATE_NOT_PENDING", notPending.diagnostic.code)
+
+            val expected = Expected()
+            expected.intake("req-mixed-inj", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-inj")
+            expected.confirm(
+                "req-mixed-inj-confirm", "mixed-inj",
+                decisionRow = row(
+                    ledgerId.value, "req-mixed-inj-confirm", "confirm", "candidate-mixed-inj", hashMixed,
+                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
+                ),
+            )
+            expected.formal3(
+                "mixed-inj", mixedFacts.occurredAt,
+                Triple("expense-account-food", 1240L, "CNY"),
+                Triple("account-asset-a", -360L, "CNY"),
+                Triple("account-credit-huabei", -880L, "CNY"),
+            )
+            expected.group(
+                "req-mixed-inj-confirm", "mixed-inj", totalMinor = 1240L,
+                assetAccount = "account-asset-a", assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+            )
+            assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-injection-replay")
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun mixedConfirmationNegativePathsStayPendingWithZeroWritesAndClaimRetry() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
+            val hashExpense = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, directProfile)
+            val run = executor(
+                database, driver,
+                BatchIntakeIdSource(listOf(intakeIds("mixed-neg"), intakeIds("credit-neg"))),
+                BatchCommitIdSource((1..12).map { commitIds3("mixed-neg-attempt-$it") }),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                run.intake(intakeRequest("req-mixed-neg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
+            )
+            assertIs<ImportIntakeResult.Accepted>(
+                run.intake(intakeRequest("req-credit-neg", 1, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+            )
+
+            // Kind gate (positive after the slice-1 defense lift): a mixed candidate
+            // only accepts the mixed decision shape, and vice versa.
+            val mismatch1 = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmCredit(creditExpenseConfirmRequest("req-mixed-neg-1", "candidate-mixed-neg", hashMixed)),
+            )
+            assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch1.diagnostic.code)
+            val mismatch2 = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmCredit(creditRepaymentConfirmRequest("req-mixed-neg-2", "candidate-mixed-neg", hashMixed)),
+            )
+            assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch2.diagnostic.code)
+            val mismatch3 = assertIs<ImportCandidateDecisionResult.Rejected>(
+                run.confirmMixed(mixedConfirmRequest("req-credit-neg-1", "candidate-credit-neg", hashExpense)),
+            )
+            assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch3.diagnostic.code)
+
+            // Domain arithmetic/account negatives: zero writes, candidate stays pending.
+            fun assertDomainFailure(result: ImportCandidateDecisionResult) {
+                val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result)
+                assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", rejected.diagnostic.code)
+            }
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed, assetLegMinor = 300L)))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-4", "candidate-mixed-neg", hashMixed, assetLegMinor = 0L)))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-4b", "candidate-mixed-neg", hashMixed, creditLegMinor = 0L)))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-5", "candidate-mixed-neg", hashMixed, liability = "account-asset-a")))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-6", "candidate-mixed-neg", hashMixed, liability = "account-credit-unknown")))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-7", "candidate-mixed-neg", hashMixed, liability = "account-credit-usd")))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-8", "candidate-mixed-neg", hashMixed, liability = "account-credit-other-ledger")))
+            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-neg").executeAsOne().status)
+            assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
+
+            // Posting-count gate: a 2-id batch on a mixed candidate is rejected before
+            // the factory runs at all (zero factory calls).
+            val counting = CountingFactory(MixedPaymentFlowFormalFactory(catalog()))
+            val gateRejected = assertIs<ImportCandidateDecisionResult.Rejected>(
+                ConfirmImportCandidate(run.store, BatchCommitIdSource(listOf(commitIds("mixed-neg-short"))), counting).execute(
+                    mixedConfirmRequest("req-mixed-neg-9", "candidate-mixed-neg", hashMixed),
+                ),
+            )
+            assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", gateRejected.diagnostic.code)
+            assertEquals(0, counting.calls)
+
+            // The rolled-back claim stays retryable on the same identity: a corrected
+            // decision now succeeds (claim rollback + zero-residue proof). The seven
+            // domain-failure attempts each consumed one commit batch (ids are
+            // allocated before the factory); the corrected confirm takes the eighth.
+            val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed)),
+            )
+            assertEquals("tx-mixed-neg-attempt-8", corrected.receipt.transactionId?.value)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun mixedEqualRowsProduceExactTupleDuplicateAndNoSecondTransaction() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
+
+            assertIs<ImportIntakeResult.Accepted>(
+                executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-dup1"))), BatchCommitIdSource(emptyList())).intake(
+                    intakeRequest("req-mixed-dup-1", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile),
+                ),
+            )
+            // An equal mixed row at another ordinal: D-104 exact-tuple duplicate
+            // candidate (kind-agnostic persisted-facts tuple comparison).
+            assertIs<ImportIntakeResult.Accepted>(
+                executor(
+                    database, driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed-dup2", duplicates = listOf("duplicate-mixed-dup-2" to "history-duplicate-mixed-dup-2")))),
+                    BatchCommitIdSource(emptyList()),
+                ).intake(
+                    intakeRequest("req-mixed-dup-2", 1, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile),
+                ),
+            )
+            assertEquals("EXACT_BUSINESS_TUPLE", database.ledgerQueries.selectDuplicateCandidate(ledgerId.value, "duplicate-mixed-dup-2").executeAsOne().kind)
+            assertEquals("DEFERRED", database.ledgerQueries.selectDuplicateCurrentStatus(ledgerId.value, "duplicate-mixed-dup-2").executeAsOne())
+
+            val run = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-dup1"))), BatchCommitIdSource(listOf(commitIds3("mixed-dup1"))))
+            assertIs<ImportCandidateDecisionResult.Accepted>(
+                run.confirmMixed(mixedConfirmRequest("req-mixed-dup-1-confirm", "candidate-mixed-dup1", hashMixed)),
+            )
+
+            // No second transaction for the duplicate row, and the constraint_solved
+            // advice boundary (D-108 ruling 4) keeps zero output: v25 has no advice
+            // table, so zero output = the persisted state equals the expected state.
+            assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
+            assertEquals(3L, database.ledgerQueries.countPostings().executeAsOne())
+            assertEquals(2L, database.ledgerQueries.countImportEvidence().executeAsOne())
+            assertEquals(2L, database.ledgerQueries.countImportCandidates().executeAsOne())
+            assertEquals(2L, database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne())
+
+            val expected = Expected()
+            expected.intake("req-mixed-dup-1", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-dup1")
+            expected.intake(
+                "req-mixed-dup-2", 1, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-dup2",
+                duplicates = listOf(Triple("duplicate-mixed-dup-2", "history-duplicate-mixed-dup-2", "source-mixed-dup1")),
+            )
+            expected.confirm(
+                "req-mixed-dup-1-confirm", "mixed-dup1",
+                decisionRow = row(
+                    ledgerId.value, "req-mixed-dup-1-confirm", "confirm", "candidate-mixed-dup1", hashMixed,
+                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
+                ),
+            )
+            expected.formal3(
+                "mixed-dup1", mixedFacts.occurredAt,
+                Triple("expense-account-food", 1240L, "CNY"),
+                Triple("account-asset-a", -360L, "CNY"),
+                Triple("account-credit-huabei", -880L, "CNY"),
+            )
+            expected.group(
+                "req-mixed-dup-1-confirm", "mixed-dup1", totalMinor = 1240L,
+                assetAccount = "account-asset-a", assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+            )
+            assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-duplicate")
         } finally {
             driver.close()
         }

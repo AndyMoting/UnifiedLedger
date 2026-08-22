@@ -67,6 +67,7 @@ class AlipayCsvParserCreditJvmTest {
 
     private val directProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "花呗")
     private val refundProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "花呗")
+    private val mixedProfile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "余额宝", "花呗")
 
     private fun v3Facts(amountMinor: Long, time: String, direction: String, status: String?) =
         com.unifiedledger.application.ImportSourceFacts(
@@ -240,10 +241,10 @@ class AlipayCsvParserCreditJvmTest {
         }
     }
 
-    // ---- Matrix 4: mixed legs fail closed slice-1; directionality ----
+    // ---- Matrix 4: mixed legs activate (6d, D-108); directionality ----
 
     @Test
-    fun mixedLegExpenseFailsClosedAndNeutralAndIncomeFollowFrozenOrderSix() {
+    fun mixedLegExpenseActivatesAndNeutralAndIncomeFollowFrozenOrderSix() {
         val rows = listOf(
             creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 08:00:00", "余额宝&花呗"),
             creditRow("网上支付", "不计收支", "120.00", "交易成功", "2026-08-14 08:01:00", "余额宝&花呗"),
@@ -252,8 +253,13 @@ class AlipayCsvParserCreditJvmTest {
         )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
 
-        // 6d: slice-2 fail-closed, no half-confirmed state.
-        assertEquals("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", rejected(result.rows, 0).diagnostics.single().code)
+        // 6d (D-108 section 3): exactly one asset leg + one credit leg + 支出.
+        val mixed = accepted(result.rows, 0)
+        assertEquals(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixed.recordKind)
+        assertEquals(v3Facts(12000, "2026-08-14T08:00:00+08:00", "out", "settled"), mixed.facts)
+        assertEquals(ImportCompleteness.VALID_COMPLETE, mixed.completeness)
+        assertEquals(emptyList(), mixed.diagnostics)
+        assertEquals(mixedProfile, mixed.paymentProfile)
 
         // 6g: unmapped direction keeps the A-04 ordinary behavior; legs never persist.
         val neutral = accepted(result.rows, 1)
@@ -267,6 +273,59 @@ class AlipayCsvParserCreditJvmTest {
         // 6f: credit leg with income direction is defensively rejected.
         assertEquals("SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED", rejected(result.rows, 2).diagnostics.single().code)
         assertEquals("SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED", rejected(result.rows, 3).diagnostics.single().code)
+    }
+
+    // ---- Matrix 4 slice 2: composition gate and the mixed status gate ----
+
+    @Test
+    fun mixedCompositionGateRejectsNonExactOnePlusOneLegsWithZeroRecords() {
+        val rows = listOf(
+            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:00:00", "余额宝&招商银行储蓄卡(0123)&花呗"),
+            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:01:00", "余额宝&账户余额&花呗"),
+            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:02:00", "招商银行储蓄卡(0123)&花呗"),
+        )
+        val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
+        assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
+        // 6d composition gate (D-108 section 2 ruling 2): >1 asset leg or >1 credit
+        // leg is a typed rejection (fail-closed, zero records).
+        assertEquals("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", rejected(result.rows, 0).diagnostics.single().code)
+        assertEquals("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", rejected(result.rows, 1).diagnostics.single().code)
+        // Control: a masked single asset leg still normalizes to exactly 1 + 1.
+        val control = accepted(result.rows, 2)
+        assertEquals(ImportRecordKind.MIXED_PAYMENT_SOURCE, control.recordKind)
+        assertEquals(ImportCompleteness.VALID_COMPLETE, control.completeness)
+        assertEquals(ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "招商银行储蓄卡", "花呗"), control.paymentProfile)
+        assertEquals(1, result.rows.count { it is AlipayRowResult.Accepted })
+    }
+
+    @Test
+    fun foldedCreditTokensStayExactlyOneAndKeepTheDirectVariant() {
+        val rows = listOf(
+            creditRow("网上支付", "支出", "80.00", "交易成功", "2026-08-14 10:00:00", "花呗&花呗分期(3期)"),
+        )
+        val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
+        assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
+        // 6e set semantics: folded duplicates stay exactly one credit token, so the
+        // exactly-one gate keeps the direct variant (never the >1 defense branch).
+        val row = accepted(result.rows, 0)
+        assertEquals(ImportRecordKind.CREDIT_EXPENSE_SOURCE, row.recordKind)
+        assertEquals(directProfile, row.paymentProfile)
+    }
+
+    @Test
+    fun mixedLegNonSuccessStatusStaysValidIncompleteWithRawStatus() {
+        val rows = listOf(
+            creditRow("网上支付", "支出", "120.00", "交易关闭", "2026-08-14 11:00:00", "余额宝&花呗"),
+        )
+        val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
+        val row = accepted(result.rows, 0)
+        assertEquals(ImportRecordKind.MIXED_PAYMENT_SOURCE, row.recordKind)
+        assertEquals(v3Facts(12000, "2026-08-14T11:00:00+08:00", "out", "交易关闭"), row.facts)
+        assertEquals(ImportCompleteness.VALID_INCOMPLETE, row.completeness)
+        assertEquals(1, row.diagnostics.size)
+        assertEquals("REQUIRED_FACT_UNRESOLVED", row.diagnostics[0].code)
+        assertEquals("status", row.diagnostics[0].fieldRole)
+        assertEquals(mixedProfile, row.paymentProfile)
     }
 
     // ---- Matrix 5: family negative shapes and defense ----

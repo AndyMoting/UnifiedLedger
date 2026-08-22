@@ -149,8 +149,19 @@ object AlipayCsvParser {
                 )
                 "out" -> {
                     if (legs.assetTokens.isNotEmpty()) {
-                        // Slice-2 fail-closed inter-slice state (D-107 section 2.3 6d):
-                        // no half-confirmed state, zero writes.
+                        // Judgment order 6d (D-108 section 3.1): exactly one asset leg +
+                        // one credit leg; any other mixed composition is a typed
+                        // rejection (fail-closed, zero writes).
+                        if (legs.assetTokens.size > 1 || legs.creditTokens.size > 1) {
+                            return AlipayRowResult.Rejected(
+                                ordinal, listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
+                            )
+                        }
+                        return parseMixedPaymentRow(inputRef, ordinal, fields, statusRaw, legs)
+                    }
+                    // Judgment order 6e (D-108 section 3.1): exactly one credit leg;
+                    // more than one distinct credit token is a typed rejection.
+                    if (legs.creditTokens.size > 1) {
                         return AlipayRowResult.Rejected(
                             ordinal, listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
                         )
@@ -337,6 +348,42 @@ object AlipayCsvParser {
         }
         return AlipayRowResult.Accepted(
             ordinal, ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+            v3Facts(amountMinor, occurredAt, "out", statusRaw.ifEmpty { null }),
+            ImportCompleteness.VALID_INCOMPLETE,
+            listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
+            profile,
+        )
+    }
+
+    // Judgment order 6d (P4-06 slice 2, D-108 section 3.2): exactly one asset leg +
+    // one credit leg with column 5 resolved as 支出 -> the MIXED_PAYMENT_SOURCE. The
+    // status gate mirrors the family rule: 交易成功 -> settled/valid_complete, any
+    // other status token stays raw + unresolved (valid_incomplete, zero upgrades).
+    private fun parseMixedPaymentRow(
+        inputRef: String,
+        ordinal: Int,
+        fields: List<String>,
+        statusRaw: String,
+        legs: PaymentLegs,
+    ): AlipayRowResult {
+        val occurredAt = parseTime(fields[0])
+            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor = parseAmount(fields[6])
+            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val profile = ImportPaymentProfile(
+            variant = ImportPaymentVariant.MIXED_PAYMENT,
+            assetLegKindToken = legs.assetTokens.single(),
+            creditLegKindToken = legs.creditTokens.single(),
+        )
+        if (statusRaw == AlipaySourceTokens.CREDIT_EXPENSE_STATUS_SUCCESS) {
+            return AlipayRowResult.Accepted(
+                ordinal, ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                v3Facts(amountMinor, occurredAt, "out", AlipaySourceTokens.STATUS_SETTLED_VALUE),
+                ImportCompleteness.VALID_COMPLETE, emptyList(), profile,
+            )
+        }
+        return AlipayRowResult.Accepted(
+            ordinal, ImportRecordKind.MIXED_PAYMENT_SOURCE,
             v3Facts(amountMinor, occurredAt, "out", statusRaw.ifEmpty { null }),
             ImportCompleteness.VALID_INCOMPLETE,
             listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
