@@ -7391,9 +7391,9 @@ CREATE TABLE import_source_record (
   owner_request_id TEXT NOT NULL,
   input_ref TEXT NOT NULL,
   record_ordinal INTEGER NOT NULL CHECK (record_ordinal >= 0),
-  record_kind TEXT NOT NULL CHECK (record_kind IN ('ordinary_flow_source', 'transfer_flow_source', 'transfer_flow_source_missing_leg')),
+  record_kind TEXT NOT NULL CHECK (record_kind IN ('ordinary_flow_source', 'transfer_flow_source', 'transfer_flow_source_missing_leg', 'credit_expense_source', 'credit_repayment_source', 'mixed_payment_source')),
   content_hash TEXT NOT NULL,
-  contract_version INTEGER NOT NULL CHECK (contract_version IN (1, 2)),
+  contract_version INTEGER NOT NULL CHECK (contract_version IN (1, 2, 3)),
   completeness TEXT NOT NULL CHECK (completeness IN ('valid_complete', 'valid_incomplete')),
   amount_minor INTEGER,
   currency_code TEXT,
@@ -7411,7 +7411,7 @@ CREATE TABLE import_source_record (
   FOREIGN KEY (ledger_id, owner_request_id) REFERENCES import_request(ledger_id, request_id),
   CHECK (completeness != 'valid_complete' OR (amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_precision IS NOT NULL AND occurred_at IS NOT NULL AND direction_token IS NOT NULL AND status_token IS NOT NULL)),
   CHECK (amount_minor IS NULL OR (currency_code IS NOT NULL AND currency_precision IS NOT NULL)),
-  CHECK ((record_kind = 'ordinary_flow_source' AND contract_version = 1) OR (record_kind IN ('transfer_flow_source', 'transfer_flow_source_missing_leg') AND contract_version = 2))
+  CHECK ((record_kind = 'ordinary_flow_source' AND contract_version = 1) OR (record_kind IN ('transfer_flow_source', 'transfer_flow_source_missing_leg') AND contract_version = 2) OR (record_kind IN ('credit_expense_source', 'credit_repayment_source', 'mixed_payment_source') AND contract_version = 3))
 );
 CREATE TABLE import_evidence (
   ledger_id TEXT NOT NULL,
@@ -7426,7 +7426,7 @@ CREATE TABLE import_candidate (
   ledger_id TEXT NOT NULL,
   candidate_id TEXT NOT NULL,
   source_id TEXT NOT NULL,
-  candidate_kind TEXT NOT NULL CHECK (candidate_kind IN ('ordinary_flow', 'transfer_flow', 'transfer_flow_missing_leg')),
+  candidate_kind TEXT NOT NULL CHECK (candidate_kind IN ('ordinary_flow', 'transfer_flow', 'transfer_flow_missing_leg', 'credit_expense', 'credit_repayment', 'mixed_payment')),
   confidence TEXT NOT NULL,
   rule TEXT NOT NULL,
   rule_version INTEGER NOT NULL CHECK (rule_version = 1),
@@ -7466,19 +7466,51 @@ CREATE TABLE import_candidate_decision_snapshot (
   funding_account_id TEXT,
   from_account_id TEXT,
   to_account_id TEXT,
+  credit_liability_account_id TEXT,
+  asset_account_id TEXT,
+  original_transaction_id TEXT,
+  asset_leg_minor INTEGER,
+  credit_leg_minor INTEGER,
   explicit_confirmed_at TEXT,
   PRIMARY KEY (ledger_id, request_id),
   FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
   FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (original_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
   CHECK (decision != 'confirm' OR
          (category_id IS NOT NULL AND funding_account_id IS NOT NULL
-          AND from_account_id IS NULL AND to_account_id IS NULL)
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
          OR
          (category_id IS NULL AND funding_account_id IS NULL
-          AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL)),
+          AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NOT NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NOT NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL)
+         OR
+         (category_id IS NOT NULL AND funding_account_id IS NULL
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NOT NULL AND asset_account_id IS NOT NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NOT NULL AND credit_leg_minor IS NOT NULL)),
   CHECK (decision != 'reject' OR
          (category_id IS NULL AND funding_account_id IS NULL
-          AND from_account_id IS NULL AND to_account_id IS NULL))
+          AND from_account_id IS NULL AND to_account_id IS NULL
+          AND credit_liability_account_id IS NULL AND asset_account_id IS NULL
+          AND original_transaction_id IS NULL AND asset_leg_minor IS NULL AND credit_leg_minor IS NULL))
 );
 CREATE TABLE import_confirmation (
   ledger_id TEXT NOT NULL,
@@ -7510,6 +7542,77 @@ CREATE TABLE import_receipt (
   FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id),
   FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id)
 );
+
+-- P4-06 slice 1 (RL-05 credit, D-107 section 4): credit/mixed structures, all built
+-- by the v24 -> v25 migration in one additive step. mixed_payment_group and
+-- mixed_payment_group_leg are built-but-unused in slice 1 (zero rows).
+CREATE TABLE import_candidate_payment_profile (
+  ledger_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  variant TEXT NOT NULL CHECK (variant IN ('credit_expense_direct', 'credit_expense_refund', 'credit_repayment', 'mixed_payment')),
+  asset_leg_kind_token TEXT,
+  credit_leg_kind_token TEXT,
+  PRIMARY KEY (ledger_id, candidate_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  CHECK (
+    (variant IN ('credit_expense_direct', 'credit_expense_refund') AND credit_leg_kind_token IS NOT NULL AND asset_leg_kind_token IS NULL)
+    OR (variant = 'credit_repayment' AND credit_leg_kind_token IS NULL)
+    OR (variant = 'mixed_payment' AND credit_leg_kind_token IS NOT NULL AND asset_leg_kind_token IS NOT NULL)
+  )
+);
+CREATE TABLE mixed_payment_group (
+  ledger_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  total_minor INTEGER NOT NULL CHECK (total_minor > 0),
+  generated_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, group_id),
+  UNIQUE (ledger_id, candidate_id),
+  UNIQUE (ledger_id, transaction_id),
+  FOREIGN KEY (ledger_id, candidate_id) REFERENCES import_candidate(ledger_id, candidate_id),
+  FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES import_request(ledger_id, request_id)
+);
+CREATE TABLE mixed_payment_group_leg (
+  ledger_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  leg_index INTEGER NOT NULL CHECK (leg_index >= 1),
+  leg_class TEXT NOT NULL CHECK (leg_class IN ('asset', 'liability')),
+  account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  PRIMARY KEY (ledger_id, group_id, leg_index),
+  FOREIGN KEY (ledger_id, group_id) REFERENCES mixed_payment_group(ledger_id, group_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER import_candidate_payment_profile_guard_update BEFORE UPDATE ON import_candidate_payment_profile BEGIN SELECT RAISE(ABORT, 'cannot update candidate payment profile'); END;
+CREATE TRIGGER import_candidate_payment_profile_guard_delete BEFORE DELETE ON import_candidate_payment_profile BEGIN SELECT RAISE(ABORT, 'cannot delete candidate payment profile'); END;
+CREATE TRIGGER mixed_payment_group_guard_update BEFORE UPDATE ON mixed_payment_group BEGIN SELECT RAISE(ABORT, 'cannot update mixed payment group'); END;
+CREATE TRIGGER mixed_payment_group_guard_delete BEFORE DELETE ON mixed_payment_group BEGIN SELECT RAISE(ABORT, 'cannot delete mixed payment group'); END;
+CREATE TRIGGER mixed_payment_group_leg_guard_update BEFORE UPDATE ON mixed_payment_group_leg BEGIN SELECT RAISE(ABORT, 'cannot update mixed payment group leg'); END;
+CREATE TRIGGER mixed_payment_group_leg_guard_delete BEFORE DELETE ON mixed_payment_group_leg BEGIN SELECT RAISE(ABORT, 'cannot delete mixed payment group leg'); END;
+-- A group head row completes exactly at its INSERT (legs are written first); it must
+-- hold exactly one asset leg + one liability leg (D-072 frozen two funding legs)
+-- summing to total_minor.
+CREATE TRIGGER mixed_payment_group_complete BEFORE INSERT ON mixed_payment_group BEGIN
+  SELECT CASE WHEN (
+    SELECT count(*) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id AND leg_class = 'asset'
+  ) != 1 OR (
+    SELECT count(*) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id AND leg_class = 'liability'
+  ) != 1 OR (
+    SELECT COALESCE(SUM(amount_minor), 0) FROM mixed_payment_group_leg
+    WHERE ledger_id = new.ledger_id AND group_id = new.group_id
+  ) != new.total_minor THEN RAISE(ABORT, 'mixed payment group incomplete') END;
+END;
+-- Frozen legs-first write order: once the head row exists the group is complete and
+-- no leg can be appended (compatible with the deferred leg FK).
+CREATE TRIGGER mixed_payment_group_leg_before_head BEFORE INSERT ON mixed_payment_group_leg BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM mixed_payment_group WHERE ledger_id = new.ledger_id AND group_id = new.group_id
+  ) THEN RAISE(ABORT, 'mixed payment group leg after head') END;
+END;
 
 -- P4-07 duplicate review is deliberately separate from import_request and P4-08.
 CREATE TABLE import_duplicate_candidate (
@@ -7871,6 +7974,15 @@ insertImportCandidate:
 INSERT INTO import_candidate(ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version)
 VALUES (?, ?, ?, ?, ?, ?, ?);
 
+insertImportCandidatePaymentProfile:
+INSERT INTO import_candidate_payment_profile(ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token)
+VALUES (?, ?, ?, ?, ?);
+
+selectImportCandidatePaymentProfile:
+SELECT variant, asset_leg_kind_token, credit_leg_kind_token
+FROM import_candidate_payment_profile
+WHERE ledger_id = ? AND candidate_id = ?;
+
 insertImportCandidateRequirement:
 INSERT INTO import_candidate_requires_confirmation(ledger_id, candidate_id, requirement_index, requirement)
 VALUES (?, ?, ?, ?);
@@ -7880,8 +7992,8 @@ INSERT INTO import_candidate_status_history(ledger_id, candidate_id, sequence, s
 VALUES (?, ?, ?, ?, ?, ?, ?);
 
 insertImportDecisionSnapshot:
-INSERT INTO import_candidate_decision_snapshot(ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, explicit_confirmed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO import_candidate_decision_snapshot(ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 insertImportConfirmation:
 INSERT INTO import_confirmation(ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at)
@@ -7892,20 +8004,30 @@ INSERT INTO import_receipt(ledger_id, request_id, outcome, source_id, evidence_i
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 selectImportSourceByIdentity:
-SELECT source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
-  contract_version, completeness, amount_minor, currency_code, currency_precision,
-  occurred_at, direction_token, status_token, funding_state, funding_rule_id,
-  funding_rule_version, candidate_generated_at
-FROM import_source_record
-WHERE ledger_id = ? AND input_ref = ? AND record_ordinal = ?;
+SELECT source.source_id, source.owner_request_id, source.input_ref, source.record_ordinal, source.record_kind, source.content_hash,
+  source.contract_version, source.completeness, source.amount_minor, source.currency_code, source.currency_precision,
+  source.occurred_at, source.direction_token, source.status_token, source.funding_state, source.funding_rule_id,
+  source.funding_rule_version, source.candidate_generated_at,
+  profile.variant, profile.asset_leg_kind_token, profile.credit_leg_kind_token
+FROM import_source_record AS source
+LEFT JOIN import_candidate AS candidate
+  ON candidate.ledger_id = source.ledger_id AND candidate.source_id = source.source_id
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+WHERE source.ledger_id = ? AND source.input_ref = ? AND source.record_ordinal = ?;
 
 selectImportSourceByOwnerRequest:
-SELECT source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash,
-  contract_version, completeness, amount_minor, currency_code, currency_precision,
-  occurred_at, direction_token, status_token, funding_state, funding_rule_id,
-  funding_rule_version, candidate_generated_at
-FROM import_source_record
-WHERE ledger_id = ? AND owner_request_id = ?;
+SELECT source.source_id, source.owner_request_id, source.input_ref, source.record_ordinal, source.record_kind, source.content_hash,
+  source.contract_version, source.completeness, source.amount_minor, source.currency_code, source.currency_precision,
+  source.occurred_at, source.direction_token, source.status_token, source.funding_state, source.funding_rule_id,
+  source.funding_rule_version, source.candidate_generated_at,
+  profile.variant, profile.asset_leg_kind_token, profile.credit_leg_kind_token
+FROM import_source_record AS source
+LEFT JOIN import_candidate AS candidate
+  ON candidate.ledger_id = source.ledger_id AND candidate.source_id = source.source_id
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+WHERE source.ledger_id = ? AND source.owner_request_id = ?;
 
 selectImportSourceForCandidate:
 SELECT source.source_id, source.content_hash, source.completeness, source.amount_minor,
@@ -7942,7 +8064,7 @@ selectImportCandidateLatestSequence:
 SELECT COALESCE(MAX(sequence), 0) FROM import_candidate_status_history WHERE ledger_id = ? AND candidate_id = ?;
 
 selectImportDecisionSnapshotByRequest:
-SELECT decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, explicit_confirmed_at
+SELECT decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at
 FROM import_candidate_decision_snapshot
 WHERE ledger_id = ? AND request_id = ?;
 
@@ -7970,6 +8092,8 @@ countImportEvidence:
 SELECT count(*) FROM import_evidence;
 countImportCandidates:
 SELECT count(*) FROM import_candidate;
+countImportCandidatePaymentProfiles:
+SELECT count(*) FROM import_candidate_payment_profile;
 countImportCandidateStatusHistory:
 SELECT count(*) FROM import_candidate_status_history;
 countImportDecisionSnapshots:

@@ -85,7 +85,7 @@ class SqlDelightImportSpineStore private constructor(
             "Request identity and snapshot must belong to the same ledger"
         }
         // Computed exactly once at intake from the inbound facts (spec section 6).
-        val digest = fingerprint.digest(snapshot.recordKind, snapshot.facts)
+        val digest = fingerprint.digest(snapshot.recordKind, snapshot.facts, snapshot.paymentProfile)
         return try {
             rollbackTypedRejection { database.transactionWithResult {
                 database.ledgerQueries.claimImportRequest(identity.ledgerId.value, identity.requestId.value, "intake")
@@ -148,11 +148,27 @@ class SqlDelightImportSpineStore private constructor(
                         ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
                         ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
                         ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                        ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+                        ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+                        ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
                     },
                     confidence = confidenceFor(snapshot.completeness),
                     rule = snapshot.recordKind.storageValue,
                     rule_version = 1L,
                 )
+                // P4-06 slice 1 (D-107 section 5): a v3 row writes its payment profile in
+                // the same transaction as source/evidence/candidate ("exactly one profile
+                // row per v3 candidate" is owned by this write path + the oracle).
+                val paymentProfile = snapshot.paymentProfile
+                if (paymentProfile != null) {
+                    database.ledgerQueries.insertImportCandidatePaymentProfile(
+                        ledger_id = snapshot.identity.ledgerId.value,
+                        candidate_id = ids.candidateId.value,
+                        variant = paymentProfile.variant.storageValue,
+                        asset_leg_kind_token = paymentProfile.assetLegKindToken,
+                        credit_leg_kind_token = paymentProfile.creditLegKindToken,
+                    )
+                }
                 database.ledgerQueries.insertImportCandidateRequirement(
                     ledger_id = snapshot.identity.ledgerId.value,
                     candidate_id = ids.candidateId.value,
@@ -332,6 +348,34 @@ class SqlDelightImportSpineStore private constructor(
             // Kind gate: check candidate_kind against decision fields
             val candidateKind = state.candidate_kind
             val decisionFields = snapshot.confirmDecisionFields!!
+            // P4-06 slice 1 (D-107 section 3.3): the credit kinds gate on candidate kind
+            // + profile variant; mixed_payment is structurally impossible in slice 1
+            // (parser never produces it) and always mismatches defensively.
+            if (candidateKind == "mixed_payment") {
+                abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
+                    ),
+                )
+            }
+            if (candidateKind == "credit_expense") {
+                val profile = database.ledgerQueries.selectImportCandidatePaymentProfile(
+                    identity.ledgerId.value,
+                    snapshot.candidateId.value,
+                ).executeAsOneOrNull()
+                val fieldsMatch = when (profile?.variant) {
+                    "credit_expense_direct" -> decisionFields is ImportConfirmDecisionFields.CreditExpenseFlow
+                    "credit_expense_refund" -> decisionFields is ImportConfirmDecisionFields.CreditExpenseRefundFlow
+                    else -> false
+                }
+                if (!fieldsMatch) {
+                    abortImportSpine(
+                        ImportCandidateDecisionResult.Rejected(
+                            SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
+                        ),
+                    )
+                }
+            }
             when {
                 candidateKind == "transfer_flow_missing_leg" -> abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
@@ -344,6 +388,11 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
                 candidateKind == "transfer_flow" && decisionFields !is ImportConfirmDecisionFields.TransferFlow -> abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
+                    ),
+                )
+                candidateKind == "credit_repayment" && decisionFields !is ImportConfirmDecisionFields.CreditRepaymentFlow -> abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
                         SpineDiagnostics.decisionKindMismatch(snapshot.candidateId),
                     ),
@@ -429,10 +478,28 @@ class SqlDelightImportSpineStore private constructor(
             }
             persistFormal(created.transaction)
             failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL)
-            val categoryId: String? = (decisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.categoryId?.value
+            val categoryId: String? = when (decisionFields) {
+                is ImportConfirmDecisionFields.OrdinaryFlow -> decisionFields.categoryId.value
+                is ImportConfirmDecisionFields.CreditExpenseFlow -> decisionFields.categoryId.value
+                is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> decisionFields.categoryId.value
+                else -> null
+            }
             val fundingAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.fundingAccountId?.value
             val fromAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.TransferFlow)?.fromAccountId?.value
             val toAccountId: String? = (decisionFields as? ImportConfirmDecisionFields.TransferFlow)?.toAccountId?.value
+            // P4-06 slice 1 (D-107 section 3.3): the three credit decision shapes.
+            // The credit-liability account is shared by all three; the refund variant
+            // additionally snapshots the original transaction id (FK-enforced).
+            val creditLiabilityAccountId: String? = when (decisionFields) {
+                is ImportConfirmDecisionFields.CreditExpenseFlow -> decisionFields.creditLiabilityAccountId.value
+                is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> decisionFields.creditLiabilityAccountId.value
+                is ImportConfirmDecisionFields.CreditRepaymentFlow -> decisionFields.creditLiabilityAccountId.value
+                else -> null
+            }
+            val creditAssetAccountId: String? =
+                (decisionFields as? ImportConfirmDecisionFields.CreditRepaymentFlow)?.assetAccountId?.value
+            val originalTransactionId: String? =
+                (decisionFields as? ImportConfirmDecisionFields.CreditExpenseRefundFlow)?.originalTransactionId?.value
             database.ledgerQueries.insertImportDecisionSnapshot(
                 ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
@@ -443,6 +510,11 @@ class SqlDelightImportSpineStore private constructor(
                 funding_account_id = fundingAccountId,
                 from_account_id = fromAccountId,
                 to_account_id = toAccountId,
+                credit_liability_account_id = creditLiabilityAccountId,
+                asset_account_id = creditAssetAccountId,
+                original_transaction_id = originalTransactionId,
+                asset_leg_minor = null,
+                credit_leg_minor = null,
                 explicit_confirmed_at = snapshot.explicitConfirmedAt,
             )
             val sequence = database.ledgerQueries.selectImportCandidateLatestSequence(
@@ -564,6 +636,11 @@ class SqlDelightImportSpineStore private constructor(
                 funding_account_id = null,
                 from_account_id = null,
                 to_account_id = null,
+                credit_liability_account_id = null,
+                asset_account_id = null,
+                original_transaction_id = null,
+                asset_leg_minor = null,
+                credit_leg_minor = null,
                 explicit_confirmed_at = null,
             )
             val sequence = database.ledgerQueries.selectImportCandidateLatestSequence(
@@ -647,10 +724,15 @@ class SqlDelightImportSpineStore private constructor(
         }
         val equivalent = stored.decision == "confirm" &&
             stored.candidate_id == snapshot.candidateId.value &&
-            stored.category_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.categoryId?.value &&
+            stored.category_id == categoryDecisionValue(snapshot.confirmDecisionFields) &&
             stored.funding_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.OrdinaryFlow)?.fundingAccountId?.value &&
             stored.from_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.TransferFlow)?.fromAccountId?.value &&
             stored.to_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.TransferFlow)?.toAccountId?.value &&
+            stored.credit_liability_account_id == creditLiabilityDecisionValue(snapshot.confirmDecisionFields) &&
+            stored.asset_account_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.CreditRepaymentFlow)?.assetAccountId?.value &&
+            stored.original_transaction_id == (snapshot.confirmDecisionFields as? ImportConfirmDecisionFields.CreditExpenseRefundFlow)?.originalTransactionId?.value &&
+            stored.asset_leg_minor == null &&
+            stored.credit_leg_minor == null &&
             stored.explicit_confirmed_at == snapshot.explicitConfirmedAt
         if (!equivalent) {
             return ImportCandidateDecisionResult.Rejected(SpineDiagnostics.requestIdentityConflict(identity.requestId))
@@ -683,6 +765,11 @@ class SqlDelightImportSpineStore private constructor(
             stored.funding_account_id == null &&
             stored.from_account_id == null &&
             stored.to_account_id == null &&
+            stored.credit_liability_account_id == null &&
+            stored.asset_account_id == null &&
+            stored.original_transaction_id == null &&
+            stored.asset_leg_minor == null &&
+            stored.credit_leg_minor == null &&
             stored.explicit_confirmed_at == null
         if (!equivalent) {
             return ImportCandidateDecisionResult.Rejected(SpineDiagnostics.requestIdentityConflict(identity.requestId))
@@ -738,6 +825,10 @@ class SqlDelightImportSpineStore private constructor(
         val fundingRuleId: String,
         val fundingRuleVersion: Long,
         val candidateGeneratedAt: String,
+        // P4-06 slice 1: profile columns (LEFT JOIN; all null for v1/v2 rows).
+        val profileVariant: String?,
+        val profileAssetLegKindToken: String?,
+        val profileCreditLegKindToken: String?,
     )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByIdentity.toStoredFacts(): StoredSourceFacts =
@@ -756,6 +847,9 @@ class SqlDelightImportSpineStore private constructor(
             fundingRuleId = funding_rule_id,
             fundingRuleVersion = funding_rule_version,
             candidateGeneratedAt = candidate_generated_at,
+            profileVariant = variant,
+            profileAssetLegKindToken = asset_leg_kind_token,
+            profileCreditLegKindToken = credit_leg_kind_token,
         )
 
     private fun com.unifiedledger.data.db.SelectImportSourceByOwnerRequest.toStoredFacts(): StoredSourceFacts =
@@ -774,12 +868,17 @@ class SqlDelightImportSpineStore private constructor(
             fundingRuleId = funding_rule_id,
             fundingRuleVersion = funding_rule_version,
             candidateGeneratedAt = candidate_generated_at,
+            profileVariant = variant,
+            profileAssetLegKindToken = asset_leg_kind_token,
+            profileCreditLegKindToken = credit_leg_kind_token,
         )
 
-    // Source-fact equivalence for replay (D-105 section 5): candidate_generated_at is an
-    // audit fact, not a source fact, so it never participates; funding facts are source
-    // facts and do. A replay carrying a different audit timestamp stays a zero-write
-    // NoChange; a changed funding fact is a hard identity collision.
+    // Source-fact equivalence for replay (D-105 section 5 + D-107 section 5):
+    // candidate_generated_at is an audit fact, not a source fact, so it never
+    // participates; funding facts are source facts and do. The P4-06 payment profile's
+    // three fields join the frozen comparison list: a replay with a changed profile is
+    // a hard identity collision. A replay carrying a different audit timestamp stays a
+    // zero-write NoChange; a changed funding fact is a hard identity collision.
     private fun intakeEquivalent(
         stored: StoredSourceFacts,
         snapshot: ImportIntakeSnapshot,
@@ -795,7 +894,24 @@ class SqlDelightImportSpineStore private constructor(
         stored.statusToken == snapshot.facts.statusToken &&
         stored.fundingState == snapshot.facts.fundingState.name &&
         stored.fundingRuleId == snapshot.facts.fundingRuleId &&
-        stored.fundingRuleVersion == snapshot.facts.fundingRuleVersion.toLong()
+        stored.fundingRuleVersion == snapshot.facts.fundingRuleVersion.toLong() &&
+        stored.profileVariant == snapshot.paymentProfile?.variant?.storageValue &&
+        stored.profileAssetLegKindToken == snapshot.paymentProfile?.assetLegKindToken &&
+        stored.profileCreditLegKindToken == snapshot.paymentProfile?.creditLegKindToken
+
+    private fun creditLiabilityDecisionValue(fields: ImportConfirmDecisionFields?): String? = when (fields) {
+        is ImportConfirmDecisionFields.CreditExpenseFlow -> fields.creditLiabilityAccountId.value
+        is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> fields.creditLiabilityAccountId.value
+        is ImportConfirmDecisionFields.CreditRepaymentFlow -> fields.creditLiabilityAccountId.value
+        else -> null
+    }
+
+    private fun categoryDecisionValue(fields: ImportConfirmDecisionFields?): String? = when (fields) {
+        is ImportConfirmDecisionFields.OrdinaryFlow -> fields.categoryId.value
+        is ImportConfirmDecisionFields.CreditExpenseFlow -> fields.categoryId.value
+        is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> fields.categoryId.value
+        else -> null
+    }
 
     private fun confidenceFor(completeness: ImportCompleteness): String = when (completeness) {
         ImportCompleteness.VALID_COMPLETE -> "1.00"

@@ -47,14 +47,22 @@ object AlipaySourceTokens {
     /** Frozen ordinary-flow category domain (spec section 3.2); expansion only via explicit contract amendment. */
     val ACCEPTED_TX_TYPES: Set<String> = setOf("网上支付", "扫码支付", "其他")
 
-    /** Frozen out-of-scope category set: typed rejection, registered per family for later batches (spec section 3.2). */
-    val REJECTED_TX_TYPES: Set<String> = setOf("账户存取", "转账红包", "亲友代付", "信用借还")
+    /** Frozen out-of-scope category set: typed rejection, registered per family for later batches (spec section 3.2).
+     *  P4-06 slice 1 (D-107 section 2.3): 信用借还 moved out of this set into its own
+     *  dedicated judgment-order-3 branch (credit repayment routing). */
+    val REJECTED_TX_TYPES: Set<String> = setOf("账户存取", "转账红包", "亲友代付")
+
+    /** P4-06 slice 1 (D-107 section 2.3): the 信用借还 family category token. */
+    const val CREDIT_TX_TYPE: String = "信用借还"
 
     /** Refund rows (category or status token containing this marker) are rejected (judgment order 1). */
     const val REFUND_MARKER: String = "退款"
 
     /** Frozen direction mapping; any other token keeps its raw value and stays unresolved. */
     val DIRECTION_TOKEN_MAP: Map<String, String> = mapOf("收入" to "in", "支出" to "out")
+
+    /** The frozen neutral direction token (P4-05 section 3.1; the refund and credit-family gates read it). */
+    const val NEUTRAL_DIRECTION_TOKEN: String = "不计收支"
 
     /** Frozen settled-status mapping subset (spec section 2.4); every other status token stays raw + unresolved. */
     const val STATUS_SETTLED: String = "settled"
@@ -88,6 +96,62 @@ object AlipaySourceTokens {
 
     /** RL-04 frozen provenance rule for the subtype-derived direction fact (design §2.2, D-097:1455). */
     const val YUEBAO_SUBTYPE_DIRECTION_RULE: String = "yuebao_subtype_direction_v1"
+
+    // ---- P4-06 slice 1 (RL-05 credit, D-107 section 2): payment-leg whitelist ----
+    //
+    // Column 7 (收/付款方式, 0-based field 7) is a composite token: legs joined by '&',
+    // each leg shaped "token(annotation)". Only the normalized whitelist tokens below
+    // are ever routed or persisted; masked tails, accounts and raw annotations never
+    // leave the parser (privacy boundary). Expansion only via explicit contract
+    // amendment; the parser never accepts a new token silently.
+
+    /** Frozen first-batch credit leg (D-107 section 2.1; 花呗分期(N期) folds onto this token). */
+    val CREDIT_LEG_TOKENS: Set<String> = setOf("花呗")
+
+    /** Frozen first-batch asset legs (D-107 section 2.1). */
+    val ASSET_LEG_TOKENS: Set<String> = setOf("余额宝", "账户余额", "余额", "招商银行储蓄卡")
+
+    /** Exactly a 4-digit numeric mask tail, e.g. 招商银行储蓄卡(0123) (D-107 section 2.2). */
+    val LEG_TAIL_4_DIGIT_MASK: Regex = Regex("\\(\\d{4}\\)$")
+
+    /** The frozen qualifier tail (个人余额) (D-107 section 2.2). */
+    const val LEG_TAIL_PERSONAL_QUALIFIER: String = "(个人余额)"
+
+    /** The frozen installment family form 花呗分期(N期) folding onto the 花呗 credit leg (D-107 section 2.2). */
+    val LEG_TAIL_INSTALLMENT_FORM: Regex = Regex("^花呗分期\\(\\d+期\\)$")
+
+    /** Frozen family status gates (D-107 section 2.5): credit consumption/repayment/refund success tokens. */
+    const val CREDIT_EXPENSE_STATUS_SUCCESS: String = "交易成功"
+    const val CREDIT_REPAYMENT_STATUS_SUCCESS: String = "还款"
+    const val CREDIT_REFUND_STATUS_SUCCESS: String = "退款成功"
+
+    /** Frozen family status persistence values (D-107 section 2.5); refund_settled is the
+     *  fact-layer discriminant of the credit refund variant. */
+    const val STATUS_SETTLED_VALUE: String = "settled"
+    const val STATUS_REFUND_SETTLED_VALUE: String = "refund_settled"
+
+    /** Frozen direction-derivation rules (D-107 section 2.5): repayment -> out, refund -> in. */
+    const val CREDIT_REPAYMENT_DIRECTION_RULE: String = "credit_repayment_direction_v1"
+    const val CREDIT_REFUND_DIRECTION_RULE: String = "credit_refund_direction_v1"
+
+    /**
+     * D-107 section 2.2 frozen bracket stripping: exactly one tail annotation of the
+     * three frozen forms is removed (a 4-digit numeric mask, the (个人余额) qualifier, or
+     * the 花呗分期(N期) installment form which folds onto the 花呗 credit-leg token); an
+     * unbracketed token stays as-is. The stripped result must literally equal a
+     * whitelist member (any other bracket shape, any inner bracket, or any other token
+     * text fails). Returns the normalized whitelist token, or null for a non-whitelist
+     * leg. Never returns or leaks the raw leg text.
+     */
+    fun normalizePaymentLegToken(rawLeg: String): String? {
+        val stripped = when {
+            LEG_TAIL_INSTALLMENT_FORM.matches(rawLeg) -> "花呗"
+            LEG_TAIL_4_DIGIT_MASK.containsMatchIn(rawLeg) -> rawLeg.dropLast(6)
+            rawLeg.endsWith(LEG_TAIL_PERSONAL_QUALIFIER) -> rawLeg.dropLast(LEG_TAIL_PERSONAL_QUALIFIER.length)
+            else -> rawLeg
+        }
+        return if (stripped in CREDIT_LEG_TOKENS || stripped in ASSET_LEG_TOKENS) stripped else null
+    }
 
     /** Frozen evidence constants (D-099:1536); never read from the file at runtime. */
     const val CURRENCY_CNY: String = "CNY"

@@ -600,6 +600,10 @@ class ImportSpineTransferEndToEndTest {
                 ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
                 ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
                 ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                // P4-06 v3 kinds: unused by this P4-04/P4-05b oracle, mapped for exhaustiveness.
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+                ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+                ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
             }
             val complete = completeness == ImportCompleteness.VALID_COMPLETE
             requests += row(ledgerId, requestId, "intake")
@@ -1901,14 +1905,14 @@ class ImportSpineTransferEndToEndTest {
             // import_source_record, so the generated queries need the final shape).
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 LedgerDatabase(driver).transaction {
-                    LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 24)
-                    driver.execute(null, "PRAGMA user_version = 24", 0)
+                    LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 25)
+                    driver.execute(null, "PRAGMA user_version = 25", 0)
                 }
             }
-            assertEquals(24L, queryLongJdbc(url, "PRAGMA user_version"))
+            assertEquals(25L, queryLongJdbc(url, "PRAGMA user_version"))
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 // Existing v21 ordinary rows keep contract_version 1.
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest("ledger-p404", "req-v21-intake").executeAsOne()
                 assertEquals(1L, source.contract_version)

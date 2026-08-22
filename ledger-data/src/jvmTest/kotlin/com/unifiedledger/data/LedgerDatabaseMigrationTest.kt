@@ -295,7 +295,7 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(24, LedgerDatabase.Schema.version)
+            assertEquals(25, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -505,7 +505,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 23, 24)
+                LedgerDatabase.Schema.migrate(driver, 23, 25)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -516,9 +516,9 @@ class LedgerDatabaseMigrationTest {
     }
 
     @Test
-    fun freshV24EqualsMigratedV24ForP407AndP408Owners() {
-        val freshPath = Files.createTempFile("ledger-data-fresh-v24-p407-", ".db")
-        val migratedPath = Files.createTempFile("ledger-data-migrated-v24-p407-", ".db")
+    fun freshV25EqualsMigratedV25ForP406CreditAndP407Owners() {
+        val freshPath = Files.createTempFile("ledger-data-fresh-v25-p406-", ".db")
+        val migratedPath = Files.createTempFile("ledger-data-migrated-v25-p406-", ".db")
         try {
             JdbcSqliteDriver("jdbc:sqlite:${freshPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
@@ -527,7 +527,7 @@ class LedgerDatabaseMigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 24)
+                LedgerDatabase.Schema.migrate(driver, 1, 25)
             }
             assertEquals(
                 schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
@@ -537,6 +537,90 @@ class LedgerDatabaseMigrationTest {
             Files.deleteIfExists(freshPath)
             Files.deleteIfExists(migratedPath)
         }
+    }
+
+    @Test
+    fun populatedV24ToV25RebuildPreservesV1V2RowsAndAddsCreditStructuresAcrossReopen() {
+        val path = Files.createTempFile("ledger-data-v24-v25-p406-populated-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 24)
+                // One v1 ordinary chain and one v2 transfer chain, populated at v24.
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-p406', 'request-p406-v1', 'intake')", 0)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-p406', 'request-p406-v2', 'intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) VALUES ('ledger-p406', 'source-p406-v1', 'request-p406-v1', 'batch-p406', 0, 'ordinary_flow_source', 'sha256:p406-v1', 1, 'valid_complete', 3580, 'CNY', 2, '2026-08-22T10:00:00+08:00', 'out', 'settled', 'SETTLED', 'legacy-settled-v1', 1, 'generated-v1')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-p406', 'evidence-p406-v1', 'source-p406-v1', 'source_observation', '2026-08-22T10:00:00+08:00')", 0)
+                driver.execute(null, "INSERT INTO import_candidate(ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version) VALUES ('ledger-p406', 'candidate-p406-v1', 'source-p406-v1', 'ordinary_flow', '1.00', 'ordinary_flow_source', 1)", 0)
+                driver.execute(null, "INSERT INTO import_candidate_status_history VALUES ('ledger-p406', 'candidate-p406-v1', 1, 'history-p406-v1', 'pending_confirmation', 'request-p406-v1', 'creation')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) VALUES ('ledger-p406', 'source-p406-v2', 'request-p406-v2', 'batch-p406', 1, 'transfer_flow_source', 'sha256:p406-v2', 2, 'valid_complete', 2000, 'CNY', 2, '2026-08-22T11:00:00+08:00', 'in', 'settled', 'SETTLED', 'legacy-settled-v1', 1, 'generated-v2')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-p406', 'evidence-p406-v2', 'source-p406-v2', 'source_observation', '2026-08-22T11:00:00+08:00')", 0)
+                driver.execute(null, "INSERT INTO import_candidate(ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version) VALUES ('ledger-p406', 'candidate-p406-v2', 'source-p406-v2', 'transfer_flow', '1.00', 'transfer_flow_source', 1)", 0)
+                driver.execute(null, "INSERT INTO import_candidate_status_history VALUES ('ledger-p406', 'candidate-p406-v2', 1, 'history-p406-v2', 'pending_confirmation', 'request-p406-v2', 'creation')", 0)
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 25) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // v1/v2 rows survive value-for-value, funding columns included.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-v1' AND record_kind='ordinary_flow_source' AND contract_version=1 AND amount_minor=3580 AND funding_state='SETTLED' AND funding_rule_id='legacy-settled-v1' AND candidate_generated_at='generated-v1'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-v2' AND record_kind='transfer_flow_source' AND contract_version=2 AND amount_minor=2000 AND funding_state='SETTLED'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_candidate WHERE candidate_id='candidate-p406-v1' AND candidate_kind='ordinary_flow'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_candidate WHERE candidate_id='candidate-p406-v2' AND candidate_kind='transfer_flow'"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM import_evidence"))
+                assertEquals(2L, queryCount(driver, "SELECT count(*) FROM import_candidate_status_history"))
+                // v3 structures exist with zero rows (built-but-unused).
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM import_candidate_payment_profile"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM mixed_payment_group"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM mixed_payment_group_leg"))
+                // The five new decision-snapshot columns exist.
+                assertEquals(5L, queryCount(driver, "SELECT count(*) FROM pragma_table_info('import_candidate_decision_snapshot') WHERE name IN ('credit_liability_account_id', 'asset_account_id', 'original_transaction_id', 'asset_leg_minor', 'credit_leg_minor')"))
+                listOf(
+                    "import_candidate_payment_profile_guard_update", "import_candidate_payment_profile_guard_delete",
+                    "mixed_payment_group_guard_update", "mixed_payment_group_guard_delete",
+                    "mixed_payment_group_leg_guard_update", "mixed_payment_group_leg_guard_delete",
+                    "mixed_payment_group_complete", "mixed_payment_group_leg_before_head",
+                ).forEach { trigger ->
+                    assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='$trigger'"), trigger)
+                }
+                // The v25 CHECK accepts a v3 kind pairing (shape contract of the rebuilt table).
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-p406', 'request-p406-v3', 'intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-p406', 'source-p406-v3', 'request-p406-v3', 'batch-p406', 2, 'credit_repayment_source', 'sha256:p406-v3', 3, 'valid_complete', 5620, 'CNY', 2, '2026-08-22T12:00:00+08:00', 'out', 'settled')", 0)
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-v3' AND contract_version=3"))
+            }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
+    fun lateV24ToV25FailureRollsBackCreditStructuresAndSpineRows() {
+        val path = Files.createTempFile("ledger-data-v24-v25-p406-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            DriverManager.getConnection(url).use { connection ->
+                connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 24)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a', 'request-p406-rollback', 'intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-a', 'source-p406-rollback', 'request-p406-rollback', 'batch-p406-rollback', 0, 'ordinary_flow_source', 'sha256:rollback', 1, 'valid_complete', 100, 'CNY', 2, '2026-08-22T10:00:00+08:00', 'out', 'settled')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-a', 'evidence-p406-rollback', 'source-p406-rollback', 'source_observation', '2026-08-22T10:00:00+08:00')", 0)
+                // Blocker occupying a Stage 1 table name: the migration must fail inside
+                // the caller's transaction and roll back every created structure.
+                driver.execute(null, "CREATE TABLE mixed_payment_group(blocker TEXT)", 0)
+                assertFailsWith<SQLException> { LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 25) } }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // Stage 1 DDL rolled back: the credit profile table never survived.
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='import_candidate_payment_profile'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='mixed_payment_group_leg'"))
+                // Stage 4 never ran or fully rolled back: the v24 decision-snapshot shape survives.
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_table_info('import_candidate_decision_snapshot') WHERE name='credit_liability_account_id'"))
+                // The v24 data is intact and the failed identity stays retryable.
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-rollback' AND amount_minor=100"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-p406-rollback'"))
+            }
+        } finally { Files.deleteIfExists(path) }
     }
 
     @Test
@@ -815,7 +899,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -885,7 +969,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -924,7 +1008,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -996,7 +1080,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1114,7 +1198,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 // Formal rows of both v1 owners and the v16 RG-11 rows are preserved.
                 assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(3L, database.ledgerQueries.countVersions().executeAsOne())
@@ -1327,7 +1411,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(24, LedgerDatabase.Schema.version)
+                assertEquals(25, LedgerDatabase.Schema.version)
                 // The rebuilt current-state guards and the new history guard exist with
                 // the v19 text; the temporary migration guard never lands in the schema.
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg12_match_current_guard_insert'"))
@@ -2160,7 +2244,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 24)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 25)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

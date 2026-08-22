@@ -1,26 +1,44 @@
 package com.unifiedledger.application
 
 /**
- * P4-02 intake content fingerprint (spec section 6).
+ * P4-02 intake content fingerprint (spec section 6), additively extended for P4-06
+ * slice 1 (D-107 section 3.2).
  *
  * Canonical form: a closed JSON object whose member names are ordered by ascending
- * UTF-16 code units (amount, currency_code, currency_precision, direction_token,
- * occurred_at, record_kind, status_token); only present facts are included and every
- * leaf value is a JSON string, so RFC 8785 number canonicalization is not part of this
- * contract. String escaping and the SHA-256 primitive are the shared Rg09Fingerprint
- * implementations (JcsSha256.kt); the digest is lowercase `sha256:<hex>`.
+ * UTF-16 code units (amount, asset_leg_kind_token, credit_leg_kind_token,
+ * currency_code, currency_precision, direction_token, occurred_at, payment_variant,
+ * record_kind, status_token); only present facts are included and every leaf value is
+ * a JSON string, so RFC 8785 number canonicalization is not part of this contract.
+ * The three profile members appear only when a payment profile is present (v3 rows);
+ * for a null profile (v1/v2) the output bytes are identical to the pre-P4-06 form, so
+ * existing-row replay equivalence is unchanged. String escaping and the SHA-256
+ * primitive are the shared Rg09Fingerprint implementations (JcsSha256.kt); the digest
+ * is lowercase `sha256:<hex>`.
  *
  * The digest is computed exactly once at intake from the inbound facts and persisted;
  * it is an integrity cross-check only: it is not an identity and never participates in
  * dedup (spec section 6, D-098:1493).
  */
 class ImportContentFingerprint {
-    fun canonicalJson(recordKind: ImportRecordKind, facts: ImportSourceFacts): String = buildString {
+    fun canonicalJson(
+        recordKind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        paymentProfile: ImportPaymentProfile? = null,
+    ): String = buildString {
         append("{\"amount\":").append(jcsString(formatDecimal(facts.amountMinor, facts.currencyPrecision)))
+        if (paymentProfile?.assetLegKindToken != null) {
+            append(",\"asset_leg_kind_token\":").append(jcsString(paymentProfile.assetLegKindToken))
+        }
+        if (paymentProfile?.creditLegKindToken != null) {
+            append(",\"credit_leg_kind_token\":").append(jcsString(paymentProfile.creditLegKindToken))
+        }
         append(",\"currency_code\":").append(jcsString(facts.currencyCode))
         append(",\"currency_precision\":").append(jcsString(facts.currencyPrecision.toString()))
         append(",\"direction_token\":").append(jcsString(facts.directionToken))
         append(",\"occurred_at\":").append(jcsString(facts.occurredAt))
+        if (paymentProfile != null) {
+            append(",\"payment_variant\":").append(jcsString(paymentProfile.variant.storageValue))
+        }
         append(",\"record_kind\":").append(jcsString(recordKind.storageValue))
         if (facts.statusToken != null) {
             append(",\"status_token\":").append(jcsString(facts.statusToken))
@@ -28,8 +46,12 @@ class ImportContentFingerprint {
         append('}')
     }
 
-    fun digest(recordKind: ImportRecordKind, facts: ImportSourceFacts): String =
-        "sha256:${Sha256.digestHex(canonicalJson(recordKind, facts).encodeToByteArray())}"
+    fun digest(
+        recordKind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        paymentProfile: ImportPaymentProfile? = null,
+    ): String =
+        "sha256:${Sha256.digestHex(canonicalJson(recordKind, facts, paymentProfile).encodeToByteArray())}"
 }
 
 /** Exact, privacy-safe P4-07 comparison fingerprint. No provider payload is retained. */

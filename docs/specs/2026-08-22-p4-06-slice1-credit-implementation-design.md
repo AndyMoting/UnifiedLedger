@@ -156,7 +156,7 @@ store 确认门（`commitOnce`）扩展：kind 门按 candidate kind + profile �
 
 ## 4. v24 -> v25 持久化（单个加性迁移，三类结构一次建成）
 
-迁移 `25.sqm`（v24→v25，恰一次版本推进；片 2 零 schema 变更）。caller 单一外层事务包裹；六阶段模板（20.sqm/21.sqm/23.sqm 先例）；重建表与 `Ledger.sq` fresh DDL 结构等同（SQLDelight migration verifier + `LedgerDatabaseMigrationTest` 强制）。append-only 守卫触发器风格沿用 23.sqm；既有 v24 funding 列（`funding_state`/`funding_rule_id`/`funding_rule_version`/`candidate_generated_at`）原语义保留、不回写。
+迁移 `24.sqm`（v24→v25，恰一次版本推进；片 2 零 schema 变更）。caller 单一外层事务包裹；六阶段模板（20.sqm/21.sqm/23.sqm 先例）；重建表与 `Ledger.sq` fresh DDL 结构等同（SQLDelight migration verifier + `LedgerDatabaseMigrationTest` 强制）。append-only 守卫触发器风格沿用 23.sqm；既有 v24 funding 列（`funding_state`/`funding_rule_id`/`funding_rule_version`/`candidate_generated_at`）原语义保留、不回写。
 
 **重建表（3 张；`PRAGMA defer_foreign_keys = 1` + stage 拷贝 = 23.sqm defer+stage 模板；重建计数守卫 = 21.sqm 模板；后代行全部保留）**：
 

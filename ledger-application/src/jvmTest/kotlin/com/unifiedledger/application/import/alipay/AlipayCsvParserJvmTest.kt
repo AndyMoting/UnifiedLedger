@@ -3,6 +3,8 @@ package com.unifiedledger.application.import.alipay
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.ImportPaymentProfile
+import com.unifiedledger.application.ImportPaymentVariant
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
 import java.io.ByteArrayOutputStream
@@ -50,7 +52,9 @@ class AlipayCsvParserJvmTest {
     /** Generic frozen-shape data row in the REAL column layout (spec §9.2): time at index 0,
      *  category[1], counterparty[2], account[3], product 商品说明[4], direction[5], amount[6],
      *  method[7], status[8], order[9] (trailing tab), merchant order[10] (trailing tab or empty),
-     *  note[11]. [merchOrderNo] = null renders the single-tab (empty) shape. */
+     *  note[11]. [merchOrderNo] = null renders the single-tab (empty) shape. Column 7 defaults
+     *  to the empty string (P406S1-SPEC-001 data-fill revision: no payment legs, so the P4-06
+     *  leg gate never triggers for these P4-05 fixtures). */
     private fun recordRow(
         category: String,
         direction: String,
@@ -61,7 +65,7 @@ class AlipayCsvParserJvmTest {
     ): String = rawRow(
         listOf(
             time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-            "SYN-SECRET-PRODUCT", direction, amount, "SYN-SECRET-METHOD", status,
+            "SYN-SECRET-PRODUCT", direction, amount, "", status,
             "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
         ),
     )
@@ -72,7 +76,7 @@ class AlipayCsvParserJvmTest {
         note: String = "SYN-SECRET-NOTE",
     ): List<String> = listOf(
         "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        "SYN-SECRET-PRODUCT", "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
+        "SYN-SECRET-PRODUCT", "支出", "128.50", "", "交易成功",
         txOrderField, merchOrderField, note,
     )
 
@@ -264,12 +268,20 @@ class AlipayCsvParserJvmTest {
         assertDiagnostic(a09.diagnostics.single(), "SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", 8)
     }
 
-    @Test // T-10 / P-10
-    fun a10CreditBorrowRepayRejectedAsUnsupportedTxType() {
+    @Test // T-10 / P-10 (P4-06 registered amendment, D-107 section 1: the 信用借还×不计收支×还款
+    // row is no longer a typed rejection; it routes to the credit repayment source)
+    fun a10CreditRepaymentRowRoutesToCreditRepaymentSource() {
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
 
-        val a10 = rejected(result.rows, 9)
-        assertDiagnostic(a10.diagnostics.single(), "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", "unsupported", "record", 9)
+        val a10 = accepted(result.rows, 9)
+        assertEquals(ImportRecordKind.CREDIT_REPAYMENT_SOURCE, a10.recordKind)
+        assertEquals(
+            ImportSourceFacts(50000, "CNY", 2, "2026-08-11T12:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+            a10.facts,
+        )
+        assertEquals(ImportCompleteness.VALID_COMPLETE, a10.completeness)
+        assertEquals(emptyList(), a10.diagnostics)
+        assertEquals(ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, null, null), a10.paymentProfile)
     }
 
     @Test // T-11 / P-11
@@ -322,19 +334,19 @@ class AlipayCsvParserJvmTest {
 
     // ---- T-17..T-23: batch-level parsing (P-17..P-23) ----
 
-    @Test // T-17 / P-17
-    fun wholeBatchIsPartialWithSixRecordsAndTwelveDiagnostics() {
+    @Test // T-17 / P-17 (P4-06 amendment: A-10 accepted, so 7 records / 11 diagnostics)
+    fun wholeBatchIsPartialWithSevenRecordsAndElevenDiagnostics() {
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
         assertNull(result.diagnostic)
 
         assertEquals(16, result.rows.size)
         val acceptedRows = result.rows.filterIsInstance<AlipayRowResult.Accepted>()
-        assertEquals(6, acceptedRows.size)
-        assertEquals(listOf(0, 1, 2, 3, 4, 5), acceptedRows.map { it.recordOrdinal })
-        assertEquals(4, acceptedRows.count { it.completeness == ImportCompleteness.VALID_COMPLETE })
+        assertEquals(7, acceptedRows.size)
+        assertEquals(listOf(0, 1, 2, 3, 4, 5, 9), acceptedRows.map { it.recordOrdinal })
+        assertEquals(5, acceptedRows.count { it.completeness == ImportCompleteness.VALID_COMPLETE })
         assertEquals(2, acceptedRows.count { it.completeness == ImportCompleteness.VALID_INCOMPLETE })
-        assertEquals(10, result.rows.count { it is AlipayRowResult.Rejected })
+        assertEquals(9, result.rows.count { it is AlipayRowResult.Rejected })
         result.rows.filterIsInstance<AlipayRowResult.Rejected>().forEach {
             assertEquals(1, it.diagnostics.size, "rejected row carries exactly one diagnostic")
         }
@@ -343,7 +355,7 @@ class AlipayCsvParserJvmTest {
         assertEquals(
             mapOf(
                 "REQUIRED_FACT_UNRESOLVED" to 2,
-                "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE" to 4,
+                "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE" to 3,
                 "SPINE_ALIPAY_REFUND_UNSUPPORTED" to 1,
                 "SPINE_ALIPAY_UNKNOWN_TOKEN" to 1,
                 "FIELD_AMOUNT_INVALID" to 3,
@@ -352,7 +364,7 @@ class AlipayCsvParserJvmTest {
             byCode,
         )
 
-        // Frozen 12-entry diagnostic multiset (message is never compared, D-097:1459).
+        // Frozen 11-entry diagnostic multiset (message is never compared, D-097:1459).
         val multiset = result.rows
             .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
             .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
@@ -363,7 +375,6 @@ class AlipayCsvParserJvmTest {
                 Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 6, null),
                 Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 7, null),
                 Triple("SPINE_ALIPAY_REFUND_UNSUPPORTED", 8, null),
-                Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 9, null),
                 Triple("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", 10, null),
                 Triple("SPINE_ALIPAY_UNKNOWN_TOKEN", 11, null),
                 Triple("FIELD_AMOUNT_INVALID", 12, "amount"),
@@ -677,13 +688,18 @@ class AlipayCsvParserJvmTest {
             "SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", 5,
         )
 
-        // Rejected family set: 账户存取 / 转账红包 / 信用借还 / 亲友代付.
-        (6..9).forEach { ordinal ->
+        // Rejected family set: 账户存取 / 转账红包 / 亲友代付; the 信用借还 不计收支+还款 row
+        // now routes to the credit repayment source (P4-06 registered amendment).
+        listOf(6, 7, 9).forEach { ordinal ->
             assertDiagnostic(
                 rejected(result.rows, ordinal).diagnostics.single(),
                 "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", "unsupported", "record", ordinal,
             )
         }
+        val repayment = accepted(result.rows, 8)
+        assertEquals(ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repayment.recordKind)
+        assertEquals("settled", repayment.facts.statusToken)
+        assertEquals(ImportCompleteness.VALID_COMPLETE, repayment.completeness)
 
         // Unknown category token cannot be routed.
         assertDiagnostic(
@@ -754,7 +770,7 @@ class AlipayCsvParserJvmTest {
         val dataRow = rawRow(
             listOf(
                 "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-                productDescription, "支出", "128.50", "SYN-SECRET-METHOD", "交易成功",
+                productDescription, "支出", "128.50", "", "交易成功",
                 "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
             ),
         )
