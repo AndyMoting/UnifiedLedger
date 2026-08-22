@@ -76,6 +76,25 @@ class MixedPaymentTest {
     }
 
     @Test
+    fun mixedExpenseRejectsTwoDistinctAssetLegsWithAssetAndCreditLiabilityRequired() {
+        val violation = assertIs<DomainResult.Failure>(
+            createMixedPaymentExpense(
+                catalog(),
+                MixedPaymentExpenseCommand(
+                    ledgerId, Money.ofMinor(12_000, currency), CategoryId("expense-daily"),
+                    listOf(
+                        FundingComponent(AccountId("asset-a"), Money.ofMinor(7_000, currency)),
+                        FundingComponent(AccountId("asset-b"), Money.ofMinor(5_000, currency)),
+                    ),
+                    TransactionTimes.collapsed(Instant.DISTANT_PAST),
+                ),
+                MixedPaymentExpenseIds(TransactionId("t"), TransactionVersionId("v"), PostingSetId("s"), PostingId("e"), listOf(PostingId("a"), PostingId("l"))),
+            ),
+        ).violation
+        assertEquals(MixedPaymentViolation.AssetAndCreditLiabilityRequired, violation)
+    }
+
+    @Test
     fun creditPrincipalRepaymentIsNotAnAccountTransferAndHasNoConsumption() {
         val result = createCreditPrincipalRepayment(
             catalog(),
@@ -102,6 +121,7 @@ class MixedPaymentTest {
         LedgerCatalog.create(
             listOf(
                 Account(AccountId("asset-a"), ledgerId, AccountKind.ASSET, currency, true, true),
+                Account(AccountId("asset-b"), ledgerId, AccountKind.ASSET, currency, true, true),
                 Account(AccountId("liability-b"), ledgerId, AccountKind.LIABILITY, currency, true, true),
                 Account(AccountId("expense-account"), ledgerId, AccountKind.EXPENSE, currency, false, false),
             ),

@@ -1486,6 +1486,17 @@ class P406CreditFullStateOracleTest {
             assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
             assertEquals(2L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
 
+            // The same request id with different leg amounts is a hard identity
+            // conflict (the leg columns are decision values): zero new writes, the
+            // ID source still runs once.
+            val conflict = assertIs<ImportCandidateDecisionResult.Rejected>(
+                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed, assetLegMinor = 300L)),
+            )
+            assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
+            assertEquals(1, commitIds.calls.get())
+            assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
+            assertEquals(2L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
+
             // After confirmation the candidate is no longer pending: a fresh request
             // on the same candidate keeps the frozen not-pending rejection.
             val notPending = assertIs<ImportCandidateDecisionResult.Rejected>(
@@ -1561,6 +1572,7 @@ class P406CreditFullStateOracleTest {
             }
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed, assetLegMinor = 300L)))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-4", "candidate-mixed-neg", hashMixed, assetLegMinor = 0L)))
+            assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-4b", "candidate-mixed-neg", hashMixed, creditLegMinor = 0L)))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-5", "candidate-mixed-neg", hashMixed, liability = "account-asset-a")))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-6", "candidate-mixed-neg", hashMixed, liability = "account-credit-unknown")))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-7", "candidate-mixed-neg", hashMixed, liability = "account-credit-usd")))
@@ -1580,13 +1592,13 @@ class P406CreditFullStateOracleTest {
             assertEquals(0, counting.calls)
 
             // The rolled-back claim stays retryable on the same identity: a corrected
-            // decision now succeeds (claim rollback + zero-residue proof). The six
+            // decision now succeeds (claim rollback + zero-residue proof). The seven
             // domain-failure attempts each consumed one commit batch (ids are
-            // allocated before the factory); the corrected confirm takes the seventh.
+            // allocated before the factory); the corrected confirm takes the eighth.
             val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
                 run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed)),
             )
-            assertEquals("tx-mixed-neg-attempt-7", corrected.receipt.transactionId?.value)
+            assertEquals("tx-mixed-neg-attempt-8", corrected.receipt.transactionId?.value)
         } finally {
             driver.close()
         }
