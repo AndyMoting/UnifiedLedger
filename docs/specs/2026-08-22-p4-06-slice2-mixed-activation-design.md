@@ -10,7 +10,7 @@
 
 **零 schema 变更声明（冻结）与验证方式**：
 
-- 不新增任何 `.sqm`（无 `25.sqm`）；schema 版本钉 v25，`Ledger.sq` 全部 DDL（含 `mixed_payment_group`/`mixed_payment_group_leg`/`import_candidate_payment_profile` 及其触发器，`Ledger.sq:7546-7620`）零字节改动——本批对既有触发器（`Ledger.sq:7597-7612`，与 `24.sqm:306-325` 同文本）只消费不修改。
+- 不新增任何 `.sqm`（无 `25.sqm`）；schema 版本钉 v25，`Ledger.sq` 全部 DDL（含 `mixed_payment_group`/`mixed_payment_group_leg`/`import_candidate_payment_profile` 及其触发器，`Ledger.sq:7546-7620`）零字节改动——本批对既有触发器（`Ledger.sq:7597-7615`，与 `24.sqm:306-325` 同文本）只消费不修改。
 - `Ledger.sq` 唯一允许的改动 = 新增恰两个命名查询 `insertMixedPaymentGroup`/`insertMixedPaymentGroupLeg`（§4.3）。**命名查询是 SQLDelight 查询目录，不是 DDL**：不创建/修改任何 schema 对象，不参与 migration verifier 的 fresh=migrated 结构比对。此区分在此显式登记，评审按「DDL 零改动 + 查询仅两条 insert」检查。
 - 验证方式：迁移 verifier 与 `LedgerDatabaseMigrationTest` 原样通过（fresh v25 = migrated v25，无任何迁移输入变化）；`docs/migrations` 注册表与本批无交集；review 门附 DDL 区段 diff 为空的检查项。
 
@@ -34,7 +34,7 @@
 
 **裁决**：去重后腿集合资产腿 >1 或信用腿 >1 的 v3 绑定行（即含信用腿的行）→ 解析层类型化拒行，fail-closed、零写入（对齐片 1 §2.3 3d :75 还款多资产腿先例的「构成门先于路由」结构）。
 
-**依据**：领域 `createMixedPaymentExpense` 冻结恰 2 funding（`MixedPayment.kt:103-105` funding.size != 2 拒绝；`:146-147` 恰 ASSET+LIABILITY 账户种类集合）且本批禁改领域（§4.2）；schema 层 `mixed_payment_group_complete` 触发器冻结恰 1 asset + 1 liability 腿求和等于总额（`24.sqm:306-320`）；profile 形状冻结双腿 token（`ImportSpine.kt:63-66`、`Ledger.sq:7554-7558` CHECK）；契约唯一混合锚点为 1+1（§7.2 :118），>2 腿形态无锚点样本。
+**依据**：领域 `createMixedPaymentExpense` 冻结恰 2 funding（`MixedPayment.kt:108` funding.size != 2 拒绝；`:144-146` 恰 ASSET+LIABILITY 账户种类集合）且本批禁改领域（§4.2）；schema 层 `mixed_payment_group_complete` 触发器冻结恰 1 asset + 1 liability 腿求和等于总额（`24.sqm:306-320`）；profile 形状冻结双腿 token（`ImportSpine.kt:63-66`、`Ledger.sq:7560` CHECK）；契约唯一混合锚点为 1+1（§7.2 :118），>2 腿形态无锚点样本。
 
 **替代方案（否决）**：接受多腿候选、确认时由用户把 N 腿合并为两腿金额——把「合并」发明为未冻结的经济语义（D-096 纪律），且 profile/快照形状无处承载 N 腿。
 
@@ -68,15 +68,15 @@
 
 ### 3.1 判定顺序（完整冻结；仅 6d/6e 内部变化，0-5 与 6a-6c/6f/6g 不变）
 
-片 1 §2.3 冻结的顺序 0-5（结构校验、退款、投资理财、信用借还、拒绝分类、未知分类）与 6a（空列 7）、6b（白名单门）、6c（仅资产腿 → ordinary v1，多资产腿亦维持，契约 §2.2 行 5 :37「仅资产腿」不设构成门）、6f（`收入` + 任一信用腿 → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED`）、6g（`不计收支`/未映射方向 → ordinary v1 A-04，腿 token 零持久化）全部不变。变化仅两处：
+片 1 §2.3 冻结的顺序 0-5（结构校验、退款、投资理财、信用借还、拒绝分类、未知分类）与 6a（空列 7）、6b（白名单门）、6c（仅资产腿 → ordinary v1，多资产腿亦维持，契约 §2.2 行 5 :37「仅资产腿」不设构成门）、6f（`收入` + 任一信用腿 → `SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED`）、6g（`不计收支`/未映射方向 → ordinary v1 A-04，腿 token 零持久化）全部不变。**白名单全清单重述**（契约 §9 :156 字面；本批零扩张）：信用腿 = {`花呗`}；资产腿 = {`余额宝`、`账户余额`、`余额`、`招商银行储蓄卡`}（均为括注剥离后的归一化 token；`####` 为 4 位合成数字掩码占位记法）。变化仅两处：
 
-- **6d（支出方向 + 混合腿）改写**（现实现 `AlipayCsvParser.kt:148-156`）：
+- **6d（支出方向 + 混合腿）改写**（现实现 `AlipayCsvParser.kt:151-157`）：
   1. 前提不变：腿门（6b）已通过、方向已解析为 `out`、资产腿 ≥1 且信用腿 ≥1（`PaymentLegs` 两集合均非空）。
   2. **构成门（新增，先于激活）**：去重后 `assetTokens.size > 1 || creditTokens.size > 1` → `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 拒行（裁决 2/3）。
   3. **激活（恰 1 资产腿 + 1 信用腿）** → `parseMixedPaymentRow`（§3.2）产出 `MIXED_PAYMENT_SOURCE` 候选。
-- **6e（恰信用腿）收紧**：显式冻结为 `creditTokens.size == 1 && assetTokens.isEmpty()`；`creditTokens.size > 1` → 同码 `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 拒行。现状 `AlipayCsvParser.kt:326` 以 `single()` 隐式恰一（>1 会抛异常而非类型化拒行），本批升格为显式门；当前白名单信用集 = {`花呗`}（片 1 §2.1 :34）使该分支结构性不可达，登记为白名单扩张防御（fail-closed，不抛异常）。
+- **6e（恰信用腿）收紧**：显式冻结为 `creditTokens.size == 1 && assetTokens.isEmpty()`；`creditTokens.size > 1` → 同码 `SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED` 拒行。现状 `AlipayCsvParser.kt:329` 以 `single()` 隐式恰一（>1 会抛异常而非类型化拒行），本批升格为显式门；当前白名单信用集 = {`花呗`}（片 1 §2.1 :34）使该分支结构性不可达，登记为白名单扩张防御（fail-closed，不抛异常）。**同款已知限制登记**：1c 退款变体 profile 构造存在同款隐式 `single()`（`AlipayCsvParser.kt:245`）——片 1 冻结行为本批不改（1c 只接受恰信用腿退款、其余形态拒行；信用 token >1 同属结构性不可达的防御缺口）；白名单扩张新增信用 token 时，6e 与 1c 两处须一并升格为显式类型化拒行（1c 的归宿变化属未来契约修订，本批不动其行为）。
 
-**1d 混合腿退款维持**：退款标记 + 资产+信用混合腿 → `SPINE_ALIPAY_REFUND_UNSUPPORTED` 拒行（片 1 §2.3 1d :69、`AlipayCsvParser.kt:239-241`），混合退款分录形状未冻结（§6）。**契约字面偏差登记**：契约 §2.2 行 1（:33）「腿种类含信用腿」按字面包含混合行（混合行含信用腿），片 1 起实施冻结为「恰信用腿（≥1 信用腿、0 资产腿）」，混合腿退款走 1d 拒行；偏差原因 = 混合退款无契约分录形状（§3.3.3 只冻结单负债腿退款），fail-closed 优先。本批维持该偏差并在此显式登记（不改契约文本；若未来冻结混合退款形状，须经契约修订）。
+**1d 混合腿退款维持**：退款标记 + 资产+信用混合腿 → `SPINE_ALIPAY_REFUND_UNSUPPORTED` 拒行（片 1 §2.3 1d :69、`AlipayCsvParser.kt:235-237`），混合退款分录形状未冻结（§6）。**契约字面偏差登记**：契约 §2.2 行 1（:33）「腿种类含信用腿」按字面包含混合行（混合行含信用腿），片 1 起实施冻结为「恰信用腿（≥1 信用腿、0 资产腿）」，混合腿退款走 1d 拒行；偏差原因 = 混合退款无契约分录形状（§3.3.3 只冻结单负债腿退款），fail-closed 优先。本批维持该偏差并在此显式登记（不改契约文本；若未来冻结混合退款形状，须经契约修订）。
 
 ### 3.2 `parseMixedPaymentRow`（新增，仿 `parseCreditExpenseRow` :315-347 形态）
 
@@ -134,7 +134,13 @@ MixedPaymentFlow(
 
 ### 4.4 幂等与 replay
 
-- **confirm replay**（`resolveConfirm` :706-738）：等价比较清单扩展——`:734-735` 的 `stored.asset_leg_minor == null && stored.credit_leg_minor == null` 断言**翻转为值比较**：`stored.asset_leg_minor == (fields as? MixedPaymentFlow)?.assetLegMinor && stored.credit_leg_minor == (fields as? MixedPaymentFlow)?.creditLegMinor`（mixed ⇒ 比较两腿值；其余形状 ⇒ 仍断言 null）。**登记该翻转**：片 1 在两处 replay 比较冻结了腿列 null 断言，本批仅翻转 confirm 路径（:734-735）；reject 路径（:771-772）维持 null 断言（reject 快照腿列恒 NULL）。重放命中返回原 receipt，零新写入（含零 group 写入——claim 未赢得则永远到不了写入段）。
+- **confirm replay**（`resolveConfirm` :706-738）：等价比较链（:725-736）扩展共五处，与腿列翻转同批实施——
+  1. `:734-735` 腿列 null 断言**翻转为值比较**：`stored.asset_leg_minor == (fields as? MixedPaymentFlow)?.assetLegMinor && stored.credit_leg_minor == (fields as? MixedPaymentFlow)?.creditLegMinor`（mixed ⇒ 比较两腿值；其余形状 ⇒ 仍断言 null）。
+  2. `:727` `categoryDecisionValue`（辅助 `:909-914`，现状三形状 else ⇒ null）加 `MixedPaymentFlow -> fields.categoryId.value` 分支——不扩展则混合重放求值 null 而 `stored.category_id` 非空 ⇒ 等价判定失败 ⇒ `requestIdentityConflict`（:738），违反契约 §4 :83「相同请求……重放返回原稳定结果」。
+  3. `:731` `creditLiabilityDecisionValue`（辅助 `:902-907`，同款三形状 else ⇒ null）加 `MixedPaymentFlow -> fields.creditLiabilityAccountId.value` 分支（理由同上，`stored.credit_liability_account_id` 非空）。
+  4. `:732` `asset_account_id` 的 `as? CreditRepaymentFlow` 安全转型比较扩展为同时覆盖 `MixedPaymentFlow.assetAccountId.value`（如 `(fields as? CreditRepaymentFlow)?.assetAccountId?.value ?: (fields as? MixedPaymentFlow)?.assetAccountId?.value` 或等价辅助；理由同上，`stored.asset_account_id` 非空）。
+  5. 无需改动的三处一并登记：`:728-730`（funding/from/to，类型封闭转型对 mixed 求值 null）与 `:733`（original_transaction_id 同）——混合快照按 XOR CHECK 对应列均为 NULL，null == null 通过，逐值不变。
+  扩展纪律：mixed ⇒ 比较决策值；其余形状 ⇒ 两辅助函数与转型比较的求值结果与片 1 逐值不变（辅助仅加分支、不改既有分支）。**登记**：片 1 在两处 replay 比较冻结了腿列 null 断言，本批仅翻转/扩展 confirm 路径；reject 路径（:771-772，含腿列 null 断言）维持不变（reject 快照全列恒 NULL）。重放命中返回原 receipt，零新写入（含零 group 写入——claim 未赢得则永远到不了写入段）。
 - **intake replay / 等价性**：profile 三字段比较与指纹成员已在片 1 冻结（片 1 §3.2 :129；`ImportContentFingerprint.kt:30/:40`），mixed profile 走同一字段，**本批零扩展**——登记为「片 2 无需翻转」项。
 - **失败注入回滚**：既有 `CONFIRM_AFTER_FORMAL` 注入点（:480）天然覆盖 group 写入（同事务其后于 persistFormal）——oracle 断言注入后 group 两表零行、重试成功全状态等价（§5.2）。P4-07 重复机制对 mixed 行原样生效（kind 无关 persisted-facts 元组比较）。
 
@@ -162,7 +168,7 @@ MixedPaymentFlow(
 4. **重试与 replay**：失败注入（`CONFIRM_AFTER_FORMAL`）→ 回滚含 group 两表与快照 → 重试成功全状态等价；确认后同 request 重放返回原 receipt 零新写入（含 group）；raw identity 重放 unchanged；`SPINE_STALE_FINGERPRINT`/`SPINE_CANDIDATE_NOT_PENDING` 原样适用。
 5. **evidence 1:2 断言**（§4.5）：恰 1 evidence 行、2 real 资金分录账户集合 = 决策双账户、费用分录非 real、P4-08 链接/对账空断言（含片 1 补测的显式空断言面维持）。
 6. **确认负路径**：kind/形状错配（mixed 候选 + 非 `MixedPaymentFlow`；`MixedPaymentFlow` + 非 mixed 候选）→ `SPINE_DECISION_KIND_MISMATCH`（登记片 1 防御解除后的正门）；腿和 ≠ 总额 / 腿 ≤0 / 双腿同账户 / 未持有或非 `LIABILITY` 负债账户 / 跨账本币种不符 → `SPINE_DOMAIN_VALIDATION_FAILED` 零写入、候选保持待确认、claim 可重试；posting 门（3 id 缺一）→ `SPINE_REFERENCE_INTEGRITY_VIOLATION` 工厂零调用。
-7. **重复与 §7.3 矩阵锚点**：两条等值混合行 → D-104 exact-tuple duplicate candidate 追加、无第二笔交易（:132 行 9）；`constraint_solved` 建议边界零产出断言（:133 行 10——断言无任何建议产物、无额外写入；已知限制见裁决 4）；行 6（未指定已持有负债账户）由负路径 6 承接；行 7/8 由 §5.1.2/5.1.3 承接。
+7. **重复与 §7.3 矩阵锚点**：两条等值混合行 → D-104 exact-tuple duplicate candidate 追加、无第二笔交易（:132 行 9）；`constraint_solved` 建议边界零产出断言（:133 行 10——断言无任何建议产物、无额外写入；已知限制见裁决 4）；行 6（未指定已持有负债账户）由负路径 6 承接；行 7（白名单外腿种类 token）由片 1 既有白名单拒行断言经 §5.2.9 回归承接（§5.1.2 新用例的腿 token 全在白名单内、触发的是构成门，不覆盖行 7）；行 8（收入方向 + 信用腿）由 §5.1.3 承接。
 8. **期望辅助扩展**：`Expected.formal()`（`:632-655`，两腿）保持既有调用点不变，新增 `formal3`（posting 0 = 费用 `+total`、1 = 资产 `−assetLeg`、2 = 信用 `−creditLeg`，与领域 typed 构序一致 `MixedPayment.kt:152-160`）；`Expected` 增加 group 头/腿行构建器（替换 `:692-693` 的 `emptyList()` 硬编码）；`captureFullState` 的 group 两表 select（`:464-465`）扩列（头：candidate/transaction/request/total/generated_at；腿：leg_class/account/amount）。
 9. **回归**：片 1 全部 oracle 断言（除 §1 登记的 Matrix 4 row 0 翻转）、ordinary/transfer/P4-05/P4-07/P4-08 共存断言逐值不变；迁移面 fresh v25、v1→v25、v24→v25 populated、reopen、失败原子回滚**无变化回归**（版本钉 v25、无新 `.sqm`、`Ledger.sq` DDL 零改动由迁移测试原样通过证明）。
 
