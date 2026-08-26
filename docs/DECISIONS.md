@@ -1775,3 +1775,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施规格：** `docs/specs/2026-08-23-o-2-precision-rescale-design.md`
 
 **关联决定：** `D-098`、`D-100`、`D-106`、`D-107`、`D-108`、`D-109`、`D-110`
+
+## D-112 P4-08 normalized evidence projection 第二批（规格批准 + 实施授权）
+
+**状态：** 已批准（2026-08-27 用户「按推荐批准，批量完成」：UQ-1..UQ-6 全部按规格推荐方案裁决通过，实施批同时授权）。
+
+**冻结输入：** `docs/specs/2026-08-26-p408-evidence-projection-implementation-design.md`（Status: approved），冻结文本 = SHA-256 `33fc68bdbd8f6da75028688c225f872b5784d68bb0edec4aeb59e61ed05c51c1`（评审终局 APPROVE 版）；三轮独立评审闭环 P408PROJ-SPEC-001..010 全闭合（001..007 APPROVE-WITH-FINDINGS 纯文本修订、008-R1/009-R1/010-R1 一行级收口，终局 APPROVE）。承接 WORK_PLAN.local.md:158-187 执行批次 2 合同与 D-111 第一批语义。
+
+**决定（UQ 裁决逐条记录）：**
+
+1. **UQ-1 = V-1-A**：`evidence_projection` 每 evidence 单行终态模型——PK `(ledger_id, projection_id)`、幂等唯一键 `UNIQUE(ledger_id, evidence_id)`、READY/REJECTED 双终态且 UPDATE/DELETE 被守卫触发器无条件 ABORT、零状态转移函数（本批不加 history 表）。
+2. **UQ-2 = V-5-A**：REJECTED 落行双路径边界——O-2/spine 成功路径归一化失败随确认事务全回滚、不落 REJECTED 行；显式目标账户的独立/mirror 物化可落 READY 或 REJECTED+拒绝码终态行；已存在行永不改写（非幂等重放 → `P408_PROJECTION_STATE_CONFLICT` 零写入），换目标重新表达须待未来 correction 批。
+3. **UQ-3 = V-6-A + 广播**：mirror 物化时机 = confirmLink 同事务首步惰性物化、请求须携显式目标绑定（对 WORK_PLAN:180 字面要求的工程解读，随本批准生效）；物化传播广播至全部六 kind 的 spine 成功路径确认，matcher 消费面维持现行 `ACCOUNT_TRANSFER` eligibility 不动。
+4. **UQ-4 = V-8-A**：request/fingerprint/snapshot 加性双值——快照重建加六新列并把两处 `basis_version` CHECK 放宽为 `{1,2}`（Ledger.sq:7743/:7777；代际源 22.sqm:20/:34）、写入恒 v2、读取按行自带 basis_version 分支；旧 v1 fingerprint/行字节不改写、等价 replay 保持，「写入恒 v2」生效后全新 requestId 以 v1 形状提交 → `P408_REQUEST_BASIS_VERSION_RETIRED` 类型化拒绝零写入；`evidence_link` 经同迁移 stage 保序重建对称放宽（无 RENAME 换位）。
+5. **UQ-5 = 附录字面冻结**：表名 `evidence_projection`；快照六新列 `projection_id`/`projection_rule_id`/`projection_rule_version`/`normalized_amount_minor`/`raw_amount_minor`/`raw_currency_precision`；回填 provenance token 字面值 `rule_id='p408_evidence_projection_backfill_v26'`。
+6. **UQ-6**：GOLDEN_TESTS「P4-09 收口失败矩阵」锚点登记采纳语义维度行附注形态而非新增失败模式列；实际登记顺延至下一次该矩阵文档触碰点一并落盘。
+
+**授权范围：** 上列 approved 规格文本为唯一 WHAT/HOW 权威：v25→v26 单事务加性迁移（新文件 `25.sqm`：建表、快照与 `evidence_link` 重建、确定性 READY 回填、未匹配零行）、matcher READY 消费门（facts raw/normalized 拆分、运行时零临时归一化）、materialization API（application port + data 层单事务入口、幂等语义与 V-4 失败码族）、TP-01..TP-18 测试矩阵（含两批之间非 2 位来源门 named test TP-18）全部授权实施。实施仍走既有链路：独立 worktree、单一 bounded writer、聚焦检查先行再受影响全量套件、distinct verifier、主代理最终验收；Git 写操作与合并推送归主代理。
+
+**边界：** correction/successor invalidation 与银行 parser 门维持延期（D-103:1639 / D-109 O-5/O-8，银行 parser 门指针 D-099:1540 不因本批打开）；Phase 5 组合根/平台壳不开启；`import_evidence` 零扩展（schema 文本扩权只及快照列集/版本门与 `evidence_link` 版本门的加性放宽，行集合零改写）；对账/匹配语义本体以 D-103 批准组合为界不扩张；金额全程整数 minor units/精确十进制，禁浮点。延期约束再申明：本批不产生 link 失效/后继机制写入者，`invalidate_link` 继续仅为枚举预留。
+
+**实施规格：** `docs/specs/2026-08-26-p408-evidence-projection-implementation-design.md`
+
+**关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`
