@@ -233,47 +233,10 @@ class P409PhaseClosureFullStateOracleTest {
 
     /** Ordinary v1 factory: "out" formalizes the expense, "in" the income (lifecycle precedent). */
     private class OrdinaryFlowFormalFactory(private val catalog: LedgerCatalog) : ImportCandidateFormalFactory {
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
-            val fields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val resolved = input.resolved
-            val money = Money.ofMinor(resolved.amountMinor, CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision))
-            val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
-            return when (resolved.directionToken) {
-                "out" -> when (
-                    val created = createAssetPaidOrdinaryExpense(
-                        catalog,
-                        AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, times),
-                        AssetPaidOrdinaryExpenseIds(
-                            transactionId = ids.formalIds.transactionId,
-                            versionId = ids.formalIds.versionId,
-                            postingSetId = ids.formalIds.postingSetId,
-                            expensePostingId = ids.formalIds.postingIds[0],
-                            paymentPostingId = ids.formalIds.postingIds[1],
-                        ),
-                    )
-                ) {
-                    is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, created.value))
-                    is DomainResult.Failure -> DomainResult.Failure(created.violation)
-                }
-                "in" -> when (
-                    val created = createAssetReceivedOrdinaryIncome(
-                        catalog,
-                        AssetReceivedOrdinaryIncomeCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, times),
-                        AssetReceivedOrdinaryIncomeIds(
-                            transactionId = ids.formalIds.transactionId,
-                            versionId = ids.formalIds.versionId,
-                            postingSetId = ids.formalIds.postingSetId,
-                            receivingPostingId = ids.formalIds.postingIds[0],
-                            incomePostingId = ids.formalIds.postingIds[1],
-                        ),
-                    )
-                ) {
-                    is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, created.value))
-                    is DomainResult.Failure -> DomainResult.Failure(created.violation)
-                }
-                else -> DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidOrdinaryIncome)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     /** Store-backed original-expense reader for the refund variant (P406 precedent). */
@@ -302,6 +265,7 @@ class P409PhaseClosureFullStateOracleTest {
         val database: LedgerDatabase,
         val driver: JdbcSqliteDriver,
         val store: SqlDelightImportSpineStore,
+        private val catalog: LedgerCatalog,
         private val ordinaryFactory: ImportCandidateFormalFactory,
         private val transferFactory: ImportCandidateFormalFactory,
         val creditFactory: ImportCandidateFormalFactory,
@@ -313,7 +277,7 @@ class P409PhaseClosureFullStateOracleTest {
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory).execute(request)
+            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
 
         fun confirmOrdinary(request: ImportCandidateConfirmRequest) = confirm(request, ordinaryFactory)
 
@@ -331,12 +295,14 @@ class P409PhaseClosureFullStateOracleTest {
         commitIds: ImportIdSource,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver)
+        val cat = catalog()
         return Executor(
             database, driver, store,
-            OrdinaryFlowFormalFactory(catalog()),
-            TransferFlowFormalFactory(catalog(), AccountId("account-asset-a")),
-            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
-            MixedPaymentFlowFormalFactory(catalog()),
+            cat,
+            OrdinaryFlowFormalFactory(cat),
+            TransferFlowFormalFactory(cat, AccountId("account-asset-a")),
+            CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(cat),
             intakeIds, commitIds,
         )
     }
@@ -349,12 +315,14 @@ class P409PhaseClosureFullStateOracleTest {
         failure: ImportSpineFailureInjector,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver, failure)
+        val cat = catalog()
         return Executor(
             database, driver, store,
-            OrdinaryFlowFormalFactory(catalog()),
-            TransferFlowFormalFactory(catalog(), AccountId("account-asset-a")),
-            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
-            MixedPaymentFlowFormalFactory(catalog()),
+            cat,
+            OrdinaryFlowFormalFactory(cat),
+            TransferFlowFormalFactory(cat, AccountId("account-asset-a")),
+            CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(cat),
             intakeIds, commitIds,
         )
     }
@@ -2019,7 +1987,7 @@ class P409PhaseClosureFullStateOracleTest {
                         } else {
                             MixedPaymentFlowFormalFactory(catalog())
                         }
-                        ConfirmImportCandidate(store, commitIds, factory).execute(request)
+                        ConfirmImportCandidate(store, commitIds, factory, catalog()).execute(request)
                     }
                 }
             }

@@ -298,14 +298,14 @@ class ImportSpineTransferEndToEndTest {
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory).execute(request)
+            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
 
         fun confirmWith(
             ids: ImportIdSource,
             factory: ImportCandidateFormalFactory,
             request: ImportCandidateConfirmRequest,
         ): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, ids, factory).execute(request)
+            ConfirmImportCandidate(store, ids, factory, catalog).execute(request)
 
         fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
             RejectImportCandidate(store, statusIds).execute(request)
@@ -1287,6 +1287,7 @@ class ImportSpineTransferEndToEndTest {
             SqlDelightImportSpineStore(database, driver),
             commitIds,
             TransferFlowFormalFactory(catalog, walletAccountId),
+            catalog,
         ).execute(request)
     }
 
@@ -1386,6 +1387,7 @@ class ImportSpineTransferEndToEndTest {
                 ConfirmImportCandidate(
                     failingConfirmStore, attempt1,
                     TransferFlowFormalFactory(cat, walletAccountId),
+                    cat,
                 ).execute(transferConfirmRequest("req-d2-confirm", "candidate-d2", hashD2, confirmedAt = "2026-08-14T10:00:00+08:00"))
             }
             assertEquals(1, attempt1.calls.get())
@@ -1401,6 +1403,7 @@ class ImportSpineTransferEndToEndTest {
                 ConfirmImportCandidate(
                     SqlDelightImportSpineStore(database, driver), batch2,
                     TransferFlowFormalFactory(cat, walletAccountId),
+                    cat,
                 ).execute(transferConfirmRequest("req-d2-confirm", "candidate-d2", hashD2, confirmedAt = "2026-08-14T10:00:00+08:00")),
             )
             assertEquals(1, batch2.calls.get())
@@ -1636,6 +1639,7 @@ class ImportSpineTransferEndToEndTest {
                     SqlDelightImportSpineStore(database, driver),
                     attemptIds,
                     maliciousFactory,
+                    cat,
                 ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
 
                 // Frozen spec contract (sections 1.3 E-34 and 4.2): the pre-persist binding
@@ -1704,7 +1708,7 @@ class ImportSpineTransferEndToEndTest {
                 factoryCalls++
                 TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
             }
-            val result = ConfirmImportCandidate(SqlDelightImportSpineStore(database, driver), commitIds, spyingFactory).execute(
+            val result = ConfirmImportCandidate(SqlDelightImportSpineStore(database, driver), commitIds, spyingFactory, catalog(ledgerId)).execute(
                 transferConfirmRequest("req-cross-ledger-confirm", "candidate-t1", hashT1, identityLedger = otherLedgerId),
             )
             val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result)
@@ -2208,6 +2212,7 @@ class ImportSpineTransferEndToEndTest {
                 store,
                 ImportIdSource { allocations.incrementAndGet(); allocated },
                 spyingFactory,
+                catalog(ledgerId),
             ).execute(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1))
             assertIs<ImportCandidateDecisionResult.Accepted>(confirmResult)
             assertEquals(1, allocations.get())
@@ -2229,17 +2234,17 @@ class ImportSpineTransferEndToEndTest {
             // NOT_CONFIRMABLE (missing leg), INCOMPLETE and KIND_MISMATCH all reject before
             // allocateIds; any consumption would throw from the exploding source.
             assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(store, explodingIds, spyingFactory).execute(
+                ConfirmImportCandidate(store, explodingIds, spyingFactory, catalog(ledgerId)).execute(
                     transferConfirmRequest("req-t3-confirm-x", "candidate-t3", hashT3),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(store, explodingIds, spyingFactory).execute(
+                ConfirmImportCandidate(store, explodingIds, spyingFactory, catalog(ledgerId)).execute(
                     transferConfirmRequest("req-t6-confirm-x", "candidate-t6", hashT6),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(store, explodingIds, spyingFactory).execute(
+                ConfirmImportCandidate(store, explodingIds, spyingFactory, catalog(ledgerId)).execute(
                     ImportCandidateConfirmRequest(
                         identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-t3-confirm-y")),
                         candidateId = ImportCandidateId("candidate-t3"),
@@ -2538,6 +2543,7 @@ class ImportSpineTransferEndToEndTest {
                     SqlDelightImportSpineStore(database, driver),
                     attemptIds,
                     swappedFactory,
+                    cat,
                 ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
 
                 // Frozen spec contract (sections 1.3 E-37 and 4.2): every replaced ID is
@@ -2581,6 +2587,7 @@ class ImportSpineTransferEndToEndTest {
                 SqlDelightImportSpineStore(database, driver),
                 malformedIds,
                 countingFactory,
+                cat,
             ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
             val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result)
             assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", rejected.diagnostic.code)

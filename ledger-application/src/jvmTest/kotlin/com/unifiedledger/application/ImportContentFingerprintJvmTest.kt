@@ -5,6 +5,7 @@ import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
  * T-18: P4-02 content fingerprint determinism, member omission, escaping, and the
@@ -125,6 +126,38 @@ class ImportContentFingerprintJvmTest {
         assertEquals("1", formatDecimal(1, 0))
         assertEquals("0.05", formatDecimal(5, 2))
         assertEquals("-128.50", formatDecimal(-12850, 2))
+    }
+
+    @Test
+    fun `high source precision fingerprint stays exact and bounded`() {
+        val zero = ImportSourceFacts(
+            amountMinor = 0,
+            currencyCode = "CNY",
+            currencyPrecision = Int.MAX_VALUE,
+            occurredAt = "2026-08-01T12:30:00+08:00",
+            directionToken = "out",
+            statusToken = "settled",
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            fundingRuleVersion = 1,
+        )
+        val nonZero = zero.copy(amountMinor = 1)
+        val zeroCanonical = fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, zero)
+        assertTrue(zeroCanonical.length < 1024)
+        assertEquals(
+            "0e-${Int.MAX_VALUE}",
+            zeroCanonical.substringAfter("\"amount\":\"").substringBefore('"'),
+        )
+        assertEquals(
+            "1e-${Int.MAX_VALUE}",
+            fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, nonZero)
+                .substringAfter("\"amount\":\"").substringBefore('"'),
+        )
+        assertEquals(zeroCanonical, fingerprint.canonicalJson(ImportRecordKind.ORDINARY_FLOW_SOURCE, zero))
+        assertNotEqualBytes(
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, zero),
+            fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, nonZero),
+        )
     }
 
     @Test

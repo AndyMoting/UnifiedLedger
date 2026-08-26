@@ -7,16 +7,14 @@ import com.unifiedledger.domain.CreditPrincipalRepaymentIds
 import com.unifiedledger.domain.CreditRefundOriginalExpense
 import com.unifiedledger.domain.CreditRefundReceiptCommand
 import com.unifiedledger.domain.CreditRefundReceiptIds
-import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.MixedPaymentViolation
 import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createCreditExpense
 import com.unifiedledger.domain.createCreditPrincipalRepayment
 import com.unifiedledger.domain.createCreditRefundReceipt
-import kotlin.time.Instant
 
 /**
  * P4-06 slice 1 (RL-05 credit, D-107 section 3.4): production factory for the three
@@ -41,7 +39,7 @@ import kotlin.time.Instant
  * explicitConfirmedAt travels on the request as everywhere else.
  */
 class CreditFlowFormalFactory(
-    private val catalog: LedgerCatalog,
+    val catalog: LedgerCatalog,
     private val originalExpenseProvider: (TransactionId) -> CreditRefundOriginalExpense?,
 ) : ImportCandidateFormalFactory {
 
@@ -50,9 +48,27 @@ class CreditFlowFormalFactory(
         ids: ImportCommitIds,
     ): DomainResult<ImportFormalCommit> {
         val resolved = input.resolved
-        val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
-        val money = Money.ofMinor(resolved.amountMinor, currency)
-        val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
+        val targetAccountId = when (val fields = input.decisionFields) {
+            is ImportConfirmDecisionFields.CreditExpenseFlow -> fields.creditLiabilityAccountId
+            is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> fields.creditLiabilityAccountId
+            is ImportConfirmDecisionFields.CreditRepaymentFlow -> fields.creditLiabilityAccountId
+            else -> return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        }
+        if (ids.formalIds.postingIds.size != 2) {
+            return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        }
+        val targetCurrency = targetAccountId.let { accountId ->
+            catalog.accounts.firstOrNull { it.id == accountId && it.ledgerId == input.ledgerId }?.currency
+        } ?: return DomainResult.Failure(MixedPaymentViolation.UnknownRealAccount)
+        val money = when (val normalized = normalizeImportAmountExact(resolved, targetCurrency)) {
+            is DomainResult.Success -> normalized.value
+            is DomainResult.Failure -> return DomainResult.Failure(normalized.violation)
+        }
+        val occurredAt = when (val parsed = parseImportOccurredAt(resolved.occurredAt)) {
+            is DomainResult.Success -> parsed.value
+            is DomainResult.Failure -> return DomainResult.Failure(parsed.violation)
+        }
+        val times = TransactionTimes.collapsed(occurredAt)
         return when (val fields = input.decisionFields) {
             is ImportConfirmDecisionFields.CreditExpenseFlow -> when (
                 val result = createCreditExpense(
@@ -73,8 +89,8 @@ class CreditFlowFormalFactory(
                     ),
                 )
             ) {
-                is DomainResult.Success -> DomainResult.Success(
-                    ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction),
+                is DomainResult.Success -> checkedImportFormalCommit(
+                    input, ids, ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction), catalog,
                 )
                 is DomainResult.Failure -> DomainResult.Failure(result.violation)
             }
@@ -98,8 +114,8 @@ class CreditFlowFormalFactory(
                     ),
                 )
             ) {
-                is DomainResult.Success -> DomainResult.Success(
-                    ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction),
+                is DomainResult.Success -> checkedImportFormalCommit(
+                    input, ids, ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction), catalog,
                 )
                 is DomainResult.Failure -> DomainResult.Failure(result.violation)
             }
@@ -128,8 +144,8 @@ class CreditFlowFormalFactory(
                         ),
                     )
                 ) {
-                    is DomainResult.Success -> DomainResult.Success(
-                        ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction),
+                    is DomainResult.Success -> checkedImportFormalCommit(
+                        input, ids, ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction), catalog,
                     )
                     is DomainResult.Failure -> DomainResult.Failure(result.violation)
                 }

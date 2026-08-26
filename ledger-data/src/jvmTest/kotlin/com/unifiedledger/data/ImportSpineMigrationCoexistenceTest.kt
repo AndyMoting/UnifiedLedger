@@ -113,32 +113,10 @@ class ImportSpineMigrationCoexistenceTest {
     private class FormalFactory(
         private val catalog: LedgerCatalog,
     ) : ImportCandidateFormalFactory {
-        override fun create(
-            input: ImportCandidateFormalizationInput,
-            ids: ImportCommitIds,
-        ): DomainResult<ImportFormalCommit> {
-            val resolved = input.resolved
-            val decisionFields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
-            val money = Money.ofMinor(resolved.amountMinor, currency)
-            val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
-            return when (
-                val created = createAssetPaidOrdinaryExpense(
-                    catalog,
-                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
-                    AssetPaidOrdinaryExpenseIds(
-                        transactionId = ids.formalIds.transactionId,
-                        versionId = ids.formalIds.versionId,
-                        postingSetId = ids.formalIds.postingSetId,
-                        expensePostingId = ids.formalIds.postingIds[0],
-                        paymentPostingId = ids.formalIds.postingIds[1],
-                    ),
-                )
-            ) {
-                is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, created.value))
-                is DomainResult.Failure -> DomainResult.Failure(created.violation)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     @Test
@@ -288,6 +266,7 @@ class ImportSpineMigrationCoexistenceTest {
             val confirm = ConfirmImportCandidate(
                 spineStore, commitIds,
                 FormalFactory(spineCatalog()),
+                spineCatalog(),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(confirm.execute(confirmRequest))
             assertIs<ImportCandidateDecisionResult.NoChange>(confirm.execute(confirmRequest))

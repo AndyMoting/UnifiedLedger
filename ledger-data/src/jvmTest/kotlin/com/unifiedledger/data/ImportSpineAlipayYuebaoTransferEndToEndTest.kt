@@ -253,7 +253,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory).execute(request)
+            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
 
         fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
             RejectImportCandidate(store, statusIds).execute(request)
@@ -1092,6 +1092,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
                 ConfirmImportCandidate(
                     failingConfirmStore, attempt1,
                     TransferFlowFormalFactory(cat, walletAccountId),
+                    cat,
                 ).execute(transferConfirmRequest("req-y01e-confirm", "candidate-y01e", hashY01))
             }
             assertEquals(1, attempt1.calls.get())
@@ -1105,6 +1106,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
                 ConfirmImportCandidate(
                     SqlDelightImportSpineStore(database, driver), confirmBatch2,
                     TransferFlowFormalFactory(cat, walletAccountId),
+                    cat,
                 ).execute(transferConfirmRequest("req-y01e-confirm", "candidate-y01e", hashY01)),
             )
         } finally {
@@ -1154,6 +1156,7 @@ class ImportSpineAlipayYuebaoTransferEndToEndTest {
             ConfirmImportCandidate(
                 SqlDelightImportSpineStore(database, driver), ids,
                 TransferFlowFormalFactory(cat, walletAccountId),
+                cat,
             ).execute(transferConfirmRequest("req-y01d-confirm", "candidate-y01d", hashY01))
         }
 

@@ -13,7 +13,10 @@ package com.unifiedledger.application
  * for a null profile (v1/v2) the output bytes are identical to the pre-P4-06 form, so
  * existing-row replay equivalence is unchanged. String escaping and the SHA-256
  * primitive are the shared Rg09Fingerprint implementations (JcsSha256.kt); the digest
- * is lowercase `sha256:<hex>`.
+ * is lowercase `sha256:<hex>`. Source precision up to the domain's maximum (18) keeps
+ * the expanded decimal representation. Higher source precision uses an exact
+ * scientific representation (`minorUnits` + `e-` + `precision`) so an evidence row
+ * with an arbitrarily large scale cannot force an arbitrarily large allocation.
  *
  * The digest is computed exactly once at intake from the inbound facts and persisted;
  * it is an integrity cross-check only: it is not an identity and never participates in
@@ -99,6 +102,9 @@ class ImportDuplicateReviewFingerprint {
 internal fun formatDecimal(minorUnits: Long, precision: Int): String {
     require(precision >= 0) { "P4-02 currency precision must not be negative" }
     if (precision == 0) return minorUnits.toString()
+    if (precision > MAX_EXPANDED_DECIMAL_PRECISION) {
+        return "${minorUnits}e-$precision"
+    }
     val negative = minorUnits < 0L
     val magnitude = if (minorUnits == Long.MIN_VALUE) {
         "9223372036854775808"
@@ -114,3 +120,5 @@ internal fun formatDecimal(minorUnits: Long, precision: Int): String {
         append(padded.substring(split))
     }
 }
+
+private const val MAX_EXPANDED_DECIMAL_PRECISION = 18
