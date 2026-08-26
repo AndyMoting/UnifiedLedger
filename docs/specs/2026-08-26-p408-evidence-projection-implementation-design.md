@@ -1,6 +1,6 @@
 # P4-08 normalized evidence projection 实施规格（第二批）
 
-**Status:** draft（冻结候选；待独立评审 + 用户批准后转 approved；决定登记 registration pending，本文件不预设 D 编号）。本批为 WORK_PLAN.local.md「O-2 / P4-08 Precision Rescale Plan」执行批次 2（P4-08 normalized evidence projection）的 HOW 规格：承接第一批 O-2 已合并语义，新增独立追加式 evidence projection 表、materialization API、matcher 消费门、v2 request/fingerprint/snapshot 与 v25→v26 加性迁移。本文档只冻结设计；实施、Git 写操作与最终验收属后续独立 worktree 实施批。
+**Status:** approved（2026-08-27 用户按推荐批准 UQ-1..UQ-6 全部裁决项并同步授权实施批；决定登记 D-112）。冻结文本 = SHA-256 33fc68bdbd8f6da75028688c225f872b5784d68bb0edec4aeb59e61ed05c51c1（评审终局 APPROVE 版；本行仅作批准状态与登记翻转）。本批为 WORK_PLAN.local.md「O-2 / P4-08 Precision Rescale Plan」执行批次 2（P4-08 normalized evidence projection）的 HOW 规格：承接第一批 O-2 已合并语义，新增独立追加式 evidence projection 表、materialization API、matcher 消费门、v2 request/fingerprint/snapshot 与 v25→v26 加性迁移。本文档只冻结设计；实施、Git 写操作与最终验收属后续独立 worktree 实施批。
 
 **Revision:** 2026-08-26 独立评审 APPROVE-WITH-FINDINGS 的纯文本修订闭合（P408PROJ-SPEC-001..007）：迁移范围扩展至两处 `basis_version` CHECK 放宽与 `evidence_link` 同批重建、「写入恒 v2」新生请求类型化拒绝码、工程裁决归属声明、三处行号勘正、22.sqm 七张共享表逐一列举、来源精度列名统一为 `raw_currency_precision`、mirror 物化时机解读归属注记；其余冻结维度与结论不变。
 
