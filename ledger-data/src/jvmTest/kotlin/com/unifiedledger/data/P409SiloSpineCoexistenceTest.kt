@@ -424,7 +424,7 @@ class P409SiloSpineCoexistenceTest {
         fun intake(request: ImportIntakeRequest) = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory) =
-            ConfirmImportCandidate(store, commitIds, factory).execute(request)
+            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
     }
 
     private fun spineExecutor(database: LedgerDatabase, driver: JdbcSqliteDriver, intakeIds: ImportIntakeIdSource, commitIds: ImportIdSource) =
@@ -432,36 +432,10 @@ class P409SiloSpineCoexistenceTest {
 
     private fun ordinaryFactory() = object : ImportCandidateFormalFactory {
         private val catalog = coexistCatalog()
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
-            val fields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val money = Money.ofMinor(input.resolved.amountMinor, CurrencyUnit(input.resolved.currencyCode, input.resolved.currencyPrecision))
-            val times = TransactionTimes.collapsed(Instant.parse(input.resolved.occurredAt))
-            return when (input.resolved.directionToken) {
-                "out" -> when (val created = createAssetPaidOrdinaryExpense(
-                    catalog,
-                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, times),
-                    AssetPaidOrdinaryExpenseIds(
-                        ids.formalIds.transactionId, ids.formalIds.versionId, ids.formalIds.postingSetId,
-                        ids.formalIds.postingIds[0], ids.formalIds.postingIds[1],
-                    ),
-                )) {
-                    is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, created.value))
-                    is DomainResult.Failure -> DomainResult.Failure(created.violation)
-                }
-                "in" -> when (val created = createAssetReceivedOrdinaryIncome(
-                    catalog,
-                    AssetReceivedOrdinaryIncomeCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, times),
-                    AssetReceivedOrdinaryIncomeIds(
-                        ids.formalIds.transactionId, ids.formalIds.versionId, ids.formalIds.postingSetId,
-                        ids.formalIds.postingIds[0], ids.formalIds.postingIds[1],
-                    ),
-                )) {
-                    is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, created.value))
-                    is DomainResult.Failure -> DomainResult.Failure(created.violation)
-                }
-                else -> DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidOrdinaryIncome)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     private fun transferFactory() = com.unifiedledger.application.TransferFlowFormalFactory(coexistCatalog(), AccountId("coexist-asset-a"))

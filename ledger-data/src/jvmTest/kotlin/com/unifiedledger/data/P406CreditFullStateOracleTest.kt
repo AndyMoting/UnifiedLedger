@@ -234,27 +234,10 @@ class P406CreditFullStateOracleTest {
 
     /** Ordinary v1 factory for the regression fixtures (USD original expense, §6.8). */
     private class OrdinaryOutFactory(private val catalog: LedgerCatalog) : ImportCandidateFormalFactory {
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
-            val fields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val resolved = input.resolved
-            val money = Money.ofMinor(resolved.amountMinor, CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision))
-            return when (
-                val result = createAssetPaidOrdinaryExpense(
-                    catalog,
-                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))),
-                    AssetPaidOrdinaryExpenseIds(
-                        transactionId = ids.formalIds.transactionId,
-                        versionId = ids.formalIds.versionId,
-                        postingSetId = ids.formalIds.postingSetId,
-                        expensePostingId = ids.formalIds.postingIds[0],
-                        paymentPostingId = ids.formalIds.postingIds[1],
-                    ),
-                )
-            ) {
-                is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value))
-                is DomainResult.Failure -> DomainResult.Failure(result.violation)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     /** P4-06 slice 2: factory-call counter for the posting-count gate zero-call proof. */
@@ -299,6 +282,7 @@ class P406CreditFullStateOracleTest {
         val database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         val store: SqlDelightImportSpineStore,
+        val catalog: LedgerCatalog,
         val creditFactory: ImportCandidateFormalFactory,
         val mixedFactory: ImportCandidateFormalFactory,
         val intakeIds: ImportIntakeIdSource,
@@ -308,13 +292,17 @@ class P406CreditFullStateOracleTest {
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirmCredit(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, creditFactory).execute(request)
+            ConfirmImportCandidate(store, commitIds, creditFactory, catalog).execute(request)
 
         fun confirmMixed(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, mixedFactory).execute(request)
+            ConfirmImportCandidate(store, commitIds, mixedFactory, catalog).execute(request)
 
-        fun confirmOrdinary(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory).execute(request)
+        fun confirmOrdinary(
+            request: ImportCandidateConfirmRequest,
+            factory: ImportCandidateFormalFactory,
+            catalogOverride: LedgerCatalog = catalog,
+        ): ImportCandidateDecisionResult =
+            ConfirmImportCandidate(store, commitIds, factory, catalogOverride).execute(request)
     }
 
     private fun executor(
@@ -324,10 +312,12 @@ class P406CreditFullStateOracleTest {
         commitIds: ImportIdSource,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver)
+        val cat = catalog()
         return Executor(
             database, driver, store,
-            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
-            MixedPaymentFlowFormalFactory(catalog()),
+            cat,
+            CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(cat),
             intakeIds, commitIds,
         )
     }
@@ -340,10 +330,12 @@ class P406CreditFullStateOracleTest {
         failure: ImportSpineFailureInjector,
     ): Executor {
         val store = SqlDelightImportSpineStore(database, driver, failure)
+        val cat = catalog()
         return Executor(
             database, driver, store,
-            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver)),
-            MixedPaymentFlowFormalFactory(catalog()),
+            cat,
+            CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
+            MixedPaymentFlowFormalFactory(cat),
             intakeIds, commitIds,
         )
     }
@@ -1229,8 +1221,9 @@ class P406CreditFullStateOracleTest {
                         expectedContentHash = usdHash,
                         explicitConfirmedAt = confirmedAt,
                         decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-usd"), AccountId("usd-asset")),
-                    ),
+                ),
                     OrdinaryOutFactory(usdCatalog),
+                    usdCatalog,
                 ),
             )
             assertDomainFailure(run.confirmCredit(creditRefundConfirmRequest("req-neg-7", "candidate-neg-refund", hashRefund, original = "tx-neg-usd")))
@@ -1584,7 +1577,7 @@ class P406CreditFullStateOracleTest {
             // the factory runs at all (zero factory calls).
             val counting = CountingFactory(MixedPaymentFlowFormalFactory(catalog()))
             val gateRejected = assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(run.store, BatchCommitIdSource(listOf(commitIds("mixed-neg-short"))), counting).execute(
+                ConfirmImportCandidate(run.store, BatchCommitIdSource(listOf(commitIds("mixed-neg-short"))), counting, run.catalog).execute(
                     mixedConfirmRequest("req-mixed-neg-9", "candidate-mixed-neg", hashMixed),
                 ),
             )

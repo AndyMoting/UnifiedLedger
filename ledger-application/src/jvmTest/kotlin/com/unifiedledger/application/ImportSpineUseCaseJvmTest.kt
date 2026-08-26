@@ -5,6 +5,7 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
@@ -21,6 +22,7 @@ import kotlin.test.assertNull
 class ImportSpineUseCaseJvmTest {
     private val ledgerId = LedgerId("ledger-p402")
     private val fingerprint = ImportContentFingerprint()
+    private val catalog = assertIs<DomainResult.Success<LedgerCatalog>>(LedgerCatalog.create(emptyList(), emptyList())).value
 
     private val intakeIds = ImportIntakeIds(
         sourceId = ImportSourceId("source-a"),
@@ -160,6 +162,7 @@ class ImportSpineUseCaseJvmTest {
                 identity: ImportRequestIdentity,
                 snapshot: ImportCandidateDecisionSnapshot,
                 allocateIds: () -> ImportCommitIds,
+                catalog: LedgerCatalog,
                 createFormalTransaction: (ImportCandidateFormalizationInput, ImportCommitIds) -> DomainResult<ImportFormalCommit>,
             ): ImportCandidateDecisionResult {
                 portSawDecision = snapshot.decision
@@ -180,6 +183,7 @@ class ImportSpineUseCaseJvmTest {
             port,
             ImportIdSource { idSourceCalls[0]++; commitIds },
             factory,
+            catalog,
         )
         val result = useCase.execute(
             ImportCandidateConfirmRequest(
@@ -215,6 +219,7 @@ class ImportSpineUseCaseJvmTest {
                 identity: ImportRequestIdentity,
                 snapshot: ImportCandidateDecisionSnapshot,
                 allocateIds: () -> ImportCommitIds,
+                catalog: LedgerCatalog,
                 createFormalTransaction: (ImportCandidateFormalizationInput, ImportCommitIds) -> DomainResult<ImportFormalCommit>,
             ): ImportCandidateDecisionResult = error("confirm must not be called")
 

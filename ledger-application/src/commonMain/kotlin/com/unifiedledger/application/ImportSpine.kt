@@ -4,6 +4,7 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
@@ -468,6 +469,7 @@ interface ImportCandidateCommitPort {
         identity: ImportRequestIdentity,
         snapshot: ImportCandidateDecisionSnapshot,
         allocateIds: () -> ImportCommitIds,
+        catalog: LedgerCatalog,
         createFormalTransaction: (input: ImportCandidateFormalizationInput, ids: ImportCommitIds) -> DomainResult<ImportFormalCommit>,
     ): ImportCandidateDecisionResult
 
@@ -565,6 +567,7 @@ class ConfirmImportCandidate(
     private val commitPort: ImportCandidateCommitPort,
     private val idSource: ImportIdSource,
     private val createFormalTransaction: ImportCandidateFormalFactory,
+    private val catalog: LedgerCatalog,
 ) {
     fun execute(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult {
         val snapshot = ImportCandidateDecisionSnapshot(
@@ -577,6 +580,7 @@ class ConfirmImportCandidate(
         return commitPort.commitOnce(
             request.identity, snapshot,
             allocateIds = { idSource.next() },
+            catalog = catalog,
         ) { input, ids ->
             createFormalTransaction.create(input, ids)
         }

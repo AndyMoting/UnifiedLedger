@@ -212,48 +212,10 @@ class ImportSpineAlipayEndToEndTest {
         private val categoryId: CategoryId,
         private val fundingAccountId: AccountId,
     ) : ImportCandidateFormalFactory {
-        override fun create(
-            input: ImportCandidateFormalizationInput,
-            ids: ImportCommitIds,
-        ): DomainResult<ImportFormalCommit> {
-            val resolved = input.resolved
-            val decisionFields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
-            val money = Money.ofMinor(resolved.amountMinor, currency)
-            val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
-            return when (resolved.directionToken) {
-                "out" -> createAssetPaidOrdinaryExpense(
-                    catalog,
-                    AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
-                    AssetPaidOrdinaryExpenseIds(
-                        transactionId = ids.formalIds.transactionId,
-                        versionId = ids.formalIds.versionId,
-                        postingSetId = ids.formalIds.postingSetId,
-                        expensePostingId = ids.formalIds.postingIds[0],
-                        paymentPostingId = ids.formalIds.postingIds[1],
-                    ),
-                ).toSpineCommit(ids)
-                "in" -> createAssetReceivedOrdinaryIncome(
-                    catalog,
-                    AssetReceivedOrdinaryIncomeCommand(input.ledgerId, money, decisionFields.categoryId, decisionFields.fundingAccountId, times),
-                    AssetReceivedOrdinaryIncomeIds(
-                        transactionId = ids.formalIds.transactionId,
-                        versionId = ids.formalIds.versionId,
-                        postingSetId = ids.formalIds.postingSetId,
-                        receivingPostingId = ids.formalIds.postingIds[0],
-                        incomePostingId = ids.formalIds.postingIds[1],
-                    ),
-                ).toSpineCommit(ids)
-                else -> DomainResult.Failure(DomainViolation.InvalidOrdinaryIncome)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        private fun DomainResult<com.unifiedledger.domain.FormalTransaction>.toSpineCommit(
-            ids: ImportCommitIds,
-        ): DomainResult<ImportFormalCommit> = when (this) {
-            is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, value))
-            is DomainResult.Failure -> DomainResult.Failure(violation)
-        }
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     private fun catalog(ledgerId: LedgerId): LedgerCatalog = when (
@@ -293,6 +255,7 @@ class ImportSpineAlipayEndToEndTest {
             ConfirmImportCandidate(
                 store, commitIds,
                 OrdinaryFlowFormalFactory(catalog, ledgerId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
+                catalog,
             ).execute(request)
 
         fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
@@ -812,6 +775,7 @@ class ImportSpineAlipayEndToEndTest {
                 ConfirmImportCandidate(
                     failingConfirmStore, attempt1,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
+                    catalog,
                 ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts)))
             }
             assertEquals(1, attempt1.calls.get())
@@ -824,6 +788,7 @@ class ImportSpineAlipayEndToEndTest {
                 ConfirmImportCandidate(
                     SqlDelightImportSpineStore(database, driver), confirmBatch2,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
+                    catalog,
                 ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
             )
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))

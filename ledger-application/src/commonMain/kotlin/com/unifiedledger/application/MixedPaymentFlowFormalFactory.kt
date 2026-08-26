@@ -1,6 +1,5 @@
 package com.unifiedledger.application
 
-import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FundingComponent
 import com.unifiedledger.domain.LedgerCatalog
@@ -9,7 +8,6 @@ import com.unifiedledger.domain.MixedPaymentExpenseIds
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createMixedPaymentExpense
-import kotlin.time.Instant
 
 /**
  * P4-06 slice 2 (RL-06 mixed payment, D-108 section 4.2): production factory for the
@@ -24,7 +22,7 @@ import kotlin.time.Instant
  * a defensive [DomainResult.Failure] (the store's leg gate intercepts it first).
  */
 class MixedPaymentFlowFormalFactory(
-    private val catalog: LedgerCatalog,
+    val catalog: LedgerCatalog,
 ) : ImportCandidateFormalFactory {
 
     override fun create(
@@ -33,24 +31,43 @@ class MixedPaymentFlowFormalFactory(
     ): DomainResult<ImportFormalCommit> {
         val fields = input.decisionFields as? ImportConfirmDecisionFields.MixedPaymentFlow
             ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        if (ids.formalIds.postingIds.size != 3) {
+            return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        }
         val assetLegMinor = fields.assetLegMinor
             ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
         val creditLegMinor = fields.creditLegMinor
             ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        val targetCurrency = catalog.accounts.firstOrNull {
+            it.id == fields.assetAccountId && it.ledgerId == input.ledgerId
+        }?.currency
+            ?: return DomainResult.Failure(com.unifiedledger.domain.MixedPaymentViolation.UnknownRealAccount)
+        if (catalog.accounts.none { it.id == fields.creditLiabilityAccountId && it.ledgerId == input.ledgerId }) {
+            return DomainResult.Failure(com.unifiedledger.domain.MixedPaymentViolation.UnknownRealAccount)
+        }
         val resolved = input.resolved
-        val currency = CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision)
+        val total = when (val normalized = normalizeImportAmountExact(resolved, targetCurrency)) {
+            is DomainResult.Success -> normalized.value
+            is DomainResult.Failure -> return DomainResult.Failure(normalized.violation)
+        }
+        val occurredAt = when (val parsed = parseImportOccurredAt(resolved.occurredAt)) {
+            is DomainResult.Success -> parsed.value
+            is DomainResult.Failure -> return DomainResult.Failure(parsed.violation)
+        }
         return when (
             val result = createMixedPaymentExpense(
                 catalog,
                 MixedPaymentExpenseCommand(
                     ledgerId = input.ledgerId,
-                    total = Money.ofMinor(resolved.amountMinor, currency),
+                    total = total,
                     categoryId = fields.categoryId,
                     funding = listOf(
-                        FundingComponent(fields.assetAccountId, Money.ofMinor(assetLegMinor, currency)),
-                        FundingComponent(fields.creditLiabilityAccountId, Money.ofMinor(creditLegMinor, currency)),
+                        // D-108 freezes leg fields as target-account minor units; this
+                        // batch does not infer or rescale an independent leg precision.
+                        FundingComponent(fields.assetAccountId, Money.ofMinor(assetLegMinor, targetCurrency)),
+                        FundingComponent(fields.creditLiabilityAccountId, Money.ofMinor(creditLegMinor, targetCurrency)),
                     ),
-                    times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt)),
+                    times = TransactionTimes.collapsed(occurredAt),
                 ),
                 MixedPaymentExpenseIds(
                     transactionId = ids.formalIds.transactionId,
@@ -61,8 +78,8 @@ class MixedPaymentFlowFormalFactory(
                 ),
             )
         ) {
-            is DomainResult.Success -> DomainResult.Success(
-                ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction),
+            is DomainResult.Success -> checkedImportFormalCommit(
+                input, ids, ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction), catalog,
             )
             is DomainResult.Failure -> DomainResult.Failure(result.violation)
         }

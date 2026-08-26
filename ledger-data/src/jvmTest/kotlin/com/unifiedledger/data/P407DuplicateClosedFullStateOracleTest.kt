@@ -197,26 +197,10 @@ class P407DuplicateClosedFullStateOracleTest {
         private val categoryId: CategoryId,
         private val fundingAccountId: AccountId,
     ) : ImportCandidateFormalFactory {
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
-            val resolved = input.resolved
-            val fields = input.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow
-            val money = Money.ofMinor(resolved.amountMinor, CurrencyUnit(resolved.currencyCode, resolved.currencyPrecision))
-            val times = TransactionTimes.collapsed(Instant.parse(resolved.occurredAt))
-            return when (val result = createAssetPaidOrdinaryExpense(
-                catalog,
-                AssetPaidOrdinaryExpenseCommand(input.ledgerId, money, fields.categoryId, fields.fundingAccountId, times),
-                AssetPaidOrdinaryExpenseIds(
-                    transactionId = ids.formalIds.transactionId,
-                    versionId = ids.formalIds.versionId,
-                    postingSetId = ids.formalIds.postingSetId,
-                    expensePostingId = ids.formalIds.postingIds[0],
-                    paymentPostingId = ids.formalIds.postingIds[1],
-                ),
-            )) {
-                is DomainResult.Success -> DomainResult.Success(ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value))
-                is DomainResult.Failure -> DomainResult.Failure(result.violation)
-            }
-        }
+        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+
+        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
+            delegate.create(input, ids)
     }
 
     private fun confirmRequest(
@@ -737,7 +721,7 @@ class P407DuplicateClosedFullStateOracleTest {
             assertFullState(state, captureFullState(driver, accounts), "3b confirmed distinct")
 
             val confirms = BatchCommitIdSource(listOf(commitIds("s1"), commitIds("s2"), commitIds("s3")))
-            val confirmUseCase = ConfirmImportCandidate(store, confirms, OrdinaryFlowFormalFactory(cat, CategoryId("category-food"), AccountId("account-asset-a")))
+            val confirmUseCase = ConfirmImportCandidate(store, confirms, OrdinaryFlowFormalFactory(cat, CategoryId("category-food"), AccountId("account-asset-a")), cat)
             assertIs<ImportCandidateDecisionResult.Accepted>(confirmUseCase.execute(confirmRequest("req-o1-confirm", "candidate-s1", hashTupleX)))
             expected.confirm(ledgerId.value, "req-o1-confirm", "s1", hashTupleX, tupleXFacts, "2026-08-20T10:00:00+08:00")
             assertIs<ImportCandidateDecisionResult.Accepted>(confirmUseCase.execute(confirmRequest("req-o2-confirm", "candidate-s2", hashTupleX)))
@@ -1053,7 +1037,7 @@ class P407DuplicateClosedFullStateOracleTest {
             // rejected as incomplete with zero formal residue (D-105 section 3).
             val confirmIds = BatchCommitIdSource(listOf(commitIds("u")))
             val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(store, confirmIds, OrdinaryFlowFormalFactory(catalog(), CategoryId("category-food"), AccountId("account-asset-a")))
+                ConfirmImportCandidate(store, confirmIds, OrdinaryFlowFormalFactory(catalog(), CategoryId("category-food"), AccountId("account-asset-a")), catalog())
                     .execute(confirmRequest("req-ou-confirm", "candidate-u", hashUnresolved)),
             )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", rejected.diagnostic.code)

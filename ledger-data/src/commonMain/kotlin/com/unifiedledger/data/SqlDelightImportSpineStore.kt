@@ -35,13 +35,25 @@ import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.SpineDiagnostics
-import com.unifiedledger.application.validateImportFormalBinding
+import com.unifiedledger.application.validateImportFormalBindingAgainstCatalog
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.TransactionId
 
-internal enum class ImportSpineFailurePoint { INTAKE_AFTER_CANDIDATE, CONFIRM_AFTER_FORMAL, REVIEW_AFTER_SNAPSHOT }
+internal enum class ImportSpineFailurePoint {
+    INTAKE_AFTER_CANDIDATE,
+    CONFIRM_AFTER_PERSIST_FORMAL,
+    CONFIRM_AFTER_MIXED_ASSET_LEG,
+    CONFIRM_AFTER_MIXED_CREDIT_LEG,
+    CONFIRM_AFTER_MIXED_GROUP,
+    CONFIRM_AFTER_FORMAL,
+    CONFIRM_AFTER_DECISION_SNAPSHOT,
+    CONFIRM_AFTER_STATUS_HISTORY,
+    CONFIRM_AFTER_CONFIRMATION,
+    CONFIRM_AFTER_RECEIPT,
+    REVIEW_AFTER_SNAPSHOT,
+}
 internal fun interface ImportSpineFailureInjector { fun failAt(point: ImportSpineFailurePoint) }
 private val NO_IMPORT_SPINE_FAILURE = ImportSpineFailureInjector { }
 
@@ -309,6 +321,7 @@ class SqlDelightImportSpineStore private constructor(
         identity: ImportRequestIdentity,
         snapshot: ImportCandidateDecisionSnapshot,
         allocateIds: () -> ImportCommitIds,
+        catalog: com.unifiedledger.domain.LedgerCatalog,
         createFormalTransaction: (input: ImportCandidateFormalizationInput, ids: ImportCommitIds) -> DomainResult<ImportFormalCommit>,
     ): ImportCandidateDecisionResult {
         return rollbackTypedRejection { database.transactionWithResult {
@@ -444,6 +457,18 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
+            // A mixed group has a required provenance timestamp. Reject incomplete
+            // decision data before allocating IDs or invoking the formal factory; the
+            // claim therefore rolls back and the candidate remains retryable.
+            val mixedConfirmedAt = if (candidateKind == "mixed_payment") {
+                snapshot.explicitConfirmedAt ?: abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.candidateIncomplete(snapshot.candidateId),
+                    ),
+                )
+            } else {
+                null
+            }
             val resolved = ImportResolvedSourceFacts(
                 amountMinor = source.amount_minor!!,
                 currencyCode = source.currency_code!!,
@@ -469,7 +494,16 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
-            val created = when (val result = createFormalTransaction(input, allocatedIds)) {
+            val formalization = try {
+                createFormalTransaction(input, allocatedIds)
+            } catch (_: RuntimeException) {
+                abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.domainValidationFailed(snapshot.candidateId),
+                    ),
+                )
+            }
+            val created = when (val result = formalization) {
                 is DomainResult.Success -> result.value
                 is DomainResult.Failure -> abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
@@ -477,7 +511,7 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
-            when (val validation = validateImportFormalBinding(input, allocatedIds, created)) {
+            when (val validation = validateImportFormalBindingAgainstCatalog(input, allocatedIds, created, catalog)) {
                 is DomainResult.Success -> Unit
                 // Binding failure reuses SPINE_REFERENCE_INTEGRITY_VIOLATION (spec 4.2):
                 // the returned graph is not bound to the same immutable input/allocated IDs.
@@ -488,10 +522,25 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
             persistFormal(created.transaction)
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_PERSIST_FORMAL)
             // P4-06 slice 2 (D-108 section 4.3): legs first, then the head row — the
             // head INSERT fires the completeness trigger; group_id derives from the
             // transaction id (no new id source, no Clock, no randomness).
             if (mixedFields != null) {
+                // The source row remains raw, but the formal expense posting is already
+                // expressed in the target account precision. Persist that normalized
+                // total alongside legs, which are frozen as target minor units by D-108.
+                val normalizedTotalMinor = created.transaction.postingSets
+                    .singleOrNull()
+                    ?.postings
+                    ?.firstOrNull()
+                    ?.amount
+                    ?.minorUnits
+                    ?: abortImportSpine(
+                        ImportCandidateDecisionResult.Rejected(
+                            SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
+                        ),
+                    )
                 val groupId = "group-" + created.transaction.transaction.id.value
                 database.ledgerQueries.insertMixedPaymentGroupLeg(
                     ledger_id = identity.ledgerId.value,
@@ -501,6 +550,7 @@ class SqlDelightImportSpineStore private constructor(
                     account_id = mixedFields.assetAccountId.value,
                     amount_minor = mixedFields.assetLegMinor!!,
                 )
+                failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_MIXED_ASSET_LEG)
                 database.ledgerQueries.insertMixedPaymentGroupLeg(
                     ledger_id = identity.ledgerId.value,
                     group_id = groupId,
@@ -509,15 +559,21 @@ class SqlDelightImportSpineStore private constructor(
                     account_id = mixedFields.creditLiabilityAccountId.value,
                     amount_minor = mixedFields.creditLegMinor!!,
                 )
+                failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_MIXED_CREDIT_LEG)
                 database.ledgerQueries.insertMixedPaymentGroup(
                     ledger_id = identity.ledgerId.value,
                     group_id = groupId,
                     candidate_id = snapshot.candidateId.value,
                     transaction_id = created.transaction.transaction.id.value,
                     request_id = identity.requestId.value,
-                    total_minor = resolved.amountMinor,
-                    generated_at = snapshot.explicitConfirmedAt!!,
+                    total_minor = normalizedTotalMinor,
+                    generated_at = mixedConfirmedAt ?: abortImportSpine(
+                        ImportCandidateDecisionResult.Rejected(
+                            SpineDiagnostics.candidateIncomplete(snapshot.candidateId),
+                        ),
+                    ),
                 )
+                failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_MIXED_GROUP)
             }
             failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL)
             val categoryId: String? = when (decisionFields) {
@@ -566,6 +622,7 @@ class SqlDelightImportSpineStore private constructor(
                 credit_leg_minor = creditLegMinor,
                 explicit_confirmed_at = snapshot.explicitConfirmedAt,
             )
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_DECISION_SNAPSHOT)
             val sequence = database.ledgerQueries.selectImportCandidateLatestSequence(
                 identity.ledgerId.value,
                 snapshot.candidateId.value,
@@ -579,6 +636,7 @@ class SqlDelightImportSpineStore private constructor(
                 request_id = identity.requestId.value,
                 operation_class = "creation",
             )
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_STATUS_HISTORY)
             database.ledgerQueries.insertImportConfirmation(
                 ledger_id = identity.ledgerId.value,
                 confirmation_id = created.confirmationId.value,
@@ -589,6 +647,7 @@ class SqlDelightImportSpineStore private constructor(
                 operation_class = "creation",
                 confirmed_at = snapshot.explicitConfirmedAt,
             )
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_CONFIRMATION)
             database.ledgerQueries.insertImportReceipt(
                 ledger_id = identity.ledgerId.value,
                 request_id = identity.requestId.value,
@@ -599,6 +658,7 @@ class SqlDelightImportSpineStore private constructor(
                 confirmation_id = created.confirmationId.value,
                 transaction_id = created.transaction.transaction.id.value,
             )
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_RECEIPT)
             ImportCandidateDecisionResult.Accepted(
                 receipt = ImportReceipt(
                     requestId = identity.requestId,

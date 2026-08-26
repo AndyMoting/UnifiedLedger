@@ -16,7 +16,7 @@ import kotlin.time.Instant
  * @param walletAccountId the wallet account ID (used for direction gate validation)
  */
 class TransferFlowFormalFactory(
-    private val catalog: LedgerCatalog,
+    val catalog: LedgerCatalog,
     private val walletAccountId: AccountId,
 ) : ImportCandidateFormalFactory {
 
@@ -42,6 +42,9 @@ class TransferFlowFormalFactory(
         if (!directionOk) {
             // Compatibility note: using InvalidOrdinaryIncome per spec §11.7
             return DomainResult.Failure(DomainViolation.InvalidOrdinaryIncome)
+        }
+        if (ids.formalIds.postingIds.size != 2) {
+            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
         }
 
         // Validate both accounts belong to the same ledger
@@ -82,42 +85,25 @@ class TransferFlowFormalFactory(
             return DomainResult.Failure(PrincipalTransferViolation.SameCurrencyRequired)
         }
 
-        // Source currency code must match target currency
-        if (input.resolved.currencyCode != fromAccount.currency.code) {
-            return DomainResult.Failure(
-                DomainViolation.AmountNotRepresentableInCurrency(
-                    amountMinor = input.resolved.amountMinor,
-                    sourceScale = input.resolved.currencyPrecision,
-                    targetCurrencyCode = fromAccount.currency.code,
-                    targetPrecision = fromAccount.currency.precision,
-                ),
-            )
+        // Normalize source amount to the explicit account currency. This is the only
+        // point at which source precision may be changed; the source facts remain raw.
+        val targetCurrency = fromAccount.currency
+        val normalizedMoney = when (val result = normalizeImportAmountExact(input.resolved, targetCurrency)) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> return DomainResult.Failure(result.violation)
         }
 
-        // Normalize source amount to target precision
-        val targetCurrency = fromAccount.currency
-        val normalizedAmount = normalizeSourceMinorExact(
-            amountMinor = input.resolved.amountMinor,
-            sourceScale = input.resolved.currencyPrecision,
-            targetPrecision = targetCurrency.precision,
-        ) ?: return DomainResult.Failure(
-            DomainViolation.AmountNotRepresentableInCurrency(
-                amountMinor = input.resolved.amountMinor,
-                sourceScale = input.resolved.currencyPrecision,
-                targetCurrencyCode = targetCurrency.code,
-                targetPrecision = targetCurrency.precision,
-            ),
-        )
-
-        val normalizedMoney = Money.ofMinor(normalizedAmount, targetCurrency)
-
         // Create the principal transfer
+        val occurredAt = when (val parsed = parseImportOccurredAt(input.resolved.occurredAt)) {
+            is DomainResult.Success -> parsed.value
+            is DomainResult.Failure -> return DomainResult.Failure(parsed.violation)
+        }
         val command = OwnAssetPrincipalTransferCommand(
             ledgerId = input.ledgerId,
             sourceAccountId = decisionFields.fromAccountId,
             destinationAccountId = decisionFields.toAccountId,
             amount = normalizedMoney,
-            times = TransactionTimes.collapsed(Instant.parse(input.resolved.occurredAt)),
+            times = TransactionTimes.collapsed(occurredAt),
         )
         val transferIds = OwnAssetPrincipalTransferIds(
             transactionId = ids.formalIds.transactionId,
@@ -130,197 +116,121 @@ class TransferFlowFormalFactory(
         return when (val result = createOwnAssetPrincipalTransfer(catalog, command, transferIds)) {
             is DomainResult.Success -> {
                 val ft = result.value.formalTransaction
-                DomainResult.Success(
+                checkedImportFormalCommit(
+                    input,
+                    ids,
                     ImportFormalCommit(
                         confirmationId = ids.confirmationId,
                         statusHistoryId = ids.statusHistoryId,
                         transaction = ft,
                     ),
+                    catalog,
                 )
             }
             is DomainResult.Failure -> DomainResult.Failure(result.violation)
         }
     }
 }
-
 /**
- * Validates that the formal commit graph created by a factory exactly matches the
- * immutable input and the allocated IDs.
- *
- * @param input the immutable formalization input used for this operation
- * @param allocatedIds the IDs allocated by the commit port for this specific attempt
- * @param created the formal commit returned by the factory
- * @return Success if all bindings are valid, Failure with a generic violation otherwise
+ * Fail-closed binding check for every import confirmation flow. The domain factory is
+ * allowed to construct a richer graph, but the graph persisted by the spine must remain
+ * tied to the request's immutable source facts, decision fields, and allocated IDs.
  */
 fun validateImportFormalBinding(
     input: ImportCandidateFormalizationInput,
     allocatedIds: ImportCommitIds,
     created: ImportFormalCommit,
 ): DomainResult<Unit> {
-    // Validate confirmationId
-    if (created.confirmationId != allocatedIds.confirmationId) {
-        return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-    }
-    // Validate statusHistoryId
-    if (created.statusHistoryId != allocatedIds.statusHistoryId) {
-        return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-    }
-
+    fun invalid(): DomainResult<Unit> = DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
     val tx = created.transaction
+    val ids = allocatedIds.formalIds
+    val expectedCount = if (input.decisionFields is ImportConfirmDecisionFields.MixedPaymentFlow) 3 else 2
+    if (created.confirmationId != allocatedIds.confirmationId ||
+        created.statusHistoryId != allocatedIds.statusHistoryId ||
+        ids.postingIds.size != expectedCount ||
+        tx.transaction.id != ids.transactionId ||
+        tx.transaction.ledgerId != input.ledgerId ||
+        tx.transaction.currentVersionId != ids.versionId ||
+        tx.versions.size != 1 ||
+        tx.postingSets.size != 1
+    ) return invalid()
 
-    // Validate transaction ID
-    if (tx.transaction.id != allocatedIds.formalIds.transactionId) {
-        return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
+    val version = tx.versions.single()
+    val postingSet = tx.postingSets.single()
+    if (version.id != ids.versionId || version.transactionId != tx.transaction.id ||
+        version.versionNumber != 1 || version.postingSetId != ids.postingSetId ||
+        postingSet.id != ids.postingSetId || postingSet.postings.size != expectedCount
+    ) return invalid()
+    val sourceInstant = runCatching { Instant.parse(input.resolved.occurredAt) }.getOrNull() ?: return invalid()
+    if (version.times != TransactionTimes.collapsed(sourceInstant)) return invalid()
+    if (postingSet.postings.indices.any { postingSet.postings[it].id != ids.postingIds[it] }) return invalid()
+
+    val postings = postingSet.postings
+    val currencies = postings.map { it.amount.currency }.distinct()
+    if (currencies.size != 1) return invalid()
+    val currency = currencies.single()
+    if (currency.code != input.resolved.currencyCode) return invalid()
+    val normalized = when (val result = normalizeSourceMinorExact(
+        input.resolved.amountMinor,
+        input.resolved.currencyPrecision,
+        currency.precision,
+    )) {
+        is ExactAmountNormalization.Success -> result.amountMinor
+        ExactAmountNormalization.NotRepresentable,
+        ExactAmountNormalization.ArithmeticOverflow,
+        -> return invalid()
     }
-    // Validate ledger
-    if (tx.transaction.ledgerId != input.ledgerId) {
-        return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-    }
-
-    // For TransferFlow: validate the complete formal graph
-    if (input.decisionFields is ImportConfirmDecisionFields.TransferFlow) {
-        // Kind must be ACCOUNT_TRANSFER
-        if (tx.transaction.kind != TransactionKind.ACCOUNT_TRANSFER) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-
-        // Must have exactly one version
-        if (tx.versions.size != 1) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        val version = tx.versions[0]
-        if (version.id != allocatedIds.formalIds.versionId) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (version.transactionId != tx.transaction.id) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (version.versionNumber != 1) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (version.note != null) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-
-        // Must have exactly one posting set
-        if (tx.postingSets.size != 1) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        val postingSet = tx.postingSets[0]
-        if (postingSet.id != allocatedIds.formalIds.postingSetId) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (version.postingSetId != postingSet.id) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-
-        // Must have exactly two postings
-        if (postingSet.postings.size != 2) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (allocatedIds.formalIds.postingIds.size != 2) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-
-        val fields = input.decisionFields
-        for (i in 0..1) {
-            val posting = postingSet.postings[i]
-            if (posting.id != allocatedIds.formalIds.postingIds[i]) {
-                return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-            }
-            // Validate posting accounts match decision fields
-            when (i) {
-                0 -> if (posting.accountId != fields.fromAccountId) return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-                1 -> if (posting.accountId != fields.toAccountId) return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-            }
-        }
-
-        // Amount/currency/precision binding (spec 4.2): postings 0/1 must be
-        // (fromAccountId, -normalized target minor, target CurrencyUnit) and
-        // (toAccountId, +normalized target minor, same currency/precision). Both
-        // postings must share one CurrencyUnit whose code equals the resolved source
-        // currency code, and the minor units must be exactly the source amount
-        // normalized to that shared precision (no rounding, no floating point).
-        val sourceAmount = postingSet.postings[0].amount
-        val destinationAmount = postingSet.postings[1].amount
-        if (sourceAmount.currency != destinationAmount.currency) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        val targetCurrency = sourceAmount.currency
-        if (targetCurrency.code != input.resolved.currencyCode) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        val expectedNormalizedMinor = normalizeSourceMinorExact(
-            amountMinor = input.resolved.amountMinor,
-            sourceScale = input.resolved.currencyPrecision,
-            targetPrecision = targetCurrency.precision,
-        ) ?: return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        if (sourceAmount.minorUnits != -expectedNormalizedMinor) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-        if (destinationAmount.minorUnits != expectedNormalizedMinor) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
-
-        // Validate times match source occurredAt
-        val sourceOccurredAt = Instant.parse(input.resolved.occurredAt)
-        if (version.times.occurredAt != sourceOccurredAt ||
-            version.times.statisticsAt != sourceOccurredAt ||
-            version.times.effectiveAt != sourceOccurredAt
-        ) {
-            return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
-        }
+    if (normalized <= 0L) return invalid()
+    fun matches(index: Int, accountId: AccountId, amount: Long): Boolean {
+        val posting = postings[index]
+        return posting.accountId == accountId && posting.amount.currency == currency && posting.amount.minorUnits == amount
     }
 
+    when (val fields = input.decisionFields) {
+        is ImportConfirmDecisionFields.OrdinaryFlow -> when (input.resolved.directionToken) {
+            "out" -> if (tx.transaction.kind != TransactionKind.EXPENSE || version.note != "" ||
+                !matches(1, fields.fundingAccountId, -normalized) ||
+                postings[0].accountId == fields.fundingAccountId || postings[0].amount.minorUnits != normalized
+            ) return invalid()
+            "in" -> if (tx.transaction.kind != TransactionKind.INCOME || version.note != "" ||
+                !matches(0, fields.fundingAccountId, normalized) ||
+                postings[1].accountId == fields.fundingAccountId || postings[1].amount.minorUnits != -normalized
+            ) return invalid()
+            else -> return invalid()
+        }
+        is ImportConfirmDecisionFields.TransferFlow -> if (
+            tx.transaction.kind != TransactionKind.ACCOUNT_TRANSFER || version.note != null ||
+            fields.fromAccountId == fields.toAccountId ||
+            !matches(0, fields.fromAccountId, -normalized) || !matches(1, fields.toAccountId, normalized)
+        ) return invalid()
+        is ImportConfirmDecisionFields.CreditExpenseFlow -> if (
+            tx.transaction.kind != TransactionKind.EXPENSE || version.note != "" ||
+            !matches(1, fields.creditLiabilityAccountId, -normalized) ||
+            postings[0].accountId == fields.creditLiabilityAccountId || postings[0].amount.minorUnits != normalized
+        ) return invalid()
+        is ImportConfirmDecisionFields.CreditRepaymentFlow -> if (
+            tx.transaction.kind != TransactionKind.CREDIT_REPAYMENT || version.note != "" ||
+            fields.assetAccountId == fields.creditLiabilityAccountId ||
+            !matches(0, fields.assetAccountId, -normalized) || !matches(1, fields.creditLiabilityAccountId, normalized)
+        ) return invalid()
+        is ImportConfirmDecisionFields.CreditExpenseRefundFlow -> if (
+            tx.transaction.kind != TransactionKind.REFUND_RECEIPT || version.note != null ||
+            !matches(0, fields.creditLiabilityAccountId, normalized) ||
+            postings[1].accountId == fields.creditLiabilityAccountId || postings[1].amount.minorUnits != -normalized
+        ) return invalid()
+        is ImportConfirmDecisionFields.MixedPaymentFlow -> {
+            val assetLeg = fields.assetLegMinor ?: return invalid()
+            val creditLeg = fields.creditLegMinor ?: return invalid()
+            if (tx.transaction.kind != TransactionKind.EXPENSE || version.note != "" ||
+                assetLeg <= 0L || creditLeg <= 0L ||
+                fields.assetAccountId == fields.creditLiabilityAccountId ||
+                postings[0].accountId == fields.assetAccountId || postings[0].accountId == fields.creditLiabilityAccountId ||
+                postings[0].amount.minorUnits != normalized ||
+                !matches(1, fields.assetAccountId, -assetLeg) ||
+                !matches(2, fields.creditLiabilityAccountId, -creditLeg) ||
+                assetLeg > Long.MAX_VALUE - creditLeg || assetLeg + creditLeg != normalized
+            ) return invalid()
+        }
+    }
     return DomainResult.Success(Unit)
-}
-
-/**
- * Exactly normalizes a source amount from its source scale to a target precision.
- *
- * Rules:
- * (a) sourceScale < 0 => null (AmountNotRepresentableInCurrency)
- * (b) targetPrecision >= sourceScale => multiply by 10^(diff), checked for overflow
- * (c) targetPrecision < sourceScale => divide by 10^(diff), only if exactly divisible
- *     when diff > 18 and amountMinor != 0, shortcut to null
- * (d) NO rounding, NO Double/Float
- */
-internal fun normalizeSourceMinorExact(
-    amountMinor: Long,
-    sourceScale: Int,
-    targetPrecision: Int,
-): Long? {
-    // (a) negative source scale
-    if (sourceScale < 0) return null
-
-    // (b) targetPrecision >= sourceScale: multiply up
-    if (targetPrecision >= sourceScale) {
-        val factor = checkedPow10(targetPrecision - sourceScale)
-        return multiplyExact(amountMinor, factor)
-    }
-
-    // (c) targetPrecision < sourceScale: divide down
-    val divisor = sourceScale - targetPrecision
-    // Optimization: if divisor > 18 and amountMinor != 0, definitely not divisible
-    if (divisor > 18 && amountMinor != 0L) return null
-    val factor = checkedPow10(divisor)
-    if (amountMinor % factor != 0L) return null
-    return amountMinor / factor
-}
-
-/** Computes 10^exp for exp in 0..18, throwing on overflow. */
-private fun checkedPow10(exp: Int): Long {
-    require(exp >= 0) { "negative exponent: $exp" }
-    if (exp > 18) error("exponent $exp > 18 overflow")
-    var result = 1L
-    repeat(exp) { result *= 10L }
-    return result
-}
-
-/** Multiplies two longs, returning null on overflow. */
-private fun multiplyExact(a: Long, b: Long): Long? {
-    if (a == 0L || b == 0L) return 0L
-    val result = a * b
-    if (result / a != b) return null
-    return result
 }
