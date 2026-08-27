@@ -1853,3 +1853,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 4. **边界保持**：余额/正式交易/report financial 维度零变化（TP-09 oracle 断言）；domain 模块零改动（规格 §12 登记豁免）；`GOLDEN_TESTS.md:194` 语义注记与 CURRENT_STATE 等正式文档同步仍延后主代理处理（不属本批）。
 
 **关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`、`D-112`
+
+## D-114 P5 前置裁决：mixed confirm 的 null explicitConfirmedAt 类型化门（登记已知限制并延后）
+
+**状态：** 已裁决（2026-08-28 用户按推荐方案批准：登记已知限制并延后，不实施类型化拒绝）。
+
+**背景与现状：** mixed confirm 请求传入 `explicitConfirmedAt = null` 当前走异常回滚路径（不变量安全、claim 可重试、零残留）；该路径仅测试侧可达，无生产调用方。承接登记链：P406S2-IMPSPEC-002 / P406S2-QUAL-002 已知限制（D-108 实施登记）。
+
+**决定：** 类型化拒绝需契约/语义修订（复用 `SPINE_CANDIDATE_INCOMPLETE` 族、新拒绝码或收紧请求形状三选一），本裁决将其登记为已知限制并延后：维持异常回滚现状，随首个出现真实生产调用方的修订批一并处置（对齐「契约按首个消费者门控」惯例，IMPORT-001 / D-096 先例）。P5 前置门以本登记为关闭形式。
+
+**边界：** 零行为变更、零 schema/迁移变更；仅检查点、决定登记与失败矩阵语义注记更新，不含任何生产代码改动。
+
+**关联决定：** `D-108`、`D-110`、`D-113`
+
+## D-115 ktlint 启用与全量重排授权（chore 批）
+
+**状态：** 已批准（2026-08-28 用户按推荐方案批准：启用并全量重排——单一 chore 批，CI 加 ktlintCheck 门禁）。
+
+**决定与授权范围：** 工程项，承接 WORK_PLAN.local 长期 backlog「ktlint code style」。授权实施：
+1. 引入 ktlint 插件（`org.jlleitschuh.gradle.ktlint`，提供 `ktlintFormat`/`ktlintCheck` 任务）至根 `build.gradle.kts`，新增 `.editorconfig`，插件 filter 排除 `**/build/**`（覆盖 `build/generated/`）。
+2. 执行 `ktlintFormat` 对全部跟踪 Kotlin 源（232 个文件）一次性全量重排，作为单一 chore 批；`ktlintCheck` 置为门禁。
+3. CI（`.github/workflows/ci.yml`）增加 `ktlintCheck` 步骤，`docs/CONTRIBUTING.md` 验证命令同步更新（两者必须一致）。
+4. 验证判据：`ktlintCheck` 零违例、三个模块全量测试与 `check` 绿、重排批经语义对照确认仅格式变化（零行为语义变更）。
+
+**边界：** 改动面仅限 `.kt` 源、构建脚本（根 `build.gradle.kts`）、新增 `.editorconfig`、CI 与 CONTRIBUTING 同步；不触碰 schema/migration/parser/matcher/projection/账务行为与 `.external/`；阶段边界无并行在途工作，是格式化落地窗口。若插件解析需联网而主机不可达，实施停于网络门并回报。Git 写操作与合并、推送归主代理；推送需用户另行显式授权。
+
+**实施登记：** 待批合入本地 main 后补全（writer/review/verify 证据与全量测试结果）。
+
+**关联决定：** 无先例决定（承接 WORK_PLAN.local backlog 工程项，与账务语义无关）
