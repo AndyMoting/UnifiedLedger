@@ -45,6 +45,7 @@ import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.CandidateId
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationResult
@@ -541,7 +542,13 @@ class P409SiloSpineCoexistenceTest {
                     direction = "out",
                     accountId = "coexist-asset-a",
                     responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    basisVersion = 1,
+                    basisVersion = 2,
+                            projectionId = "proj-evidence-sp-rl03x",
+                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                            projectionRuleVersion = 1,
+                            normalizedAmountMinor = 3000,
+                            rawAmountMinor = 3000,
+                            rawCurrencyPrecision = 2,
                     matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
                     windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
                     naturalDayDistance = 0,

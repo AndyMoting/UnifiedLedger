@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationResult
@@ -165,7 +166,7 @@ class P409SingleChainMigrationTest {
             }
             // Stage 11: v25 — the credit/mixed structures and the v3 kind rebuild.
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 25) }
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 26) }
                 // Stage 12: v25 rows — three v3 kinds with candidates and profiles; the
                 // credit expense row exercises the funding-omittable insert shape.
                 driver.execute(null, "INSERT INTO import_request VALUES ('$ledger','request-mig-v5c','intake')", 0)
@@ -270,7 +271,13 @@ class P409SingleChainMigrationTest {
                             direction = "out",
                             accountId = "account-mig-a",
                             responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                            basisVersion = 1,
+                            basisVersion = 2,
+                            projectionId = "proj-evidence-mig-v2",
+                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                            projectionRuleVersion = 1,
+                            normalizedAmountMinor = 2000,
+                            rawAmountMinor = 2000,
+                            rawCurrencyPrecision = 2,
                             matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
                             windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
                             naturalDayDistance = 0,
@@ -365,7 +372,7 @@ class P409SingleChainMigrationTest {
             execute("INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('$ledger','reconciliation-posting-mig-transfer-in',1,'PENDING',NULL,'$migrationV23SeedRequest','$migrationV23SeedOccurredAt')")
             // The v23 hand-written P4-08 link rows (on the missing-leg evidence; see stage 8).
             execute("INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('$ledger','request-mig-v3','confirm_link','fp-mig-v3','ACCEPTED')")
-            execute("INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2m','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match')")
+            execute("INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision, projection_id, projection_rule_id, projection_rule_version, normalized_amount_minor, raw_amount_minor, raw_currency_precision) VALUES ('$ledger','request-mig-v3','evidence-mig-v2m','candidate-mig','posting-mig-transfer-in','tx-mig-transfer',2000,'CNY',2,'in','account-mig-b','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window',2,0,'2026-08-05T12:00:00+08:00','2026-08-05T13:00:00+08:00','confirm_match',NULL,NULL,NULL,2000,2000,2)")
             execute("INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('$ledger','link-mig','evidence-mig-v2m','posting-mig-transfer-in','tx-mig-transfer','destination_asset_posting',1,'account,amount,currency,direction,occurred_at_window','candidate-mig','request-mig-v3','2026-08-05T13:00:00+08:00')")
             execute("INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) VALUES ('$ledger','link-mig',1,'active','confirmed','request-mig-v3','2026-08-05T13:00:00+08:00')")
             execute("INSERT INTO reconciliation_receipt(ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence) VALUES ('$ledger','request-mig-v3','ACCEPTED','link-mig','reconciliation-posting-mig-transfer-in',2)")

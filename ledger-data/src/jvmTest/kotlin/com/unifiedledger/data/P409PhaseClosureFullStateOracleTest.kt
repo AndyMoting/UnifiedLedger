@@ -43,6 +43,7 @@ import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationResult
@@ -447,6 +448,7 @@ class P409PhaseClosureFullStateOracleTest {
         linkId: String,
         reconciliationId: String,
     ) = P408ConfirmLinkRequest(
+
         ledgerId = ledgerId.value,
         requestId = requestId,
         evidenceId = evidenceId,
@@ -468,7 +470,19 @@ class P409PhaseClosureFullStateOracleTest {
         linkId = linkId,
         reconciliationId = reconciliationId,
         createdAt = confirmedAt,
-    )
+    ).let { base ->
+        // Write-always-v2 (D-112 UQ-4): scale-equal fixtures carry raw == normalized.
+        if (base.basisVersion == 1) base.copy(
+            basisVersion = 2,
+            projectionId = "proj-$evidenceId",
+            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+            projectionRuleVersion = 1,
+            normalizedAmountMinor = amountMinor,
+            rawAmountMinor = amountMinor,
+            rawCurrencyPrecision = 2,
+        ) else base
+    }
+
 
     // ---------- canonical capture (29 row lists + 2 projections) ----------
 

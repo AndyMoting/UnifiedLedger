@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.db.SqlDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
 import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408MaterializationRequest
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationCommitPort
 import com.unifiedledger.application.P408ReconciliationReadPort
@@ -10,6 +11,7 @@ import com.unifiedledger.application.P408ReconciliationReceipt
 import com.unifiedledger.application.P408ReconciliationReportRow
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.P408ReconciliationStatus
+import com.unifiedledger.data.SqlDelightEvidenceProjectionStore.EnsureReadyResult
 import com.unifiedledger.data.db.LedgerDatabase
 import kotlin.math.abs
 import kotlin.time.Instant
@@ -24,6 +26,9 @@ class SqlDelightP408ReconciliationStore private constructor(
     constructor(database: LedgerDatabase, driver: SqlDriver) : this(database) {
         configureSqliteConnection(driver)
     }
+
+    /** Projection authority used by the READY gate; shares this store's database. */
+    private val projections = SqlDelightEvidenceProjectionStore.createShared(database)
 
     override fun confirmLink(request: P408ConfirmLinkRequest): P408ReconciliationResult {
         if (request.windowDays != P408Matcher.DEFAULT_WINDOW_DAYS) {
@@ -49,25 +54,94 @@ class SqlDelightP408ReconciliationStore private constructor(
                 abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_ALREADY_LINKED"))
             }
 
-            val source = database.ledgerQueries
+            // Write-always-v2 gate: existing v1 requests short-circuit into
+            // resolveReplay above (their claim rowcount is 0), so any claim that
+            // reaches this line with basisVersion == 1 is a brand-new v1 shape,
+            // which the approved contract retires (V-4 / 010-R1).
+            if (request.basisVersion != 2) {
+                abortP408(P408ReconciliationResult.Rejected("P408_REQUEST_BASIS_VERSION_RETIRED"))
+            }
+            // v2 payload is contractually total; bind non-null locals once (the
+            // constructor guarantees these for basisVersion == 2).
+            val v2ProjectionId = requireNotNull(request.projectionId)
+            val v2RuleId = requireNotNull(request.projectionRuleId)
+            val v2RuleVersion = requireNotNull(request.projectionRuleVersion)
+            val v2NormalizedAmount = requireNotNull(request.normalizedAmountMinor)
+            val v2RawAmount = requireNotNull(request.rawAmountMinor)
+            val v2RawPrecision = requireNotNull(request.rawCurrencyPrecision)
+
+            // Raw presence/unresolved gates precede the projection authority so
+            // immutable-source discipline (D-111) still yields the D-103-era typed
+            // outcomes for absent or half-seeded import rows.
+            val sourceFacts = database.ledgerQueries
                 .selectP408EvidenceSourceFacts(request.ledgerId, request.evidenceId)
                 .executeAsOneOrNull()
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_EVIDENCE_NOT_FOUND"))
-            val sourceAmount = source.amount_minor
+            val sourceOccurredAt = sourceFacts.occurred_at
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-            val sourceCurrency = source.currency_code
+            // QUAL-004 (dual-review correction): half-seeded import rows keep the
+            // D-103-era typed P408_SOURCE_FACT_UNRESOLVED outcome, so the same
+            // raw-presence/unresolved discipline the projection gate previously
+            // bypassed is restored BEFORE the authority lookup. P408_PROJECTION_ABSENT
+            // therefore stays reserved for the authority layer itself (no source rows
+            // AND no materialization authority — R3/ensureReady level).
+            sourceFacts.amount_minor
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-            val sourcePrecision = source.currency_precision
+            sourceFacts.currency_code
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-            val sourceOccurredAt = source.occurred_at
+            sourceFacts.currency_precision
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
-            if (sourceAmount != request.amountMinor ||
-                sourceCurrency != request.currencyCode ||
-                sourcePrecision != request.currencyPrecision.toLong() ||
-                sourceOccurredAt != request.sourceOccurredAt ||
-                source.direction_token != request.direction
+            sourceFacts.direction_token
+                ?: abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_UNRESOLVED"))
+
+            // READY-projection authority gate (spec V-3): identity facts come from
+            // a READY projection; absence lazily materializes inside THIS same
+            // transaction using the explicit target riding on the request, and a
+            // REJECTED/failed authority keeps everything unresolved with zero writes.
+            val projection = when (val ensured = projections.ensureReadyWithinTransaction(
+                P408MaterializationRequest(
+                    ledgerId = request.ledgerId,
+                    requestId = request.requestId,
+                    evidenceId = request.evidenceId,
+                    targetAccountId = request.accountId,
+                    targetCurrencyCode = request.currencyCode,
+                    targetCurrencyPrecision = request.currencyPrecision,
+                    materializedAt = request.confirmedAt,
+                ),
+            )) {
+                is EnsureReadyResult.Ready -> ensured.projection
+                is EnsureReadyResult.NotReady ->
+                    abortP408(P408ReconciliationResult.Rejected(ensured.code))
+            }
+
+            // Raw echo drift check: projection.raw twins and hash must equal the
+            // live source row before anything else is trusted.
+            if (
+                sourceFacts.content_hash != projection.sourceHash ||
+                sourceFacts.amount_minor != projection.rawAmountMinor ||
+                sourceFacts.currency_precision != projection.rawCurrencyPrecision.toLong() ||
+                sourceFacts.direction_token != projection.directionToken
             ) {
-                abortP408(P408ReconciliationResult.Rejected("P408_SOURCE_FACT_MISMATCH"))
+                abortP408(P408ReconciliationResult.Rejected("P408_PROJECTION_SOURCE_DRIFT"))
+            }
+
+            // Request ↔ authority exact equality: normalized domain identity plus
+            // the raw twins and rule provenance carried by every v2 request.
+            if (
+                v2ProjectionId != projection.projectionId ||
+                v2RuleId != projection.ruleId ||
+                v2RuleVersion.toLong() != projection.ruleVersion.toLong() ||
+                v2NormalizedAmount != projection.normalizedAmountMinor ||
+                v2RawAmount != projection.rawAmountMinor ||
+                v2RawPrecision != projection.rawCurrencyPrecision.toInt() ||
+                request.amountMinor != projection.normalizedAmountMinor ||
+                request.currencyCode != projection.currencyCode ||
+                request.currencyPrecision != projection.currencyPrecision.toInt() ||
+                request.direction != projection.directionToken ||
+                request.accountId != projection.targetAccountId ||
+                sourceOccurredAt != request.sourceOccurredAt
+            ) {
+                abortP408(P408ReconciliationResult.Rejected("P408_REQUEST_IDENTITY_CONFLICT"))
             }
 
             val posting = database.ledgerQueries
@@ -129,6 +203,12 @@ class SqlDelightP408ReconciliationStore private constructor(
                 source_occurred_at = request.sourceOccurredAt,
                 confirmed_at = request.confirmedAt,
                 human_decision = "confirm_match",
+                projection_id = v2ProjectionId,
+                projection_rule_id = v2RuleId,
+                projection_rule_version = v2RuleVersion.toLong(),
+                normalized_amount_minor = v2NormalizedAmount,
+                raw_amount_minor = v2RawAmount,
+                raw_currency_precision = v2RawPrecision.toLong(),
             )
             database.ledgerQueries.insertP408EvidenceLink(
                 ledger_id = request.ledgerId,

@@ -43,6 +43,7 @@ import com.unifiedledger.domain.TransactionId
 
 internal enum class ImportSpineFailurePoint {
     INTAKE_AFTER_CANDIDATE,
+    CONFIRM_AFTER_PROJECTION_MATERIALIZE,
     CONFIRM_AFTER_PERSIST_FORMAL,
     CONFIRM_AFTER_MIXED_ASSET_LEG,
     CONFIRM_AFTER_MIXED_CREDIT_LEG,
@@ -79,6 +80,14 @@ class SqlDelightImportSpineStore private constructor(
         this(database, NO_IMPORT_SPINE_FAILURE, ImportContentFingerprint()) {
         configureSqliteConnection(driver)
     }
+
+    /**
+     * Six-kind success-path projection materialization owner (D-112 UQ-3): every
+     * confirmed candidate's evidence gains its READY authority inside the same
+     * commitOnce transaction as the formal postings (spec V-7); any non-READY
+     * outcome aborts the whole confirmation with zero writes.
+     */
+    private val evidenceProjections = SqlDelightEvidenceProjectionStore.createShared(database)
 
     internal constructor(
         database: LedgerDatabase,
@@ -437,15 +446,18 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
-            database.ledgerQueries.selectImportEvidenceForSource(
+            val evidenceForProjection = database.ledgerQueries.selectImportEvidenceForSource(
                 identity.ledgerId.value,
                 source.source_id,
             ).executeAsOneOrNull()
-                ?: abortImportSpine(
+            if (evidenceForProjection == null) {
+                abortImportSpine(
                     ImportCandidateDecisionResult.Rejected(
                         SpineDiagnostics.referenceIntegrityViolation(snapshot.candidateId),
                     ),
                 )
+            }
+            val projectionEvidenceId = evidenceForProjection
             // P4-06 slice 2 (D-108 section 4.2): leg amounts are decision data; a null
             // leg is insufficient decision data (not a candidate state) — reject with
             // zero writes, the claim rolls back and stays retryable.
@@ -521,6 +533,16 @@ class SqlDelightImportSpineStore private constructor(
                     ),
                 )
             }
+            materializeEvidenceProjectionWithinConfirm(
+                identity = identity,
+                evidenceId = projectionEvidenceId,
+                resolved = resolved,
+                decisionFields = decisionFields,
+                postings = created.transaction.currentPostings(),
+                candidateId = snapshot.candidateId,
+                materializedAt = snapshot.explicitConfirmedAt ?: resolved.occurredAt,
+            )
+            failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_PROJECTION_MATERIALIZE)
             persistFormal(created.transaction)
             failure.failAt(ImportSpineFailurePoint.CONFIRM_AFTER_PERSIST_FORMAL)
             // P4-06 slice 2 (D-108 section 4.3): legs first, then the head row — the
@@ -789,6 +811,66 @@ class SqlDelightImportSpineStore private constructor(
                 ),
             )
         } }
+    }
+
+    /**
+     * Six-kind deterministic target selection (D-112 UQ-3; D-111 account sources):
+     * ordinary -> funding account, transfer -> direction-matched leg, credit
+     * expense/refund/repayment -> credit liability account, mixed -> asset leg
+     * account. Currency code/precision authority is read off the confirmed
+     * posting on the selected account, which the validated factory has already
+     * expressed in the target CurrencyUnit. Runs inside the caller's commitOnce
+     * transaction (spec V-7); any non-READY outcome maps onto the existing
+     * SPINE_DOMAIN_VALIDATION_FAILED family with zero writes and a retryable
+     * candidate (D-111 section 7).
+     */
+    private fun materializeEvidenceProjectionWithinConfirm(
+        identity: ImportRequestIdentity,
+        evidenceId: String,
+        resolved: ImportResolvedSourceFacts,
+        decisionFields: com.unifiedledger.application.ImportConfirmDecisionFields,
+        postings: List<com.unifiedledger.domain.Posting>,
+        candidateId: com.unifiedledger.application.ImportCandidateId,
+        materializedAt: String,
+    ) {
+        val decisionAccountId = when (decisionFields) {
+            is com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow ->
+                decisionFields.fundingAccountId
+            is com.unifiedledger.application.ImportConfirmDecisionFields.TransferFlow ->
+                if (resolved.directionToken == "out") decisionFields.fromAccountId else decisionFields.toAccountId
+            is com.unifiedledger.application.ImportConfirmDecisionFields.CreditExpenseFlow ->
+                decisionFields.creditLiabilityAccountId
+            is com.unifiedledger.application.ImportConfirmDecisionFields.CreditExpenseRefundFlow ->
+                decisionFields.creditLiabilityAccountId
+            is com.unifiedledger.application.ImportConfirmDecisionFields.CreditRepaymentFlow ->
+                decisionFields.creditLiabilityAccountId
+            is com.unifiedledger.application.ImportConfirmDecisionFields.MixedPaymentFlow ->
+                decisionFields.assetAccountId
+        }
+        val targetPosting = postings.firstOrNull { it.accountId == decisionAccountId }
+            ?: abortImportSpine(
+                ImportCandidateDecisionResult.Rejected(
+                    SpineDiagnostics.referenceIntegrityViolation(candidateId),
+                ),
+            )
+        val request = com.unifiedledger.application.P408MaterializationRequest(
+            ledgerId = identity.ledgerId.value,
+            requestId = identity.requestId.value + "/p408-projection",
+            evidenceId = evidenceId,
+            targetAccountId = decisionAccountId.value,
+            targetCurrencyCode = targetPosting.amount.currency.code,
+            targetCurrencyPrecision = targetPosting.amount.currency.precision,
+            materializedAt = materializedAt,
+        )
+        when (val outcome = evidenceProjections.ensureReadyWithinTransaction(request)) {
+            is SqlDelightEvidenceProjectionStore.EnsureReadyResult.Ready -> Unit
+            is SqlDelightEvidenceProjectionStore.EnsureReadyResult.NotReady ->
+                abortImportSpine(
+                    ImportCandidateDecisionResult.Rejected(
+                        SpineDiagnostics.domainValidationFailed(candidateId),
+                    ),
+                )
+        }
     }
 
     private fun resolveIntake(

@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.data.db.LedgerDatabase
@@ -295,7 +296,7 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(25, LedgerDatabase.Schema.version)
+            assertEquals(26, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -387,7 +388,12 @@ class LedgerDatabaseMigrationTest {
                 seed.forEach { driver.execute(null, it, 0) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 22, 23)
+                // Seed at the v23 generation, then complete the chain to the current
+                // terminal so the modern store (which owns the projection authority)
+                // operates on its own schema (D-112 second batch).
+                LedgerDatabase(driver).transaction {
+                    LedgerDatabase.Schema.migrate(driver, 22, 26)
+                }
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightP408ReconciliationStore(database, driver)
 
@@ -410,7 +416,13 @@ class LedgerDatabaseMigrationTest {
                             direction = "out",
                             accountId = "account-bank-a",
                             responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                            basisVersion = 1,
+                            basisVersion = 2,
+                            projectionId = "proj-evidence-a",
+                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                            projectionRuleVersion = 1,
+                            normalizedAmountMinor = 1000,
+                            rawAmountMinor = 1000,
+                            rawCurrencyPrecision = 2,
                             matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
                             windowDays = 2,
                             naturalDayDistance = 0,
@@ -505,7 +517,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 23, 25)
+                LedgerDatabase.Schema.migrate(driver, 23, 26)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -527,7 +539,7 @@ class LedgerDatabaseMigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 25)
+                LedgerDatabase.Schema.migrate(driver, 1, 26)
             }
             assertEquals(
                 schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
@@ -899,7 +911,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -969,7 +981,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1008,7 +1020,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1080,7 +1092,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1198,7 +1210,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 // Formal rows of both v1 owners and the v16 RG-11 rows are preserved.
                 assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(3L, database.ledgerQueries.countVersions().executeAsOne())
@@ -1411,7 +1423,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(25, LedgerDatabase.Schema.version)
+                assertEquals(26, LedgerDatabase.Schema.version)
                 // The rebuilt current-state guards and the new history guard exist with
                 // the v19 text; the temporary migration guard never lands in the schema.
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg12_match_current_guard_insert'"))
@@ -2228,6 +2240,126 @@ class LedgerDatabaseMigrationTest {
         }
     }
 
+    /** Seeds a terminal-v25 world holding one confirmed transfer link + v23-shaped snapshot. */
+    private fun seedV25ProjectionWorld(url: String) {
+        DriverManager.getConnection(url).use { connection ->
+            connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+        }
+        JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+            LedgerDatabase.Schema.migrate(driver, 1, 25)
+            driver.execute(null, "INSERT INTO import_request VALUES ('ledger-b26','request-b26','intake')", 0)
+            driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-b26','source-b26','request-b26','batch-b26',0,'transfer_flow_source','hash-b26',2,'valid_complete',9900,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')", 0)
+            driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-b26','evidence-b26','source-b26','source_observation','2026-08-10T12:00:01+08:00')", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-b26','ledger-b26','ACCOUNT_TRANSFER',NULL)", 0)
+            driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-b26','ledger-b26')", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-b26','tx-b26','ledger-b26',1,'posting-set-b26','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('tx-b26','ledger-b26','version-b26')", 0)
+            driver.execute(null, "INSERT INTO posting VALUES ('posting-b26-out','posting-set-b26','ledger-b26',0,'account-bank-a',-9900,'CNY',2)", 0)
+            driver.execute(null, "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('ledger-b26','request-link-b26','confirm_link','fp-b26','ACCEPTED')", 0)
+            driver.execute(null, "INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision) VALUES ('ledger-b26','request-link-b26','evidence-b26','candidate-b26','posting-b26-out','tx-b26',9900,'CNY',2,'out','account-bank-a','real_account_posting',1,'amount,currency,direction,occurred_at_window,account',2,0,'2026-08-10T12:00:00+08:00','2026-08-10T13:00:00+08:00','confirm_match')", 0)
+            driver.execute(null, "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-b26','link-b26','evidence-b26','posting-b26-out','tx-b26','real_account_posting',1,'amount,currency,direction,occurred_at_window,account','candidate-b26','request-link-b26','2026-08-10T13:00:01+08:00')", 0)
+            driver.execute(null, "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) VALUES ('ledger-b26','link-b26',1,'active','confirmed','request-link-b26','2026-08-10T13:00:01+08:00')", 0)
+            driver.execute(null, "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) VALUES ('ledger-b26','reconciliation-b26-out','posting-b26-out','CHECKED',2)", 0)
+            driver.execute(null, "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('ledger-b26','reconciliation-b26-out',1,'PENDING',NULL,'request-link-b26','2026-08-10T12:00:02+08:00')", 0)
+            driver.execute(null, "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('ledger-b26','reconciliation-b26-out',2,'CHECKED','link-b26','request-link-b26','2026-08-10T13:00:02+08:00')", 0)
+            driver.execute(null, "INSERT INTO reconciliation_receipt(ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence) VALUES ('ledger-b26','request-link-b26','ACCEPTED','link-b26','reconciliation-b26-out',2)", 0)
+        }
+    }
+
+    @Test
+    fun populatedV25ToV26ProjectionBackfillEqualsFreshEquivalentRows() {
+        val migratedPath = Files.createTempFile("ledger-data-migrated-v26-proj-", ".db")
+        val freshPath = Files.createTempFile("ledger-data-fresh-v26-proj-", ".db")
+        val migratedUrl = "jdbc:sqlite:${migratedPath.absolutePathString()}"
+        try {
+            seedV25ProjectionWorld(migratedUrl)
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 25, 26) }
+            }
+            // Fresh equivalent construction at v26 mirrors the deterministic predicate.
+            JdbcSqliteDriver("jdbc:sqlite:${freshPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-b26','request-b26','intake')", 0)
+                driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-b26','source-b26','request-b26','batch-b26',0,'transfer_flow_source','hash-b26',2,'valid_complete',9900,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')", 0)
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-b26','evidence-b26','source-b26','source_observation','2026-08-10T12:00:01+08:00')", 0)
+                driver.execute(null, "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-b26','ledger-b26','ACCOUNT_TRANSFER',NULL)", 0)
+                driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-b26','ledger-b26')", 0)
+                driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-b26','tx-b26','ledger-b26',1,'posting-set-b26','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)", 0)
+                driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('tx-b26','ledger-b26','version-b26')", 0)
+                driver.execute(null, "INSERT INTO posting VALUES ('posting-b26-out','posting-set-b26','ledger-b26',0,'account-bank-a',-9900,'CNY',2)", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('ledger-b26','request-link-b26','confirm_link','fp-b26','ACCEPTED')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision, projection_id, projection_rule_id, projection_rule_version, normalized_amount_minor, raw_amount_minor, raw_currency_precision) VALUES ('ledger-b26','request-link-b26','evidence-b26','candidate-b26','posting-b26-out','tx-b26',9900,'CNY',2,'out','account-bank-a','real_account_posting',1,'amount,currency,direction,occurred_at_window,account',2,0,'2026-08-10T12:00:00+08:00','2026-08-10T13:00:00+08:00','confirm_match',NULL,NULL,NULL,NULL,9900,2)", 0)
+                driver.execute(null, "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-b26','link-b26','evidence-b26','posting-b26-out','tx-b26','real_account_posting',1,'amount,currency,direction,occurred_at_window,account','candidate-b26','request-link-b26','2026-08-10T13:00:01+08:00')", 0)
+                driver.execute(null, "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) VALUES ('ledger-b26','link-b26',1,'active','confirmed','request-link-b26','2026-08-10T13:00:01+08:00')", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) VALUES ('ledger-b26','reconciliation-b26-out','posting-b26-out','CHECKED',2)", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('ledger-b26','reconciliation-b26-out',1,'PENDING',NULL,'request-link-b26','2026-08-10T12:00:02+08:00')", 0)
+                driver.execute(null, "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('ledger-b26','reconciliation-b26-out',2,'CHECKED','link-b26','request-link-b26','2026-08-10T13:00:02+08:00')", 0)
+                driver.execute(null, "INSERT INTO reconciliation_receipt(ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence) VALUES ('ledger-b26','request-link-b26','ACCEPTED','link-b26','reconciliation-b26-out',2)", 0)
+                driver.execute(null, "INSERT INTO evidence_projection(ledger_id, projection_id, evidence_id, source_id, source_hash, target_account_id, currency_code, currency_precision, raw_amount_minor, raw_currency_precision, normalized_amount_minor, direction_token, state, rejection_code, rule_id, rule_version, materialization_request_id, materialized_at) VALUES ('ledger-b26','proj-evidence-b26','evidence-b26','source-b26','hash-b26','account-bank-a','CNY',2,9900,2,9900,'out','READY',NULL,'p408_evidence_projection_backfill_v26',1,'p408-evidence-projection-backfill-v26','1970-01-01T00:00:00Z')", 0)
+            }
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                val db = LedgerDatabase(driver)
+                assertEquals(26, LedgerDatabase.Schema.version)
+                assertEquals(1L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
+                val rows = queryCount(driver, "SELECT count(*) FROM evidence_projection WHERE state='READY' AND normalized_amount_minor=9900 AND rule_id='p408_evidence_projection_backfill_v26'")
+                assertEquals(1L, rows)
+            }
+            // TP-16 full two-sided equivalence: the seven v23-era shared tables plus
+            // the rebuilt snapshot/evidence_link (all columns) and the projection
+            // table compare row-for-row between migrated and fresh-equivalent worlds.
+            val tableSelects = listOf(
+                "reconciliation_request",
+                "reconciliation_request_snapshot",
+                "evidence_link",
+                "evidence_link_history",
+                "posting_reconciliation",
+                "posting_reconciliation_history",
+                "reconciliation_receipt",
+                "evidence_projection",
+            )
+            val migratedRows = tableSelects.associateWith { selectRowsFlat(migratedUrl, it) }
+            val freshRows = tableSelects.associateWith { selectRowsFlat("jdbc:sqlite:${freshPath.absolutePathString()}", it) }
+            tableSelects.forEach { table ->
+                assertEquals(freshRows.getValue(table), migratedRows.getValue(table), "row diff on $table")
+            }
+            // Widened CHECK texts are identical on both sides.
+            val checkSelect = "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('reconciliation_request_snapshot','evidence_link') ORDER BY name"
+            val migratedCheck = selectRaw(migratedUrl, checkSelect)
+            val freshCheck = selectRaw("jdbc:sqlite:${freshPath.absolutePathString()}", checkSelect)
+            assertEquals(freshCheck, migratedCheck)
+            freshCheck.forEach { sql -> assertEquals(true, sql.contains("basis_version IN (1, 2)"), sql) }
+        } finally {
+            Files.deleteIfExists(migratedPath)
+            Files.deleteIfExists(freshPath)
+        }
+    }
+
+    @Test
+    fun lateV25ToV26FailureRollsBackProjectionObjectsAndKeepsLegacyRows() {
+        val path = Files.createTempFile("ledger-data-v25-v26-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            seedV25ProjectionWorld(url)
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // SPEC-006: the sentinel name is created after the backfill (step 5),
+                // so the READY backfill has already executed when the migration
+                // aborts — full late-stage rollback is asserted below.
+                driver.execute(null, "CREATE TABLE p408_v26_late_sentinel(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 25, 26) }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='evidence_projection_guard_update'"))
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('evidence_projection','p408_v26_row_guard','p408_v26_pre_guard')"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM evidence_link WHERE link_id='link-b26'"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM reconciliation_request_snapshot WHERE request_id='request-link-b26' AND basis_version=1"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='reconciliation_request_snapshot' AND sql LIKE '%basis_version = 1%'"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
     @Test
     fun freshSchemaAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
@@ -2244,7 +2376,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 25)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 26)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -3006,3 +3138,28 @@ internal val VERSION_ONE_STATEMENTS = listOf(
         )
     """.trimIndent(),
 )
+
+private fun selectRowsFlat(url: String, table: String): List<List<String?>> =
+    DriverManager.getConnection(url).use { connection ->
+        connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT * FROM $table ORDER BY 1,2,3,4").use { rows ->
+                val meta = rows.metaData
+                val out = mutableListOf<List<String?>>()
+                while (rows.next()) {
+                    out.add((1..meta.columnCount).map { rows.getObject(it)?.toString() })
+                }
+                out
+            }
+        }
+    }
+
+private fun selectRaw(url: String, sql: String): List<String> =
+    DriverManager.getConnection(url).use { connection ->
+        connection.createStatement().use { statement ->
+            statement.executeQuery(sql).use { rows ->
+                val out = mutableListOf<String>()
+                while (rows.next()) out.add(rows.getString(1))
+                out
+            }
+        }
+    }

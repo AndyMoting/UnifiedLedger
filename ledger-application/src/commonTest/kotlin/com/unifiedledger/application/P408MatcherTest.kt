@@ -100,9 +100,8 @@ class P408MatcherTest {
 
     @Test
     fun missingSourceOffsetRemainsUnresolved() {
-        val source = P408EvidenceFacts(
-            "ledger", "e-6", 1_000, "CNY", 2, "out", "wallet",
-            P408TemporalEvidence("2026-08-10 12:00:00", "local_datetime", false, null, null),
+        val source = evidence("e-6", "2026-08-10T12:00:00+08:00").copy(
+            occurredAt = P408TemporalEvidence("2026-08-10 12:00:00", "local_datetime", false, null, null),
         )
         val result = matcher.match(source, listOf(posting("p-6", "2026-08-10T12:00:00+08:00")))
 
@@ -218,8 +217,11 @@ class P408MatcherTest {
 
     @Test
     fun incompleteFundingFactsFailClosed() {
+        val incomplete = evidence("e-14", "2026-08-10T12:00:00+08:00")
         val result = matcher.match(
-            evidence("e-14", "2026-08-10T12:00:00+08:00").copy(accountId = "", currencyPrecision = -1),
+            incomplete.copy(
+                normalized = incomplete.normalized.copy(targetAccountId = "", currencyPrecision = -1),
+            ),
             listOf(posting("p-incomplete", "2026-08-10T12:00:00+08:00")),
         )
 
@@ -229,8 +231,9 @@ class P408MatcherTest {
 
     @Test
     fun negativeSourceAmountFailsClosed() {
+        val negative = evidence("e-16", "2026-08-10T12:00:00+08:00")
         val result = matcher.match(
-            evidence("e-16", "2026-08-10T12:00:00+08:00").copy(amountMinor = -1),
+            negative.copy(normalized = negative.normalized.copy(normalizedAmountMinor = -1)),
             listOf(posting("p-negative", "2026-08-10T12:00:00+08:00")),
         )
 
@@ -250,8 +253,30 @@ class P408MatcherTest {
         assertTrue(result.candidates.isEmpty())
     }
 
-    private fun evidence(id: String, occurredAt: String): P408EvidenceFacts =
-        P408EvidenceFacts("ledger", id, 1_000, "CNY", 2, "out", "wallet", temporal(occurredAt))
+    /** Fixture helper: raw 1000@2 twins and a READY projection carrying the same values. */
+    private fun evidence(id: String, occurredAt: String): P408EvidenceFacts = P408EvidenceFacts(
+        ledgerId = "ledger",
+        evidenceId = id,
+        raw = P408RawEvidenceFacts(
+            sourceId = "src-$id",
+            contentHash = "sha256:$id",
+            amountMinor = 1_000,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            directionToken = "out",
+        ),
+        normalized = P408NormalizedProjectionFacts(
+            projectionId = "proj-$id",
+            targetAccountId = "wallet",
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            normalizedAmountMinor = 1_000,
+            directionToken = "out",
+            ruleId = P408EvidenceProjectionPort.RULE_ID,
+            ruleVersion = P408EvidenceProjectionPort.RULE_VERSION,
+        ),
+        occurredAt = temporal(occurredAt),
+    )
 
     private fun posting(
         id: String,
