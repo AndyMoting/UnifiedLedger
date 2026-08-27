@@ -42,6 +42,13 @@ data class P408ConfirmLinkRequest(
     val linkId: String,
     val reconciliationId: String,
     val createdAt: String,
+    /** v2 only (UQ-4): projection identity and rule/version provenance. */
+    val projectionId: String? = null,
+    val projectionRuleId: String? = null,
+    val projectionRuleVersion: Int? = null,
+    val normalizedAmountMinor: Long? = null,
+    val rawAmountMinor: Long? = null,
+    val rawCurrencyPrecision: Int? = null,
 ) {
     init {
         require(ledgerId.isNotBlank() && requestId.isNotBlank())
@@ -49,7 +56,20 @@ data class P408ConfirmLinkRequest(
         require(currencyCode.isNotBlank() && currencyPrecision >= 0)
         require(direction == "in" || direction == "out")
         require(accountId.isNotBlank())
-        require(basisVersion == 1)
+        // Version selection is frozen: existing v1 rows stay readable/replayable
+        // against their own snapshots, and every NEW write is v2. The two
+        // versions are never interconverted or cross-explained.
+        require(basisVersion == 1 || basisVersion == 2)
+        if (basisVersion == 1) {
+            require(projectionId == null && projectionRuleId == null && projectionRuleVersion == null &&
+                normalizedAmountMinor == null && rawAmountMinor == null && rawCurrencyPrecision == null)
+        } else {
+            require(!projectionId.isNullOrBlank() && !projectionRuleId.isNullOrBlank())
+            require(projectionRuleVersion != null && projectionRuleVersion >= 1)
+            require(normalizedAmountMinor != null && normalizedAmountMinor >= 0)
+            require(rawAmountMinor != null && rawAmountMinor >= 0)
+            require(rawCurrencyPrecision != null && rawCurrencyPrecision >= 0)
+        }
         require(matchBasis == REQUIRED_MATCH_BASIS)
         require(amountMinor >= 0)
         require(naturalDayDistance >= 0 && naturalDayDistance <= windowDays)
@@ -59,7 +79,7 @@ data class P408ConfirmLinkRequest(
 
     /** Stable UTF-8 identity; set-valued basis tokens are sorted and deduplicated. */
     fun fingerprint(): String = buildString {
-        append("p408-confirm-v1|")
+        if (basisVersion == 2) append("p408-confirm-v2|") else append("p408-confirm-v1|")
         append("ledger=").append(ledgerId).append('|')
         append("evidence=").append(evidenceId).append('|')
         append("candidate=").append(candidateId).append('|')
@@ -77,6 +97,17 @@ data class P408ConfirmLinkRequest(
         append("natural_day_distance=").append(naturalDayDistance).append('|')
         append("source_occurred_at=").append(sourceOccurredAt).append('|')
         append("confirmed_at=").append(confirmedAt)
+        if (basisVersion == 2) {
+            // Four added groups: raw pair, normalized value, projection identity,
+            // rule/version. The v2 prefix plus these groups keep the two
+            // fingerprint spaces disjoint by construction.
+            append("|projection_id=").append(projectionId)
+            append("|projection_rule_id=").append(projectionRuleId)
+            append("|projection_rule_version=").append(projectionRuleVersion)
+            append("|normalized_amount_minor=").append(normalizedAmountMinor)
+            append("|raw_amount_minor=").append(rawAmountMinor)
+            append("|raw_currency_precision=").append(rawCurrencyPrecision)
+        }
     }
 }
 

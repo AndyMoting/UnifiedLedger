@@ -1142,6 +1142,8 @@ class O2PrecisionRescaleDataTest {
                 ).execute(confirmRequest)
             }
             assertEquals(baseline, confirmationCounts(database, driver))
+            // QUAL-007: the projection authority is rolled back with everything else.
+            assertEquals(0L, database.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
             assertEquals(
                 "pending_confirmation",
                 database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, candidateId).executeAsOne().status,

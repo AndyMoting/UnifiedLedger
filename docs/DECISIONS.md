@@ -1796,5 +1796,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** correction/successor invalidation 与银行 parser 门维持延期（D-103:1639 / D-109 O-5/O-8，银行 parser 门指针 D-099:1540 不因本批打开）；Phase 5 组合根/平台壳不开启；`import_evidence` 零扩展（schema 文本扩权只及快照列集/版本门与 `evidence_link` 版本门的加性放宽，行集合零改写）；对账/匹配语义本体以 D-103 批准组合为界不扩张；金额全程整数 minor units/精确十进制，禁浮点。延期约束再申明：本批不产生 link 失效/后继机制写入者，`invalidate_link` 继续仅为枚举预留。
 
 **实施规格：** `docs/specs/2026-08-26-p408-evidence-projection-implementation-design.md`
+**实施登记：** 已于 2026-08-27/9 按 D-112 授权范围落地（本段登记双评审与 verifier 回修闭环后的实施事实）：
+
+1. **QUAL-001 语义确立**：evidence 已有 READY 行时按经济内容+身份字段判定——`materializationRequestId`/`materializedAt` 为审计迹、不参与相等性（`SqlDelightEvidenceProjectionStore.kt` economicEquals，约 :117-146）；「spine 物化 → 同 evidence confirmLink ACCEPTED」链式用例 = `P408ProjectionSixKindMaterializationTest.tpQual001SpineMaterializeThenConfirmLinkAcceptsThroughAuditDivergence`（transfer flow，Z 形时序链）。`sourceHash` 归入 DRIFT 门（liveness/raw-echo 审计），不在经济相等内。
+2. **SPEC-001：`P408_PROJECTION_TARGET_ACCOUNT_MISSING` 消除登记**：`P408MaterializationRequest.targetAccountId` 为必填非空字段（application 数据类 require），显式目标绑定恒存在——该码在 store companion 常数区注释保留备案（V-2/V-4 工程裁决归属），无触发路径、不注册。
+3. **account FK 复核结论**：fresh schema 无独立 account 表（posting 为全局单列主键，`Ledger.sq` posting 定义；`reconciliation_request_snapshot.account_id` 即无 FK 先例，约 :7741-7755），附录 A 预留的 `REFERENCES account(...)` 按规格勘误条款省略，`evidence_projection.target_account_id` 采用同款纯文本定向绑定。
+4. **确认失败码复用登记**：请求↔权威回声失配沿用既有 `P408_REQUEST_IDENTITY_CONFLICT`（`SqlDelightP408ReconciliationStore.kt` 门回声段），不新增 V-4 之外码；V-4 全 9 码定义与落点见实施批报告核对表。
+5. **QUAL-006 处置**：data 模块无法访问 application `internal` 归一化函数，跨模块语义钉以「规格一致性 + 值域矩阵」承担——store 内 `normalizeExact` 注释声明镜像语义（约 :350-386），TP-02..TP-07/TP-04 向量与 `ExactAmountNormalization`（application）各自全绿；等效性由固定向量钉死。
+6. **TP-18 代理语义登记**：REJECTED 终态权威 = 不可表达 55@2→precision1 的字面场景代理（`P408ProjectionAuthorityStoreTest.spec007`/`tp18` 注释），语义承诺（零 claim/link/reconciliation 写入、posting 不推进）与 persisted-REJECTED 权威一致。
+7. **25.sqm 增量说明（QUAL-008/SPEC-006）**：迁移头部新增 `p408_v26_pre_guard`（快照金额非负/currency_precision≥0/basis_version=1、evidence_link.basis_version=1 存量 fail-closed 守卫）与第 5 步 `p408_v26_late_sentinel` 同名冲突钩子（回填后注入失败、全事务回滚）；两者随步 6 清理。`lateV25ToV26FailureRollsBackProjectionObjectsAndKeepsLegacyRows` 现为真 late-stage 用例。
+8. **QUAL-004 修正**：half-seeded import 行在投影门之前以既有 `P408_SOURCE_FACT_UNRESOLVED` 类型化拒绝恢复（`SqlDelightP408ReconciliationStore.kt` 门首原始事实存在性段）；`P408_PROJECTION_ABSENT` 仅保留给「无任何源行/权威」场景（`r3AuthorityAbsentWhenNothingToMaterialize`）。
+
+
 
 **关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`

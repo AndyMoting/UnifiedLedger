@@ -14,7 +14,7 @@ class Rg03SchemaV5Test {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(25, LedgerDatabase.Schema.version)
+            assertEquals(26, LedgerDatabase.Schema.version)
             database.ledgerQueries.insertTransaction("tx-transfer-schema", "ledger-a", "ACCOUNT_TRANSFER")
             database.ledgerQueries.insertTransaction("tx-repayment-schema", "ledger-a", "CREDIT_REPAYMENT")
             assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())

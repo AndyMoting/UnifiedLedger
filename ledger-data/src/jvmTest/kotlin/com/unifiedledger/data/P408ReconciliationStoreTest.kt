@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.P408ReconciliationStatus
@@ -62,7 +63,7 @@ class P408ReconciliationStoreTest {
             val rejected = assertIs<P408ReconciliationResult.Rejected>(
                 store.confirmLink(request(direction = "in")),
             )
-            assertEquals("P408_SOURCE_FACT_MISMATCH", rejected.code)
+            assertEquals("P408_REQUEST_IDENTITY_CONFLICT", rejected.code)
             assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
             assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
             assertEquals(0L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
@@ -584,6 +585,7 @@ class P408ReconciliationStoreTest {
         reconciliationId: String = "reconciliation-posting-a",
         createdAt: String = "2026-08-10T13:00:00+08:00",
     ) = P408ConfirmLinkRequest(
+
         ledgerId = ledgerId,
         requestId = requestId,
         evidenceId = evidenceId,
@@ -605,7 +607,19 @@ class P408ReconciliationStoreTest {
         linkId = linkId,
         reconciliationId = reconciliationId,
         createdAt = createdAt,
-    )
+    ).let { base ->
+        // Write-always-v2 (D-112 UQ-4): scale-equal fixtures carry raw == normalized.
+        if (base.basisVersion == 1) base.copy(
+            basisVersion = 2,
+            projectionId = "proj-$evidenceId",
+            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+            projectionRuleVersion = 1,
+            normalizedAmountMinor = amountMinor,
+            rawAmountMinor = amountMinor,
+            rawCurrencyPrecision = currencyPrecision,
+        ) else base
+    }
+
 
     private fun seedSingleOutTransfer(driver: JdbcSqliteDriver) = seedTransfer(driver, includeSecondPosting = false)
 

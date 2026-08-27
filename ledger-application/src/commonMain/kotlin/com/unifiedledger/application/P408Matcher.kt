@@ -20,16 +20,47 @@ data class P408TemporalEvidence(
     val instant: Instant?,
 )
 
-data class P408EvidenceFacts(
-    val ledgerId: String,
-    val evidenceId: String,
+/** Raw source facts retained verbatim from import_source_record (D-111). */
+data class P408RawEvidenceFacts(
+    val sourceId: String,
+    val contentHash: String,
     val amountMinor: Long,
     val currencyCode: String,
     val currencyPrecision: Int,
-    val direction: String,
-    val accountId: String,
-    val occurredAt: P408TemporalEvidence,
+    val directionToken: String,
 )
+
+/** Identity facts sourced exclusively from a READY projection row (spec V-3). */
+data class P408NormalizedProjectionFacts(
+    val projectionId: String,
+    val targetAccountId: String,
+    val currencyCode: String,
+    val currencyPrecision: Int,
+    val normalizedAmountMinor: Long,
+    val directionToken: String,
+    val ruleId: String,
+    val ruleVersion: Int,
+)
+
+/**
+ * Matcher input after the projection batch: the five funding-identity fields
+ * are the READY projection's exact values, and raw facts ride along for audit
+ * only. sameFundingFacts semantics text is unchanged (D-103 O-1); only the
+ * sourcing moved away from raw source rows.
+ */
+data class P408EvidenceFacts(
+    val ledgerId: String,
+    val evidenceId: String,
+    val raw: P408RawEvidenceFacts,
+    val normalized: P408NormalizedProjectionFacts,
+    val occurredAt: P408TemporalEvidence,
+) {
+    val amountMinor: Long get() = normalized.normalizedAmountMinor
+    val currencyCode: String get() = normalized.currencyCode
+    val currencyPrecision: Int get() = normalized.currencyPrecision
+    val direction: String get() = normalized.directionToken
+    val accountId: String get() = normalized.targetAccountId
+}
 
 /** A real-account posting candidate exposed by the formal-ledger read port. */
 data class P408PostingFacts(

@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.P408ReconciliationStatus
@@ -55,7 +56,7 @@ class P408ReconciliationCanonicalOracleTest {
                     listOf(
                         "ledger-a", "request-a", "evidence-a", "candidate-transient-a", "posting-a", "tx-a",
                         1000L, "CNY", 2L, "out", "account-bank-a", "real_account_posting",
-                        1L, "account,amount,currency,direction,occurred_at_window", 2L, 0L,
+                        2L, "account,amount,currency,direction,occurred_at_window", 2L, 0L,
                         "2026-08-10T12:00:00+08:00", "2026-08-10T13:00:00+08:00", "confirm_match",
                     ),
                 ),
@@ -69,7 +70,7 @@ class P408ReconciliationCanonicalOracleTest {
                 listOf(
                     listOf(
                         "ledger-a", "link-a", "evidence-a", "posting-a", "tx-a", "real_account_posting",
-                        1L, "account,amount,currency,direction,occurred_at_window", "candidate-transient-a",
+                        2L, "account,amount,currency,direction,occurred_at_window", "candidate-transient-a",
                         "request-a", "2026-08-10T13:00:00+08:00",
                     ),
                 ),
@@ -197,7 +198,13 @@ class P408ReconciliationCanonicalOracleTest {
         direction = "out",
         accountId = "account-bank-a",
         responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-        basisVersion = 1,
+        basisVersion = 2,
+        projectionId = "proj-evidence-a",
+        projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+        projectionRuleVersion = 1,
+        normalizedAmountMinor = 1000,
+        rawAmountMinor = 1000,
+        rawCurrencyPrecision = 2,
         matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
         windowDays = 2,
         naturalDayDistance = 0,
