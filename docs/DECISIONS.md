@@ -1810,3 +1810,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 
 **关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`
+
+## D-113 P4-08 correction / successor invalidation（规格批准 + 实施授权）
+
+**状态：** 已批准（2026-08-27 用户「按推荐批准」：UQ-1..UQ-8 全部按规格 §13 推荐方案裁决通过，实施批同步授权）。
+
+**冻结输入：** `docs/specs/2026-08-27-p408-correction-successor-invalidation-design.md`（Status: approved），冻结文本 = SHA-256 `5645e1c8f4ddd05d9d2f530e716f253832caa0f433a0b7dc3c32fc9201a4f70e`（评审终局 APPROVE 版）；三轮独立评审闭环 P408CORR-SPEC-001..010 全闭合（主编写 001..010 修订 + reviewer delta 收口），终局 APPROVE 无附带条件。承接登记链：D-103:1639（correction/successor invalidation 明确延期）、D-109 O-5（DECISIONS.md:1738，维持延期并在失败矩阵登记为已知延期维度）与 D-112 UQ-2 = V-5-A（DECISIONS.md:1788，「换目标账户重新表达须待未来 correction 批」）。
+
+**决定（UQ 裁决逐条记录，1..8 = 规格 §13 推荐方案）：**
+
+1. **UQ-1 修正触发资格与调用方**：仅冻结 correction port + 请求契约 + 持久化语义 + TP-01..17 测试（直接端口调用，与 confirmLink 同构）；版本替代自动触发与补充资料重匹配的跨层集成（spine 通知、应用协调）登记后续独立批。
+2. **UQ-2 reason 值域与失效面统一性**：复用既有三值（`confirmed`/`corrected`/`posting_replaced`）不扩值域；link 失效事件（evidence_link_history 行）与投影 supersede（受控转移）是同一 correction 事务内的两个独立事件，不合并为单一事件面。
+3. **UQ-3 MISSING/DIFFERENCE 激活**：激活为 correction 结果态，写入者仅 correction port，matcher 零自动转移（D-103 O-3 维持）；版本替代场景旧 stale posting 行不更新只留 invalidation 事件（UQ-7）。
+4. **UQ-4 迁移回填形态**：v26→v27 单个加性迁移零回填（存量 active link 无失效历史、投影全 current），pre-guard + 行数守卫 + fresh=migrated 断言面承载。
+5. **UQ-5 失败码归宿**：五新码 `P408_INVALIDATE_LINK_NOT_ACTIVE` / `P408_CORRECTION_RESULT_INVALID` / `P408_CORRECTION_AFFECTED_POSTING_MISMATCH` / `P408_CORRECTION_PROJECTION_CONFLICT` / `P408_CORRECTION_SNAPSHOT_MISMATCH` 命名冻结，纳入 P408_* 族、correction 族独立于确认族，落入 store companion 常量区（先例 SqlDelightEvidenceProjectionStore.kt:273-285）。
+6. **UQ-6 correction snapshot**：新建 `reconciliation_correction_snapshot` 表（含 `reconciliation_correction_snapshot_guard_update/delete` 两条 ABORT 触发器，同 `reconciliation_snapshot_guard_*` 款），确认快照 `human_decision` CHECK 零变化。
+7. **UQ-7 版本替代场景的旧 posting reconciliation 行**：不更新 stale 旧行（只留 invalidation 事件），新版本 posting 走 current 报告面；与 RG-12 竖井「old fact unchanged」先例一致，不回写竖井。
+8. **UQ-8 受控 supersede 面**：`evidence_projection` 引入单列 `superseded_by_projection_id` + 部分唯一索引（`WHERE superseded_by_projection_id IS NULL`）+ 唯一合法转移触发器，为 D-112 V-1-A 每 evidence 单行终态模型的授权承接面；既有 v26 行零改写、READY/REJECTED 各行仍终态。
+
+**授权范围：** 上列 approved 规格文本为唯一 WHAT/HOW 权威：correction port（`P408CorrectionCommitPort`）与请求/指纹/幂等契约、`reconciliation_request.operation='invalidate_link'` 与 `evidence_link_history` invalidation 事件激活（reason `corrected`/`posting_replaced`）、successor link 同事务创建与单活性、「同一 evidence 一 active link」贯穿失效-替换交替期、`posting_reconciliation` 结果态（CHECKED/MISSING/DIFFERENCE）写入与 same-sequence history 配对推进、受控 supersede 投影面、`26.sqm` v26→v27 加性迁移（零回填）、TP-01..TP-17 测试矩阵全部授权实施；partial unique index 实施批先验（规格 §15 INFO 红线）为实施门前提。实施走既有高风险拓扑：独立 worktree、单一 bounded writer、独立规格/质量评审、distinct verifier、主代理最终验收；Git 写操作与合并推送归主代理。
+
+**边界：** 余额、正式交易与 report financial 维度零变化；不删行、不回溯（12 竖井零改动、D-092 不退役）；银行 parser 门仍开（D-109 O-8 / D-099:1540）；Phase 5 组合根/平台壳不开；matcher eligibility 与 D-103 approved 组合不变；产品 Clock/随机 ID 不引入；`import_evidence`/`import_source_record` 零扩展；GOLDEN_TESTS「P4-09 收口失败矩阵」本批测试锚点登记沿用 :194 语义维度行附注形态延后落盘。
+
+**实施规格：** `docs/specs/2026-08-27-p408-correction-successor-invalidation-design.md`
+**实施登记：** 未实施（本批为规格批准 + 实施授权登记；实施在独立 worktree 批落地后回填本段）。
+
+**关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`、`D-112`
