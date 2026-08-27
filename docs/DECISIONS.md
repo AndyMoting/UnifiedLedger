@@ -1833,6 +1833,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 余额、正式交易与 report financial 维度零变化；不删行、不回溯（12 竖井零改动、D-092 不退役）；银行 parser 门仍开（D-109 O-8 / D-099:1540）；Phase 5 组合根/平台壳不开；matcher eligibility 与 D-103 approved 组合不变；产品 Clock/随机 ID 不引入；`import_evidence`/`import_source_record` 零扩展；GOLDEN_TESTS「P4-09 收口失败矩阵」本批测试锚点登记沿用 :194 语义维度行附注形态延后落盘。
 
 **实施规格：** `docs/specs/2026-08-27-p408-correction-successor-invalidation-design.md`
-**实施登记：** 未实施（本批为规格批准 + 实施授权登记；实施在独立 worktree 批落地后回填本段）。
+**实施登记：** 已于 2026-08-27 按 D-113 授权范围落地（本段登记实施事实；双独立评审修复轮全闭合并 delta 收口 APPROVE，distinct verifier 终验结果待落笔、主代理将于合并前补全）：
+
+1. **实施面**：
+   - `P408CorrectionCommitPort`（新增 application 公共main 文件）：`P408CorrectLinkRequest` 请求/指纹、`P408CorrectionReason`/`P408CorrectionResultState` 枚举、`P408SuccessorLinkFacts` 与端口契约——claim-first 幂等、指纹排除输出 ID（persistence spec §2 同款）、correction 族恒 v2-only。
+   - `SqlDelightCorrectionStore`（新增 ledger-data 公共main 文件）：单事务 append invalidation 事件 +（可选）successor link + CHECKED/MISSING/DIFFERENCE 结果态推进；`invalidate_link` 等效重放返回原 receipt、changed retry 类型化冲突零写入；五新失败码常量化（`CODE_INVALIDATE_LINK_NOT_ACTIVE`/`CODE_RESULT_INVALID`/`CODE_AFFECTED_POSTING_MISMATCH`/`CODE_PROJECTION_CONFLICT`/`CODE_SNAPSHOT_MISMATCH`，companion 常量区样式取自 `SqlDelightEvidenceProjectionStore.kt`）。
+   - `SqlDelightEvidenceProjectionStore`（包内 supersede 原语）：`ensureCurrentForCorrection`——受控 supersede 转移 + 后继行同一事务、`contentEquals`（排除投影 ID）判当前权威匹配、store 层同 evidence/非自身校验；部分唯一索引与投影 PK 为 DB 级兜底。
+   - `SqlDelightP408ReconciliationStore`：回滚助手 `abortP408`/`rollbackP408`/`P408TypedRollback`/`isSqliteConstraintFailure` 转 internal 共享；符号/时间纯计算抽入新增 `P408Computation.kt` 供确认与修正两 store 共用（去整段复制）。
+   - schema：`Ledger.sq` fresh 终态 + 新 `26.sqm`（v26→v27）：`evidence_projection` 撤 `UNIQUE(ledger_id, evidence_id)`、新增 `superseded_by_projection_id` + 部分唯一索引（`WHERE superseded_by_projection_id IS NULL`）+ 唯一受控转移触发器；`reconciliation_correction_snapshot` 表 + `reconciliation_correction_snapshot_guard_update/delete` 双 guard；迁移零回填、pre-guard 表、late sentinel、stage-copy 无 RENAME（25.sqm 模板）；版本链断言 26→27 全量升迁（`Schema.version` 与 E-40/连锁迁移目标同步升至 27）。
+
+2. **披露项（评审要求显式登记）**：
+   - (a) `26.sqm` pre-guard 第 2 谓词按规格 §10 原义细化——只拒绝「非法 latest 态」（seq1 非 active、或 active-latest 追随 invalidated 前驱），放行合法 invalidated 终态；第 3 谓词（拒绝 `operation='invalidate_link'` 请求行）与 schema CHECK 冗余故移除。对齐规格原文，零 spec 文本改动。
+   - (b) 消息串匹配残差：`isSqliteConstraintFailure` 的 cannot update/delete 宽子串会把事务内任何 P4-08 触发器 ABORT 归为 `P408_RECONCILIATION_CONSTRAINT_VIOLATION`；确认/修正两写面只触碰 P4-08 行，暴露面有界，登记接受。
+   - (c) `SQLITE_BUSY` 备查：并发单赢家测试依赖 `busy_timeout=5000`；极端负载下 BUSY 类错误若逃逸需纳入稳妥重试（备查登记）。
+   - (d) 三注入点（CORRECTION_AFTER_INVALIDATION / AFTER_SUCCESSOR_LINK / AFTER_PROJECTION_SUPERCEDE）与真并发双线程同 evidence 单赢家测试已落地；败方码钉死——link/历史面 `P408_RECONCILIATION_CONSTRAINT_VIOLATION`、投影面 `P408_CORRECTION_PROJECTION_CONFLICT`。
+
+3. **验证证据**：聚焦 22/22；全量 `:ledger-data:jvmTest`、`:ledger-application:jvmTest`、`:ledger-data:verifyCommonMainLedgerDatabaseMigration`、`:ledger-data:compileAndroidMain` 四命令 + `project_docs` 全部成功（data 448→720 测试、application 269，0 失败）；双独立评审（规格 6 + 质量 8 findings）修复轮全闭合、delta 收口双 APPROVE（P408CORRIMPL-SPEC-001..006 / P408CORRIMPL-QUAL-001..008，其中 QUAL-001/002 与 SPEC-001/002 为同一缺失并入修复）；distinct verifier 独立复验结果待终验落笔（主代理将于合并前补全）。
+
+4. **边界保持**：余额/正式交易/report financial 维度零变化（TP-09 oracle 断言）；domain 模块零改动（规格 §12 登记豁免）；`GOLDEN_TESTS.md:194` 语义注记与 CURRENT_STATE 等正式文档同步仍延后主代理处理（不属本批）。
 
 **关联决定：** `D-096`、`D-098`、`D-103`、`D-105`、`D-109`、`D-110`、`D-111`、`D-112`

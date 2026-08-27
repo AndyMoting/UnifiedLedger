@@ -141,7 +141,7 @@ interface P408ReconciliationReadPort {
     fun readReconciliationReport(ledgerId: String): List<P408ReconciliationReportRow>
 }
 
-private val REQUIRED_MATCH_BASIS = setOf(
+internal val REQUIRED_MATCH_BASIS = setOf(
     "amount",
     "currency",
     "direction",

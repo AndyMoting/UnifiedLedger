@@ -97,7 +97,11 @@ class SqlDelightEvidenceProjectionStore private constructor(
             .executeAsOneOrNull()
             ?: return Resolution.Fresh(desired)
         val model = existing.toModel()
-        return Resolution.Existing(existing, matchesDesired = economicEquals(model, desired.model))
+        return Resolution.Existing(
+            row = existing,
+            matchesDesired = economicEquals(model, desired.model),
+            desired = desired,
+        )
     }
 
     /**
@@ -132,9 +136,32 @@ class SqlDelightEvidenceProjectionStore private constructor(
         Resolution.Fresh(rejectedWithoutSource(CODE_PROJECTION_ABSENT))
 
     /**
-     * Insert-only write for a fully resolved desired row. The UNIQUE(ledger,
-     * evidence) key makes concurrent double-materialization impossible without
-     * conflicting, and update/delete guards forbid any mutation afterwards.
+     * Correction-authority content matching: [economicEquals] minus projectionId.
+     * After a re-expression the CURRENT row carries a generation-suffixed
+     * projection id while the desired row keeps the base id, so projection id
+     * must not participate when the gate asks "does the current authority already
+     * express the desired target/facts".
+     */
+    private fun contentEquals(left: P408EvidenceProjection, right: P408EvidenceProjection): Boolean =
+        left.evidenceId == right.evidenceId &&
+            left.sourceId == right.sourceId &&
+            left.targetAccountId == right.targetAccountId &&
+            left.currencyCode == right.currencyCode &&
+            left.currencyPrecision == right.currencyPrecision &&
+            left.rawAmountMinor == right.rawAmountMinor &&
+            left.rawCurrencyPrecision == right.rawCurrencyPrecision &&
+            left.normalizedAmountMinor == right.normalizedAmountMinor &&
+            left.directionToken == right.directionToken &&
+            left.state == right.state &&
+            left.rejectionCode == right.rejectionCode &&
+            left.ruleId == right.ruleId &&
+            left.ruleVersion == right.ruleVersion
+
+    /**
+     * Insert-only write for a fully resolved desired row. The partial unique
+     * index over the current authorities (superseded_by_projection_id IS NULL,
+     * D-113) makes concurrent double-materialization impossible without
+     * conflicting, and the update/delete guards forbid any mutation afterwards.
      */
     internal fun insertIfAbsent(desired: Resolution.Fresh) {
         insert(desired.desired.model)
@@ -284,7 +311,15 @@ class SqlDelightEvidenceProjectionStore private constructor(
         const val CODE_PROJECTION_ABSENT = "P408_PROJECTION_ABSENT"
         const val CODE_PROJECTION_NOT_READY = "P408_PROJECTION_NOT_READY"
 
-        fun projectionIdFor(evidenceId: String): String = "proj-$evidenceId"
+        fun projectionIdFor(evidenceId: String): String = projectionIdFor(evidenceId, 1)
+
+        /**
+         * Deterministic generation-aware projection identity: the first row keeps
+         * the v26-era id shape and every controlled re-expression (D-113) appends
+         * an increasing suffix, so successor rows never collide.
+         */
+        fun projectionIdFor(evidenceId: String, generation: Int): String =
+            if (generation <= 1) "proj-$evidenceId" else "proj-$evidenceId-$generation"
     }
 
     /**
@@ -317,6 +352,70 @@ class SqlDelightEvidenceProjectionStore private constructor(
                 }
         }
 
+    /**
+     * D-113 correction-path authority (spec section 8, V-E-A): ensure the
+     * CURRENT projection for the evidence matches the desired re-expression,
+     * running inside the CALLER's active transaction.
+     *
+     * - current row content equals the desired content -> zero writes;
+     * - desired content is not READY -> NotReady with the frozen V-4 code;
+     * - current row is READY-but-different or REJECTED, and the desired row is
+     *   READY -> controlled supersede: freeze the current row through the
+     *   one-shot superseded_by_projection_id transition, then insert the
+     *   successor projection row INSIDE THIS SAME TRANSACTION. The supersede
+     *   MUST precede the insert so the partial unique index never observes two
+     *   current rows for one evidence (concurrent losers abort via the trigger
+     *   or the partial unique index instead of creating two authorities).
+     */
+    fun ensureCurrentForCorrection(request: P408MaterializationRequest): EnsureReadyResult =
+        when (val resolution = resolutionFor(request)) {
+            is Resolution.Fresh ->
+                when {
+                    resolution.desired.state == P408ProjectionState.READY -> {
+                        insertIfAbsent(resolution)
+                        EnsureReadyResult.Ready(resolution.desired.model)
+                    }
+                    else -> EnsureReadyResult.NotReady(
+                        resolution.desired.model.rejectionCode ?: CODE_SOURCE_DRIFT,
+                    )
+                }
+            is Resolution.Existing -> {
+                val model = resolution.row.toModel()
+                when {
+                    model.state == P408ProjectionState.READY && contentEquals(model, resolution.desired.model) ->
+                        EnsureReadyResult.Ready(model)
+                    resolution.desired.state != P408ProjectionState.READY ->
+                        EnsureReadyResult.NotReady(
+                            resolution.desired.model.rejectionCode ?: CODE_SOURCE_DRIFT,
+                        )
+                    else -> {
+                        // Re-expression: supersede the current row, then insert the
+                        // successor row. The generation index keeps projection ids
+                        // deterministic per serialized correction.
+                        val generation = database.ledgerQueries
+                            .selectP408EvidenceProjectionCountForEvidence(model.ledgerId, model.evidenceId)
+                            .executeAsOne() + 1L
+                        val replacement = resolution.desired.model.copy(
+                            projectionId = projectionIdFor(model.evidenceId, generation.toInt()),
+                        )
+                        // Store-level supersede integrity (QUAL-006): the successor
+                        // keeps the same evidence and is a fresh row by construction;
+                        // DB backstops are the partial unique index and the projection
+                        // PK (no trigger-level DDL beyond the approved surface).
+                        check(replacement.evidenceId == model.evidenceId) { "correction projection successor must keep the same evidence" }
+                        check(replacement.projectionId != model.projectionId) { "correction projection successor must be a fresh row" }
+                        database.ledgerQueries.supersedeP408EvidenceProjection(
+                            superseded_by_projection_id = replacement.projectionId,
+                            ledger_id = model.ledgerId,
+                            projection_id = model.projectionId,
+                        )
+                        insert(replacement)
+                        EnsureReadyResult.Ready(replacement)
+                    }
+                }
+            }
+        }
+
     sealed interface EnsureReadyResult {
         data class Ready(val projection: P408EvidenceProjection) : EnsureReadyResult
         data class NotReady(val code: String) : EnsureReadyResult
@@ -329,7 +428,11 @@ class SqlDelightEvidenceProjectionStore private constructor(
         data class Fresh(val desired: Desired) : Resolution
 
         /** Row already present; verdict compares stored content against fresh computation. */
-        data class Existing(val row: Evidence_projection, val matchesDesired: Boolean) : Resolution
+        data class Existing(
+            val row: Evidence_projection,
+            val matchesDesired: Boolean,
+            val desired: Desired,
+        ) : Resolution
     }
 
     private class ProjectionTypedRollback(val code: String) : RuntimeException()

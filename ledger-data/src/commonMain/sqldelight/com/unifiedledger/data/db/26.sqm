@@ -1,0 +1,189 @@
+-- P4-08 correction / successor invalidation batch (D-113): v26 -> v27.
+-- The caller wraps Schema.migrate in one outer transaction. Deferring FK checks
+-- lets the replaced evidence_projection parent be swapped while descendant rows
+-- survive (25.sqm staged template). Six steps (approved implementation spec
+-- section 10):
+--   1. pre-guard p408_v27_pre_guard: fail-closed invariants the rebuild relies
+--      on (per-evidence single projection row; ILLEGAL evidence_link_history
+--      latest states that violate the closed active -> invalidated transition;
+--      legal invalidated terminal rows are accepted and preserved verbatim);
+--   2. rebuild evidence_projection (drop the UNIQUE key, add the
+--      superseded_by_projection_id column, replace the update guard with the
+--      controlled-supersede trigger, add the partial unique index and re-attach
+--      evidence_projection_by_state; no RENAME swap anywhere);
+--   3. create reconciliation_correction_snapshot (+ update/delete guards);
+--   4. zero backfill: every legacy projection row is already a current
+--      authority (superseded_by_projection_id IS NULL) and the correction
+--      snapshot starts empty; nothing is guessed and nothing is synthesized;
+--   5. nothing else is touched: import rows, formal rows and the confirmation
+--      family keep zero schema-text changes;
+--   6. version advances to 27 (handled by the migration chain itself).
+PRAGMA defer_foreign_keys = 1;
+
+-- Fail-closed pre-migration data guard (25.sqm discipline, QUAL-008): abort
+-- before touching anything if legacy P4-08 rows violate the v27 invariants the
+-- rebuild relies on.
+CREATE TABLE p408_v27_pre_guard (ok INTEGER NOT NULL CHECK (ok = 1));
+INSERT INTO p408_v27_pre_guard(ok)
+SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM evidence_projection
+    GROUP BY ledger_id, evidence_id HAVING COUNT(*) != 1
+) THEN 0 ELSE 1 END;
+-- Reject only ILLEGAL latest states (spec section 10 original predicate): a
+-- sequence-1 row that is not 'active', or an 'active' latest row that follows
+-- an 'invalidated' predecessor. Legal invalidated terminals are allowed and
+-- carried over verbatim (D-113 TP-14 covers a legal-invalidation fixture).
+INSERT INTO p408_v27_pre_guard(ok)
+SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM evidence_link_history WHERE sequence = 1 AND state != 'active'
+) OR EXISTS (
+    SELECT 1
+    FROM evidence_link_history AS latest
+    WHERE latest.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+        WHERE h2.ledger_id = latest.ledger_id AND h2.link_id = latest.link_id)
+      AND latest.state = 'active'
+      AND EXISTS (SELECT 1 FROM evidence_link_history AS prior
+        WHERE prior.ledger_id = latest.ledger_id AND prior.link_id = latest.link_id
+          AND prior.sequence < latest.sequence AND prior.state = 'invalidated')
+) THEN 0 ELSE 1 END;
+
+-- Shared fail-closed row guard: every guarded INSERT below must produce ok = 1;
+-- a CHECK violation aborts the whole migration transaction (25.sqm template).
+CREATE TABLE p408_v27_row_guard (ok INTEGER NOT NULL CHECK (ok = 1));
+
+-- Step 2: rebuild evidence_projection. Column set is v26 verbatim plus the v27
+-- superseded_by_projection_id column; the stage-copy -> DROP -> CREATE -> copy
+-- back -> row guards -> stage cleanup template carries every legacy row
+-- byte-for-byte (all current: superseded_by NULL).
+CREATE TABLE evidence_projection_stage AS SELECT * FROM evidence_projection;
+DROP TRIGGER evidence_projection_guard_update;
+DROP TRIGGER evidence_projection_guard_delete;
+DROP TABLE evidence_projection;
+CREATE TABLE evidence_projection (
+  ledger_id TEXT NOT NULL,
+  projection_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  target_account_id TEXT NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  raw_amount_minor INTEGER NOT NULL CHECK (raw_amount_minor >= 0),
+  raw_currency_precision INTEGER NOT NULL CHECK (raw_currency_precision >= 0),
+  normalized_amount_minor INTEGER NOT NULL CHECK (normalized_amount_minor >= 0),
+  direction_token TEXT NOT NULL CHECK (direction_token IN ('in', 'out')),
+  state TEXT NOT NULL CHECK (state IN ('READY', 'REJECTED')),
+  rejection_code TEXT,
+  rule_id TEXT NOT NULL,
+  rule_version INTEGER NOT NULL CHECK (rule_version >= 1),
+  materialization_request_id TEXT NOT NULL,
+  materialized_at TEXT NOT NULL,
+  superseded_by_projection_id TEXT,
+  PRIMARY KEY (ledger_id, projection_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((state = 'READY' AND rejection_code IS NULL) OR (state = 'REJECTED' AND rejection_code IS NOT NULL))
+);
+INSERT INTO evidence_projection(
+  ledger_id, projection_id, evidence_id, source_id, source_hash,
+  target_account_id, currency_code, currency_precision,
+  raw_amount_minor, raw_currency_precision, normalized_amount_minor,
+  direction_token, state, rejection_code, rule_id, rule_version,
+  materialization_request_id, materialized_at, superseded_by_projection_id
+)
+SELECT
+  ledger_id, projection_id, evidence_id, source_id, source_hash,
+  target_account_id, currency_code, currency_precision,
+  raw_amount_minor, raw_currency_precision, normalized_amount_minor,
+  direction_token, state, rejection_code, rule_id, rule_version,
+  materialization_request_id, materialized_at, NULL
+FROM evidence_projection_stage;
+INSERT INTO p408_v27_row_guard(ok)
+SELECT CASE WHEN (SELECT COUNT(*) FROM evidence_projection)
+         = (SELECT COUNT(*) FROM evidence_projection_stage)
+  THEN 1 ELSE 0 END;
+DROP TABLE evidence_projection_stage;
+-- The rebuild replaced the table object; its attached indexes were dropped with
+-- it and are recreated here under the same fresh-schema names (25.sqm template).
+DROP INDEX IF EXISTS evidence_projection_by_state;
+CREATE INDEX evidence_projection_by_state ON evidence_projection(ledger_id, state);
+CREATE UNIQUE INDEX evidence_projection_current_by_evidence
+  ON evidence_projection(ledger_id, evidence_id) WHERE superseded_by_projection_id IS NULL;
+CREATE TRIGGER evidence_projection_guard_update BEFORE UPDATE ON evidence_projection BEGIN
+  SELECT CASE WHEN old.superseded_by_projection_id IS NOT NULL
+      OR new.superseded_by_projection_id IS NULL
+      OR new.ledger_id != old.ledger_id OR new.projection_id != old.projection_id
+      OR new.evidence_id != old.evidence_id OR new.source_id != old.source_id
+      OR new.source_hash != old.source_hash OR new.target_account_id != old.target_account_id
+      OR new.currency_code != old.currency_code OR new.currency_precision != old.currency_precision
+      OR new.raw_amount_minor != old.raw_amount_minor OR new.raw_currency_precision != old.raw_currency_precision
+      OR new.normalized_amount_minor != old.normalized_amount_minor OR new.direction_token != old.direction_token
+      OR new.state != old.state OR COALESCE(new.rejection_code, '') != COALESCE(old.rejection_code, '')
+      OR new.rule_id != old.rule_id OR new.rule_version != old.rule_version
+      OR new.materialization_request_id != old.materialization_request_id OR new.materialized_at != old.materialized_at
+    THEN RAISE(ABORT, 'cannot update evidence projection') END;
+END;
+CREATE TRIGGER evidence_projection_guard_delete BEFORE DELETE ON evidence_projection BEGIN SELECT RAISE(ABORT, 'cannot delete evidence projection'); END;
+
+-- Step 3: correction snapshot. Statement text matches the fresh Ledger.sq
+-- terminal definitions byte for byte; the table is empty after migration.
+CREATE TABLE reconciliation_correction_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  previous_link_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('corrected', 'posting_replaced')),
+  affected_posting_id TEXT NOT NULL,
+  result_state TEXT NOT NULL CHECK (result_state IN ('CHECKED', 'MISSING', 'DIFFERENCE')),
+  successor_link_id TEXT,
+  successor_posting_id TEXT,
+  successor_transaction_id TEXT,
+  successor_responsibility TEXT CHECK (successor_responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  successor_candidate_id TEXT,
+  successor_match_basis TEXT,
+  successor_window_days INTEGER,
+  successor_natural_day_distance INTEGER,
+  successor_source_occurred_at TEXT,
+  successor_confirmed_at TEXT,
+  successor_created_at TEXT,
+  projection_id TEXT,
+  projection_rule_id TEXT,
+  projection_rule_version INTEGER,
+  normalized_amount_minor INTEGER,
+  raw_amount_minor INTEGER,
+  raw_currency_precision INTEGER,
+  basis_version INTEGER NOT NULL CHECK (basis_version = 2),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, previous_link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (affected_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (successor_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (successor_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((result_state = 'CHECKED' AND successor_link_id IS NOT NULL AND successor_posting_id IS NOT NULL
+          AND successor_transaction_id IS NOT NULL AND successor_confirmed_at IS NOT NULL
+          AND affected_posting_id = successor_posting_id)
+      OR (result_state IN ('MISSING', 'DIFFERENCE') AND successor_link_id IS NULL
+          AND successor_posting_id IS NULL AND successor_transaction_id IS NULL))
+);
+CREATE TRIGGER reconciliation_correction_snapshot_guard_update BEFORE UPDATE ON reconciliation_correction_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update correction snapshot'); END;
+CREATE TRIGGER reconciliation_correction_snapshot_guard_delete BEFORE DELETE ON reconciliation_correction_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete correction snapshot'); END;
+INSERT INTO p408_v27_row_guard(ok)
+SELECT CASE WHEN (SELECT COUNT(*) FROM reconciliation_correction_snapshot) = 0
+  THEN 1 ELSE 0 END;
+
+-- Step 4: zero backfill. Every legacy projection row was copied back as a
+-- current authority and the correction snapshot is empty; there is no
+-- invalidation history to re-derive and no REJECTED/supersede state to
+-- synthesize, so this step is intentionally statement-free.
+
+-- Late-stage failure hook (25.sqm name-conflict template, SPEC-006): the
+-- sentinel table is created AFTER the rebuild ran, so a test-occupied
+-- p408_v27_late_sentinel name aborts the migration post-rebuild and proves the
+-- whole transaction (rebuild + new table) rolls back together.
+CREATE TABLE p408_v27_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1));
+
+-- Step 6: housekeeping; the migration chain itself advances the version to 27.
+DROP TABLE p408_v27_late_sentinel;
+DROP TABLE p408_v27_row_guard;
+DROP TABLE p408_v27_pre_guard;
