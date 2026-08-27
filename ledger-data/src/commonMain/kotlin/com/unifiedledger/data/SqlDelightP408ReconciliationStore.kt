@@ -13,8 +13,6 @@ import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.data.SqlDelightEvidenceProjectionStore.EnsureReadyResult
 import com.unifiedledger.data.db.LedgerDatabase
-import kotlin.math.abs
-import kotlin.time.Instant
 
 /**
  * RL-07 confirmation owner. The matcher remains pure; this port is the only
@@ -149,7 +147,7 @@ class SqlDelightP408ReconciliationStore private constructor(
                 .executeAsOneOrNull()
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_NOT_ELIGIBLE"))
             if (posting.ledger_id != request.ledgerId ||
-                posting.amount_minor != signedAmount(request.amountMinor, request.direction) ||
+                posting.amount_minor != P408Computation.signedAmount(request.amountMinor, request.direction) ||
                 posting.currency_code != request.currencyCode ||
                 posting.currency_precision != request.currencyPrecision.toLong() ||
                 posting.account_id != request.accountId
@@ -167,7 +165,7 @@ class SqlDelightP408ReconciliationStore private constructor(
             if (!responsibilityMatchesPostingSide) {
                 abortP408(P408ReconciliationResult.Rejected("P408_RESPONSIBILITY_POSTING_MISMATCH"))
             }
-            val actualDistance = naturalDayDistance(request.sourceOccurredAt, posting.occurred_at)
+            val actualDistance = P408Computation.naturalDayDistance(request.sourceOccurredAt, posting.occurred_at)
                 ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_UNRESOLVED"))
             if (actualDistance != request.naturalDayDistance || actualDistance > request.windowDays) {
                 abortP408(P408ReconciliationResult.Rejected("P408_POSTING_TIME_WINDOW_MISMATCH"))
@@ -351,68 +349,35 @@ class SqlDelightP408ReconciliationStore private constructor(
             ),
         )
     }
-
-    private fun signedAmount(amountMinor: Long, direction: String): Long? {
-        if (amountMinor == Long.MIN_VALUE) return null
-        val absolute = abs(amountMinor)
-        return when (direction) {
-            "out" -> -absolute
-            "in" -> absolute
-            else -> null
-        }
-    }
-
-    private fun naturalDayDistance(source: String, posting: String): Int? {
-        if (!temporalComparableRaw(source, posting)) return null
-        val sourceInstant = runCatching { Instant.parse(source) }.getOrNull() ?: return null
-        val postingInstant = runCatching { Instant.parse(posting) }.getOrNull() ?: return null
-        val localOffsetSeconds = P408Matcher.DEFAULT_LOCAL_OFFSET_SECONDS
-        val sourceDay = floorDivEpochSeconds(sourceInstant.epochSeconds + localOffsetSeconds)
-        val postingDay = floorDivEpochSeconds(postingInstant.epochSeconds + localOffsetSeconds)
-        val distance = kotlin.math.abs(sourceDay - postingDay)
-        return distance.takeIf { it <= Int.MAX_VALUE.toLong() }?.toInt()
-    }
-
-    private fun temporalComparableRaw(source: String, posting: String): Boolean {
-        val sourceHasOffset = hasExplicitOffset(source)
-        val postingHasOffset = hasExplicitOffset(posting)
-        if (!sourceHasOffset || !postingHasOffset) return false
-        return temporalShape(source) == temporalShape(posting)
-    }
-
-    private fun hasExplicitOffset(value: String): Boolean = value.endsWith('Z') ||
-        (value.length >= 6 && value[value.length - 6] in setOf('+', '-') && value[value.length - 3] == ':')
-
-    private fun temporalShape(value: String): String = buildString(value.length) {
-        value.forEach { append(if (it in '0'..'9') '#' else it) }
-    }
-
-    private fun floorDivEpochSeconds(value: Long): Long {
-        val quotient = value / SECONDS_PER_DAY
-        return if (value % SECONDS_PER_DAY < 0) quotient - 1 else quotient
-    }
-
-    private companion object {
-        const val SECONDS_PER_DAY: Long = 24 * 60 * 60
-    }
 }
 
-private class P408TypedRollback(val result: Any) : RuntimeException()
+internal class P408TypedRollback(val result: Any) : RuntimeException()
 
-private fun abortP408(result: Any): Nothing = throw P408TypedRollback(result)
+internal fun abortP408(result: Any): Nothing = throw P408TypedRollback(result)
 
-private inline fun <T> rollbackP408(block: () -> T): T = try {
+internal inline fun <T> rollbackP408(block: () -> T): T = try {
     block()
 } catch (failure: P408TypedRollback) {
     @Suppress("UNCHECKED_CAST")
     failure.result as T
 }
 
-private fun isSqliteConstraintFailure(failure: Throwable): Boolean {
+internal fun isSqliteConstraintFailure(failure: Throwable): Boolean {
     var current: Throwable? = failure
     while (current != null) {
         val message = current.message ?: ""
-        if (message.contains("constraint failed")) return true
+        if (
+            message.contains("constraint failed") ||
+                message.contains("cannot update") ||
+                message.contains("cannot delete") ||
+                message.contains("evidence link history sequence") ||
+                message.contains("evidence link history transition") ||
+                message.contains("posting reconciliation sequence") ||
+                message.contains("posting reconciliation evidence link target") ||
+                message.contains("posting reconciliation current projection")
+        ) {
+            return true
+        }
         current = current.cause
     }
     return false

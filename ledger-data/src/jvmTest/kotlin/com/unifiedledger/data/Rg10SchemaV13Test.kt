@@ -17,7 +17,7 @@ class Rg10SchemaV13Test {
         try {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                assertEquals(26, LedgerDatabase.Schema.version)
+                assertEquals(27, LedgerDatabase.Schema.version)
                 val database = LedgerDatabase(driver)
                 seedFormal(database, "recharge", "STORED_VALUE_RECHARGE", 120_000L)
                 seedFormal(database, "spend", "STORED_VALUE_SPEND", -30_000L)
@@ -58,7 +58,7 @@ class Rg10SchemaV13Test {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(26, LedgerDatabase.Schema.version)
+            assertEquals(27, LedgerDatabase.Schema.version)
             assertEquals(0L, database.ledgerQueries.selectRg10AllOperations("ledger-a").executeAsList().size.toLong())
             assertEquals(0L, database.ledgerQueries.selectRg10AllLots("ledger-a").executeAsList().size.toLong())
             assertEquals(0L, database.ledgerQueries.selectRg10AllCandidates("ledger-a").executeAsList().size.toLong())

@@ -7833,13 +7833,13 @@ CREATE TABLE posting_reconciliation_history (
 );
 CREATE INDEX posting_reconciliation_history_by_link ON posting_reconciliation_history(ledger_id, evidence_link_id);
 
--- P4-08 normalized evidence projection surface: additive v26 terminal state.
--- One immutable projection authority per evidence (UQ-1): READY/REJECTED are
--- both terminal and UPDATE/DELETE are unconditionally aborted; raw source
--- facts stay untouched (D-111) and the normalized pair is exact integer
--- arithmetic only. target_account_id is a decision-field account reference in
--- the same style as reconciliation_request_snapshot.account_id (no registry
--- FK); integrity is carried by the explicit confirmation binding.
+-- P4-08 normalized evidence projection surface: v26 terminal state, v27
+-- controlled supersede extension (D-113). Each evidence has at most one CURRENT
+-- projection authority: rows are immutable terminal facts (README: every row is
+-- READY/REJECTED terminal), and the only legal UPDATE is the one-shot supersede
+-- transition that marks a row as superseded_by_projection_id (all other columns
+-- must stay unchanged). The UNIQUE key is expressed as a partial unique index
+-- over the current rows (superseded_by_projection_id IS NULL).
 CREATE TABLE evidence_projection (
   ledger_id TEXT NOT NULL,
   projection_id TEXT NOT NULL,
@@ -7859,15 +7859,75 @@ CREATE TABLE evidence_projection (
   rule_version INTEGER NOT NULL CHECK (rule_version >= 1),
   materialization_request_id TEXT NOT NULL,
   materialized_at TEXT NOT NULL,
+  superseded_by_projection_id TEXT,
   PRIMARY KEY (ledger_id, projection_id),
-  UNIQUE (ledger_id, evidence_id),
   FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id) DEFERRABLE INITIALLY DEFERRED,
   CHECK ((state = 'READY' AND rejection_code IS NULL) OR (state = 'REJECTED' AND rejection_code IS NOT NULL))
 );
 CREATE INDEX evidence_projection_by_state ON evidence_projection(ledger_id, state);
-CREATE TRIGGER evidence_projection_guard_update BEFORE UPDATE ON evidence_projection BEGIN SELECT RAISE(ABORT, 'cannot update evidence projection'); END;
+CREATE UNIQUE INDEX evidence_projection_current_by_evidence
+  ON evidence_projection(ledger_id, evidence_id) WHERE superseded_by_projection_id IS NULL;
+CREATE TRIGGER evidence_projection_guard_update BEFORE UPDATE ON evidence_projection BEGIN
+  SELECT CASE WHEN old.superseded_by_projection_id IS NOT NULL
+      OR new.superseded_by_projection_id IS NULL
+      OR new.ledger_id != old.ledger_id OR new.projection_id != old.projection_id
+      OR new.evidence_id != old.evidence_id OR new.source_id != old.source_id
+      OR new.source_hash != old.source_hash OR new.target_account_id != old.target_account_id
+      OR new.currency_code != old.currency_code OR new.currency_precision != old.currency_precision
+      OR new.raw_amount_minor != old.raw_amount_minor OR new.raw_currency_precision != old.raw_currency_precision
+      OR new.normalized_amount_minor != old.normalized_amount_minor OR new.direction_token != old.direction_token
+      OR new.state != old.state OR COALESCE(new.rejection_code, '') != COALESCE(old.rejection_code, '')
+      OR new.rule_id != old.rule_id OR new.rule_version != old.rule_version
+      OR new.materialization_request_id != old.materialization_request_id OR new.materialized_at != old.materialized_at
+    THEN RAISE(ABORT, 'cannot update evidence projection') END;
+END;
 CREATE TRIGGER evidence_projection_guard_delete BEFORE DELETE ON evidence_projection BEGIN SELECT RAISE(ABORT, 'cannot delete evidence projection'); END;
+
+-- P4-08 correction / successor invalidation surface (D-113): v27 additive.
+-- One append-only correction snapshot per invalidate_link request; basis_version
+-- is frozen to 2 (the correction family is v2-only by construction).
+CREATE TABLE reconciliation_correction_snapshot (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  previous_link_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('corrected', 'posting_replaced')),
+  affected_posting_id TEXT NOT NULL,
+  result_state TEXT NOT NULL CHECK (result_state IN ('CHECKED', 'MISSING', 'DIFFERENCE')),
+  successor_link_id TEXT,
+  successor_posting_id TEXT,
+  successor_transaction_id TEXT,
+  successor_responsibility TEXT CHECK (successor_responsibility IN ('real_account_posting', 'destination_asset_posting')),
+  successor_candidate_id TEXT,
+  successor_match_basis TEXT,
+  successor_window_days INTEGER,
+  successor_natural_day_distance INTEGER,
+  successor_source_occurred_at TEXT,
+  successor_confirmed_at TEXT,
+  successor_created_at TEXT,
+  projection_id TEXT,
+  projection_rule_id TEXT,
+  projection_rule_version INTEGER,
+  normalized_amount_minor INTEGER,
+  raw_amount_minor INTEGER,
+  raw_currency_precision INTEGER,
+  basis_version INTEGER NOT NULL CHECK (basis_version = 2),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES reconciliation_request(ledger_id, request_id),
+  FOREIGN KEY (ledger_id, evidence_id) REFERENCES import_evidence(ledger_id, evidence_id),
+  FOREIGN KEY (ledger_id, previous_link_id) REFERENCES evidence_link(ledger_id, link_id),
+  FOREIGN KEY (affected_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (successor_posting_id, ledger_id) REFERENCES posting(posting_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (successor_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((result_state = 'CHECKED' AND successor_link_id IS NOT NULL AND successor_posting_id IS NOT NULL
+          AND successor_transaction_id IS NOT NULL AND successor_confirmed_at IS NOT NULL
+          AND affected_posting_id = successor_posting_id)
+      OR (result_state IN ('MISSING', 'DIFFERENCE') AND successor_link_id IS NULL
+          AND successor_posting_id IS NULL AND successor_transaction_id IS NULL))
+);
+CREATE TRIGGER reconciliation_correction_snapshot_guard_update BEFORE UPDATE ON reconciliation_correction_snapshot BEGIN SELECT RAISE(ABORT, 'cannot update correction snapshot'); END;
+CREATE TRIGGER reconciliation_correction_snapshot_guard_delete BEFORE DELETE ON reconciliation_correction_snapshot BEGIN SELECT RAISE(ABORT, 'cannot delete correction snapshot'); END;
 
 CREATE TRIGGER reconciliation_request_guard_update BEFORE UPDATE ON reconciliation_request BEGIN
   SELECT CASE WHEN old.outcome != 'PENDING'
@@ -8265,8 +8325,37 @@ SELECT ledger_id, projection_id, evidence_id, source_id, source_hash,
   target_account_id, currency_code, currency_precision,
   raw_amount_minor, raw_currency_precision, normalized_amount_minor,
   direction_token, state, rejection_code, rule_id, rule_version,
-  materialization_request_id, materialized_at
-FROM evidence_projection WHERE ledger_id = ? AND evidence_id = ?;
+  materialization_request_id, materialized_at, superseded_by_projection_id
+FROM evidence_projection WHERE ledger_id = ? AND evidence_id = ?
+  AND superseded_by_projection_id IS NULL;
+
+selectP408EvidenceProjectionCountForEvidence:
+SELECT count(*) FROM evidence_projection WHERE ledger_id = ? AND evidence_id = ?;
+
+supersedeP408EvidenceProjection:
+UPDATE evidence_projection SET superseded_by_projection_id = ?
+WHERE ledger_id = ? AND projection_id = ?;
+
+selectP408CorrectionPredecessor:
+SELECT link.evidence_id, link.posting_id, link.transaction_id,
+  history.state AS latest_state,
+  history.sequence AS latest_sequence
+FROM evidence_link AS link
+JOIN evidence_link_history AS history
+  ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+WHERE link.ledger_id = ? AND link.link_id = ?
+  AND history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+    WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id);
+
+insertP408CorrectionSnapshot:
+INSERT INTO reconciliation_correction_snapshot(
+  ledger_id, request_id, evidence_id, previous_link_id, reason, affected_posting_id, result_state,
+  successor_link_id, successor_posting_id, successor_transaction_id, successor_responsibility,
+  successor_candidate_id, successor_match_basis, successor_window_days, successor_natural_day_distance,
+  successor_source_occurred_at, successor_confirmed_at, successor_created_at,
+  projection_id, projection_rule_id, projection_rule_version,
+  normalized_amount_minor, raw_amount_minor, raw_currency_precision, basis_version
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectP408PostingIntegrity:
 SELECT DISTINCT p.posting_id, p.ledger_id, p.amount_minor, p.currency_code, p.currency_precision,

@@ -166,7 +166,7 @@ class P409SingleChainMigrationTest {
             }
             // Stage 11: v25 — the credit/mixed structures and the v3 kind rebuild.
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 26) }
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 24, 27) }
                 // Stage 12: v25 rows — three v3 kinds with candidates and profiles; the
                 // credit expense row exercises the funding-omittable insert shape.
                 driver.execute(null, "INSERT INTO import_request VALUES ('$ledger','request-mig-v5c','intake')", 0)
