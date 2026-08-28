@@ -1903,6 +1903,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 4. **fixture 与 oracle**：CMB 主批 17 行 + batch-h 19 行（接受 token 每类 ≥2 例 + 边界覆盖）、CCB 18 行 + 变体批；解析级 P-01..P-42、端到端 E-01..E-12、余额镜像 B-01..B-04、回归 R-01/R-02。
 5. **边界**：不做 PDF/其他银行/信用卡（未提供样本）；不引入 matcher 新语义（D-103 组合不变）；不引入产品 Clock/随机 ID；schema 预期零变更（余额镜像零持久化，观察持久化留后续独立批）；provider DTO 零引入；`note` severity 值域扩展按 D-098:1516 追加注册。
 
+**契约修订登记：** 用户于 2026-08-29 接受 E-11 双形状门契约修订；spec 冻结 SHA-256（UTF-8+LF 规范域，与原冻结同域可比）由 `515dc342a6068e5c73ab043c1985d03851d5c47aa16f015d15796a545b9e9555` 更新为 `15ef5d6101339758c8788852c9fc823d3d92605019e9bc3c6a14a49edb470ee1`（修订文件 git blob SHA-1 = `82a2a741f4e5e949e183bac671143279b6129826`）。银行原始 parser fact 保留来源契约的 `+08:00` 形状；仅在进入既有 `confirmLink` 前由镜像适配层将同一时刻规范化为 UTC `Z` 形。P4-08 既有语义与实现零改动。实现测试已钉死拒绝路径（原始 `+08:00` 形状进入 `confirmLink` 被 `P408_POSTING_TIME_UNRESOLVED` 拒绝且零写入）与成功路径（前置 `Z` 规范化后经既有 `confirmLink` + D-112 READY projection 完整链），并保持单笔正式转账、`CHECKED`、零第二笔/零收入不变量。该登记不改原批准内容，仅记录本次契约修订。
+
 **实施登记：** 待实施批。本决定批准契约，不授权实施；实施批以本冻结 spec 为唯一 WHAT/HOW 权威，走独立 worktree、单一 writer、独立规格/质量双评审、distinct verifier、主代理验收的高风险拓扑。
 
 **关联决定：** `D-014`、`D-020`、`D-031`、`D-032`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-109`、`D-111`、`D-112`

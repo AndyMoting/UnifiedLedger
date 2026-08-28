@@ -1,6 +1,6 @@
 # BP-01 银行 parser 门承接批（招商银行网银 CSV + 建设银行网银 XLS）设计契约
 
-**Status:** approved — 本文件为 BP-01 设计契约（D-096/IMPORT-001 契约优先纪律：先定契约，后写代码）。经独立规格评审（B-1/M-1..M-3/m-1..m-6 全部闭环，终局 APPROVE）与用户 2026-08-28 裁决后批准；主代理登记 D-116。本文件只写设计，不含实现；实现由后续实施批在独立 worktree 执行。
+**Status:** approved — 本文件为 BP-01 设计契约（D-096/IMPORT-001 契约优先纪律：先定契约，后写代码）。经独立规格评审（B-1/M-1..M-3/m-1..m-6 全部闭环，终局 APPROVE）与用户 2026-08-28 裁决后批准；主代理登记 D-116。**当前冻结说明：本次契约修订仅冻结 E-11 双形状门（银行原始解析事实保留 `+08:00`；进入既有 `confirmLink` 前由镜像适配层规范化为 UTC `Z` 形），仍为 approved；修订后的冻结 SHA-256 已在 D-116 契约修订登记中更新。** 本文件只写设计，不含实现；实现由后续实施批在独立 worktree 执行。
 
 **Scope:** 冻结 BP-01（D-109 O-8「银行 parser 门」延期维度的承接批）的设计契约：两个来源格式（招商银行网银 CSV、建设银行网银 XLS）的中性格式契约、五类事实映射、方向判定 fail-closed 规则、类型路由矩阵（普通收支 / 明确转账提现 / 其余 fail-closed）、余额镜像（余额锚点/对账维度）、匿名 fixture 规格、oracle 面（解析级 + spine 端到端代表路径 + 余额镜像断言）、实现边界与 schema 预期，以及决策草案 D-116 附录。用户 2026-08-28 裁决的范围 = 普通收支 formalization + 余额镜像 + 明确转账/提现路由；其余类型 fail-closed 拒绝并登记。
 
@@ -290,7 +290,7 @@
 - P-01…P-17（CMB 主批 R1-R17 逐行）：facts 字段级、completeness、诊断 code/severity/scope/location、零 record/零写入；R11 同时断言 valid_complete + 连续性诊断（非阻断）；R12-R15 零 record 与诊断码钉死；R9/R10 拒行零 record。
 - P-18 整批 CMB 主批：outcome = `partial`；11 条 valid_complete 记录（R1-R8、R11、R16、R17）；拒行行（R9/R10）与 record_error 行（R12/R13/R14/R15）零 record；诊断 multiset 钉死 = {R9: REFUND、R10: UNKNOWN、R11: BALANCE_CONTINUITY、R12: FIELD_AMOUNT_INVALID、R13: FIELD_TIME_INVALID、R14: CONFLICTING_SOURCE_FACTS、R15: FIELD_AMOUNT_INVALID}（7 条）。
 - P-19…P-30：CMB 变体批（§4.2 各 input ref，含 `batch-bp01-cmb-h` 的 19 行逐行路由与整批 partial 断言）。
-- P-31…P-49：CCB 主批 B1-B18 逐行 + 整批 outcome（`partial`；拒行 B9/B10 与 record_error B12/B13/B14 零 record；B11 valid_complete + SPINE_BANK_BALANCE_CONTINUITY 并存；诊断 multiset 钉死 = {B9: UNKNOWN、B10: REFUND、B11: BALANCE_CONTINUITY、B12: FIELD_AMOUNT_INVALID、B13: FIELD_TIME_INVALID、B14: FIELD_AMOUNT_INVALID}）+ CCB 变体批（§4.4）。
+- P-31…P-49：CCB 主批 B1-B18 逐行 + 整批 outcome（`partial`；拒行 B9/B10 与 record_error B12/B13/B14 零 record；B11 valid_complete + SPINE_BANK_BALANCE_CONTINUITY 并存；诊断 multiset 钉死 = {B8: REQUIRED_FACT_UNRESOLVED、B9: UNKNOWN、B10: REFUND、B11: BALANCE_CONTINUITY、B12: FIELD_AMOUNT_INVALID、B13: FIELD_TIME_INVALID、B14: FIELD_AMOUNT_INVALID}）+ CCB 变体批（§4.4）。
 - P-50…P-53：CCB 变体批（§4.4）。
 - P-54 余额连续性向量：CMB 降序不变量与 CCB 升序不变量分别对全部合法行断言（零失配，除刻意失配行；拒行行仍按原始行口径参与、record_error 行不参与，§2.3 第 3 条）；日期边界（月初/月末/闰日）与同日多行时序向量。
 - P-55 隐私断言：标题区/注释块（含掩码账号、户名）、附言、备注、对方账号与户名等非持久化列的值集合与解析输出/诊断/日志字符串集合不相交（对齐 P4-03 M-01/P4-05 P-18）。
@@ -321,8 +321,8 @@
 
 ### 5.4 RL-07 镜像代表路径（E 系列延伸，复用既有 P4-08 链）
 
-- E-11（两端一笔正式转账）：在独立账本 `ledger-bp01-mirror`，先按 P4-04 语义确认微信侧零钱提现行（具名 fixture：`零钱提现` 支出 `10.00`、occurred_at = `20260824T09:00:00+08:00`——与 CCB B3（银联入账 +10.00、交易日期 20260825）镜像同额，且落在 P4-08 matcher 默认 ±2 自然日窗内；wallet=from、bank=to）→ 形成一笔正式转账（bank posting 已存在）；再 intake 银行侧对应行（CCB B3 形状：银联入账 + 附言 微信零钱提现）→ 候选生成；对银行侧 evidence 走既有 P4-08 `confirmLink`（D-112 同事务首步惰性物化 READY evidence projection + 显式目标绑定 = account-asset-bank）→ evidence link 建立、转账的 bank posting 对账状态推进为 CHECKED；**零第二笔正式转账、零第二笔收入**；等价重放 no_change。
-- E-12（镜像后候选处置）：E-11 中银行侧候选的 formalization 阻断语义（P4-07 duplicate 阻断 `SPINE_DUPLICATE_NOT_CONFIRMABLE` 或用户显式 reject）作为实施批决定（§6 第 4 条）；oracle 断言正式交易计数为 1、posting 对账状态与 evidence link 行集合与 P4-08/P4-09 RL-07 平台侧锚点同构（`P409PhaseClosureFullStateOracleTest.rl07PlatformSideMirrorSubsetZeroSecondTransaction` 先例）。
+- E-11（两端一笔正式转账，双形状门）：在独立账本 `ledger-bp01-mirror`，先按 P4-04 语义确认微信侧零钱提现行（具名 fixture：`零钱提现` 支出 `10.00`、occurred_at = `20260824T09:00:00+08:00`——与 CCB B3（银联入账 +10.00、交易日期 20260825）镜像同额，且落在 P4-08 matcher 默认 ±2 自然日窗内；wallet=from、bank=to）→ 形成一笔正式转账（bank posting 已存在）；再 intake 银行侧对应行（CCB B3 形状：银联入账 + 附言 微信零钱提现）→ 银行原始 parser 事实按来源契约原样保留 `occurred_at = 20260825T00:00:00+08:00`，不由 parser 改写；原始事实直接进入既有 P4-08 `confirmLink` 时，按 P4-08 既有语义因 `P408_POSTING_TIME_UNRESOLVED` 拒绝且零写入；仅由镜像适配层在进入既有 `confirmLink` 前，将同一时刻规范化为 UTC `Z` 形（`20260824T16:00:00Z`），随后走既有 `confirmLink` + D-112 READY projection 完整链（同事务首步惰性物化 READY evidence projection + 显式目标绑定 = account-asset-bank）→ evidence link 建立、转账的 bank posting 对账状态推进为 CHECKED；**零第二笔正式转账、零第二笔收入**；等价重放 no_change。P4-08 既有语义与实现零改动。
+- E-12（镜像后候选处置，拒绝/完整双路径）：对 E-11 的银行侧候选，原始 `+08:00` 形状直接进入既有 `confirmLink` 的路径以 `P408_POSTING_TIME_UNRESOLVED` 拒绝且零写入；镜像适配层在确认前规范化为 UTC `Z` 形后，走既有 `confirmLink` + D-112 READY projection 完整链并成功建立 evidence link、推进 CHECKED。完整路径的 formalization 仍阻断（P4-07 duplicate 阻断 `SPINE_DUPLICATE_NOT_CONFIRMABLE`）或允许用户显式 reject；两种处置均断言正式交易计数为 1、零第二笔正式转账、零第二笔收入，posting 对账状态与 evidence link 行集合与 P4-08/P4-09 RL-07 平台侧锚点同构（`P409PhaseClosureFullStateOracleTest.rl07PlatformSideMirrorSubsetZeroSecondTransaction` 先例）。
 
 ### 5.5 回归（R 系列）
 
