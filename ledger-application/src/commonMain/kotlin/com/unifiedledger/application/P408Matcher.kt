@@ -125,76 +125,90 @@ class P408Matcher(
         if (!validFundingFacts(evidence)) {
             return P408MatchResult(evidence.evidenceId, P408MatchDisposition.UNRESOLVED, emptyList(), "funding_facts_unresolved")
         }
-        val fundingCandidates = postings
-            .asSequence()
-            .filter { posting -> posting.ledgerId == evidence.ledgerId }
-            .filter { posting -> posting.transactionLedgerId == evidence.ledgerId }
-            .filter { posting -> posting.postingId.isNotBlank() && posting.transactionId.isNotBlank() }
-            .filter { posting -> validFundingFacts(posting) }
-            .filter { posting -> posting.eligibleRealAccount && posting.current }
-            .filter { posting -> sameFundingFacts(evidence, posting) }
-            .toList()
-        val hasUnresolvedTime = fundingCandidates.any { posting ->
-            !temporalComparable(evidence.occurredAt, posting.occurredAt)
-        }
-        val candidates = fundingCandidates
-            .asSequence()
-            .mapNotNull { posting ->
-                val evidenceTime = evidence.occurredAt
-                val postingTime = posting.occurredAt
-                if (!temporalComparable(evidenceTime, postingTime)) return@mapNotNull null
-                val distance = naturalDayDistance(
-                    checkNotNull(evidenceTime.instant),
-                    checkNotNull(postingTime.instant),
-                )
-                if (distance > windowDays) return@mapNotNull null
-                P408MatchCandidate(
-                    posting = posting,
-                    basis = P408MatchBasis(
-                        fields = MATCH_FIELDS,
-                        naturalDayDistance = distance,
-                        windowDays = windowDays,
-                    ),
-                )
+        val fundingCandidates =
+            postings
+                .asSequence()
+                .filter { posting -> posting.ledgerId == evidence.ledgerId }
+                .filter { posting -> posting.transactionLedgerId == evidence.ledgerId }
+                .filter { posting -> posting.postingId.isNotBlank() && posting.transactionId.isNotBlank() }
+                .filter { posting -> validFundingFacts(posting) }
+                .filter { posting -> posting.eligibleRealAccount && posting.current }
+                .filter { posting -> sameFundingFacts(evidence, posting) }
+                .toList()
+        val hasUnresolvedTime =
+            fundingCandidates.any { posting ->
+                !temporalComparable(evidence.occurredAt, posting.occurredAt)
             }
-            .sortedBy { it.posting.postingId }
-            .toList()
+        val candidates =
+            fundingCandidates
+                .asSequence()
+                .mapNotNull { posting ->
+                    val evidenceTime = evidence.occurredAt
+                    val postingTime = posting.occurredAt
+                    if (!temporalComparable(evidenceTime, postingTime)) return@mapNotNull null
+                    val distance =
+                        naturalDayDistance(
+                            checkNotNull(evidenceTime.instant),
+                            checkNotNull(postingTime.instant),
+                        )
+                    if (distance > windowDays) return@mapNotNull null
+                    P408MatchCandidate(
+                        posting = posting,
+                        basis =
+                            P408MatchBasis(
+                                fields = MATCH_FIELDS,
+                                naturalDayDistance = distance,
+                                windowDays = windowDays,
+                            ),
+                    )
+                }.sortedBy { it.posting.postingId }
+                .toList()
 
-        val disposition = when {
-            candidates.size > 1 -> P408MatchDisposition.AMBIGUOUS
-            hasUnresolvedTime -> P408MatchDisposition.UNRESOLVED
-            candidates.size == 1 -> P408MatchDisposition.PROPOSED_MATCH
-            else -> P408MatchDisposition.UNRESOLVED
-        }
-        val reason = when {
-            candidates.size > 1 -> "ambiguous_multiple_candidates"
-            hasUnresolvedTime -> "source_time_unresolved"
-            candidates.isNotEmpty() -> null
-            else -> "no_unique_funding_candidate"
-        }
+        val disposition =
+            when {
+                candidates.size > 1 -> P408MatchDisposition.AMBIGUOUS
+                hasUnresolvedTime -> P408MatchDisposition.UNRESOLVED
+                candidates.size == 1 -> P408MatchDisposition.PROPOSED_MATCH
+                else -> P408MatchDisposition.UNRESOLVED
+            }
+        val reason =
+            when {
+                candidates.size > 1 -> "ambiguous_multiple_candidates"
+                hasUnresolvedTime -> "source_time_unresolved"
+                candidates.isNotEmpty() -> null
+                else -> "no_unique_funding_candidate"
+            }
         return P408MatchResult(evidence.evidenceId, disposition, candidates, reason)
     }
 
     private fun sameFundingFacts(
         evidence: P408EvidenceFacts,
         posting: P408PostingFacts,
-    ): Boolean = signedAmount(evidence.amountMinor, evidence.direction) == posting.amountMinor &&
-        evidence.currencyCode == posting.currencyCode &&
-        evidence.currencyPrecision == posting.currencyPrecision &&
-        evidence.direction == posting.direction &&
-        evidence.accountId == posting.accountId &&
-        evidence.direction in DIRECTIONS
+    ): Boolean =
+        signedAmount(evidence.amountMinor, evidence.direction) == posting.amountMinor &&
+            evidence.currencyCode == posting.currencyCode &&
+            evidence.currencyPrecision == posting.currencyPrecision &&
+            evidence.direction == posting.direction &&
+            evidence.accountId == posting.accountId &&
+            evidence.direction in DIRECTIONS
 
     private fun validFundingFacts(evidence: P408EvidenceFacts): Boolean =
-        evidence.amountMinor >= 0 && evidence.accountId.isNotBlank() &&
-            evidence.currencyCode.isNotBlank() && evidence.currencyPrecision >= 0 &&
+        evidence.amountMinor >= 0 &&
+            evidence.accountId.isNotBlank() &&
+            evidence.currencyCode.isNotBlank() &&
+            evidence.currencyPrecision >= 0 &&
             evidence.direction in DIRECTIONS
 
     private fun validFundingFacts(posting: P408PostingFacts): Boolean =
-        posting.accountId.isNotBlank() && posting.currencyCode.isNotBlank() &&
-            posting.currencyPrecision >= 0 && posting.direction in DIRECTIONS
+        posting.accountId.isNotBlank() &&
+            posting.currencyCode.isNotBlank() &&
+            posting.currencyPrecision >= 0 &&
+            posting.direction in DIRECTIONS
 
-    private fun signedAmount(amountMinor: Long, direction: String): Long? {
+    private fun signedAmount(
+        amountMinor: Long,
+        direction: String,
+    ): Long? {
         if (amountMinor == Long.MIN_VALUE) return null
         val absolute = kotlin.math.abs(amountMinor)
         return when (direction) {
@@ -207,42 +221,56 @@ class P408Matcher(
     private fun temporalComparable(
         evidence: P408TemporalEvidence,
         posting: P408TemporalEvidence,
-    ): Boolean = evidence.kind in TEMPORAL_KINDS &&
-        posting.kind == evidence.kind &&
-        temporalKindMatchesToken(evidence) &&
-        temporalKindMatchesToken(posting) &&
-        temporalShape(evidence.rawText) == temporalShape(posting.rawText) &&
-        evidence.components != null &&
-        posting.components != null &&
-        componentsMatchRawText(evidence) &&
-        componentsMatchRawText(posting) &&
-        evidence.offsetPresent && posting.offsetPresent &&
-        evidence.instant != null && posting.instant != null &&
-        parsedInstantMatches(evidence) && parsedInstantMatches(posting)
+    ): Boolean =
+        evidence.kind in TEMPORAL_KINDS &&
+            posting.kind == evidence.kind &&
+            temporalKindMatchesToken(evidence) &&
+            temporalKindMatchesToken(posting) &&
+            temporalShape(evidence.rawText) == temporalShape(posting.rawText) &&
+            evidence.components != null &&
+            posting.components != null &&
+            componentsMatchRawText(evidence) &&
+            componentsMatchRawText(posting) &&
+            evidence.offsetPresent &&
+            posting.offsetPresent &&
+            evidence.instant != null &&
+            posting.instant != null &&
+            parsedInstantMatches(evidence) &&
+            parsedInstantMatches(posting)
 
     private fun temporalKindMatchesToken(temporal: P408TemporalEvidence): Boolean {
-        val hasExplicitOffset = temporal.rawText.endsWith('Z') ||
-            (temporal.rawText.length >= 6 &&
-                temporal.rawText[temporal.rawText.length - 6] in setOf('+', '-') &&
-                temporal.rawText[temporal.rawText.length - 3] == ':')
+        val hasExplicitOffset =
+            temporal.rawText.endsWith('Z') ||
+                (
+                    temporal.rawText.length >= 6 &&
+                        temporal.rawText[temporal.rawText.length - 6] in setOf('+', '-') &&
+                        temporal.rawText[temporal.rawText.length - 3] == ':'
+                )
         return when (temporal.kind) {
             "offset_datetime" -> temporal.offsetPresent && hasExplicitOffset
             else -> false
         }
     }
 
-    private fun temporalShape(rawText: String): String = buildString(rawText.length) {
-        rawText.forEach { character ->
-            append(if (character in '0'..'9') '#' else character)
+    private fun temporalShape(rawText: String): String =
+        buildString(rawText.length) {
+            rawText.forEach { character ->
+                append(if (character in '0'..'9') '#' else character)
+            }
         }
-    }
 
     private fun componentsMatchRawText(temporal: P408TemporalEvidence): Boolean {
         val components = temporal.components ?: return false
         val raw = temporal.rawText
-        if (raw.length < 19 || raw[4] != '-' || raw[7] != '-' || raw[10] != 'T' ||
-            raw[13] != ':' || raw[16] != ':'
-        ) return false
+        if (raw.length < 19 ||
+            raw[4] != '-' ||
+            raw[7] != '-' ||
+            raw[10] != 'T' ||
+            raw[13] != ':' ||
+            raw[16] != ':'
+        ) {
+            return false
+        }
         return component(raw, 0, 4) == components.year &&
             component(raw, 5, 7) == components.month &&
             component(raw, 8, 10) == components.day &&
@@ -251,15 +279,21 @@ class P408Matcher(
             component(raw, 17, 19) == components.second
     }
 
-    private fun component(raw: String, start: Int, end: Int): Int? {
+    private fun component(
+        raw: String,
+        start: Int,
+        end: Int,
+    ): Int? {
         val value = raw.substring(start, end)
         return if (value.all { it in '0'..'9' }) value.toInt() else null
     }
 
-    private fun parsedInstantMatches(temporal: P408TemporalEvidence): Boolean =
-        runCatching { Instant.parse(temporal.rawText) == temporal.instant }.getOrDefault(false)
+    private fun parsedInstantMatches(temporal: P408TemporalEvidence): Boolean = runCatching { Instant.parse(temporal.rawText) == temporal.instant }.getOrDefault(false)
 
-    private fun naturalDayDistance(left: Instant, right: Instant): Long {
+    private fun naturalDayDistance(
+        left: Instant,
+        right: Instant,
+    ): Long {
         val leftDay = floorDivEpochSeconds(left.epochSeconds + localOffsetSeconds)
         val rightDay = floorDivEpochSeconds(right.epochSeconds + localOffsetSeconds)
         return kotlin.math.abs(leftDay - rightDay)
@@ -274,13 +308,14 @@ class P408Matcher(
         const val DEFAULT_WINDOW_DAYS: Int = 2
         const val DEFAULT_LOCAL_OFFSET_SECONDS: Long = 8 * 60 * 60
 
-        val MATCH_FIELDS: Set<String> = setOf(
-            "amount",
-            "currency",
-            "direction",
-            "account",
-            "occurred_at_window",
-        )
+        val MATCH_FIELDS: Set<String> =
+            setOf(
+                "amount",
+                "currency",
+                "direction",
+                "account",
+                "occurred_at_window",
+            )
 
         private val DIRECTIONS = setOf("in", "out")
         private val TEMPORAL_KINDS = setOf("offset_datetime")

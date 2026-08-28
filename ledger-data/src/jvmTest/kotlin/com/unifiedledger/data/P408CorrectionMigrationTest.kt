@@ -18,7 +18,6 @@ import kotlin.test.assertTrue
  * fresh=migrated schema-text equivalence, and late-stage rollback.
  */
 class P408CorrectionMigrationTest {
-
     @Test
     fun versionIsTwentySeven() {
         assertEquals(27, LedgerDatabase.Schema.version)
@@ -55,20 +54,23 @@ class P408CorrectionMigrationTest {
             // intact, and the sentinel was never created by the migration.
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement ->
-                    val projectionSql = statement.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='evidence_projection'").use { rows ->
-                        check(rows.next())
-                        rows.getString("sql")
-                    }
+                    val projectionSql =
+                        statement.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='evidence_projection'").use { rows ->
+                            check(rows.next())
+                            rows.getString("sql")
+                        }
                     assertTrue(!projectionSql.contains("superseded_by_projection_id"), projectionSql)
-                    val snapshotExists = statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='reconciliation_correction_snapshot'").use { rows ->
-                        check(rows.next())
-                        rows.getLong(1)
-                    }
+                    val snapshotExists =
+                        statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='reconciliation_correction_snapshot'").use { rows ->
+                            check(rows.next())
+                            rows.getLong(1)
+                        }
                     assertEquals(0L, snapshotExists)
-                    val partialIndex = statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='evidence_projection_current_by_evidence'").use { rows ->
-                        check(rows.next())
-                        rows.getLong(1)
-                    }
+                    val partialIndex =
+                        statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='evidence_projection_current_by_evidence'").use { rows ->
+                            check(rows.next())
+                            rows.getLong(1)
+                        }
                     assertEquals(0L, partialIndex)
                 }
             }
@@ -109,9 +111,25 @@ class P408CorrectionMigrationTest {
             // value snapshot, not just counts).
             assertEquals(
                 listOf(
-                    "ledger-a", "proj-evidence-a", "evidence-a", "source-a", "hash-a", "account-bank-a",
-                    "CNY", 2L, 1000L, 2L, 1000L, "out", "READY", null,
-                    "p408_evidence_projection_v1", 1L, "request-migrate", "2026-08-10T13:00:00+08:00", null,
+                    "ledger-a",
+                    "proj-evidence-a",
+                    "evidence-a",
+                    "source-a",
+                    "hash-a",
+                    "account-bank-a",
+                    "CNY",
+                    2L,
+                    1000L,
+                    2L,
+                    1000L,
+                    "out",
+                    "READY",
+                    null,
+                    "p408_evidence_projection_v1",
+                    1L,
+                    "request-migrate",
+                    "2026-08-10T13:00:00+08:00",
+                    null,
                 ),
                 queryRow(
                     url,
@@ -224,44 +242,50 @@ class P408CorrectionMigrationTest {
      * link plus one (v26) projection row — the exact baseline the migration must
      * preserve with zero backfill. */
     private fun seedLegacyLinkedState(driver: JdbcSqliteDriver) {
-        val statements = listOf(
-            "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
-            "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')",
-            "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
-            "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)",
-            "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')",
-            "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
-            "INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')",
-            "INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
-            "INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)",
-            "INSERT INTO reconciliation_request VALUES ('ledger-a','request-migrate','migration_seed','schema-v23-seed','ACCEPTED',NULL)",
-            "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-a','link-a','evidence-a','posting-a','tx-a','real_account_posting',1,'amount,currency,direction,account,occurred_at_window','candidate-a','request-migrate','2026-08-10T13:00:00+08:00')",
-            "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',1,'active','confirmed','request-migrate','2026-08-10T13:00:00+08:00')",
-            "INSERT INTO evidence_projection(ledger_id, projection_id, evidence_id, source_id, source_hash, target_account_id, currency_code, currency_precision, raw_amount_minor, raw_currency_precision, normalized_amount_minor, direction_token, state, rejection_code, rule_id, rule_version, materialization_request_id, materialized_at) VALUES ('ledger-a','proj-evidence-a','evidence-a','source-a','hash-a','account-bank-a','CNY',2,1000,2,1000,'out','READY',NULL,'p408_evidence_projection_v1',1,'request-migrate','2026-08-10T13:00:00+08:00')",
-        )
+        val statements =
+            listOf(
+                "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
+                "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')",
+                "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
+                "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')",
+                "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                "INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')",
+                "INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                "INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)",
+                "INSERT INTO reconciliation_request VALUES ('ledger-a','request-migrate','migration_seed','schema-v23-seed','ACCEPTED',NULL)",
+                "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-a','link-a','evidence-a','posting-a','tx-a','real_account_posting',1,'amount,currency,direction,account,occurred_at_window','candidate-a','request-migrate','2026-08-10T13:00:00+08:00')",
+                "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',1,'active','confirmed','request-migrate','2026-08-10T13:00:00+08:00')",
+                "INSERT INTO evidence_projection(ledger_id, projection_id, evidence_id, source_id, source_hash, target_account_id, currency_code, currency_precision, raw_amount_minor, raw_currency_precision, normalized_amount_minor, direction_token, state, rejection_code, rule_id, rule_version, materialization_request_id, materialized_at) VALUES ('ledger-a','proj-evidence-a','evidence-a','source-a','hash-a','account-bank-a','CNY',2,1000,2,1000,'out','READY',NULL,'p408_evidence_projection_v1',1,'request-migrate','2026-08-10T13:00:00+08:00')",
+            )
         statements.forEach { driver.execute(null, it, 0) }
     }
 
     private fun seedLinkedStateWithLegalInvalidation(driver: JdbcSqliteDriver) {
-        val statements = listOf(
-            "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
-            "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')",
-            "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
-            "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)",
-            "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')",
-            "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
-            "INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')",
-            "INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
-            "INSERT INTO reconciliation_request VALUES ('ledger-a','request-a','confirm_link','fp-a','ACCEPTED',NULL)",
-            "INSERT INTO reconciliation_request VALUES ('ledger-a','request-correction','invalidate_link','fp-correction','ACCEPTED',NULL)",
-            "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-a','link-a','evidence-a','posting-a','tx-a','real_account_posting',1,'amount,currency,direction,account,occurred_at_window','candidate-a','request-a','2026-08-10T13:00:00+08:00')",
-            "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',1,'active','confirmed','request-a','2026-08-10T13:00:00+08:00')",
-            "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',2,'invalidated','corrected','request-correction','2026-08-10T14:00:00+08:00')",
-        )
+        val statements =
+            listOf(
+                "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
+                "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')",
+                "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
+                "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                "INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')",
+                "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                "INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')",
+                "INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                "INSERT INTO reconciliation_request VALUES ('ledger-a','request-a','confirm_link','fp-a','ACCEPTED',NULL)",
+                "INSERT INTO reconciliation_request VALUES ('ledger-a','request-correction','invalidate_link','fp-correction','ACCEPTED',NULL)",
+                "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-a','link-a','evidence-a','posting-a','tx-a','real_account_posting',1,'amount,currency,direction,account,occurred_at_window','candidate-a','request-a','2026-08-10T13:00:00+08:00')",
+                "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',1,'active','confirmed','request-a','2026-08-10T13:00:00+08:00')",
+                "INSERT INTO evidence_link_history VALUES ('ledger-a','link-a',2,'invalidated','corrected','request-correction','2026-08-10T14:00:00+08:00')",
+            )
         statements.forEach { driver.execute(null, it, 0) }
     }
 
-    private fun tableRows(url: String, sql: String, longColumns: List<Boolean>): List<List<Any?>> =
+    private fun tableRows(
+        url: String,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
         DriverManager.getConnection(url).use { connection ->
             connection.createStatement().use { statement ->
                 statement.executeQuery(sql).use { rows ->
@@ -278,7 +302,11 @@ class P408CorrectionMigrationTest {
             }
         }
 
-    private fun queryRow(url: String, sql: String, longColumns: List<Boolean>): List<Any?> =
+    private fun queryRow(
+        url: String,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<Any?> =
         DriverManager.getConnection(url).use { connection ->
             connection.createStatement().use { statement ->
                 statement.executeQuery(sql).use { rows ->
@@ -290,58 +318,73 @@ class P408CorrectionMigrationTest {
             }
         }
 
-    private fun queryRows(url: String, sql: String): List<String> = DriverManager.getConnection(url).use { connection ->
-        connection.createStatement().use { statement ->
-            statement.executeQuery(sql).use { rows ->
-                buildList {
-                    while (rows.next()) {
-                        add(rows.getString(1))
+    private fun queryRows(
+        url: String,
+        sql: String,
+    ): List<String> =
+        DriverManager.getConnection(url).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(sql).use { rows ->
+                    buildList {
+                        while (rows.next()) {
+                            add(rows.getString(1))
+                        }
                     }
                 }
             }
         }
-    }
 
-    private fun queryCount(url: String, sql: String): Long = DriverManager.getConnection(url).use { connection ->
-        connection.createStatement().use { statement ->
-            statement.executeQuery(sql).use { rows ->
-                check(rows.next())
-                rows.getLong(1)
-            }
-        }
-    }
-
-    private fun schemaMetadata(url: String): List<String> = DriverManager.getConnection(url).use { connection ->
-        connection.createStatement().use { statement ->
-            statement.executeQuery(
-                """
-                SELECT type, name, tbl_name, sql
-                FROM sqlite_master
-                WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-                ORDER BY type, name
-                """.trimIndent(),
-            ).use { rows ->
-                buildList {
-                    while (rows.next()) {
-                        add(
-                            listOf(
-                                rows.getString("type"),
-                                rows.getString("name"),
-                                rows.getString("tbl_name"),
-                                normalizeSql(rows.getString("sql")),
-                            ).joinToString("|"),
-                        )
-                    }
+    private fun queryCount(
+        url: String,
+        sql: String,
+    ): Long =
+        DriverManager.getConnection(url).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(sql).use { rows ->
+                    check(rows.next())
+                    rows.getLong(1)
                 }
             }
         }
-    }
+
+    private fun schemaMetadata(url: String): List<String> =
+        DriverManager.getConnection(url).use { connection ->
+            connection.createStatement().use { statement ->
+                statement
+                    .executeQuery(
+                        """
+                        SELECT type, name, tbl_name, sql
+                        FROM sqlite_master
+                        WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+                        ORDER BY type, name
+                        """.trimIndent(),
+                    ).use { rows ->
+                        buildList {
+                            while (rows.next()) {
+                                add(
+                                    listOf(
+                                        rows.getString("type"),
+                                        rows.getString("name"),
+                                        rows.getString("tbl_name"),
+                                        normalizeSql(rows.getString("sql")),
+                                    ).joinToString("|"),
+                                )
+                            }
+                        }
+                    }
+            }
+        }
 
     private fun normalizeSql(sql: String): String =
-        sql.replace(Regex("\\s+"), " ").trim().replace("( ", "(").replace(" )", ")")
+        sql
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
 
-    private fun migrationSqliteProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun migrationSqliteProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 }

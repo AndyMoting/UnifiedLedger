@@ -29,9 +29,9 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersion
-import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVersionAppendIds
 import com.unifiedledger.domain.TransactionVersionChange
+import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.appendVersion
 import com.unifiedledger.domain.createExplicitOperationConfirmation
 import com.unifiedledger.domain.createInitialInstallments
@@ -70,7 +70,9 @@ data class Rg11OperationIdentity(
  * dedicated retry action: replays reuse the action of the replayed operation and are detected
  * by identity fingerprint in [Rg11Runtime.commit].
  */
-enum class Rg11Action(val code: String) {
+enum class Rg11Action(
+    val code: String,
+) {
     CREATE_PERIODIC_ALLOCATION("create_periodic_allocation"),
     RECOGNIZE_PERIODIC_ALLOCATION_INSTALLMENT("recognize_periodic_allocation_installment"),
     REVISE_PERIODIC_ALLOCATION("revise_periodic_allocation"),
@@ -277,11 +279,25 @@ sealed interface Rg11Operation {
 }
 
 sealed interface Rg11ReturnedId {
-    data class Transaction(val id: TransactionId) : Rg11ReturnedId
-    data class Version(val id: TransactionVersionId) : Rg11ReturnedId
-    data class DomainEntity(val id: String) : Rg11ReturnedId
-    data class Confirmation(val id: String) : Rg11ReturnedId
-    data class Request(val id: String) : Rg11ReturnedId
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg11ReturnedId
+
+    data class Version(
+        val id: TransactionVersionId,
+    ) : Rg11ReturnedId
+
+    data class DomainEntity(
+        val id: String,
+    ) : Rg11ReturnedId
+
+    data class Confirmation(
+        val id: String,
+    ) : Rg11ReturnedId
+
+    data class Request(
+        val id: String,
+    ) : Rg11ReturnedId
 }
 
 /**
@@ -291,7 +307,9 @@ sealed interface Rg11ReturnedId {
  * of the v2 validator recomputation (`_periodic_allocation_rejection`) that no frozen fixture
  * triggers; the last three are application-level guards.
  */
-enum class Rg11RejectionReason(val code: String) {
+enum class Rg11RejectionReason(
+    val code: String,
+) {
     EXACT_DECIMAL_STRING_REQUIRED("exact_decimal_string_required"),
     MUST_BE_POSITIVE("must_be_positive"),
     UNSUPPORTED_CURRENCY("unsupported_currency"),
@@ -310,7 +328,9 @@ enum class Rg11RejectionReason(val code: String) {
 }
 
 /** Frozen `field_path` values; rejection paths always use the `$.attempted_input.*` form. */
-enum class Rg11FieldPath(val value: String) {
+enum class Rg11FieldPath(
+    val value: String,
+) {
     INPUT_CONFIRMATION("$.input.explicit_confirmation"),
     INPUT_PAYMENT_ACCOUNT_ID("$.input.payment_account_id"),
     INPUT_PREPAID_ACCOUNT_ID("$.input.prepaid_account_id"),
@@ -331,19 +351,29 @@ enum class Rg11FieldPath(val value: String) {
 }
 
 sealed interface Rg11ExecutionResult {
-    class Accepted(returnedIds: List<Rg11ReturnedId>) : Rg11ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg11ReturnedId>,
+    ) : Rg11ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg11ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg11ReturnedId>) : Rg11ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg11ReturnedId>,
+    ) : Rg11ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg11ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -497,33 +527,35 @@ class Rg11Runtime(
                 Rg11ExecutionResult.RequestIdentityConflict
             }
         }
-        val result = when (operation) {
-            is Rg11Operation.CreatePeriodicAllocation -> createPeriodicAllocation(operation)
-            is Rg11Operation.RecognizePeriodicAllocationInstallment -> recognizePeriodicAllocationInstallment(operation)
-            is Rg11Operation.RevisePeriodicAllocation -> revisePeriodicAllocation(operation)
-            is Rg11Operation.CorrectTransactionVersion -> correctTransactionVersion(operation)
-            is Rg11Operation.RetryIdempotentInput -> replayRetry(operation)
-            is Rg11Operation.InvalidInput -> rejectInvalidInput(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg11Operation.CreatePeriodicAllocation -> createPeriodicAllocation(operation)
+                is Rg11Operation.RecognizePeriodicAllocationInstallment -> recognizePeriodicAllocationInstallment(operation)
+                is Rg11Operation.RevisePeriodicAllocation -> revisePeriodicAllocation(operation)
+                is Rg11Operation.CorrectTransactionVersion -> correctTransactionVersion(operation)
+                is Rg11Operation.RetryIdempotentInput -> replayRetry(operation)
+                is Rg11Operation.InvalidInput -> rejectInvalidInput(operation)
+            }
         if (result is Rg11ExecutionResult.Accepted || result is Rg11ExecutionResult.Rejected) {
             receipts[operation.identity] = Receipt(fingerprint, result)
         }
         return result
     }
 
-    fun snapshot(): Rg11Snapshot = Rg11Snapshot(
-        formalTransactions = formalTransactions.toList(),
-        schedules = schedules.toList(),
-        revisions = revisions.map { it.copy(installmentIds = it.installmentIds.toList()) },
-        installments = installments.toList(),
-        confirmations = confirmations.toList(),
-        auditLinks = auditLinks.toList(),
-        postingSemantics = postingSemantics.toMap(),
-        balances = replayBalances(),
-        reports = reports(),
-        reconciliation = reconciliation(),
-        derivedStatuses = derivedStatuses(),
-    )
+    fun snapshot(): Rg11Snapshot =
+        Rg11Snapshot(
+            formalTransactions = formalTransactions.toList(),
+            schedules = schedules.toList(),
+            revisions = revisions.map { it.copy(installmentIds = it.installmentIds.toList()) },
+            installments = installments.toList(),
+            confirmations = confirmations.toList(),
+            auditLinks = auditLinks.toList(),
+            postingSemantics = postingSemantics.toMap(),
+            balances = replayBalances(),
+            reports = reports(),
+            reconciliation = reconciliation(),
+            derivedStatuses = derivedStatuses(),
+        )
 
     fun operationFingerprint(operation: Rg11Operation): String = canonicalInput(operation)
 
@@ -543,25 +575,28 @@ class Rg11Runtime(
         if (input.currency !in knownCurrencies) {
             return rejected(Rg11RejectionReason.UNSUPPORTED_CURRENCY, Rg11FieldPath.ATTEMPTED_CURRENCY)
         }
-        val anchor = when (val candidate = input.anchor) {
-            PeriodicAllocationAnchor.MonthEnd -> candidate
-            is PeriodicAllocationAnchor.DayOfMonth -> {
-                if (candidate.day < 1 || candidate.day > 28) {
-                    return rejected(Rg11RejectionReason.INVALID_ANCHOR, Rg11FieldPath.ATTEMPTED_ANCHOR)
+        val anchor =
+            when (val candidate = input.anchor) {
+                PeriodicAllocationAnchor.MonthEnd -> candidate
+                is PeriodicAllocationAnchor.DayOfMonth -> {
+                    if (candidate.day < 1 || candidate.day > 28) {
+                        return rejected(Rg11RejectionReason.INVALID_ANCHOR, Rg11FieldPath.ATTEMPTED_ANCHOR)
+                    }
+                    candidate
                 }
-                candidate
             }
-        }
         if (input.installmentCount < 1) {
             return rejected(Rg11RejectionReason.INVALID_INSTALLMENT_COUNT, Rg11FieldPath.ATTEMPTED_INSTALLMENT_COUNT)
         }
         if (ids.installmentIds.size != input.installmentCount || ids.installmentIds.toSet().size != ids.installmentIds.size) {
             return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
         }
-        val payment = catalogAccount(input.paymentAccountId)
-            ?: return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
-        val prepaid = catalogAccount(input.prepaidAccountId)
-            ?: return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
+        val payment =
+            catalogAccount(input.paymentAccountId)
+                ?: return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
+        val prepaid =
+            catalogAccount(input.prepaidAccountId)
+                ?: return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
         if (payment.currency != input.currency || prepaid.currency != input.currency) {
             return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
         }
@@ -589,63 +624,71 @@ class Rg11Runtime(
         ) {
             return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.INPUT_CATEGORY_ID)
         }
-        val schedule = when (
-            val result = createPeriodicAllocationSchedule(
-                id = ids.scheduleId,
-                paymentTransactionId = ids.transactionId,
-                prepaidAccountId = input.prepaidAccountId,
-                categoryId = input.categoryId,
-                totalAmountMinor = input.amount.minorUnits,
-                currency = input.currency,
-                startAt = input.startAt,
-                anchor = anchor,
-                cadence = input.cadence,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
-        val revision = when (
-            val result = createPeriodicAllocationRevision(
-                id = ids.revisionId,
-                schedule = schedule,
-                previousRevision = null,
-                recognizedThrough = null,
-                remainingAmountMinor = input.amount.minorUnits,
-                currency = input.currency,
-                installmentIds = ids.installmentIds,
-                recognizedInstallmentIds = emptySet(),
-                recognizedAmountMinor = 0L,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
+        val schedule =
+            when (
+                val result =
+                    createPeriodicAllocationSchedule(
+                        id = ids.scheduleId,
+                        paymentTransactionId = ids.transactionId,
+                        prepaidAccountId = input.prepaidAccountId,
+                        categoryId = input.categoryId,
+                        totalAmountMinor = input.amount.minorUnits,
+                        currency = input.currency,
+                        startAt = input.startAt,
+                        anchor = anchor,
+                        cadence = input.cadence,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
+        val revision =
+            when (
+                val result =
+                    createPeriodicAllocationRevision(
+                        id = ids.revisionId,
+                        schedule = schedule,
+                        previousRevision = null,
+                        recognizedThrough = null,
+                        remainingAmountMinor = input.amount.minorUnits,
+                        currency = input.currency,
+                        installmentIds = ids.installmentIds,
+                        recognizedInstallmentIds = emptySet(),
+                        recognizedAmountMinor = 0L,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
         // `start_at` must itself hit the anchor (frozen step after the account checks); the
         // domain rejects a miss with `invalid_anchor`.
-        val newInstallments = when (
-            val result = createInitialInstallments(
-                schedule = schedule,
-                revisionId = ids.revisionId,
-                installmentIds = ids.installmentIds,
-                utcOffsetSeconds = utcOffsetSeconds,
+        val newInstallments =
+            when (
+                val result =
+                    createInitialInstallments(
+                        schedule = schedule,
+                        revisionId = ids.revisionId,
+                        installmentIds = ids.installmentIds,
+                        utcOffsetSeconds = utcOffsetSeconds,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
+        val formal =
+            when (
+                val result = buildPurchaseTransaction(operation.ledgerId, input, ids)
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation)
+            }
+        val record =
+            Rg11FormalTransactionRecord(
+                formal,
+                createdAt = input.occurredAt,
+                createdAtText = input.occurredAtText,
+                statisticsAtText = input.occurredAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
-        val formal = when (
-            val result = buildPurchaseTransaction(operation.ledgerId, input, ids)
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation)
-        }
-        val record = Rg11FormalTransactionRecord(
-            formal,
-            createdAt = input.occurredAt,
-            createdAtText = input.occurredAtText,
-            statisticsAtText = input.occurredAtText,
-        )
         if (
             !canAppendFormalTransaction(record) ||
             schedules.any { it.id == ids.scheduleId } ||
@@ -683,8 +726,9 @@ class Rg11Runtime(
         if (schedule == null || installment == null || installment.scheduleId != schedule.id) {
             return rejected(Rg11RejectionReason.INSTALLMENT_NOT_PENDING, Rg11FieldPath.ATTEMPTED_INSTALLMENT_ID)
         }
-        val latestRevision = latestRevisionOf(schedule.id)
-            ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
+        val latestRevision =
+            latestRevisionOf(schedule.id)
+                ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
         val recognizedIds = recognizedInstallmentIds()
         if (installment.id in recognizedIds || installment.revisionId != latestRevision.id) {
             return rejected(Rg11RejectionReason.INSTALLMENT_NOT_PENDING, Rg11FieldPath.ATTEMPTED_INSTALLMENT_ID)
@@ -702,45 +746,51 @@ class Rg11Runtime(
             return rejected(Rg11RejectionReason.INSTALLMENT_AMOUNT_MISMATCH, Rg11FieldPath.ATTEMPTED_AMOUNT)
         }
         when (
-            val result = validateInstallmentRecognition(
-                schedule = schedule,
-                latestRevision = latestRevision,
-                installments = installments,
-                recognizedInstallmentIds = recognizedIds,
-                requestedInstallmentId = input.installmentId,
-                requestedAmountMinor = input.amount.minorUnits,
-                requestedCurrency = input.currency,
-            )
+            val result =
+                validateInstallmentRecognition(
+                    schedule = schedule,
+                    latestRevision = latestRevision,
+                    installments = installments,
+                    recognizedInstallmentIds = recognizedIds,
+                    requestedInstallmentId = input.installmentId,
+                    requestedAmountMinor = input.amount.minorUnits,
+                    requestedCurrency = input.currency,
+                )
         ) {
             is DomainResult.Success -> Unit
             is DomainResult.Failure -> return domainRejected(result.violation)
         }
-        val category = catalog.categories.firstOrNull { it.id == schedule.categoryId }
-            ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
-        val expenseAccountId = category.postingAccountId
-            ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
-        val formal = when (
-            val result = buildRecognitionTransaction(operation.ledgerId, schedule, installment, expenseAccountId, ids)
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation)
-        }
-        val record = Rg11FormalTransactionRecord(
-            formal,
-            createdAt = installment.scheduledAt,
-            // The frozen recognition report periods are case-timezone (+08:00) local dates;
-            // `kotlin.time.Instant.toString()` renders UTC, so the report text is rendered at
-            // the runtime's fixed offset like every frozen `statistics_at` text.
-            statisticsAtText = localDateTimeText(installment.scheduledAt, utcOffsetSeconds),
-        )
-        val auditLink = Rg11AuditLink(
-            id = ids.auditLinkId,
-            linkType = PERIODIC_ALLOCATION_RECOGNITION_LINK_TYPE,
-            fromKind = "domain_entity",
-            fromId = installment.id,
-            toKind = "transaction",
-            toId = ids.transactionId.value,
-        )
+        val category =
+            catalog.categories.firstOrNull { it.id == schedule.categoryId }
+                ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
+        val expenseAccountId =
+            category.postingAccountId
+                ?: return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
+        val formal =
+            when (
+                val result = buildRecognitionTransaction(operation.ledgerId, schedule, installment, expenseAccountId, ids)
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation)
+            }
+        val record =
+            Rg11FormalTransactionRecord(
+                formal,
+                createdAt = installment.scheduledAt,
+                // The frozen recognition report periods are case-timezone (+08:00) local dates;
+                // `kotlin.time.Instant.toString()` renders UTC, so the report text is rendered at
+                // the runtime's fixed offset like every frozen `statistics_at` text.
+                statisticsAtText = localDateTimeText(installment.scheduledAt, utcOffsetSeconds),
+            )
+        val auditLink =
+            Rg11AuditLink(
+                id = ids.auditLinkId,
+                linkType = PERIODIC_ALLOCATION_RECOGNITION_LINK_TYPE,
+                fromKind = "domain_entity",
+                fromId = installment.id,
+                toKind = "transaction",
+                toId = ids.transactionId.value,
+            )
         if (
             !canAppendFormalTransaction(record) ||
             auditLinks.any { it.id == ids.auditLinkId } ||
@@ -800,42 +850,47 @@ class Rg11Runtime(
             return rejected(Rg11RejectionReason.CURRENCY_MISMATCH, Rg11FieldPath.ATTEMPTED_CURRENCY)
         }
         val recognizedAmount = recognizedAmountMinor(schedule.id)
-        val expectedRemaining = checkedSubtract(schedule.totalAmountMinor, recognizedAmount)
-            ?: return rejected(Rg11RejectionReason.DOMAIN_REJECTED, Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT)
+        val expectedRemaining =
+            checkedSubtract(schedule.totalAmountMinor, recognizedAmount)
+                ?: return rejected(Rg11RejectionReason.DOMAIN_REJECTED, Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT)
         if (input.remainingAmount.minorUnits != expectedRemaining) {
             return rejected(Rg11RejectionReason.REMAINING_AMOUNT_MISMATCH, Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT)
         }
-        val revision = when (
-            val result = createPeriodicAllocationRevision(
-                id = ids.revisionId,
-                schedule = schedule,
-                previousRevision = latest,
-                recognizedThrough = input.recognizedThrough,
-                remainingAmountMinor = input.remainingAmount.minorUnits,
-                currency = input.currency,
-                installmentIds = ids.installmentIds,
-                recognizedInstallmentIds = recognizedIds,
-                recognizedAmountMinor = recognizedAmount,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
-        val builtInstallments = when (
-            val result = createRevisedInstallments(
-                schedule = schedule,
-                previousRevision = latest,
-                allInstallments = installments,
-                recognizedThrough = input.recognizedThrough,
-                remainingAmountMinor = input.remainingAmount.minorUnits,
-                installmentIds = ids.installmentIds,
-                newRevisionId = ids.revisionId,
-                utcOffsetSeconds = utcOffsetSeconds,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
+        val revision =
+            when (
+                val result =
+                    createPeriodicAllocationRevision(
+                        id = ids.revisionId,
+                        schedule = schedule,
+                        previousRevision = latest,
+                        recognizedThrough = input.recognizedThrough,
+                        remainingAmountMinor = input.remainingAmount.minorUnits,
+                        currency = input.currency,
+                        installmentIds = ids.installmentIds,
+                        recognizedInstallmentIds = recognizedIds,
+                        recognizedAmountMinor = recognizedAmount,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
+        val builtInstallments =
+            when (
+                val result =
+                    createRevisedInstallments(
+                        schedule = schedule,
+                        previousRevision = latest,
+                        allInstallments = installments,
+                        recognizedThrough = input.recognizedThrough,
+                        remainingAmountMinor = input.remainingAmount.minorUnits,
+                        installmentIds = ids.installmentIds,
+                        newRevisionId = ids.revisionId,
+                        utcOffsetSeconds = utcOffsetSeconds,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
         // The frozen contract numbers installment sequences continuously across revisions in
         // revision order (revision 2 continues 4, 5, 6; validator `_validate_periodic_allocations`
         // "unique and consecutive in revision order"). The shard-1 domain helper restarts
@@ -875,34 +930,39 @@ class Rg11Runtime(
         if (input.correctionKind != CORRECTION_KIND_STATISTICS_TIME) {
             return rejected(Rg11RejectionReason.INVALID_RG11_INPUT, Rg11FieldPath.INPUT_CORRECTION_KIND)
         }
-        val appended = when (
-            val result = record.formalTransaction.appendVersion(
-                change = TransactionVersionChange.StatisticsAt(input.statisticsAt),
-                ids = TransactionVersionAppendIds(versionId = ids.versionId),
-                newPostingSetId = null,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg11FieldPath.ATTEMPTED_TRANSACTION_ID)
-        }
-        val confirmation = when (
-            val result = createExplicitOperationConfirmation(
-                id = ids.confirmationId,
-                operationId = ids.operationId,
-                createdAt = ids.confirmationCreatedAt,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg11FieldPath.ATTEMPTED_TRANSACTION_ID)
-        }
+        val appended =
+            when (
+                val result =
+                    record.formalTransaction.appendVersion(
+                        change = TransactionVersionChange.StatisticsAt(input.statisticsAt),
+                        ids = TransactionVersionAppendIds(versionId = ids.versionId),
+                        newPostingSetId = null,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg11FieldPath.ATTEMPTED_TRANSACTION_ID)
+            }
+        val confirmation =
+            when (
+                val result =
+                    createExplicitOperationConfirmation(
+                        id = ids.confirmationId,
+                        operationId = ids.operationId,
+                        createdAt = ids.confirmationCreatedAt,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg11FieldPath.ATTEMPTED_TRANSACTION_ID)
+            }
         if (appendedIdCollision(appended, record.formalTransaction) || confirmations.any { it.id == ids.confirmationId }) {
             return rejected(Rg11RejectionReason.DOMAIN_REJECTED, Rg11FieldPath.ATTEMPTED_REQUEST_ID)
         }
-        formalTransactions[index] = record.copy(
-            formalTransaction = appended,
-            statisticsAtText = input.statisticsAtText,
-            versionConfirmationIds = record.versionConfirmationIds + (ids.versionId to ids.confirmationId),
-        )
+        formalTransactions[index] =
+            record.copy(
+                formalTransaction = appended,
+                statisticsAtText = input.statisticsAtText,
+                versionConfirmationIds = record.versionConfirmationIds + (ids.versionId to ids.confirmationId),
+            )
         confirmations += confirmation
         return accepted(listOf(Rg11ReturnedId.Version(ids.versionId)))
     }
@@ -910,8 +970,9 @@ class Rg11Runtime(
     // ------------------------------------------------------------------ retry / invalid
 
     private fun replayRetry(operation: Rg11Operation.RetryIdempotentInput): Rg11ExecutionResult {
-        val receipt = receipts[operation.identity]
-            ?: return Rg11ExecutionResult.RequestIdentityConflict
+        val receipt =
+            receipts[operation.identity]
+                ?: return Rg11ExecutionResult.RequestIdentityConflict
         return when (val result = receipt.result) {
             is Rg11ExecutionResult.Accepted -> Rg11ExecutionResult.NoChange(result.returnedIds)
             else -> result
@@ -919,38 +980,39 @@ class Rg11Runtime(
     }
 
     private fun rejectInvalidInput(operation: Rg11Operation.InvalidInput): Rg11ExecutionResult {
-        val (reason, fieldPath) = when (operation.input.predicate) {
-            Rg11InvalidPredicate.EXACT_DECIMAL_AMOUNT ->
-                Rg11RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg11FieldPath.ATTEMPTED_AMOUNT
-            Rg11InvalidPredicate.EXACT_DECIMAL_REMAINING_AMOUNT ->
-                Rg11RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
-            Rg11InvalidPredicate.ZERO_OR_NEGATIVE_AMOUNT ->
-                Rg11RejectionReason.MUST_BE_POSITIVE to Rg11FieldPath.ATTEMPTED_AMOUNT
-            Rg11InvalidPredicate.ZERO_OR_NEGATIVE_REMAINING_AMOUNT ->
-                Rg11RejectionReason.MUST_BE_POSITIVE to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
-            Rg11InvalidPredicate.UNSUPPORTED_CURRENCY ->
-                Rg11RejectionReason.UNSUPPORTED_CURRENCY to Rg11FieldPath.ATTEMPTED_CURRENCY
-            Rg11InvalidPredicate.CURRENCY_MISMATCH ->
-                Rg11RejectionReason.CURRENCY_MISMATCH to Rg11FieldPath.ATTEMPTED_CURRENCY
-            Rg11InvalidPredicate.INVALID_ANCHOR ->
-                Rg11RejectionReason.INVALID_ANCHOR to Rg11FieldPath.ATTEMPTED_ANCHOR
-            Rg11InvalidPredicate.INSTALLMENT_NOT_PENDING ->
-                Rg11RejectionReason.INSTALLMENT_NOT_PENDING to Rg11FieldPath.ATTEMPTED_INSTALLMENT_ID
-            Rg11InvalidPredicate.EXCEEDS_REMAINING_PREPAID ->
-                Rg11RejectionReason.EXCEEDS_REMAINING_PREPAID to Rg11FieldPath.ATTEMPTED_AMOUNT
-            Rg11InvalidPredicate.INVALID_REVISION_BOUNDARY ->
-                Rg11RejectionReason.INVALID_REVISION_BOUNDARY to Rg11FieldPath.ATTEMPTED_RECOGNIZED_THROUGH
-            Rg11InvalidPredicate.INVALID_INSTALLMENT_COUNT ->
-                Rg11RejectionReason.INVALID_INSTALLMENT_COUNT to Rg11FieldPath.ATTEMPTED_INSTALLMENT_COUNT
-            Rg11InvalidPredicate.INVALID_REMAINING_INSTALLMENT_COUNT ->
-                Rg11RejectionReason.INVALID_INSTALLMENT_COUNT to Rg11FieldPath.ATTEMPTED_REMAINING_INSTALLMENT_COUNT
-            Rg11InvalidPredicate.INSTALLMENT_AMOUNT_MISMATCH ->
-                Rg11RejectionReason.INSTALLMENT_AMOUNT_MISMATCH to Rg11FieldPath.ATTEMPTED_AMOUNT
-            Rg11InvalidPredicate.REMAINING_AMOUNT_MISMATCH ->
-                Rg11RejectionReason.REMAINING_AMOUNT_MISMATCH to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
-            Rg11InvalidPredicate.TRANSACTION_NOT_CORRECTABLE ->
-                Rg11RejectionReason.TRANSACTION_NOT_CORRECTABLE to Rg11FieldPath.ATTEMPTED_TRANSACTION_ID
-        }
+        val (reason, fieldPath) =
+            when (operation.input.predicate) {
+                Rg11InvalidPredicate.EXACT_DECIMAL_AMOUNT ->
+                    Rg11RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg11FieldPath.ATTEMPTED_AMOUNT
+                Rg11InvalidPredicate.EXACT_DECIMAL_REMAINING_AMOUNT ->
+                    Rg11RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
+                Rg11InvalidPredicate.ZERO_OR_NEGATIVE_AMOUNT ->
+                    Rg11RejectionReason.MUST_BE_POSITIVE to Rg11FieldPath.ATTEMPTED_AMOUNT
+                Rg11InvalidPredicate.ZERO_OR_NEGATIVE_REMAINING_AMOUNT ->
+                    Rg11RejectionReason.MUST_BE_POSITIVE to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
+                Rg11InvalidPredicate.UNSUPPORTED_CURRENCY ->
+                    Rg11RejectionReason.UNSUPPORTED_CURRENCY to Rg11FieldPath.ATTEMPTED_CURRENCY
+                Rg11InvalidPredicate.CURRENCY_MISMATCH ->
+                    Rg11RejectionReason.CURRENCY_MISMATCH to Rg11FieldPath.ATTEMPTED_CURRENCY
+                Rg11InvalidPredicate.INVALID_ANCHOR ->
+                    Rg11RejectionReason.INVALID_ANCHOR to Rg11FieldPath.ATTEMPTED_ANCHOR
+                Rg11InvalidPredicate.INSTALLMENT_NOT_PENDING ->
+                    Rg11RejectionReason.INSTALLMENT_NOT_PENDING to Rg11FieldPath.ATTEMPTED_INSTALLMENT_ID
+                Rg11InvalidPredicate.EXCEEDS_REMAINING_PREPAID ->
+                    Rg11RejectionReason.EXCEEDS_REMAINING_PREPAID to Rg11FieldPath.ATTEMPTED_AMOUNT
+                Rg11InvalidPredicate.INVALID_REVISION_BOUNDARY ->
+                    Rg11RejectionReason.INVALID_REVISION_BOUNDARY to Rg11FieldPath.ATTEMPTED_RECOGNIZED_THROUGH
+                Rg11InvalidPredicate.INVALID_INSTALLMENT_COUNT ->
+                    Rg11RejectionReason.INVALID_INSTALLMENT_COUNT to Rg11FieldPath.ATTEMPTED_INSTALLMENT_COUNT
+                Rg11InvalidPredicate.INVALID_REMAINING_INSTALLMENT_COUNT ->
+                    Rg11RejectionReason.INVALID_INSTALLMENT_COUNT to Rg11FieldPath.ATTEMPTED_REMAINING_INSTALLMENT_COUNT
+                Rg11InvalidPredicate.INSTALLMENT_AMOUNT_MISMATCH ->
+                    Rg11RejectionReason.INSTALLMENT_AMOUNT_MISMATCH to Rg11FieldPath.ATTEMPTED_AMOUNT
+                Rg11InvalidPredicate.REMAINING_AMOUNT_MISMATCH ->
+                    Rg11RejectionReason.REMAINING_AMOUNT_MISMATCH to Rg11FieldPath.ATTEMPTED_REMAINING_AMOUNT
+                Rg11InvalidPredicate.TRANSACTION_NOT_CORRECTABLE ->
+                    Rg11RejectionReason.TRANSACTION_NOT_CORRECTABLE to Rg11FieldPath.ATTEMPTED_TRANSACTION_ID
+            }
         return rejected(reason, fieldPath)
     }
 
@@ -961,37 +1023,40 @@ class Rg11Runtime(
         input: Rg11CreateInput,
         ids: Rg11CreateIds,
     ): DomainResult<FormalTransaction> {
-        val postingSet = when (
-            val result = PostingSet.create(
-                ids.postingSetId,
-                listOf(
-                    Posting(
-                        ids.paymentPostingId,
-                        input.paymentAccountId,
-                        Money.ofMinor(
-                            checkedNegate(input.amount.minorUnits)
-                                ?: return DomainResult.Failure(DomainResultFailureViolation),
-                            input.currency,
+        val postingSet =
+            when (
+                val result =
+                    PostingSet.create(
+                        ids.postingSetId,
+                        listOf(
+                            Posting(
+                                ids.paymentPostingId,
+                                input.paymentAccountId,
+                                Money.ofMinor(
+                                    checkedNegate(input.amount.minorUnits)
+                                        ?: return DomainResult.Failure(DomainResultFailureViolation),
+                                    input.currency,
+                                ),
+                            ),
+                            Posting(ids.prepaidPostingId, input.prepaidAccountId, Money.ofMinor(input.amount.minorUnits, input.currency)),
                         ),
-                    ),
-                    Posting(ids.prepaidPostingId, input.prepaidAccountId, Money.ofMinor(input.amount.minorUnits, input.currency)),
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
-        }
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
+            }
         return FormalTransaction.create(
             Transaction(ids.transactionId, ledgerId, TransactionKind.PREPAID_PURCHASE, ids.versionId),
-            versions = listOf(
-                TransactionVersion(
-                    ids.versionId,
-                    ids.transactionId,
-                    versionNumber = 1,
-                    postingSetId = ids.postingSetId,
-                    times = TransactionTimes(input.occurredAt, input.occurredAt, input.occurredAt),
+            versions =
+                listOf(
+                    TransactionVersion(
+                        ids.versionId,
+                        ids.transactionId,
+                        versionNumber = 1,
+                        postingSetId = ids.postingSetId,
+                        times = TransactionTimes(input.occurredAt, input.occurredAt, input.occurredAt),
+                    ),
                 ),
-            ),
             postingSets = listOf(postingSet),
         )
     }
@@ -1003,143 +1068,159 @@ class Rg11Runtime(
         expenseAccountId: AccountId,
         ids: Rg11RecognizeIds,
     ): DomainResult<FormalTransaction> {
-        val postingSet = when (
-            val result = PostingSet.create(
-                ids.postingSetId,
-                listOf(
-                    Posting(ids.expensePostingId, expenseAccountId, Money.ofMinor(installment.amountMinor, schedule.currency)),
-                    Posting(
-                        ids.prepaidPostingId,
-                        schedule.prepaidAccountId,
-                        Money.ofMinor(
-                            checkedNegate(installment.amountMinor)
-                                ?: return DomainResult.Failure(DomainResultFailureViolation),
-                            schedule.currency,
+        val postingSet =
+            when (
+                val result =
+                    PostingSet.create(
+                        ids.postingSetId,
+                        listOf(
+                            Posting(ids.expensePostingId, expenseAccountId, Money.ofMinor(installment.amountMinor, schedule.currency)),
+                            Posting(
+                                ids.prepaidPostingId,
+                                schedule.prepaidAccountId,
+                                Money.ofMinor(
+                                    checkedNegate(installment.amountMinor)
+                                        ?: return DomainResult.Failure(DomainResultFailureViolation),
+                                    schedule.currency,
+                                ),
+                            ),
                         ),
-                    ),
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
-        }
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
+            }
         return FormalTransaction.create(
             Transaction(ids.transactionId, ledgerId, TransactionKind.PREPAID_RECOGNITION, ids.versionId),
-            versions = listOf(
-                TransactionVersion(
-                    ids.versionId,
-                    ids.transactionId,
-                    versionNumber = 1,
-                    postingSetId = ids.postingSetId,
-                    // The frozen recognition version collapses all three times on the
-                    // scheduled installment date (validator requires occurred_at and
-                    // effective_at to equal scheduled_at; statistics_at is the correction
-                    // target of `correct_transaction_version`).
-                    times = TransactionTimes(installment.scheduledAt, installment.scheduledAt, installment.scheduledAt),
+            versions =
+                listOf(
+                    TransactionVersion(
+                        ids.versionId,
+                        ids.transactionId,
+                        versionNumber = 1,
+                        postingSetId = ids.postingSetId,
+                        // The frozen recognition version collapses all three times on the
+                        // scheduled installment date (validator requires occurred_at and
+                        // effective_at to equal scheduled_at; statistics_at is the correction
+                        // target of `correct_transaction_version`).
+                        times = TransactionTimes(installment.scheduledAt, installment.scheduledAt, installment.scheduledAt),
+                    ),
                 ),
-            ),
             postingSets = listOf(postingSet),
         )
     }
 
     // ------------------------------------------------------------------ derived state
 
-    private fun derivedStatuses(): List<Rg11DerivedStatus> = buildList {
-        val recognized = recognizedInstallmentIds()
-        schedules.forEach { schedule ->
-            val latest = latestRevisionOf(schedule.id)
-            installments.filter { it.scheduleId == schedule.id }.forEach { installment ->
-                val value = if (latest == null) {
-                    if (installment.id in recognized) "recognized" else "superseded"
-                } else {
-                    when (deriveInstallmentAllocationStatus(installment, latest, recognized)) {
-                        PeriodicAllocationInstallmentStatus.RECOGNIZED -> "recognized"
-                        PeriodicAllocationInstallmentStatus.PENDING -> "pending"
-                        PeriodicAllocationInstallmentStatus.SUPERSEDED -> "superseded"
-                    }
-                }
-                add(
-                    Rg11DerivedStatus(
-                        id = "status-" + installment.id,
-                        targetKind = "domain_entity",
-                        targetId = installment.id,
-                        statusName = "allocation_status",
-                        value = value,
-                    ),
-                )
-            }
-            val scheduleValue = if (latest == null) {
-                "active"
-            } else {
-                when (
-                    deriveScheduleAllocationStatus(
-                        currentInstallments = installments.filter { it.revisionId == latest.id },
-                        recognizedInstallmentIds = recognized,
+    private fun derivedStatuses(): List<Rg11DerivedStatus> =
+        buildList {
+            val recognized = recognizedInstallmentIds()
+            schedules.forEach { schedule ->
+                val latest = latestRevisionOf(schedule.id)
+                installments.filter { it.scheduleId == schedule.id }.forEach { installment ->
+                    val value =
+                        if (latest == null) {
+                            if (installment.id in recognized) "recognized" else "superseded"
+                        } else {
+                            when (deriveInstallmentAllocationStatus(installment, latest, recognized)) {
+                                PeriodicAllocationInstallmentStatus.RECOGNIZED -> "recognized"
+                                PeriodicAllocationInstallmentStatus.PENDING -> "pending"
+                                PeriodicAllocationInstallmentStatus.SUPERSEDED -> "superseded"
+                            }
+                        }
+                    add(
+                        Rg11DerivedStatus(
+                            id = "status-" + installment.id,
+                            targetKind = "domain_entity",
+                            targetId = installment.id,
+                            statusName = "allocation_status",
+                            value = value,
+                        ),
                     )
-                ) {
-                    PeriodicAllocationScheduleStatus.RECOGNIZED -> "recognized"
-                    PeriodicAllocationScheduleStatus.ACTIVE -> "active"
                 }
-            }
-            add(
-                Rg11DerivedStatus(
-                    id = "status-" + schedule.id,
-                    targetKind = "domain_entity",
-                    targetId = schedule.id,
-                    statusName = "allocation_status",
-                    value = scheduleValue,
-                ),
-            )
-        }
-        formalTransactions.forEach { record ->
-            val eligible = record.formalTransaction.currentPostings()
-                .filter { postingSemantics[it.id.value]?.reconciliationEligible == true }
-            if (eligible.isNotEmpty()) {
-                val statuses = eligible.map { reconciliation()[it.id.value] ?: "pending" }
-                val summary = when {
-                    statuses.any { it == "has_difference" } -> "has_difference"
-                    statuses.all { it == "matched" } -> "matched"
-                    statuses.all { it == "pending" } -> "pending"
-                    else -> "partial"
-                }
+                val scheduleValue =
+                    if (latest == null) {
+                        "active"
+                    } else {
+                        when (
+                            deriveScheduleAllocationStatus(
+                                currentInstallments = installments.filter { it.revisionId == latest.id },
+                                recognizedInstallmentIds = recognized,
+                            )
+                        ) {
+                            PeriodicAllocationScheduleStatus.RECOGNIZED -> "recognized"
+                            PeriodicAllocationScheduleStatus.ACTIVE -> "active"
+                        }
+                    }
                 add(
                     Rg11DerivedStatus(
-                        id = "status-reconciliation-" + record.formalTransaction.transaction.id.value,
-                        targetKind = "transaction",
-                        targetId = record.formalTransaction.transaction.id.value,
-                        statusName = "reconciliation_summary",
-                        value = summary,
+                        id = "status-" + schedule.id,
+                        targetKind = "domain_entity",
+                        targetId = schedule.id,
+                        statusName = "allocation_status",
+                        value = scheduleValue,
                     ),
                 )
             }
+            formalTransactions.forEach { record ->
+                val eligible =
+                    record.formalTransaction
+                        .currentPostings()
+                        .filter { postingSemantics[it.id.value]?.reconciliationEligible == true }
+                if (eligible.isNotEmpty()) {
+                    val statuses = eligible.map { reconciliation()[it.id.value] ?: "pending" }
+                    val summary =
+                        when {
+                            statuses.any { it == "has_difference" } -> "has_difference"
+                            statuses.all { it == "matched" } -> "matched"
+                            statuses.all { it == "pending" } -> "pending"
+                            else -> "partial"
+                        }
+                    add(
+                        Rg11DerivedStatus(
+                            id = "status-reconciliation-" + record.formalTransaction.transaction.id.value,
+                            targetKind = "transaction",
+                            targetId = record.formalTransaction.transaction.id.value,
+                            statusName = "reconciliation_summary",
+                            value = summary,
+                        ),
+                    )
+                }
+            }
         }
-    }
 
     private fun reports(): Map<String, Rg11Report> {
         val periods = linkedMapOf<String, Rg11Report>()
         formalTransactions.forEach { record ->
-            val report = when (record.formalTransaction.transaction.kind) {
-                TransactionKind.PREPAID_PURCHASE -> {
-                    val payment = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "payment_asset" }
-                    Rg11Report(
-                        cashOutflowMinor = checkedNegate(payment.amount.minorUnits)
-                            ?: return@forEach,
-                    )
+            val report =
+                when (record.formalTransaction.transaction.kind) {
+                    TransactionKind.PREPAID_PURCHASE -> {
+                        val payment =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "payment_asset" }
+                        Rg11Report(
+                            cashOutflowMinor =
+                                checkedNegate(payment.amount.minorUnits)
+                                    ?: return@forEach,
+                        )
+                    }
+                    TransactionKind.PREPAID_RECOGNITION -> {
+                        val expense =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "expense" }
+                        Rg11Report(
+                            budgetMinor = expense.amount.minorUnits,
+                            categoryEffectMinor = expense.amount.minorUnits,
+                            consumptionMinor = expense.amount.minorUnits,
+                            netWorthChangeMinor =
+                                checkedNegate(expense.amount.minorUnits)
+                                    ?: return@forEach,
+                        )
+                    }
+                    else -> Rg11Report()
                 }
-                TransactionKind.PREPAID_RECOGNITION -> {
-                    val expense = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "expense" }
-                    Rg11Report(
-                        budgetMinor = expense.amount.minorUnits,
-                        categoryEffectMinor = expense.amount.minorUnits,
-                        consumptionMinor = expense.amount.minorUnits,
-                        netWorthChangeMinor = checkedNegate(expense.amount.minorUnits)
-                            ?: return@forEach,
-                    )
-                }
-                else -> Rg11Report()
-            }
             val period = statisticsAtText(record).substring(0, 10)
             val current = periods[period] ?: Rg11Report()
             periods[period] = mergeReports(current, report)
@@ -1151,30 +1232,34 @@ class Rg11Runtime(
         }
     }
 
-    private fun mergeReports(left: Rg11Report, right: Rg11Report): Rg11Report = Rg11Report(
-        budgetMinor = checkedAdd(left.budgetMinor, right.budgetMinor)!!,
-        cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
-        categoryEffectMinor = checkedAdd(left.categoryEffectMinor, right.categoryEffectMinor)!!,
-        consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
-        incomeMinor = checkedAdd(left.incomeMinor, right.incomeMinor)!!,
-        netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
-    )
+    private fun mergeReports(
+        left: Rg11Report,
+        right: Rg11Report,
+    ): Rg11Report =
+        Rg11Report(
+            budgetMinor = checkedAdd(left.budgetMinor, right.budgetMinor)!!,
+            cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
+            categoryEffectMinor = checkedAdd(left.categoryEffectMinor, right.categoryEffectMinor)!!,
+            consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
+            incomeMinor = checkedAdd(left.incomeMinor, right.incomeMinor)!!,
+            netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
+        )
 
-    private fun reconciliation(): Map<String, String> = buildMap {
-        formalTransactions.forEach { record ->
-            record.formalTransaction.currentPostings().forEach { posting ->
-                if (postingSemantics[posting.id.value]?.reconciliationEligible == true) {
-                    // RG-11 has no matching action: every eligible posting stays pending.
-                    put(posting.id.value, "pending")
+    private fun reconciliation(): Map<String, String> =
+        buildMap {
+            formalTransactions.forEach { record ->
+                record.formalTransaction.currentPostings().forEach { posting ->
+                    if (postingSemantics[posting.id.value]?.reconciliationEligible == true) {
+                        // RG-11 has no matching action: every eligible posting stays pending.
+                        put(posting.id.value, "pending")
+                    }
                 }
             }
         }
-    }
 
     // ------------------------------------------------------------------ helpers
 
-    private fun latestRevisionOf(scheduleId: String): PeriodicAllocationRevision? =
-        revisions.filter { it.scheduleId == scheduleId }.maxByOrNull { it.revisionNumber }
+    private fun latestRevisionOf(scheduleId: String): PeriodicAllocationRevision? = revisions.filter { it.scheduleId == scheduleId }.maxByOrNull { it.revisionNumber }
 
     private fun recognizedInstallmentIds(): Set<String> =
         auditLinks
@@ -1200,7 +1285,8 @@ class Rg11Runtime(
         record.statisticsAtText
             ?: record.formalTransaction.versions
                 .first { it.id == record.formalTransaction.transaction.currentVersionId }
-                .times.statisticsAt.toString()
+                .times.statisticsAt
+                .toString()
 
     private fun catalogAccount(id: AccountId): Account? = catalog.accounts.firstOrNull { it.id == id }
 
@@ -1209,7 +1295,8 @@ class Rg11Runtime(
             return false
         }
         val currentBalances = replayBalances()
-        record.formalTransaction.currentPostings()
+        record.formalTransaction
+            .currentPostings()
             .groupBy { it.accountId }
             .forEach { (accountId, postings) ->
                 var total = currentBalances[accountId]?.minorUnits ?: return false
@@ -1231,15 +1318,18 @@ class Rg11Runtime(
 
     private fun formalIdCollision(formal: FormalTransaction): Boolean {
         val transactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val versionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val postingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val postingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val versionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val postingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val postingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return formal.transaction.id in transactionIds ||
             formal.versions.any { it.id in versionIds } ||
             formal.postingSets.any { it.id in postingSetIds } ||
@@ -1254,62 +1344,78 @@ class Rg11Runtime(
      * ids the append newly introduces are checked against the whole collection, so the frozen
      * `main-correct` (version v2 append + confirmation) can be accepted.
      */
-    private fun appendedIdCollision(appended: FormalTransaction, baseline: FormalTransaction): Boolean {
+    private fun appendedIdCollision(
+        appended: FormalTransaction,
+        baseline: FormalTransaction,
+    ): Boolean {
         val baselineVersionIds = baseline.versions.mapTo(mutableSetOf()) { it.id }
         val baselinePostingSetIds = baseline.postingSets.mapTo(mutableSetOf()) { it.id }
-        val baselinePostingIds = baseline.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
-            postingSet.postings.map { it.id }
-        }
-        val newTransactionIds = if (appended.transaction.id == baseline.transaction.id) {
-            emptySet()
-        } else {
-            setOf(appended.transaction.id)
-        }
-        val newVersionIds = appended.versions.mapTo(mutableSetOf()) { it.id }
-            .apply { removeAll(baselineVersionIds) }
-        val newPostingSetIds = appended.postingSets.mapTo(mutableSetOf()) { it.id }
-            .apply { removeAll(baselinePostingSetIds) }
-        val newPostingIds = appended.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
-            postingSet.postings.map { it.id }
-        }.apply { removeAll(baselinePostingIds) }
+        val baselinePostingIds =
+            baseline.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
+                postingSet.postings.map { it.id }
+            }
+        val newTransactionIds =
+            if (appended.transaction.id == baseline.transaction.id) {
+                emptySet()
+            } else {
+                setOf(appended.transaction.id)
+            }
+        val newVersionIds =
+            appended.versions
+                .mapTo(mutableSetOf()) { it.id }
+                .apply { removeAll(baselineVersionIds) }
+        val newPostingSetIds =
+            appended.postingSets
+                .mapTo(mutableSetOf()) { it.id }
+                .apply { removeAll(baselinePostingSetIds) }
+        val newPostingIds =
+            appended.postingSets
+                .flatMapTo(mutableSetOf()) { postingSet ->
+                    postingSet.postings.map { it.id }
+                }.apply { removeAll(baselinePostingIds) }
         val existingTransactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val existingVersionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val existingPostingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val existingPostingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val existingVersionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val existingPostingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val existingPostingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return newTransactionIds.any { it in existingTransactionIds } ||
             newVersionIds.any { it in existingVersionIds } ||
             newPostingSetIds.any { it in existingPostingSetIds } ||
             newPostingIds.any { it in existingPostingIds }
     }
 
-    private fun replayBalances(): Map<AccountId, Money> = buildMap {
-        catalog.accounts.forEach { account ->
-            var total = 0L
-            formalTransactions
-                .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
-                .forEach { record ->
-                    record.formalTransaction.currentPostings()
-                        .filter { it.accountId == account.id }
-                        .forEach { posting ->
-                            check(posting.amount.currency == account.currency) { "RG-11 posting currency mismatch" }
-                            total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-11 balance overflow")
-                        }
-                }
-            put(account.id, Money.ofMinor(total, account.currency))
+    private fun replayBalances(): Map<AccountId, Money> =
+        buildMap {
+            catalog.accounts.forEach { account ->
+                var total = 0L
+                formalTransactions
+                    .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
+                    .forEach { record ->
+                        record.formalTransaction
+                            .currentPostings()
+                            .filter { it.accountId == account.id }
+                            .forEach { posting ->
+                                check(posting.amount.currency == account.currency) { "RG-11 posting currency mismatch" }
+                                total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-11 balance overflow")
+                            }
+                    }
+                put(account.id, Money.ofMinor(total, account.currency))
+            }
         }
-    }
 
     private fun domainRejected(
         violation: DomainViolation,
         fallbackFieldPath: Rg11FieldPath = Rg11FieldPath.ATTEMPTED_REQUEST_ID,
-    ): Rg11ExecutionResult {
-        return when (violation) {
+    ): Rg11ExecutionResult =
+        when (violation) {
             is PeriodicAllocationViolation.ExactDecimalStringRequired ->
                 rejected(Rg11RejectionReason.EXACT_DECIMAL_STRING_REQUIRED, Rg11FieldPath.ATTEMPTED_AMOUNT)
             is PeriodicAllocationViolation.MustBePositive ->
@@ -1342,152 +1448,170 @@ class Rg11Runtime(
             is PeriodicAllocationViolation.IdentityRequired,
             is PeriodicAllocationViolation.UnknownSchedule,
             is PeriodicAllocationViolation.UnknownInstallment,
-            is PeriodicAllocationViolation.RevisionMustBeAppendOnly ->
+            is PeriodicAllocationViolation.RevisionMustBeAppendOnly,
+            ->
                 rejected(Rg11RejectionReason.INVALID_RG11_INPUT, fallbackFieldPath)
             else -> rejected(Rg11RejectionReason.DOMAIN_REJECTED, fallbackFieldPath)
         }
-    }
 
     // ------------------------------------------------------------------ fingerprints
 
-    private fun canonicalInput(operation: Rg11Operation): String = when (operation) {
-        is Rg11Operation.CreatePeriodicAllocation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.paymentAccountId.value,
-            operation.input.prepaidAccountId.value,
-            operation.input.categoryId.value,
-            canonicalMoney(operation.input.amount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.startAt.toString(),
-            operation.input.startAtText,
-            canonicalAnchor(operation.input.anchor),
-            operation.input.cadence.name,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.installmentCount.toString(),
-            canonicalCreateIds(operation.ids),
+    private fun canonicalInput(operation: Rg11Operation): String =
+        when (operation) {
+            is Rg11Operation.CreatePeriodicAllocation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.paymentAccountId.value,
+                    operation.input.prepaidAccountId.value,
+                    operation.input.categoryId.value,
+                    canonicalMoney(operation.input.amount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.startAt.toString(),
+                    operation.input.startAtText,
+                    canonicalAnchor(operation.input.anchor),
+                    operation.input.cadence.name,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.installmentCount.toString(),
+                    canonicalCreateIds(operation.ids),
+                )
+            is Rg11Operation.RecognizePeriodicAllocationInstallment ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.scheduleId,
+                    operation.input.installmentId,
+                    canonicalMoney(operation.input.amount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.explicitConfirmation.toString(),
+                    canonicalRecognizeIds(operation.ids),
+                )
+            is Rg11Operation.RevisePeriodicAllocation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.scheduleId,
+                    operation.input.recognizedThrough,
+                    canonicalMoney(operation.input.remainingAmount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.remainingInstallmentCount.toString(),
+                    canonicalReviseIds(operation.ids),
+                )
+            is Rg11Operation.CorrectTransactionVersion ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.transactionId.value,
+                    operation.input.correctionKind,
+                    operation.input.statisticsAt.toString(),
+                    operation.input.statisticsAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    canonicalCorrectIds(operation.ids),
+                )
+            is Rg11Operation.RetryIdempotentInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.inputId,
+                )
+            is Rg11Operation.InvalidInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.predicate.name,
+                    operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
+                        "$key=${value ?: "<null>"}"
+                    },
+                )
+        }
+
+    private fun canonicalCreateIds(ids: Rg11CreateIds): String =
+        canonicalFields(
+            ids.transactionId.value,
+            ids.versionId.value,
+            ids.postingSetId.value,
+            ids.paymentPostingId.value,
+            ids.prepaidPostingId.value,
+            ids.scheduleId,
+            ids.revisionId,
+            ids.installmentIds.joinToString("|"),
         )
-        is Rg11Operation.RecognizePeriodicAllocationInstallment -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.scheduleId,
-            operation.input.installmentId,
-            canonicalMoney(operation.input.amount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.explicitConfirmation.toString(),
-            canonicalRecognizeIds(operation.ids),
+
+    private fun canonicalRecognizeIds(ids: Rg11RecognizeIds): String =
+        canonicalFields(
+            ids.transactionId.value,
+            ids.versionId.value,
+            ids.postingSetId.value,
+            ids.expensePostingId.value,
+            ids.prepaidPostingId.value,
+            ids.auditLinkId,
         )
-        is Rg11Operation.RevisePeriodicAllocation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.scheduleId,
-            operation.input.recognizedThrough,
-            canonicalMoney(operation.input.remainingAmount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.explicitConfirmation.toString(),
-            operation.input.remainingInstallmentCount.toString(),
-            canonicalReviseIds(operation.ids),
+
+    private fun canonicalReviseIds(ids: Rg11ReviseIds): String =
+        canonicalFields(
+            ids.revisionId,
+            ids.installmentIds.joinToString("|"),
         )
-        is Rg11Operation.CorrectTransactionVersion -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.transactionId.value,
-            operation.input.correctionKind,
-            operation.input.statisticsAt.toString(),
-            operation.input.statisticsAtText,
-            operation.input.explicitConfirmation.toString(),
-            canonicalCorrectIds(operation.ids),
+
+    private fun canonicalCorrectIds(ids: Rg11CorrectIds): String =
+        canonicalFields(
+            ids.versionId.value,
+            ids.confirmationId,
+            ids.operationId,
+            ids.confirmationCreatedAt.toString(),
+            ids.confirmationCreatedAtText,
         )
-        is Rg11Operation.RetryIdempotentInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.inputId,
-        )
-        is Rg11Operation.InvalidInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.predicate.name,
-            operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
-                "$key=${value ?: "<null>"}"
-            },
-        )
-    }
 
-    private fun canonicalCreateIds(ids: Rg11CreateIds): String = canonicalFields(
-        ids.transactionId.value,
-        ids.versionId.value,
-        ids.postingSetId.value,
-        ids.paymentPostingId.value,
-        ids.prepaidPostingId.value,
-        ids.scheduleId,
-        ids.revisionId,
-        ids.installmentIds.joinToString("|"),
-    )
+    private fun canonicalAnchor(anchor: PeriodicAllocationAnchor): String =
+        when (anchor) {
+            PeriodicAllocationAnchor.MonthEnd -> "month_end"
+            is PeriodicAllocationAnchor.DayOfMonth -> "day_of_month:${anchor.day}"
+        }
 
-    private fun canonicalRecognizeIds(ids: Rg11RecognizeIds): String = canonicalFields(
-        ids.transactionId.value,
-        ids.versionId.value,
-        ids.postingSetId.value,
-        ids.expensePostingId.value,
-        ids.prepaidPostingId.value,
-        ids.auditLinkId,
-    )
+    private fun canonicalMoney(money: Money): String = "${money.minorUnits}:${canonicalCurrency(money.currency)}"
 
-    private fun canonicalReviseIds(ids: Rg11ReviseIds): String = canonicalFields(
-        ids.revisionId,
-        ids.installmentIds.joinToString("|"),
-    )
+    private fun canonicalCurrency(currency: CurrencyUnit): String = "${currency.code}:${currency.precision}"
 
-    private fun canonicalCorrectIds(ids: Rg11CorrectIds): String = canonicalFields(
-        ids.versionId.value,
-        ids.confirmationId,
-        ids.operationId,
-        ids.confirmationCreatedAt.toString(),
-        ids.confirmationCreatedAtText,
-    )
-
-    private fun canonicalAnchor(anchor: PeriodicAllocationAnchor): String = when (anchor) {
-        PeriodicAllocationAnchor.MonthEnd -> "month_end"
-        is PeriodicAllocationAnchor.DayOfMonth -> "day_of_month:${anchor.day}"
-    }
-
-    private fun canonicalMoney(money: Money): String =
-        "${money.minorUnits}:${canonicalCurrency(money.currency)}"
-
-    private fun canonicalCurrency(currency: CurrencyUnit): String =
-        "${currency.code}:${currency.precision}"
-
-    private fun canonicalFields(vararg values: String?): String = buildString {
-        values.forEach { value ->
-            if (value == null) {
-                append("N;")
-            } else {
-                append("V").append(value.length).append(':').append(value).append(';')
+    private fun canonicalFields(vararg values: String?): String =
+        buildString {
+            values.forEach { value ->
+                if (value == null) {
+                    append("N;")
+                } else {
+                    append("V")
+                        .append(value.length)
+                        .append(':')
+                        .append(value)
+                        .append(';')
+                }
             }
         }
-    }
 
     private fun accepted(ids: List<Rg11ReturnedId>) = Rg11ExecutionResult.Accepted(ids)
 
-    private fun rejected(reason: Rg11RejectionReason, fieldPath: Rg11FieldPath) =
-        Rg11ExecutionResult.Rejected(reason, fieldPath)
+    private fun rejected(
+        reason: Rg11RejectionReason,
+        fieldPath: Rg11FieldPath,
+    ) = Rg11ExecutionResult.Rejected(reason, fieldPath)
 
     private companion object {
         const val PERIODIC_ALLOCATION_RECOGNITION_LINK_TYPE = "periodic_allocation_recognition"
         const val CORRECTION_KIND_STATISTICS_TIME = "statistics_time"
 
         /** Frozen case currencies of rg-11.json (CNY is the supported product currency). */
-        val DEFAULT_KNOWN_CURRENCIES = setOf(
-            CurrencyUnit(code = "CNY", precision = 2),
-            CurrencyUnit(code = "USD", precision = 2),
-        )
+        val DEFAULT_KNOWN_CURRENCIES =
+            setOf(
+                CurrencyUnit(code = "CNY", precision = 2),
+                CurrencyUnit(code = "USD", precision = 2),
+            )
 
         /** Case timezone `Asia/Shanghai` of the frozen contract. */
         const val DEFAULT_UTC_OFFSET_SECONDS = 28_800
@@ -1496,13 +1620,19 @@ class Rg11Runtime(
 
 private val DomainResultFailureViolation = com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction
 
-private fun checkedAdd(left: Long, right: Long): Long? {
+private fun checkedAdd(
+    left: Long,
+    right: Long,
+): Long? {
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null
     return left + right
 }
 
-private fun checkedSubtract(left: Long, right: Long): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
+private fun checkedSubtract(
+    left: Long,
+    right: Long,
+): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
 
 private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value
 
@@ -1515,7 +1645,10 @@ private const val SECONDS_PER_DAY = 86_400L
  * `kotlin.time.Instant.toString()` renders UTC, which would shift report day periods by one
  * day for evening instants of the case timezone.
  */
-private fun localDateTimeText(instant: Instant, utcOffsetSeconds: Int): String {
+private fun localDateTimeText(
+    instant: Instant,
+    utcOffsetSeconds: Int,
+): String {
     val localSeconds = instant.epochSeconds + utcOffsetSeconds
     val days = localSeconds.floorDiv(SECONDS_PER_DAY)
     val secondsOfDay = localSeconds - days * SECONDS_PER_DAY
@@ -1538,7 +1671,10 @@ private fun localDateTimeText(instant: Instant, utcOffsetSeconds: Int): String {
     }
 }
 
-private fun padded(value: Long, width: Int): String = value.toString().padStart(width, '0')
+private fun padded(
+    value: Long,
+    width: Int,
+): String = value.toString().padStart(width, '0')
 
 /** Fixed-offset civil-from-days (Howard Hinnant's public-domain algorithm), same arithmetic as
  * the domain's `PeriodicAllocation.kt` local calendar so both layers agree on case dates. */

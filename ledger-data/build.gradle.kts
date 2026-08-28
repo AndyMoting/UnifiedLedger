@@ -4,6 +4,21 @@ plugins {
     kotlin("multiplatform")
     id("com.android.kotlin.multiplatform.library")
     id("app.cash.sqldelight")
+    id("org.jlleitschuh.gradle.ktlint")
+}
+
+ktlint {
+    filter {
+        exclude("**/build/**")
+        // Patterns apply relative to each source-directory root, so a literal
+        // "**/build/**" does not reach generated sources (their root is already
+        // inside build/). Match the absolute path to exclude build/generated.
+        exclude {
+            it.file.absolutePath
+                .replace('\\', '/')
+                .contains("/build/")
+        }
+    }
 }
 
 kotlin {

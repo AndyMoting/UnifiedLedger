@@ -16,24 +16,59 @@ import com.unifiedledger.domain.TransactionVersionId
  *
  * All names and signatures below are the frozen round-A contract. ledger-domain is
  * unchanged; ledger-data implements the commit ports.
+ *
+ * Frozen no_change reason token (spec section 3).
  */
 
-/** Frozen no_change reason token (spec section 3). */
 const val SPINE_NO_CHANGE_REASON_CODE = "equivalent_replay"
 
-data class ImportRequestId(val value: String)
-data class ImportSourceId(val value: String)
-data class ImportEvidenceId(val value: String)
-data class ImportCandidateId(val value: String)
-data class ImportConfirmationId(val value: String)
-data class ImportStatusHistoryId(val value: String)
-data class ImportDuplicateCandidateId(val value: String)
-data class ImportDuplicateReviewId(val value: String)
+data class ImportRequestId(
+    val value: String,
+)
 
-data class ImportRawIdentity(val ledgerId: LedgerId, val inputRef: String, val recordOrdinal: Int)
-data class ImportRequestIdentity(val ledgerId: LedgerId, val requestId: ImportRequestId)
+data class ImportSourceId(
+    val value: String,
+)
 
-enum class ImportRecordKind(val storageValue: String, val contractVersion: Int) {
+data class ImportEvidenceId(
+    val value: String,
+)
+
+data class ImportCandidateId(
+    val value: String,
+)
+
+data class ImportConfirmationId(
+    val value: String,
+)
+
+data class ImportStatusHistoryId(
+    val value: String,
+)
+
+data class ImportDuplicateCandidateId(
+    val value: String,
+)
+
+data class ImportDuplicateReviewId(
+    val value: String,
+)
+
+data class ImportRawIdentity(
+    val ledgerId: LedgerId,
+    val inputRef: String,
+    val recordOrdinal: Int,
+)
+
+data class ImportRequestIdentity(
+    val ledgerId: LedgerId,
+    val requestId: ImportRequestId,
+)
+
+enum class ImportRecordKind(
+    val storageValue: String,
+    val contractVersion: Int,
+) {
     ORDINARY_FLOW_SOURCE("ordinary_flow_source", 1),
     TRANSFER_FLOW_SOURCE("transfer_flow_source", 2),
     TRANSFER_FLOW_SOURCE_MISSING_LEG("transfer_flow_source_missing_leg", 2),
@@ -47,7 +82,9 @@ enum class ImportRecordKind(val storageValue: String, val contractVersion: Int) 
  * v3 intake row. The refund variant of a credit expense is not a fourth record kind:
  * it is marked here and formalized under the D-078 refund contract semantics.
  */
-enum class ImportPaymentVariant(val storageValue: String) {
+enum class ImportPaymentVariant(
+    val storageValue: String,
+) {
     CREDIT_EXPENSE_DIRECT("credit_expense_direct"),
     CREDIT_EXPENSE_REFUND("credit_expense_refund"),
     CREDIT_REPAYMENT("credit_repayment"),
@@ -83,7 +120,9 @@ fun importPaymentProfileShapeValid(profile: ImportPaymentProfile?): Boolean {
 enum class ImportCompleteness { VALID_COMPLETE, VALID_INCOMPLETE }
 
 enum class ImportFundingState { SETTLED, NO_FUNDS, UNRESOLVED }
+
 enum class ImportDuplicateCandidateKind { EXACT_BUSINESS_TUPLE, CLOSED_OR_FAILED_NO_FUNDS }
+
 enum class ImportDuplicateStatus { DEFERRED, CONFIRMED_DUPLICATE, CONFIRMED_DISTINCT, DISMISSED_LOOKALIKE, REJECTED }
 
 // P4-07 funding facts are explicit at every construction site (D-105 section 5): the
@@ -162,9 +201,18 @@ data class ImportDuplicateReviewReceipt(
 )
 
 sealed interface ImportDuplicateReviewResult {
-    data class Accepted(val receipt: ImportDuplicateReviewReceipt) : ImportDuplicateReviewResult
-    data class NoChange(val receipt: ImportDuplicateReviewReceipt, val reasonCode: String) : ImportDuplicateReviewResult
-    data class Rejected(val diagnostic: ImportDiagnostic) : ImportDuplicateReviewResult
+    data class Accepted(
+        val receipt: ImportDuplicateReviewReceipt,
+    ) : ImportDuplicateReviewResult
+
+    data class NoChange(
+        val receipt: ImportDuplicateReviewReceipt,
+        val reasonCode: String,
+    ) : ImportDuplicateReviewResult
+
+    data class Rejected(
+        val diagnostic: ImportDiagnostic,
+    ) : ImportDuplicateReviewResult
 }
 
 enum class ImportCandidateDecision { CONFIRM, REJECT }
@@ -270,85 +318,121 @@ data class ImportDiagnosticRecord(
  * fields; message text is unstable and never compared.
  */
 object SpineDiagnostics {
-    fun identityCollision(inputRef: String, recordOrdinal: Int): ImportDiagnostic =
+    fun identityCollision(
+        inputRef: String,
+        recordOrdinal: Int,
+    ): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_IDENTITY_COLLISION", "fatal", "record",
+            "SPINE_IDENTITY_COLLISION",
+            "fatal",
+            "record",
             ImportDiagnosticLocation(inputRef, recordOrdinal, null, null),
         )
 
     fun requestIdentityConflict(requestId: ImportRequestId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_REQUEST_IDENTITY_CONFLICT", "conflict", "request",
+            "SPINE_REQUEST_IDENTITY_CONFLICT",
+            "conflict",
+            "request",
             ImportDiagnosticLocation(null, null, requestId, null),
         )
 
     fun candidateNotPending(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_CANDIDATE_NOT_PENDING", "invalid", "candidate",
+            "SPINE_CANDIDATE_NOT_PENDING",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun candidateNotFound(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_CANDIDATE_NOT_FOUND", "invalid", "candidate",
+            "SPINE_CANDIDATE_NOT_FOUND",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun candidateIncomplete(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_CANDIDATE_INCOMPLETE", "invalid", "candidate",
+            "SPINE_CANDIDATE_INCOMPLETE",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun staleFingerprint(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_STALE_FINGERPRINT", "stale", "candidate",
+            "SPINE_STALE_FINGERPRINT",
+            "stale",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun referenceIntegrityViolation(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_REFERENCE_INTEGRITY_VIOLATION", "invalid", "candidate",
+            "SPINE_REFERENCE_INTEGRITY_VIOLATION",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
-    fun intakeInvalid(inputRef: String, recordOrdinal: Int): ImportDiagnostic =
+    fun intakeInvalid(
+        inputRef: String,
+        recordOrdinal: Int,
+    ): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_INTAKE_INVALID", "invalid", "record",
+            "SPINE_INTAKE_INVALID",
+            "invalid",
+            "record",
             ImportDiagnosticLocation(inputRef, recordOrdinal, null, null),
         )
 
     fun domainValidationFailed(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_DOMAIN_VALIDATION_FAILED", "invalid", "candidate",
+            "SPINE_DOMAIN_VALIDATION_FAILED",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun transferNotConfirmable(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_TRANSFER_NOT_CONFIRMABLE", "invalid", "candidate",
+            "SPINE_TRANSFER_NOT_CONFIRMABLE",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun decisionKindMismatch(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_DECISION_KIND_MISMATCH", "invalid", "candidate",
+            "SPINE_DECISION_KIND_MISMATCH",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 
     fun duplicateNotConfirmable(candidateId: ImportCandidateId): ImportDiagnostic =
         ImportDiagnosticRecord(
-            "SPINE_DUPLICATE_NOT_CONFIRMABLE", "invalid", "candidate",
+            "SPINE_DUPLICATE_NOT_CONFIRMABLE",
+            "invalid",
+            "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
 }
 
 enum class ImportReturnedIdKind { SOURCE, EVIDENCE, CANDIDATE, CONFIRMATION, TRANSACTION }
 
-data class ImportReturnedId(val kind: ImportReturnedIdKind, val id: String)
+data class ImportReturnedId(
+    val kind: ImportReturnedIdKind,
+    val id: String,
+)
 
 sealed interface ImportIntakeResult {
-    data class Accepted(val receipt: ImportReceipt, val returnedIds: List<ImportReturnedId>) : ImportIntakeResult
+    data class Accepted(
+        val receipt: ImportReceipt,
+        val returnedIds: List<ImportReturnedId>,
+    ) : ImportIntakeResult
 
     /**
      * Same-request equivalent replay (O-02) returns the original receipt; the raw
@@ -361,17 +445,26 @@ sealed interface ImportIntakeResult {
         val reasonCode: String,
     ) : ImportIntakeResult
 
-    data class Rejected(val diagnostic: ImportDiagnostic) : ImportIntakeResult
+    data class Rejected(
+        val diagnostic: ImportDiagnostic,
+    ) : ImportIntakeResult
 }
 
 sealed interface ImportCandidateDecisionResult {
-    data class Accepted(val receipt: ImportReceipt, val returnedIds: List<ImportReturnedId>) :
-        ImportCandidateDecisionResult
+    data class Accepted(
+        val receipt: ImportReceipt,
+        val returnedIds: List<ImportReturnedId>,
+    ) : ImportCandidateDecisionResult
 
     /** Equivalent replay returns the original receipt (D-098:1516); reasonCode is frozen. */
-    data class NoChange(val receipt: ImportReceipt, val reasonCode: String) : ImportCandidateDecisionResult
+    data class NoChange(
+        val receipt: ImportReceipt,
+        val reasonCode: String,
+    ) : ImportCandidateDecisionResult
 
-    data class Rejected(val diagnostic: ImportDiagnostic) : ImportCandidateDecisionResult
+    data class Rejected(
+        val diagnostic: ImportDiagnostic,
+    ) : ImportCandidateDecisionResult
 }
 
 data class ImportIntakeIds(
@@ -442,7 +535,10 @@ data class ImportCandidateFormalizationInput(
 )
 
 fun interface ImportCandidateFormalFactory {
-    fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit>
+    fun create(
+        input: ImportCandidateFormalizationInput,
+        ids: ImportCommitIds,
+    ): DomainResult<ImportFormalCommit>
 }
 
 fun interface ImportIntakeCommitPort {
@@ -488,8 +584,7 @@ fun interface ImportDuplicateReviewCommitPort {
 class ReviewImportDuplicateCandidate(
     private val commitPort: ImportDuplicateReviewCommitPort,
 ) {
-    fun execute(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult =
-        commitPort.commitReviewOnce(request)
+    fun execute(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult = commitPort.commitReviewOnce(request)
 }
 
 class ExecuteImportIntake(
@@ -508,17 +603,18 @@ class ExecuteImportIntake(
         val contentHash = fingerprint.digest(request.recordKind, request.facts, request.paymentProfile)
 
         val identity = request.identity
-        val snapshot = ImportIntakeSnapshot(
-            identity = request.identity,
-            inputRef = request.inputRef,
-            recordOrdinal = request.recordOrdinal,
-            recordKind = request.recordKind,
-            facts = request.facts,
-            completeness = request.completeness,
-            contentHash = contentHash,
-            candidateGeneratedAt = request.candidateGeneratedAt,
-            paymentProfile = request.paymentProfile,
-        )
+        val snapshot =
+            ImportIntakeSnapshot(
+                identity = request.identity,
+                inputRef = request.inputRef,
+                recordOrdinal = request.recordOrdinal,
+                recordKind = request.recordKind,
+                facts = request.facts,
+                completeness = request.completeness,
+                contentHash = contentHash,
+                candidateGeneratedAt = request.candidateGeneratedAt,
+                paymentProfile = request.paymentProfile,
+            )
         return commitPort.commitIntake(identity, snapshot) { idSource.next() }
     }
 
@@ -570,15 +666,17 @@ class ConfirmImportCandidate(
     private val catalog: LedgerCatalog,
 ) {
     fun execute(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult {
-        val snapshot = ImportCandidateDecisionSnapshot(
-            candidateId = request.candidateId,
-            decision = ImportCandidateDecision.CONFIRM,
-            expectedContentHash = request.expectedContentHash,
-            explicitConfirmedAt = request.explicitConfirmedAt,
-            confirmDecisionFields = request.decisionFields,
-        )
+        val snapshot =
+            ImportCandidateDecisionSnapshot(
+                candidateId = request.candidateId,
+                decision = ImportCandidateDecision.CONFIRM,
+                expectedContentHash = request.expectedContentHash,
+                explicitConfirmedAt = request.explicitConfirmedAt,
+                confirmDecisionFields = request.decisionFields,
+            )
         return commitPort.commitOnce(
-            request.identity, snapshot,
+            request.identity,
+            snapshot,
             allocateIds = { idSource.next() },
             catalog = catalog,
         ) { input, ids ->
@@ -592,13 +690,14 @@ class RejectImportCandidate(
     private val statusIdSource: ImportStatusIdSource,
 ) {
     fun execute(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult {
-        val snapshot = ImportCandidateDecisionSnapshot(
-            candidateId = request.candidateId,
-            decision = ImportCandidateDecision.REJECT,
-            expectedContentHash = request.expectedContentHash,
-            explicitConfirmedAt = null,
-            confirmDecisionFields = null,
-        )
+        val snapshot =
+            ImportCandidateDecisionSnapshot(
+                candidateId = request.candidateId,
+                decision = ImportCandidateDecision.REJECT,
+                expectedContentHash = request.expectedContentHash,
+                explicitConfirmedAt = null,
+                confirmDecisionFields = null,
+            )
         return commitPort.commitRejectOnce(request.identity, snapshot) { statusIdSource.next() }
     }
 }

@@ -1,20 +1,21 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ExecuteImportIntake
-import com.unifiedledger.application.ConfirmImportCandidate
+import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
-import com.unifiedledger.application.ImportConfirmationId
-import com.unifiedledger.application.ImportCommitIds
-import com.unifiedledger.application.ImportCompleteness
-import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportCandidateFormalFactory
 import com.unifiedledger.application.ImportCandidateFormalizationInput
+import com.unifiedledger.application.ImportCommitIds
+import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportConfirmDecisionFields
-import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportConfirmationId
+import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportFormalCommit
+import com.unifiedledger.application.ImportFormalIds
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
@@ -29,7 +30,6 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
-import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.TransferFlowFormalFactory
@@ -46,7 +46,6 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSet
 import com.unifiedledger.domain.PostingSetId
@@ -75,90 +74,113 @@ class O2PrecisionRescaleDataTest {
             val store = SqlDelightImportSpineStore(database, driver)
             val facts = facts(99L, 0)
             val profile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit")
-            val intakeIds = object : ImportIntakeIdSource {
-                override fun next() = ImportIntakeIds(
-                    ImportSourceId("source-o2-boundary"),
-                    com.unifiedledger.application.ImportEvidenceId("evidence-o2-boundary"),
-                    com.unifiedledger.application.ImportCandidateId("candidate-o2-boundary"),
-                    ImportStatusHistoryId("status-o2-boundary-1"),
-                )
-            }
+            val intakeIds =
+                object : ImportIntakeIdSource {
+                    override fun next() =
+                        ImportIntakeIds(
+                            ImportSourceId("source-o2-boundary"),
+                            com.unifiedledger.application.ImportEvidenceId("evidence-o2-boundary"),
+                            com.unifiedledger.application.ImportCandidateId("candidate-o2-boundary"),
+                            ImportStatusHistoryId("status-o2-boundary-1"),
+                        )
+                }
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(
                 request("req-o2-boundary-intake", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts, profile),
             )
             val hash = ImportContentFingerprint().digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts, profile)
-            val ids = object : ImportIdSource {
-                private val calls = AtomicInteger(0)
-                override fun next(): ImportCommitIds {
-                    val suffix = calls.getAndIncrement()
-                    return ImportCommitIds(
-                        ImportConfirmationId("confirmation-o2-boundary-$suffix"),
-                        ImportStatusHistoryId("status-o2-boundary-2-$suffix"),
-                        ImportFormalIds(
-                            TransactionId("tx-o2-boundary-$suffix"),
-                            TransactionVersionId("version-o2-boundary-$suffix"),
-                            PostingSetId("set-o2-boundary-$suffix"),
-                            listOf(PostingId("posting-o2-boundary-$suffix-0"), PostingId("posting-o2-boundary-$suffix-1")),
-                        ),
-                    )
+            val ids =
+                object : ImportIdSource {
+                    private val calls = AtomicInteger(0)
+
+                    override fun next(): ImportCommitIds {
+                        val suffix = calls.getAndIncrement()
+                        return ImportCommitIds(
+                            ImportConfirmationId("confirmation-o2-boundary-$suffix"),
+                            ImportStatusHistoryId("status-o2-boundary-2-$suffix"),
+                            ImportFormalIds(
+                                TransactionId("tx-o2-boundary-$suffix"),
+                                TransactionVersionId("version-o2-boundary-$suffix"),
+                                PostingSetId("set-o2-boundary-$suffix"),
+                                listOf(PostingId("posting-o2-boundary-$suffix-0"), PostingId("posting-o2-boundary-$suffix-1")),
+                            ),
+                        )
+                    }
                 }
-            }
             val catalog = catalog()
-            val maliciousFactory = object : ImportCandidateFormalFactory {
-                override fun create(input: ImportCandidateFormalizationInput, allocated: ImportCommitIds): DomainResult<ImportFormalCommit> {
-                val trusted = assertIs<DomainResult.Success<ImportFormalCommit>>(
-                    CreditFlowFormalFactory(catalog) { null }.create(input, allocated),
-                ).value
-                val originalPostings = trusted.transaction.postingSets.single().postings
-                val wrongPostingSet = assertIs<DomainResult.Success<PostingSet>>(
-                    PostingSet.create(
-                        trusted.transaction.postingSets.single().id,
-                        originalPostings.mapIndexed { index, posting ->
-                            posting.copy(
-                                // Keep the graph internally balanced and the posting
-                                // currency valid, but forge a cross-ledger account id.
-                                accountId = if (index == 0) AccountId("asset-other-ledger") else posting.accountId,
-                            )
-                        },
-                    ),
-                ).value
-                val wrongGraph = assertIs<DomainResult.Success<FormalTransaction>>(
-                    FormalTransaction.create(
-                        trusted.transaction.transaction,
-                        trusted.transaction.versions,
-                        listOf(wrongPostingSet),
-                    ),
-                ).value
-                return DomainResult.Success(
-                    ImportFormalCommit(
-                        allocated.confirmationId,
-                        allocated.statusHistoryId,
-                        wrongGraph,
-                    ),
-                )
+            val maliciousFactory =
+                object : ImportCandidateFormalFactory {
+                    override fun create(
+                        input: ImportCandidateFormalizationInput,
+                        allocated: ImportCommitIds,
+                    ): DomainResult<ImportFormalCommit> {
+                        val trusted =
+                            assertIs<DomainResult.Success<ImportFormalCommit>>(
+                                CreditFlowFormalFactory(catalog) { null }.create(input, allocated),
+                            ).value
+                        val originalPostings =
+                            trusted.transaction.postingSets
+                                .single()
+                                .postings
+                        val wrongPostingSet =
+                            assertIs<DomainResult.Success<PostingSet>>(
+                                PostingSet.create(
+                                    trusted.transaction.postingSets
+                                        .single()
+                                        .id,
+                                    originalPostings.mapIndexed { index, posting ->
+                                        posting.copy(
+                                            // Keep the graph internally balanced and the posting
+                                            // currency valid, but forge a cross-ledger account id.
+                                            accountId = if (index == 0) AccountId("asset-other-ledger") else posting.accountId,
+                                        )
+                                    },
+                                ),
+                            ).value
+                        val wrongGraph =
+                            assertIs<DomainResult.Success<FormalTransaction>>(
+                                FormalTransaction.create(
+                                    trusted.transaction.transaction,
+                                    trusted.transaction.versions,
+                                    listOf(wrongPostingSet),
+                                ),
+                            ).value
+                        return DomainResult.Success(
+                            ImportFormalCommit(
+                                allocated.confirmationId,
+                                allocated.statusHistoryId,
+                                wrongGraph,
+                            ),
+                        )
+                    }
                 }
-            }
-            val rejected = ConfirmImportCandidate(store, ids, maliciousFactory, catalog).execute(
-                confirm("req-o2-boundary-confirm", hash, AccountId("liability-cny"), "candidate-o2-boundary"),
-            )
+            val rejected =
+                ConfirmImportCandidate(store, ids, maliciousFactory, catalog).execute(
+                    confirm("req-o2-boundary-confirm", hash, AccountId("liability-cny"), "candidate-o2-boundary"),
+                )
             assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", assertIs<ImportCandidateDecisionResult.Rejected>(rejected).diagnostic.code)
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countPostings().executeAsOne())
-            val source = database.ledgerQueries.selectImportSourceByOwnerRequest(
-                ledgerId.value,
-                "req-o2-boundary-intake",
-            ).executeAsOne()
+            val source =
+                database.ledgerQueries
+                    .selectImportSourceByOwnerRequest(
+                        ledgerId.value,
+                        "req-o2-boundary-intake",
+                    ).executeAsOne()
             assertEquals(99L, source.amount_minor)
             assertEquals(0L, source.currency_precision)
             assertEquals(hash, source.content_hash)
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-o2-boundary").executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-o2-boundary")
+                    .executeAsOne()
+                    .status,
             )
 
-            val accepted = ConfirmImportCandidate(store, ids, CreditFlowFormalFactory(catalog) { null }, catalog).execute(
-                confirm("req-o2-boundary-retry", hash, AccountId("liability-cny"), "candidate-o2-boundary"),
-            )
+            val accepted =
+                ConfirmImportCandidate(store, ids, CreditFlowFormalFactory(catalog) { null }, catalog).execute(
+                    confirm("req-o2-boundary-retry", hash, AccountId("liability-cny"), "candidate-o2-boundary"),
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(accepted)
             assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -176,63 +198,76 @@ class O2PrecisionRescaleDataTest {
             val store = SqlDelightImportSpineStore(database, driver)
             val facts = facts(99L, 0)
             val profile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit")
-            val intake = ExecuteImportIntake(
-                store,
-                object : ImportIntakeIdSource {
-                    override fun next() = ImportIntakeIds(
-                        ImportSourceId("source-o2"),
-                        com.unifiedledger.application.ImportEvidenceId("evidence-o2"),
-                        com.unifiedledger.application.ImportCandidateId("candidate-o2"),
-                        ImportStatusHistoryId("status-o2-1"),
-                    )
-                },
-                ImportContentFingerprint(),
-            )
-            val intakeResult = assertIs<ImportIntakeResult.Accepted>(
-                intake.execute(request("req-o2-intake", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts, profile)),
-            )
+            val intake =
+                ExecuteImportIntake(
+                    store,
+                    object : ImportIntakeIdSource {
+                        override fun next() =
+                            ImportIntakeIds(
+                                ImportSourceId("source-o2"),
+                                com.unifiedledger.application.ImportEvidenceId("evidence-o2"),
+                                com.unifiedledger.application.ImportCandidateId("candidate-o2"),
+                                ImportStatusHistoryId("status-o2-1"),
+                            )
+                    },
+                    ImportContentFingerprint(),
+                )
+            val intakeResult =
+                assertIs<ImportIntakeResult.Accepted>(
+                    intake.execute(request("req-o2-intake", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts, profile)),
+                )
             val hash = ImportContentFingerprint().digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts, profile)
-            val commitIds = object : ImportIdSource {
-                private val calls = AtomicInteger(0)
-                override fun next(): ImportCommitIds {
-                    val suffix = calls.getAndIncrement()
-                    return ImportCommitIds(
-                        ImportConfirmationId("confirmation-o2-$suffix"),
-                        ImportStatusHistoryId("status-o2-2-$suffix"),
-                        ImportFormalIds(
-                            TransactionId("tx-o2-$suffix"),
-                            TransactionVersionId("version-o2-$suffix"),
-                            PostingSetId("set-o2-$suffix"),
-                            listOf(PostingId("posting-o2-$suffix-0"), PostingId("posting-o2-$suffix-1")),
-                        ),
-                    )
+            val commitIds =
+                object : ImportIdSource {
+                    private val calls = AtomicInteger(0)
+
+                    override fun next(): ImportCommitIds {
+                        val suffix = calls.getAndIncrement()
+                        return ImportCommitIds(
+                            ImportConfirmationId("confirmation-o2-$suffix"),
+                            ImportStatusHistoryId("status-o2-2-$suffix"),
+                            ImportFormalIds(
+                                TransactionId("tx-o2-$suffix"),
+                                TransactionVersionId("version-o2-$suffix"),
+                                PostingSetId("set-o2-$suffix"),
+                                listOf(PostingId("posting-o2-$suffix-0"), PostingId("posting-o2-$suffix-1")),
+                            ),
+                        )
+                    }
                 }
-            }
             val factory = CreditFlowFormalFactory(catalog()) { null }
-            val first = ConfirmImportCandidate(
-                store,
-                commitIds,
-                factory,
-                catalog(),
-            ).execute(
-                confirm(
-                    requestId = "req-o2-confirm-usd",
-                    hash = hash,
-                    liability = AccountId("liability-usd"),
-                ),
-            )
+            val first =
+                ConfirmImportCandidate(
+                    store,
+                    commitIds,
+                    factory,
+                    catalog(),
+                ).execute(
+                    confirm(
+                        requestId = "req-o2-confirm-usd",
+                        hash = hash,
+                        liability = AccountId("liability-usd"),
+                    ),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", assertIs<ImportCandidateDecisionResult.Rejected>(first).diagnostic.code)
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countPostings().executeAsOne())
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-o2").executeAsOne().status)
-
-            val second = ConfirmImportCandidate(store, commitIds, factory, catalog()).execute(
-                confirm(
-                    requestId = "req-o2-confirm-cny",
-                    hash = hash,
-                    liability = AccountId("liability-cny"),
-                ),
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-o2")
+                    .executeAsOne()
+                    .status,
             )
+
+            val second =
+                ConfirmImportCandidate(store, commitIds, factory, catalog()).execute(
+                    confirm(
+                        requestId = "req-o2-confirm-cny",
+                        hash = hash,
+                        liability = AccountId("liability-cny"),
+                    ),
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(second)
             assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -284,11 +319,12 @@ class O2PrecisionRescaleDataTest {
                     ),
                 ),
             )
-            val originalHash = ImportContentFingerprint().digest(
-                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
-                originalFacts,
-                originalProfile,
-            )
+            val originalHash =
+                ImportContentFingerprint().digest(
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                    originalFacts,
+                    originalProfile,
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 ConfirmImportCandidate(
                     store,
@@ -335,34 +371,38 @@ class O2PrecisionRescaleDataTest {
                     ),
                 ),
             )
-            val refundHash = ImportContentFingerprint().digest(
-                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
-                refundFacts,
-                refundProfile,
-            )
-            val refundRequest = ImportCandidateConfirmRequest(
-                ImportRequestIdentity(ledgerId, ImportRequestId("req-o2-provider-refund-confirm")),
-                refundCandidateId,
-                refundHash,
-                confirmedAt,
-                ImportConfirmDecisionFields.CreditExpenseRefundFlow(
-                    CategoryId("category-food"),
-                    AccountId("liability-cny"),
-                    TransactionId("tx-provider-original"),
-                ),
-            )
+            val refundHash =
+                ImportContentFingerprint().digest(
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                    refundFacts,
+                    refundProfile,
+                )
+            val refundRequest =
+                ImportCandidateConfirmRequest(
+                    ImportRequestIdentity(ledgerId, ImportRequestId("req-o2-provider-refund-confirm")),
+                    refundCandidateId,
+                    refundHash,
+                    confirmedAt,
+                    ImportConfirmDecisionFields.CreditExpenseRefundFlow(
+                        CategoryId("category-food"),
+                        AccountId("liability-cny"),
+                        TransactionId("tx-provider-original"),
+                    ),
+                )
             val baseline = confirmationCounts(database, driver)
             var providerCalls = 0
-            val throwingFactory = CreditFlowFormalFactory(catalog) {
-                providerCalls += 1
-                error("original expense provider failed")
-            }
-            val rejected = ConfirmImportCandidate(
-                store,
-                ImportIdSource { commitIds("provider-refund", 2) },
-                throwingFactory,
-                catalog,
-            ).execute(refundRequest)
+            val throwingFactory =
+                CreditFlowFormalFactory(catalog) {
+                    providerCalls += 1
+                    error("original expense provider failed")
+                }
+            val rejected =
+                ConfirmImportCandidate(
+                    store,
+                    ImportIdSource { commitIds("provider-refund", 2) },
+                    throwingFactory,
+                    catalog,
+                ).execute(refundRequest)
             assertEquals(
                 "SPINE_DOMAIN_VALIDATION_FAILED",
                 assertIs<ImportCandidateDecisionResult.Rejected>(rejected).diagnostic.code,
@@ -371,15 +411,19 @@ class O2PrecisionRescaleDataTest {
             assertEquals(baseline, confirmationCounts(database, driver))
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(
-                    ledgerId.value,
-                    refundCandidateId.value,
-                ).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(
+                        ledgerId.value,
+                        refundCandidateId.value,
+                    ).executeAsOne()
+                    .status,
             )
-            val refundSource = database.ledgerQueries.selectImportSourceByOwnerRequest(
-                ledgerId.value,
-                "req-o2-provider-refund-intake",
-            ).executeAsOne()
+            val refundSource =
+                database.ledgerQueries
+                    .selectImportSourceByOwnerRequest(
+                        ledgerId.value,
+                        "req-o2-provider-refund-intake",
+                    ).executeAsOne()
             assertEquals(refundFacts.amountMinor, refundSource.amount_minor)
             assertEquals(refundFacts.currencyCode, refundSource.currency_code)
             assertEquals(refundFacts.currencyPrecision.toLong(), refundSource.currency_precision)
@@ -391,20 +435,21 @@ class O2PrecisionRescaleDataTest {
             assertEquals(refundFacts.fundingRuleVersion.toLong(), refundSource.funding_rule_version)
             assertEquals(refundHash, refundSource.content_hash)
 
-            val accepted = ConfirmImportCandidate(
-                SqlDelightImportSpineStore(database, driver),
-                ImportIdSource { commitIds("provider-refund", 2) },
-                CreditFlowFormalFactory(catalog) { transactionId ->
-                    CreditRefundOriginalExpense(
-                        transactionId,
-                        ledgerId,
-                        TransactionKind.EXPENSE,
-                        "CNY",
-                        AccountId("expense"),
-                    )
-                },
-                catalog,
-            ).execute(refundRequest)
+            val accepted =
+                ConfirmImportCandidate(
+                    SqlDelightImportSpineStore(database, driver),
+                    ImportIdSource { commitIds("provider-refund", 2) },
+                    CreditFlowFormalFactory(catalog) { transactionId ->
+                        CreditRefundOriginalExpense(
+                            transactionId,
+                            ledgerId,
+                            TransactionKind.EXPENSE,
+                            "CNY",
+                            AccountId("expense"),
+                        )
+                    },
+                    catalog,
+                ).execute(refundRequest)
             assertIs<ImportCandidateDecisionResult.Accepted>(accepted)
             assertEquals(
                 baseline.copy(
@@ -422,10 +467,12 @@ class O2PrecisionRescaleDataTest {
             )
             assertEquals(
                 "confirmed",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(
-                    ledgerId.value,
-                    refundCandidateId.value,
-                ).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(
+                        ledgerId.value,
+                        refundCandidateId.value,
+                    ).executeAsOne()
+                    .status,
             )
         } finally {
             driver.close()
@@ -443,18 +490,20 @@ class O2PrecisionRescaleDataTest {
             val malformedFacts = facts(99L, 0).copy(occurredAt = "not-an-instant")
             val profile: ImportPaymentProfile? = null
             val kind = ImportRecordKind.ORDINARY_FLOW_SOURCE
-            val intake = ExecuteImportIntake(
-                store,
-                object : ImportIntakeIdSource {
-                    override fun next() = ImportIntakeIds(
-                        ImportSourceId("source-o2-malformed-time"),
-                        com.unifiedledger.application.ImportEvidenceId("evidence-o2-malformed-time"),
-                        com.unifiedledger.application.ImportCandidateId("candidate-o2-malformed-time"),
-                        ImportStatusHistoryId("status-o2-malformed-time-1"),
-                    )
-                },
-                ImportContentFingerprint(),
-            )
+            val intake =
+                ExecuteImportIntake(
+                    store,
+                    object : ImportIntakeIdSource {
+                        override fun next() =
+                            ImportIntakeIds(
+                                ImportSourceId("source-o2-malformed-time"),
+                                com.unifiedledger.application.ImportEvidenceId("evidence-o2-malformed-time"),
+                                com.unifiedledger.application.ImportCandidateId("candidate-o2-malformed-time"),
+                                ImportStatusHistoryId("status-o2-malformed-time-1"),
+                            )
+                    },
+                    ImportContentFingerprint(),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 intake.execute(
                     request(
@@ -466,27 +515,31 @@ class O2PrecisionRescaleDataTest {
                 ),
             )
             val hash = ImportContentFingerprint().digest(kind, malformedFacts, profile)
-            val ids = object : ImportIdSource {
-                private val calls = AtomicInteger(0)
-                override fun next(): ImportCommitIds = commitIds("malformed-time-${calls.getAndIncrement()}", 2)
-            }
-            fun confirm(requestId: String): ImportCandidateDecisionResult = ConfirmImportCandidate(
-                store,
-                ids,
-                OrdinaryFlowFormalFactory(catalog),
-                catalog,
-            ).execute(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
-                    com.unifiedledger.application.ImportCandidateId("candidate-o2-malformed-time"),
-                    hash,
-                    confirmedAt,
-                    com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow(
-                        CategoryId("category-food"),
-                        AccountId("asset"),
+            val ids =
+                object : ImportIdSource {
+                    private val calls = AtomicInteger(0)
+
+                    override fun next(): ImportCommitIds = commitIds("malformed-time-${calls.getAndIncrement()}", 2)
+                }
+
+            fun confirm(requestId: String): ImportCandidateDecisionResult =
+                ConfirmImportCandidate(
+                    store,
+                    ids,
+                    OrdinaryFlowFormalFactory(catalog),
+                    catalog,
+                ).execute(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+                        com.unifiedledger.application.ImportCandidateId("candidate-o2-malformed-time"),
+                        hash,
+                        confirmedAt,
+                        com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow(
+                            CategoryId("category-food"),
+                            AccountId("asset"),
+                        ),
                     ),
-                ),
-            )
+                )
 
             repeat(2) { attempt ->
                 val result = assertIs<ImportCandidateDecisionResult.Rejected>(confirm("req-o2-malformed-time-$attempt"))
@@ -496,15 +549,19 @@ class O2PrecisionRescaleDataTest {
             assertEquals(0L, database.ledgerQueries.countPostings().executeAsOne())
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(
-                    ledgerId.value,
-                    "candidate-o2-malformed-time",
-                ).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(
+                        ledgerId.value,
+                        "candidate-o2-malformed-time",
+                    ).executeAsOne()
+                    .status,
             )
-            val source = database.ledgerQueries.selectImportSourceByOwnerRequest(
-                ledgerId.value,
-                "req-o2-malformed-time-intake",
-            ).executeAsOne()
+            val source =
+                database.ledgerQueries
+                    .selectImportSourceByOwnerRequest(
+                        ledgerId.value,
+                        "req-o2-malformed-time-intake",
+                    ).executeAsOne()
             assertEquals(99L, source.amount_minor)
             assertEquals(0L, source.currency_precision)
             assertEquals(hash, source.content_hash)
@@ -521,18 +578,20 @@ class O2PrecisionRescaleDataTest {
             val database = LedgerDatabase(driver)
             val store = SqlDelightImportSpineStore(database, driver)
             val sourceFacts = facts(0L, Int.MAX_VALUE)
-            val intake = ExecuteImportIntake(
-                store,
-                object : ImportIntakeIdSource {
-                    override fun next() = ImportIntakeIds(
-                        ImportSourceId("source-o2-high-scale"),
-                        com.unifiedledger.application.ImportEvidenceId("evidence-o2-high-scale"),
-                        com.unifiedledger.application.ImportCandidateId("candidate-o2-high-scale"),
-                        ImportStatusHistoryId("status-o2-high-scale-1"),
-                    )
-                },
-                ImportContentFingerprint(),
-            )
+            val intake =
+                ExecuteImportIntake(
+                    store,
+                    object : ImportIntakeIdSource {
+                        override fun next() =
+                            ImportIntakeIds(
+                                ImportSourceId("source-o2-high-scale"),
+                                com.unifiedledger.application.ImportEvidenceId("evidence-o2-high-scale"),
+                                com.unifiedledger.application.ImportCandidateId("candidate-o2-high-scale"),
+                                ImportStatusHistoryId("status-o2-high-scale-1"),
+                            )
+                    },
+                    ImportContentFingerprint(),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 intake.execute(
                     request(
@@ -545,14 +604,17 @@ class O2PrecisionRescaleDataTest {
                 ),
             )
 
-            val expectedHash = ImportContentFingerprint().digest(
-                ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                sourceFacts,
-            )
-            val source = database.ledgerQueries.selectImportSourceByOwnerRequest(
-                ledgerId.value,
-                "req-o2-high-scale-intake",
-            ).executeAsOne()
+            val expectedHash =
+                ImportContentFingerprint().digest(
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    sourceFacts,
+                )
+            val source =
+                database.ledgerQueries
+                    .selectImportSourceByOwnerRequest(
+                        ledgerId.value,
+                        "req-o2-high-scale-intake",
+                    ).executeAsOne()
             assertEquals(0L, source.amount_minor)
             assertEquals(Int.MAX_VALUE.toLong(), source.currency_precision)
             assertEquals("CNY", source.currency_code)
@@ -565,10 +627,12 @@ class O2PrecisionRescaleDataTest {
             assertEquals(expectedHash, source.content_hash)
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(
-                    ledgerId.value,
-                    "candidate-o2-high-scale",
-                ).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(
+                        ledgerId.value,
+                        "candidate-o2-high-scale",
+                    ).executeAsOne()
+                    .status,
             )
         } finally {
             driver.close()
@@ -590,12 +654,13 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     store,
                     object : ImportIntakeIdSource {
-                        override fun next() = ImportIntakeIds(
-                            ImportSourceId("source-o2-missing-confirmed-at"),
-                            com.unifiedledger.application.ImportEvidenceId("evidence-o2-missing-confirmed-at"),
-                            com.unifiedledger.application.ImportCandidateId(candidateId),
-                            ImportStatusHistoryId("status-o2-missing-confirmed-at-1"),
-                        )
+                        override fun next() =
+                            ImportIntakeIds(
+                                ImportSourceId("source-o2-missing-confirmed-at"),
+                                com.unifiedledger.application.ImportEvidenceId("evidence-o2-missing-confirmed-at"),
+                                com.unifiedledger.application.ImportCandidateId(candidateId),
+                                ImportStatusHistoryId("status-o2-missing-confirmed-at-1"),
+                            )
                     },
                     ImportContentFingerprint(),
                 ).execute(
@@ -609,30 +674,36 @@ class O2PrecisionRescaleDataTest {
                 ),
             )
             val hash = ImportContentFingerprint().digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, sourceFacts, profile)
-            val missingTime = ImportCandidateConfirmRequest(
-                ImportRequestIdentity(ledgerId, ImportRequestId("req-o2-missing-confirmed-at-confirm")),
-                com.unifiedledger.application.ImportCandidateId(candidateId),
-                hash,
-                null,
-                ImportConfirmDecisionFields.MixedPaymentFlow(
-                    CategoryId("category-food"), AccountId("asset"), AccountId("liability-cny"), 5000L, 4900L,
-                ),
-            )
+            val missingTime =
+                ImportCandidateConfirmRequest(
+                    ImportRequestIdentity(ledgerId, ImportRequestId("req-o2-missing-confirmed-at-confirm")),
+                    com.unifiedledger.application.ImportCandidateId(candidateId),
+                    hash,
+                    null,
+                    ImportConfirmDecisionFields.MixedPaymentFlow(
+                        CategoryId("category-food"),
+                        AccountId("asset"),
+                        AccountId("liability-cny"),
+                        5000L,
+                        4900L,
+                    ),
+                )
             var idCalls = 0
             var factoryCalls = 0
             val baseline = confirmationCounts(database, driver)
-            val rejected = ConfirmImportCandidate(
-                store,
-                ImportIdSource {
-                    idCalls += 1
-                    commitIds("missing-confirmed-at", 3)
-                },
-                ImportCandidateFormalFactory { _, _ ->
-                    factoryCalls += 1
-                    error("factory must not be invoked for missing confirmation time")
-                },
-                catalog,
-            ).execute(missingTime)
+            val rejected =
+                ConfirmImportCandidate(
+                    store,
+                    ImportIdSource {
+                        idCalls += 1
+                        commitIds("missing-confirmed-at", 3)
+                    },
+                    ImportCandidateFormalFactory { _, _ ->
+                        factoryCalls += 1
+                        error("factory must not be invoked for missing confirmation time")
+                    },
+                    catalog,
+                ).execute(missingTime)
             assertEquals(
                 "SPINE_CANDIDATE_INCOMPLETE",
                 assertIs<ImportCandidateDecisionResult.Rejected>(rejected).diagnostic.code,
@@ -642,15 +713,19 @@ class O2PrecisionRescaleDataTest {
             assertEquals(baseline, confirmationCounts(database, driver))
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, candidateId).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, candidateId)
+                    .executeAsOne()
+                    .status,
             )
 
-            val accepted = ConfirmImportCandidate(
-                store,
-                ImportIdSource { commitIds("missing-confirmed-at", 3) },
-                MixedPaymentFlowFormalFactory(catalog),
-                catalog,
-            ).execute(missingTime.copy(explicitConfirmedAt = confirmedAt))
+            val accepted =
+                ConfirmImportCandidate(
+                    store,
+                    ImportIdSource { commitIds("missing-confirmed-at", 3) },
+                    MixedPaymentFlowFormalFactory(catalog),
+                    catalog,
+                ).execute(missingTime.copy(explicitConfirmedAt = confirmedAt))
             assertIs<ImportCandidateDecisionResult.Accepted>(accepted)
             assertEquals(
                 baseline.copy(
@@ -700,41 +775,50 @@ class O2PrecisionRescaleDataTest {
             val store = SqlDelightImportSpineStore(database, driver)
             val facts = facts(99L, 0)
             val profile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "asset", "credit")
-            val intakeIds = object : ImportIntakeIdSource {
-                override fun next() = ImportIntakeIds(
-                    ImportSourceId("source-mixed-o2"),
-                    com.unifiedledger.application.ImportEvidenceId("evidence-mixed-o2"),
-                    com.unifiedledger.application.ImportCandidateId("candidate-mixed-o2"),
-                    ImportStatusHistoryId("status-mixed-o2-1"),
-                )
-            }
+            val intakeIds =
+                object : ImportIntakeIdSource {
+                    override fun next() =
+                        ImportIntakeIds(
+                            ImportSourceId("source-mixed-o2"),
+                            com.unifiedledger.application.ImportEvidenceId("evidence-mixed-o2"),
+                            com.unifiedledger.application.ImportCandidateId("candidate-mixed-o2"),
+                            ImportStatusHistoryId("status-mixed-o2-1"),
+                        )
+                }
             ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(
                 request("req-mixed-o2-intake", ImportRecordKind.MIXED_PAYMENT_SOURCE, facts, profile),
             )
             val hash = ImportContentFingerprint().digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, facts, profile)
-            val ids = object : ImportIdSource {
-                override fun next() = ImportCommitIds(
-                    ImportConfirmationId("confirmation-mixed-o2"),
-                    ImportStatusHistoryId("status-mixed-o2-2"),
-                    ImportFormalIds(
-                        TransactionId("tx-mixed-o2"),
-                        TransactionVersionId("version-mixed-o2"),
-                        PostingSetId("set-mixed-o2"),
-                        listOf(PostingId("posting-mixed-o2-0"), PostingId("posting-mixed-o2-1"), PostingId("posting-mixed-o2-2")),
+            val ids =
+                object : ImportIdSource {
+                    override fun next() =
+                        ImportCommitIds(
+                            ImportConfirmationId("confirmation-mixed-o2"),
+                            ImportStatusHistoryId("status-mixed-o2-2"),
+                            ImportFormalIds(
+                                TransactionId("tx-mixed-o2"),
+                                TransactionVersionId("version-mixed-o2"),
+                                PostingSetId("set-mixed-o2"),
+                                listOf(PostingId("posting-mixed-o2-0"), PostingId("posting-mixed-o2-1"), PostingId("posting-mixed-o2-2")),
+                            ),
+                        )
+                }
+            val result =
+                ConfirmImportCandidate(store, ids, MixedPaymentFlowFormalFactory(catalog()), catalog()).execute(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(ledgerId, ImportRequestId("req-mixed-o2-confirm")),
+                        com.unifiedledger.application.ImportCandidateId("candidate-mixed-o2"),
+                        hash,
+                        confirmedAt,
+                        com.unifiedledger.application.ImportConfirmDecisionFields.MixedPaymentFlow(
+                            CategoryId("category-food"),
+                            AccountId("asset"),
+                            AccountId("liability-cny"),
+                            5000L,
+                            4900L,
+                        ),
                     ),
                 )
-            }
-            val result = ConfirmImportCandidate(store, ids, MixedPaymentFlowFormalFactory(catalog()), catalog()).execute(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(ledgerId, ImportRequestId("req-mixed-o2-confirm")),
-                    com.unifiedledger.application.ImportCandidateId("candidate-mixed-o2"),
-                    hash,
-                    confirmedAt,
-                    com.unifiedledger.application.ImportConfirmDecisionFields.MixedPaymentFlow(
-                        CategoryId("category-food"), AccountId("asset"), AccountId("liability-cny"), 5000L, 4900L,
-                    ),
-                ),
-            )
             assertIs<ImportCandidateDecisionResult.Accepted>(result)
             assertEquals(9900L, scalarLong(driver, "SELECT total_minor FROM mixed_payment_group WHERE ledger_id = 'ledger-o2'"))
             assertEquals(listOf(5000L, 4900L), scalarLongs(driver, "SELECT amount_minor FROM mixed_payment_group_leg WHERE ledger_id = 'ledger-o2' ORDER BY leg_index"))
@@ -751,34 +835,38 @@ class O2PrecisionRescaleDataTest {
             val database = LedgerDatabase(driver)
             val store = SqlDelightImportSpineStore(database, driver)
             val catalog = catalog()
-            val cases = listOf(
-                Triple("expense", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(99L, 0, "out")),
-                Triple("expense-downscale", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(123400L, 4, "out")),
-                Triple("income", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(99L, 0, "in")),
-                Triple("transfer", ImportRecordKind.TRANSFER_FLOW_SOURCE, facts(99L, 0)),
-                Triple("credit", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts(99L, 0)),
-                // Refunds are source inflows, so the direction also keeps this tuple
-                // distinct from the preceding credit-expense outflow at the duplicate gate.
-                Triple("refund", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts(99L, 0, "in")),
-                Triple("repayment", ImportRecordKind.CREDIT_REPAYMENT_SOURCE, facts(99L, 0)),
-            )
-            val profiles = mapOf(
-                "credit" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit"),
-                "refund" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "credit"),
-                "repayment" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, null, null),
-            )
-            val intakeSource = object : ImportIntakeIdSource {
-                private var index = 0
-                override fun next(): ImportIntakeIds {
-                    val prefix = cases[index++].first
-                    return ImportIntakeIds(
-                        ImportSourceId("source-o2-$prefix"),
-                        com.unifiedledger.application.ImportEvidenceId("evidence-o2-$prefix"),
-                        com.unifiedledger.application.ImportCandidateId("candidate-o2-$prefix"),
-                        ImportStatusHistoryId("status-o2-$prefix-1"),
-                    )
+            val cases =
+                listOf(
+                    Triple("expense", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(99L, 0, "out")),
+                    Triple("expense-downscale", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(123400L, 4, "out")),
+                    Triple("income", ImportRecordKind.ORDINARY_FLOW_SOURCE, facts(99L, 0, "in")),
+                    Triple("transfer", ImportRecordKind.TRANSFER_FLOW_SOURCE, facts(99L, 0)),
+                    Triple("credit", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts(99L, 0)),
+                    // Refunds are source inflows, so the direction also keeps this tuple
+                    // distinct from the preceding credit-expense outflow at the duplicate gate.
+                    Triple("refund", ImportRecordKind.CREDIT_EXPENSE_SOURCE, facts(99L, 0, "in")),
+                    Triple("repayment", ImportRecordKind.CREDIT_REPAYMENT_SOURCE, facts(99L, 0)),
+                )
+            val profiles =
+                mapOf(
+                    "credit" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit"),
+                    "refund" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "credit"),
+                    "repayment" to ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, null, null),
+                )
+            val intakeSource =
+                object : ImportIntakeIdSource {
+                    private var index = 0
+
+                    override fun next(): ImportIntakeIds {
+                        val prefix = cases[index++].first
+                        return ImportIntakeIds(
+                            ImportSourceId("source-o2-$prefix"),
+                            com.unifiedledger.application.ImportEvidenceId("evidence-o2-$prefix"),
+                            com.unifiedledger.application.ImportCandidateId("candidate-o2-$prefix"),
+                            ImportStatusHistoryId("status-o2-$prefix-1"),
+                        )
+                    }
                 }
-            }
             val intake = ExecuteImportIntake(store, intakeSource, ImportContentFingerprint())
             cases.forEachIndexed { index, (prefix, kind, sourceFacts) ->
                 val profile = profiles[prefix]
@@ -796,19 +884,22 @@ class O2PrecisionRescaleDataTest {
                 )
             }
 
-            val commitSource = object : ImportIdSource {
-                private val ids = listOf(
-                    commitIds("expense-o2", 2),
-                    commitIds("expense-downscale-o2", 2),
-                    commitIds("income-o2", 2),
-                    commitIds("transfer-o2", 2),
-                    commitIds("credit-o2", 2),
-                    commitIds("refund-o2", 2),
-                    commitIds("repayment-o2", 2),
-                ).iterator()
+            val commitSource =
+                object : ImportIdSource {
+                    private val ids =
+                        listOf(
+                            commitIds("expense-o2", 2),
+                            commitIds("expense-downscale-o2", 2),
+                            commitIds("income-o2", 2),
+                            commitIds("transfer-o2", 2),
+                            commitIds("credit-o2", 2),
+                            commitIds("refund-o2", 2),
+                            commitIds("repayment-o2", 2),
+                        ).iterator()
 
-                override fun next(): ImportCommitIds = ids.next()
-            }
+                    override fun next(): ImportCommitIds = ids.next()
+                }
+
             fun confirm(
                 prefix: String,
                 kind: ImportRecordKind,
@@ -831,45 +922,74 @@ class O2PrecisionRescaleDataTest {
 
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "expense", ImportRecordKind.ORDINARY_FLOW_SOURCE, cases[0].third, null,
+                    "expense",
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    cases[0].third,
+                    null,
                     com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow(
-                        CategoryId("category-food"), AccountId("asset"),
-                    ), OrdinaryFlowFormalFactory(catalog),
+                        CategoryId("category-food"),
+                        AccountId("asset"),
+                    ),
+                    OrdinaryFlowFormalFactory(catalog),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "expense-downscale", ImportRecordKind.ORDINARY_FLOW_SOURCE, cases[1].third, null,
+                    "expense-downscale",
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    cases[1].third,
+                    null,
                     com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow(
-                        CategoryId("category-food"), AccountId("asset"),
-                    ), OrdinaryFlowFormalFactory(catalog),
+                        CategoryId("category-food"),
+                        AccountId("asset"),
+                    ),
+                    OrdinaryFlowFormalFactory(catalog),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "income", ImportRecordKind.ORDINARY_FLOW_SOURCE, cases[2].third, null,
+                    "income",
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    cases[2].third,
+                    null,
                     com.unifiedledger.application.ImportConfirmDecisionFields.OrdinaryFlow(
-                        CategoryId("category-income"), AccountId("asset"),
-                    ), OrdinaryFlowFormalFactory(catalog),
+                        CategoryId("category-income"),
+                        AccountId("asset"),
+                    ),
+                    OrdinaryFlowFormalFactory(catalog),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "transfer", ImportRecordKind.TRANSFER_FLOW_SOURCE, cases[3].third, null,
+                    "transfer",
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE,
+                    cases[3].third,
+                    null,
                     com.unifiedledger.application.ImportConfirmDecisionFields.TransferFlow(
-                        AccountId("asset"), AccountId("asset-2"),
-                    ), TransferFlowFormalFactory(catalog, AccountId("asset")),
+                        AccountId("asset"),
+                        AccountId("asset-2"),
+                    ),
+                    TransferFlowFormalFactory(catalog, AccountId("asset")),
                 ),
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "credit", ImportRecordKind.CREDIT_EXPENSE_SOURCE, cases[4].third, profiles["credit"],
+                    "credit",
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                    cases[4].third,
+                    profiles["credit"],
                     com.unifiedledger.application.ImportConfirmDecisionFields.CreditExpenseFlow(
-                        CategoryId("category-food"), AccountId("liability-cny"),
-                    ), CreditFlowFormalFactory(catalog) { transactionId ->
+                        CategoryId("category-food"),
+                        AccountId("liability-cny"),
+                    ),
+                    CreditFlowFormalFactory(catalog) { transactionId ->
                         if (transactionId.value == "tx-credit-o2") {
                             CreditRefundOriginalExpense(
-                                transactionId, ledgerId, TransactionKind.EXPENSE, "CNY", AccountId("expense"),
+                                transactionId,
+                                ledgerId,
+                                TransactionKind.EXPENSE,
+                                "CNY",
+                                AccountId("expense"),
                             )
                         } else {
                             null
@@ -879,13 +999,23 @@ class O2PrecisionRescaleDataTest {
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "refund", ImportRecordKind.CREDIT_EXPENSE_SOURCE, cases[5].third, profiles["refund"],
+                    "refund",
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                    cases[5].third,
+                    profiles["refund"],
                     com.unifiedledger.application.ImportConfirmDecisionFields.CreditExpenseRefundFlow(
-                        CategoryId("category-food"), AccountId("liability-cny"), TransactionId("tx-credit-o2"),
-                    ), CreditFlowFormalFactory(catalog) { transactionId ->
+                        CategoryId("category-food"),
+                        AccountId("liability-cny"),
+                        TransactionId("tx-credit-o2"),
+                    ),
+                    CreditFlowFormalFactory(catalog) { transactionId ->
                         if (transactionId.value == "tx-credit-o2") {
                             CreditRefundOriginalExpense(
-                                transactionId, ledgerId, TransactionKind.EXPENSE, "CNY", AccountId("expense"),
+                                transactionId,
+                                ledgerId,
+                                TransactionKind.EXPENSE,
+                                "CNY",
+                                AccountId("expense"),
                             )
                         } else {
                             null
@@ -895,45 +1025,79 @@ class O2PrecisionRescaleDataTest {
             )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 confirm(
-                    "repayment", ImportRecordKind.CREDIT_REPAYMENT_SOURCE, cases[6].third, profiles["repayment"],
+                    "repayment",
+                    ImportRecordKind.CREDIT_REPAYMENT_SOURCE,
+                    cases[6].third,
+                    profiles["repayment"],
                     com.unifiedledger.application.ImportConfirmDecisionFields.CreditRepaymentFlow(
-                        AccountId("asset"), AccountId("liability-cny"),
-                    ), CreditFlowFormalFactory(catalog) { null },
+                        AccountId("asset"),
+                        AccountId("liability-cny"),
+                    ),
+                    CreditFlowFormalFactory(catalog) { null },
                 ),
             )
 
             assertEquals(7L, database.ledgerQueries.countTransactions().executeAsOne())
             assertNormalizedPostings(
-                database, "tx-expense-o2", "set-expense-o2", "EXPENSE",
-                listOf("expense", "asset"), listOf(9900L, -9900L),
+                database,
+                "tx-expense-o2",
+                "set-expense-o2",
+                "EXPENSE",
+                listOf("expense", "asset"),
+                listOf(9900L, -9900L),
             )
             assertNormalizedPostings(
-                database, "tx-expense-downscale-o2", "set-expense-downscale-o2", "EXPENSE",
-                listOf("expense", "asset"), listOf(1234L, -1234L),
+                database,
+                "tx-expense-downscale-o2",
+                "set-expense-downscale-o2",
+                "EXPENSE",
+                listOf("expense", "asset"),
+                listOf(1234L, -1234L),
             )
             assertNormalizedPostings(
-                database, "tx-income-o2", "set-income-o2", "INCOME",
-                listOf("asset", "income"), listOf(9900L, -9900L),
+                database,
+                "tx-income-o2",
+                "set-income-o2",
+                "INCOME",
+                listOf("asset", "income"),
+                listOf(9900L, -9900L),
             )
             assertNormalizedPostings(
-                database, "tx-transfer-o2", "set-transfer-o2", "ACCOUNT_TRANSFER",
-                listOf("asset", "asset-2"), listOf(-9900L, 9900L),
+                database,
+                "tx-transfer-o2",
+                "set-transfer-o2",
+                "ACCOUNT_TRANSFER",
+                listOf("asset", "asset-2"),
+                listOf(-9900L, 9900L),
             )
             assertNormalizedPostings(
-                database, "tx-credit-o2", "set-credit-o2", "EXPENSE",
-                listOf("expense", "liability-cny"), listOf(9900L, -9900L),
+                database,
+                "tx-credit-o2",
+                "set-credit-o2",
+                "EXPENSE",
+                listOf("expense", "liability-cny"),
+                listOf(9900L, -9900L),
             )
             assertNormalizedPostings(
-                database, "tx-refund-o2", "set-refund-o2", "REFUND_RECEIPT",
-                listOf("liability-cny", "expense"), listOf(9900L, -9900L),
+                database,
+                "tx-refund-o2",
+                "set-refund-o2",
+                "REFUND_RECEIPT",
+                listOf("liability-cny", "expense"),
+                listOf(9900L, -9900L),
             )
             assertNormalizedPostings(
-                database, "tx-repayment-o2", "set-repayment-o2", "CREDIT_REPAYMENT",
-                listOf("asset", "liability-cny"), listOf(-9900L, 9900L),
+                database,
+                "tx-repayment-o2",
+                "set-repayment-o2",
+                "CREDIT_REPAYMENT",
+                listOf("asset", "liability-cny"),
+                listOf(-9900L, 9900L),
             )
-            val refundSnapshot = database.ledgerQueries
-                .selectImportDecisionSnapshotByRequest(ledgerId.value, "req-o2-refund-confirm")
-                .executeAsOne()
+            val refundSnapshot =
+                database.ledgerQueries
+                    .selectImportDecisionSnapshotByRequest(ledgerId.value, "req-o2-refund-confirm")
+                    .executeAsOne()
             assertEquals("tx-credit-o2", refundSnapshot.original_transaction_id)
             cases.forEach { (prefix, _, sourceFacts) ->
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, "req-o2-$prefix-intake").executeAsOne()
@@ -960,12 +1124,18 @@ class O2PrecisionRescaleDataTest {
         }
     }
 
-    private fun confirm(requestId: String, hash: String, liability: AccountId, candidateId: String = "candidate-o2") = ImportCandidateConfirmRequest(
+    private fun confirm(
+        requestId: String,
+        hash: String,
+        liability: AccountId,
+        candidateId: String = "candidate-o2",
+    ) = ImportCandidateConfirmRequest(
         ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
         com.unifiedledger.application.ImportCandidateId(candidateId),
         hash,
         confirmedAt,
-        com.unifiedledger.application.ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("category-food"), liability),
+        com.unifiedledger.application.ImportConfirmDecisionFields
+            .CreditExpenseFlow(CategoryId("category-food"), liability),
     )
 
     private fun request(
@@ -986,7 +1156,11 @@ class O2PrecisionRescaleDataTest {
         profile,
     )
 
-    private fun facts(amountMinor: Long, precision: Int, direction: String = "out") = ImportSourceFacts(
+    private fun facts(
+        amountMinor: Long,
+        precision: Int,
+        direction: String = "out",
+    ) = ImportSourceFacts(
         amountMinor,
         "CNY",
         precision,
@@ -998,27 +1172,31 @@ class O2PrecisionRescaleDataTest {
         1,
     )
 
-    private fun catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            listOf(
-                Account(AccountId("asset"), ledgerId, AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
-                Account(AccountId("asset-2"), ledgerId, AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
-                Account(AccountId("liability-cny"), ledgerId, AccountKind.LIABILITY, CurrencyUnit("CNY", 2), true, true),
-                Account(AccountId("liability-usd"), ledgerId, AccountKind.LIABILITY, CurrencyUnit("USD", 2), true, true),
-                Account(AccountId("asset-other-ledger"), LedgerId("ledger-o2-other"), AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
-                Account(AccountId("expense"), ledgerId, AccountKind.EXPENSE, CurrencyUnit("CNY", 2), false, false),
-                Account(AccountId("income"), ledgerId, AccountKind.INCOME, CurrencyUnit("CNY", 2), false, false),
+    private fun catalog(): LedgerCatalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                listOf(
+                    Account(AccountId("asset"), ledgerId, AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
+                    Account(AccountId("asset-2"), ledgerId, AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
+                    Account(AccountId("liability-cny"), ledgerId, AccountKind.LIABILITY, CurrencyUnit("CNY", 2), true, true),
+                    Account(AccountId("liability-usd"), ledgerId, AccountKind.LIABILITY, CurrencyUnit("USD", 2), true, true),
+                    Account(AccountId("asset-other-ledger"), LedgerId("ledger-o2-other"), AccountKind.ASSET, CurrencyUnit("CNY", 2), true, true),
+                    Account(AccountId("expense"), ledgerId, AccountKind.EXPENSE, CurrencyUnit("CNY", 2), false, false),
+                    Account(AccountId("income"), ledgerId, AccountKind.INCOME, CurrencyUnit("CNY", 2), false, false),
+                ),
+                listOf(
+                    Category(CategoryId("parent-expense"), ledgerId, null, null, true, CategoryKind.EXPENSE),
+                    Category(CategoryId("category-food"), ledgerId, CategoryId("parent-expense"), AccountId("expense"), true, CategoryKind.EXPENSE),
+                    Category(CategoryId("parent-income"), ledgerId, null, null, true, CategoryKind.INCOME),
+                    Category(CategoryId("category-income"), ledgerId, CategoryId("parent-income"), AccountId("income"), true, CategoryKind.INCOME),
+                ),
             ),
-            listOf(
-                Category(CategoryId("parent-expense"), ledgerId, null, null, true, CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, CategoryId("parent-expense"), AccountId("expense"), true, CategoryKind.EXPENSE),
-                Category(CategoryId("parent-income"), ledgerId, null, null, true, CategoryKind.INCOME),
-                Category(CategoryId("category-income"), ledgerId, CategoryId("parent-income"), AccountId("income"), true, CategoryKind.INCOME),
-            ),
-        ),
-    ).value
+        ).value
 
-    private fun commitIds(prefix: String, postingCount: Int) = ImportCommitIds(
+    private fun commitIds(
+        prefix: String,
+        postingCount: Int,
+    ) = ImportCommitIds(
         ImportConfirmationId("confirmation-$prefix"),
         ImportStatusHistoryId("status-$prefix"),
         ImportFormalIds(
@@ -1047,23 +1225,27 @@ class O2PrecisionRescaleDataTest {
         val mixedLegs: Long,
     )
 
-    private fun confirmationCounts(database: LedgerDatabase, driver: JdbcSqliteDriver): ConfirmationCounts = ConfirmationCounts(
-        importRequests = database.ledgerQueries.countImportRequests().executeAsOne(),
-        sourceRecords = database.ledgerQueries.countImportSourceRecords().executeAsOne(),
-        evidence = database.ledgerQueries.countImportEvidence().executeAsOne(),
-        candidates = database.ledgerQueries.countImportCandidates().executeAsOne(),
-        profiles = database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne(),
-        statusHistory = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
-        decisionSnapshots = database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
-        confirmations = database.ledgerQueries.countImportConfirmations().executeAsOne(),
-        receipts = database.ledgerQueries.countImportReceipts().executeAsOne(),
-        transactions = database.ledgerQueries.countTransactions().executeAsOne(),
-        versions = database.ledgerQueries.countVersions().executeAsOne(),
-        postingSets = database.ledgerQueries.countPostingSets().executeAsOne(),
-        postings = database.ledgerQueries.countPostings().executeAsOne(),
-        mixedGroups = scalarLong(driver, "SELECT count(*) FROM mixed_payment_group"),
-        mixedLegs = scalarLong(driver, "SELECT count(*) FROM mixed_payment_group_leg"),
-    )
+    private fun confirmationCounts(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ): ConfirmationCounts =
+        ConfirmationCounts(
+            importRequests = database.ledgerQueries.countImportRequests().executeAsOne(),
+            sourceRecords = database.ledgerQueries.countImportSourceRecords().executeAsOne(),
+            evidence = database.ledgerQueries.countImportEvidence().executeAsOne(),
+            candidates = database.ledgerQueries.countImportCandidates().executeAsOne(),
+            profiles = database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne(),
+            statusHistory = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
+            decisionSnapshots = database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
+            confirmations = database.ledgerQueries.countImportConfirmations().executeAsOne(),
+            receipts = database.ledgerQueries.countImportReceipts().executeAsOne(),
+            transactions = database.ledgerQueries.countTransactions().executeAsOne(),
+            versions = database.ledgerQueries.countVersions().executeAsOne(),
+            postingSets = database.ledgerQueries.countPostingSets().executeAsOne(),
+            postings = database.ledgerQueries.countPostings().executeAsOne(),
+            mixedGroups = scalarLong(driver, "SELECT count(*) FROM mixed_payment_group"),
+            mixedLegs = scalarLong(driver, "SELECT count(*) FROM mixed_payment_group_leg"),
+        )
 
     private fun assertConfirmationFailureRollsBackAndRetries(
         point: ImportSpineFailurePoint,
@@ -1080,59 +1262,70 @@ class O2PrecisionRescaleDataTest {
             val confirmRequestId = "req-o2-$prefix-confirm"
             val sourceFacts = facts(99L, 0)
             val kind = if (mixed) ImportRecordKind.MIXED_PAYMENT_SOURCE else ImportRecordKind.CREDIT_EXPENSE_SOURCE
-            val profile: ImportPaymentProfile? = if (mixed) {
-                ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "asset", "credit")
-            } else {
-                ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit")
-            }
-            val fields: ImportConfirmDecisionFields = if (mixed) {
-                ImportConfirmDecisionFields.MixedPaymentFlow(
-                    CategoryId("category-food"), AccountId("asset"), AccountId("liability-cny"), 5000L, 4900L,
-                )
-            } else {
-                ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("category-food"), AccountId("liability-cny"))
-            }
-            val factory: ImportCandidateFormalFactory = if (mixed) {
-                MixedPaymentFlowFormalFactory(catalog)
-            } else {
-                CreditFlowFormalFactory(catalog) { null }
-            }
-            val intake = ExecuteImportIntake(
-                SqlDelightImportSpineStore(database, driver),
-                object : ImportIntakeIdSource {
-                    override fun next() = ImportIntakeIds(
-                        ImportSourceId("source-o2-$prefix"),
-                        com.unifiedledger.application.ImportEvidenceId("evidence-o2-$prefix"),
-                        com.unifiedledger.application.ImportCandidateId(candidateId),
-                        ImportStatusHistoryId("status-o2-$prefix-1"),
+            val profile: ImportPaymentProfile? =
+                if (mixed) {
+                    ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "asset", "credit")
+                } else {
+                    ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit")
+                }
+            val fields: ImportConfirmDecisionFields =
+                if (mixed) {
+                    ImportConfirmDecisionFields.MixedPaymentFlow(
+                        CategoryId("category-food"),
+                        AccountId("asset"),
+                        AccountId("liability-cny"),
+                        5000L,
+                        4900L,
                     )
-                },
-                ImportContentFingerprint(),
-            )
+                } else {
+                    ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("category-food"), AccountId("liability-cny"))
+                }
+            val factory: ImportCandidateFormalFactory =
+                if (mixed) {
+                    MixedPaymentFlowFormalFactory(catalog)
+                } else {
+                    CreditFlowFormalFactory(catalog) { null }
+                }
+            val intake =
+                ExecuteImportIntake(
+                    SqlDelightImportSpineStore(database, driver),
+                    object : ImportIntakeIdSource {
+                        override fun next() =
+                            ImportIntakeIds(
+                                ImportSourceId("source-o2-$prefix"),
+                                com.unifiedledger.application.ImportEvidenceId("evidence-o2-$prefix"),
+                                com.unifiedledger.application.ImportCandidateId(candidateId),
+                                ImportStatusHistoryId("status-o2-$prefix-1"),
+                            )
+                    },
+                    ImportContentFingerprint(),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 intake.execute(request(intakeRequestId, kind, sourceFacts, profile, inputRef = "o2-$prefix")),
             )
             val hash = ImportContentFingerprint().digest(kind, sourceFacts, profile)
             val commitIds = commitIds("$prefix-commit", if (mixed) 3 else 2)
-            val confirmRequest = ImportCandidateConfirmRequest(
-                ImportRequestIdentity(ledgerId, ImportRequestId(confirmRequestId)),
-                com.unifiedledger.application.ImportCandidateId(candidateId),
-                hash,
-                confirmedAt,
-                fields,
-            )
+            val confirmRequest =
+                ImportCandidateConfirmRequest(
+                    ImportRequestIdentity(ledgerId, ImportRequestId(confirmRequestId)),
+                    com.unifiedledger.application.ImportCandidateId(candidateId),
+                    hash,
+                    confirmedAt,
+                    fields,
+                )
             val baseline = confirmationCounts(database, driver)
             var armed = true
-            val failingStore = SqlDelightImportSpineStore(
-                database,
-                driver,
-                ImportSpineFailureInjector { actual ->
-                    if (armed && actual == point) {
-                        armed = false
-                        error("injected $point")
-                    }
-                },
-            )
+            val failingStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { actual ->
+                        if (armed && actual == point) {
+                            armed = false
+                            error("injected $point")
+                        }
+                    },
+                )
             assertFailsWith<IllegalStateException> {
                 ConfirmImportCandidate(
                     failingStore,
@@ -1146,7 +1339,10 @@ class O2PrecisionRescaleDataTest {
             assertEquals(0L, database.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
             assertEquals(
                 "pending_confirmation",
-                database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, candidateId).executeAsOne().status,
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, candidateId)
+                    .executeAsOne()
+                    .status,
             )
             val source = database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, intakeRequestId).executeAsOne()
             assertEquals(sourceFacts.amountMinor, source.amount_minor)
@@ -1154,12 +1350,13 @@ class O2PrecisionRescaleDataTest {
             assertEquals(sourceFacts.occurredAt, source.occurred_at)
             assertEquals(hash, source.content_hash)
 
-            val accepted = ConfirmImportCandidate(
-                SqlDelightImportSpineStore(database, driver),
-                ImportIdSource { commitIds },
-                factory,
-                catalog,
-            ).execute(confirmRequest)
+            val accepted =
+                ConfirmImportCandidate(
+                    SqlDelightImportSpineStore(database, driver),
+                    ImportIdSource { commitIds },
+                    factory,
+                    catalog,
+                ).execute(confirmRequest)
             assertIs<ImportCandidateDecisionResult.Accepted>(accepted)
             assertEquals(
                 baseline.copy(
@@ -1190,9 +1387,11 @@ class O2PrecisionRescaleDataTest {
         expectedAccounts: List<String>,
         expectedAmounts: List<Long>,
     ) {
-        val transaction = database.ledgerQueries.selectRg12FormalTransactions(ledgerId.value)
-            .executeAsList()
-            .single { it.transaction_id == transactionId }
+        val transaction =
+            database.ledgerQueries
+                .selectRg12FormalTransactions(ledgerId.value)
+                .executeAsList()
+                .single { it.transaction_id == transactionId }
         assertEquals(kind, transaction.kind)
         val rows = database.ledgerQueries.selectRg12FormalPostings(ledgerId.value, postingSetId).executeAsList()
         assertEquals(expectedAccounts, rows.map { it.account_id })
@@ -1201,16 +1400,28 @@ class O2PrecisionRescaleDataTest {
         assertEquals(expectedAmounts.map { 2L }, rows.map { it.currency_precision })
     }
 
-    private fun scalarLong(driver: JdbcSqliteDriver, sql: String): Long =
-        driver.executeQuery(null, sql, { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!)
-        }, 0).value
+    private fun scalarLong(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(null, sql, { cursor ->
+                cursor.next()
+                app.cash.sqldelight.db.QueryResult
+                    .Value(cursor.getLong(0)!!)
+            }, 0)
+            .value
 
-    private fun scalarLongs(driver: JdbcSqliteDriver, sql: String): List<Long> =
-        driver.executeQuery(null, sql, { cursor ->
-            val values = mutableListOf<Long>()
-            while (cursor.next().value) values += cursor.getLong(0)!!
-            app.cash.sqldelight.db.QueryResult.Value(values)
-        }, 0).value
+    private fun scalarLongs(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): List<Long> =
+        driver
+            .executeQuery(null, sql, { cursor ->
+                val values = mutableListOf<Long>()
+                while (cursor.next().value) values += cursor.getLong(0)!!
+                app.cash.sqldelight.db.QueryResult
+                    .Value(values)
+            }, 0)
+            .value
 }

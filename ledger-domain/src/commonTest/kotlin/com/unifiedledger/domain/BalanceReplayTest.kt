@@ -8,17 +8,19 @@ class BalanceReplayTest {
 
     @Test
     fun replaysTheOpeningBalanceAndAcceptedExpenseByAccountId() {
-        val snapshot = success(
-            replayBalances(
-                catalog = fixture.catalog,
-                transactions = listOf(fixture.openingBalance(), fixture.acceptedExpense()),
-            ),
-        )
-        val expectedBalances = mapOf(
-            fixture.paymentAccountId to money(96_420, fixture.cny),
-            fixture.expenseAccountId to money(3_580, fixture.cny),
-            fixture.equityAccountId to money(-100_000, fixture.cny),
-        )
+        val snapshot =
+            success(
+                replayBalances(
+                    catalog = fixture.catalog,
+                    transactions = listOf(fixture.openingBalance(), fixture.acceptedExpense()),
+                ),
+            )
+        val expectedBalances =
+            mapOf(
+                fixture.paymentAccountId to money(96_420, fixture.cny),
+                fixture.expenseAccountId to money(3_580, fixture.cny),
+                fixture.equityAccountId to money(-100_000, fixture.cny),
+            )
 
         expectedBalances.forEach { (accountId, balance) ->
             assertEquals(balance, snapshot.balances[accountId], accountId.toString())
@@ -29,10 +31,11 @@ class BalanceReplayTest {
     fun rejectsDuplicateTransactionIdentityDuringReplay() {
         val transaction = fixture.openingBalance()
 
-        val result = replayBalances(
-            catalog = fixture.catalog,
-            transactions = listOf(transaction, transaction),
-        )
+        val result =
+            replayBalances(
+                catalog = fixture.catalog,
+                transactions = listOf(transaction, transaction),
+            )
 
         assertEquals(DomainViolation.InvalidBalanceReplay, failure(result))
     }

@@ -1878,6 +1878,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 改动面仅限 `.kt` 源、构建脚本（根 `build.gradle.kts`）、新增 `.editorconfig`、CI 与 CONTRIBUTING 同步；不触碰 schema/migration/parser/matcher/projection/账务行为与 `.external/`；阶段边界无并行在途工作，是格式化落地窗口。若插件解析需联网而主机不可达，实施停于网络门并回报。Git 写操作与合并、推送归主代理；推送需用户另行显式授权。
 
-**实施登记：** 待批合入本地 main 后补全（writer/review/verify 证据与全量测试结果）。
+**实施登记：** 已于 2026-08-28 按 D-115 授权范围落地（单一 writer 批 + 独立评审 + 独立 verifier + 主代理验收）：
+
+1. **接线**：根 `build.gradle.kts` 引入 `org.jlleitschuh.gradle.ktlint` 14.2.0（`apply false`）+ 三模块应用，捆绑 ktlint 引擎 1.5.0；每模块 `ktlint` filter 排除 `build/generated`（相对模式够不到 SQLDelight 生成目录，改绝对路径 Spec 落实排除意图；先验 3.4 万条生成码违例被排除）。
+2. **.editorconfig**（新增，根）：`root = true`；`[*.{kt,kts}]` charset=utf-8、indent 4 空格、`end_of_line = crlf`、insert_final_newline=true、max_line_length=off、ktlint_code_style=ktlint_official。行尾根因已固化：ktlint 1.5.0 在 `end_of_line` 未设置时 formatter 恒输出 LF（`END_OF_LINE_PROPERTY` defaultValue=lf），显式 crlf 后 Windows 工作树格式化稳定；git add 按 autocrlf 归一化为 LF 入仓，CI 仅跑 `ktlintCheck`（无行尾规则）不红门。
+3. **重排面**：全部 232 个跟踪 `.kt` 经 `ktlintFormat`（225 改写 + 7 原合规）；2 文件按类名改名（`AndroidLedgerDatabase.kt`→`AndroidLedgerDatabaseHandle.kt`、`BalanceReplay.kt`→`BalanceSnapshot.kt`）；71 条存量违例清零均为收尾修复（65 条 wildcard import 展开于 35 文件、2 文件名、2 处相邻注释合并、1 函数命名 + 1 属性命名修正），零语义变化。
+4. **门禁与回归（全部 exit 0）**：`ktlintCheck` 0 违例；`:ledger-domain:jvmTest`、`:ledger-application:jvmTest`、`:ledger-data:jvmTest`、`:ledger-data:verifyCommonMainLedgerDatabaseMigration`、`:ledger-data:compileAndroidMain`、`check`（`ktlintCheck` 已挂入 `check` 生命周期）。
+5. **CI/文档同步**：ci.yml kotlin job 在 Gradle check 后新增 `Ktlint check` 步骤；CONTRIBUTING.md「Kotlin 验证」同步新增 `ktlintCheck` 命令（两者一致）。
+6. **边界保持**：无 schema/migration/sql 改动、无 `.external/`、无 parser/matcher/projection 行为变更、无个人数据/本机路径；改动面仅限允许清单（ci.yml、根 + 三模块 build.gradle.kts、.editorconfig、CONTRIBUTING.md、225 个 `.kt` 源/测试（含 2 文件按类名改名））。
 
 **关联决定：** 无先例决定（承接 WORK_PLAN.local backlog 工程项，与账务语义无关）

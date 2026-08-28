@@ -68,7 +68,10 @@ class CategoryRenameTest {
             CategoryRenameViolation.CurrentNameVersionMissing,
             failure(
                 renameCategoryName(
-                    catalog, ledgerId, categoryId, "薪资",
+                    catalog,
+                    ledgerId,
+                    categoryId,
+                    "薪资",
                     CategoryNameVersion(categoryId, 1, "工资", CategoryNameVersionStatus.SUPERSEDED),
                 ),
             ),
@@ -77,32 +80,40 @@ class CategoryRenameTest {
             CategoryRenameViolation.CurrentNameVersionMissing,
             failure(
                 renameCategoryName(
-                    catalog, ledgerId, categoryId, "薪资",
+                    catalog,
+                    ledgerId,
+                    categoryId,
+                    "薪资",
                     CategoryNameVersion(CategoryId("income-category-other"), 1, "其他", CategoryNameVersionStatus.CURRENT),
                 ),
             ),
         )
     }
 
-    private fun currentVersion() =
-        CategoryNameVersion(categoryId, 1, "工资", CategoryNameVersionStatus.CURRENT)
+    private fun currentVersion() = CategoryNameVersion(categoryId, 1, "工资", CategoryNameVersionStatus.CURRENT)
 }
 
-private class RenameFixture(ledgerId: LedgerId, categoryId: CategoryId) {
+private class RenameFixture(
+    ledgerId: LedgerId,
+    categoryId: CategoryId,
+) {
     private val cny = CurrencyUnit("CNY", 2)
     private val salaryAccountId = AccountId("income-account-salary")
     private val parentCategoryId = CategoryId("income-category-work")
 
-    val catalog: LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            accounts = listOf(
-                Account(salaryAccountId, ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("asset-bank-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+    val catalog: LedgerCatalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                accounts =
+                    listOf(
+                        Account(salaryAccountId, ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        Account(AccountId("asset-bank-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                    ),
+                categories =
+                    listOf(
+                        Category(parentCategoryId, ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                        Category(categoryId, ledgerId, parentId = parentCategoryId, postingAccountId = salaryAccountId, active = true, kind = CategoryKind.INCOME),
+                    ),
             ),
-            categories = listOf(
-                Category(parentCategoryId, ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(categoryId, ledgerId, parentId = parentCategoryId, postingAccountId = salaryAccountId, active = true, kind = CategoryKind.INCOME),
-            ),
-        ),
-    ).value
+        ).value
 }

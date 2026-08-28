@@ -1,10 +1,39 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.Rg05BankFact
+import com.unifiedledger.application.Rg05ConfirmAllocation
+import com.unifiedledger.application.Rg05ConfirmSnapshot
+import com.unifiedledger.application.Rg05EvidenceKind
+import com.unifiedledger.application.Rg05ExecutionError
+import com.unifiedledger.application.Rg05ExecutionResult
+import com.unifiedledger.application.Rg05IngestSnapshot
+import com.unifiedledger.application.Rg05ItemFact
+import com.unifiedledger.application.Rg05ManualSnapshot
+import com.unifiedledger.application.Rg05PreparedOperation
+import com.unifiedledger.application.Rg05ReceiptSnapshot
 import com.unifiedledger.data.db.LedgerDatabase
-import com.unifiedledger.application.*
-import com.unifiedledger.domain.*
-import kotlin.test.*
+import com.unifiedledger.domain.Account
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.Category
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MergedPaymentExpenseIds
+import com.unifiedledger.domain.MergedPaymentItem
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVersionId
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertIs
 import kotlin.time.Instant
 
 class SqlDelightRg05StoreTest {
@@ -14,23 +43,41 @@ class SqlDelightRg05StoreTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused") }, Rg05FailureInjector { if (it == Rg05FailurePoint.INGEST_AFTER_SOURCES) error("injected") })
+            val store =
+                SqlDelightRg05Store(
+                    database,
+                    driver,
+                    catalog(),
+                    object : Rg05IdentitySource {
+                        override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused")
+                    },
+                    Rg05FailureInjector { if (it == Rg05FailurePoint.INGEST_AFTER_SOURCES) error("injected") },
+                )
             val cny = CurrencyUnit("CNY", 2)
-            val operation = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(
-                LedgerId("ledger-a"), RequestId("request"),
-                Rg05BankFact("bank", "bank-evidence", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z", "bank", Money.ofMinor(-10_000, cny)),
-                listOf(
-                    Rg05ItemFact("a", "source-a", "evidence-a", Rg05EvidenceKind.ITEM_RECEIPT, Instant.parse("2026-04-08T02:00:00Z"), "2026-04-08T02:00:00Z", "A", Money.ofMinor(4_000, cny), CategoryId("daily")),
-                    Rg05ItemFact("b", "source-b", "evidence-b", Rg05EvidenceKind.ITEM_SUMMARY, Instant.parse("2026-04-09T07:00:00Z"), "2026-04-09T07:00:00Z", "B", Money.ofMinor(6_000, cny), CategoryId("service")),
-                ), "candidate", "pending",
-            ))
+            val operation =
+                Rg05PreparedOperation.Ingest(
+                    Rg05IngestSnapshot(
+                        LedgerId("ledger-a"),
+                        RequestId("request"),
+                        Rg05BankFact("bank", "bank-evidence", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z", "bank", Money.ofMinor(-10_000, cny)),
+                        listOf(
+                            Rg05ItemFact("a", "source-a", "evidence-a", Rg05EvidenceKind.ITEM_RECEIPT, Instant.parse("2026-04-08T02:00:00Z"), "2026-04-08T02:00:00Z", "A", Money.ofMinor(4_000, cny), CategoryId("daily")),
+                            Rg05ItemFact("b", "source-b", "evidence-b", Rg05EvidenceKind.ITEM_SUMMARY, Instant.parse("2026-04-09T07:00:00Z"), "2026-04-09T07:00:00Z", "B", Money.ofMinor(6_000, cny), CategoryId("service")),
+                        ),
+                        "candidate",
+                        "pending",
+                    ),
+                )
             assertFails { store.commit(operation) }
             assertEquals(0L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg05Sources().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg05Evidence().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countRg05Candidates().executeAsOne())
-        } finally { driver.close() }
+        } finally {
+            driver.close()
+        }
     }
+
     @Test
     fun importConfirmAndReceiptLifecycleKeepsBusinessCompletenessSeparate() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -38,13 +85,22 @@ class SqlDelightRg05StoreTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val ledger = LedgerId("ledger-a")
-            val store = SqlDelightRg05Store(database, driver, catalog(), object : Rg05IdentitySource { override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused") })
+            val store =
+                SqlDelightRg05Store(
+                    database,
+                    driver,
+                    catalog(),
+                    object : Rg05IdentitySource {
+                        override fun manual(requestId: RequestId) = Rg05ManualCommitIds("unused", "unused")
+                    },
+                )
             val cny = CurrencyUnit("CNY", 2)
             val bank = Rg05BankFact("source-bank", "evidence-bank", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z", "bank", Money.ofMinor(-10_000, cny))
-            val items = listOf(
-                Rg05ItemFact("item-a", "source-a", "evidence-a", Rg05EvidenceKind.ITEM_RECEIPT, Instant.parse("2026-04-08T02:00:00Z"), "2026-04-08T10:00:00+08:00", "A", Money.ofMinor(4_000, cny), CategoryId("daily")),
-                Rg05ItemFact("item-b", "source-b", "evidence-b-summary", Rg05EvidenceKind.ITEM_SUMMARY, Instant.parse("2026-04-09T07:00:00Z"), "2026-04-09T15:00:00+08:00", "B", Money.ofMinor(6_000, cny), CategoryId("service")),
-            )
+            val items =
+                listOf(
+                    Rg05ItemFact("item-a", "source-a", "evidence-a", Rg05EvidenceKind.ITEM_RECEIPT, Instant.parse("2026-04-08T02:00:00Z"), "2026-04-08T10:00:00+08:00", "A", Money.ofMinor(4_000, cny), CategoryId("daily")),
+                    Rg05ItemFact("item-b", "source-b", "evidence-b-summary", Rg05EvidenceKind.ITEM_SUMMARY, Instant.parse("2026-04-09T07:00:00Z"), "2026-04-09T15:00:00+08:00", "B", Money.ofMinor(6_000, cny), CategoryId("service")),
+                )
             val ingest = Rg05PreparedOperation.Ingest(Rg05IngestSnapshot(ledger, RequestId("source-bank"), bank, items, "candidate", "candidate-status-pending"))
             assertIs<Rg05ExecutionResult.IngestAccepted>(store.commit(ingest))
             assertIs<Rg05ExecutionResult.IngestNoChange>(store.commit(ingest))
@@ -55,15 +111,24 @@ class SqlDelightRg05StoreTest {
             assertEquals(1L, database.ledgerQueries.countRg05Candidates().executeAsOne())
             assertEquals(1L, database.ledgerQueries.countRg05CandidateStatuses().executeAsOne())
 
-            fun confirm(amounts: List<Long>) = Rg05PreparedOperation.Confirm(
-                Rg05ConfirmSnapshot(ledger, RequestId("confirm-${amounts.sum()}"), "candidate", AccountId("asset"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00+08:00", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00+08:00", listOf(Rg05ConfirmAllocation("item-a", CategoryId("daily"), Money.ofMinor(amounts[0], cny)), Rg05ConfirmAllocation("item-b", CategoryId("service"), Money.ofMinor(amounts[1], cny))), true, "candidate-status-confirmed"),
-                MergedPaymentExpenseIds(TransactionId("tx-imported"), TransactionVersionId("v-imported"), PostingSetId("set-imported"), listOf(PostingId("expense-a-imported"), PostingId("expense-b-imported")), PostingId("asset-imported")), "relation-imported", "confirmation-imported", "reconciliation-imported", "match-bank", mapOf("item-a" to "match-item-a"), mapOf("item-a" to "consumption-a", "item-b" to "consumption-b"), mapOf("item-a" to "allocation-a", "item-b" to "allocation-b"),
-            )
+            fun confirm(amounts: List<Long>) =
+                Rg05PreparedOperation.Confirm(
+                    Rg05ConfirmSnapshot(ledger, RequestId("confirm-${amounts.sum()}"), "candidate", AccountId("asset"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00+08:00", Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00+08:00", listOf(Rg05ConfirmAllocation("item-a", CategoryId("daily"), Money.ofMinor(amounts[0], cny)), Rg05ConfirmAllocation("item-b", CategoryId("service"), Money.ofMinor(amounts[1], cny))), true, "candidate-status-confirmed"),
+                    MergedPaymentExpenseIds(TransactionId("tx-imported"), TransactionVersionId("v-imported"), PostingSetId("set-imported"), listOf(PostingId("expense-a-imported"), PostingId("expense-b-imported")), PostingId("asset-imported")),
+                    "relation-imported",
+                    "confirmation-imported",
+                    "reconciliation-imported",
+                    "match-bank",
+                    mapOf("item-a" to "match-item-a"),
+                    mapOf("item-a" to "consumption-a", "item-b" to "consumption-b"),
+                    mapOf("item-a" to "allocation-a", "item-b" to "allocation-b"),
+                )
             assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_INCOMPLETE, "allocation_total"), store.commit(confirm(listOf(4_000, 5_000))))
             assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.ALLOCATION_CONFLICT, "allocation_total"), store.commit(confirm(listOf(4_000, 7_000))))
-            val invalidCategory = confirm(listOf(4_000, 6_000)).let { operation ->
-                operation.copy(snapshot = operation.snapshot.copy(requestId = RequestId("confirm-invalid-category"), allocations = operation.snapshot.allocations.mapIndexed { index, allocation -> if (index == 0) allocation.copy(categoryId = CategoryId("missing")) else allocation }))
-            }
+            val invalidCategory =
+                confirm(listOf(4_000, 6_000)).let { operation ->
+                    operation.copy(snapshot = operation.snapshot.copy(requestId = RequestId("confirm-invalid-category"), allocations = operation.snapshot.allocations.mapIndexed { index, allocation -> if (index == 0) allocation.copy(categoryId = CategoryId("missing")) else allocation }))
+                }
             assertEquals(Rg05ExecutionResult.Rejected(Rg05ExecutionError.SECONDARY_CATEGORY_REQUIRED, "items"), store.commit(invalidCategory))
             assertEquals(1L, database.ledgerQueries.countRg05OperationRequests().executeAsOne())
             val confirmation = confirm(listOf(4_000, 6_000))
@@ -89,6 +154,7 @@ class SqlDelightRg05StoreTest {
             driver.close()
         }
     }
+
     @Test
     fun schemaIsVersionTenAndManualCommitIsIdempotent() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -97,17 +163,29 @@ class SqlDelightRg05StoreTest {
             val database = LedgerDatabase(driver)
             assertEquals(27, LedgerDatabase.Schema.version)
             val catalog = catalog()
-            val store = SqlDelightRg05Store(database, driver, catalog, object : Rg05IdentitySource {
-                override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation", "reconciliation")
-            })
-            val snapshot = Rg05ManualSnapshot(
-                LedgerId("ledger-a"), RequestId("request"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z",
-                Money.ofMinor(10_000, currency), AccountId("asset"),
-                listOf(
-                    MergedPaymentItem("a", Money.ofMinor(4_000, currency), CategoryId("daily"), "daily", Instant.parse("2026-04-10T09:00:00Z")),
-                    MergedPaymentItem("b", Money.ofMinor(6_000, currency), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
-                ), true,
-            )
+            val store =
+                SqlDelightRg05Store(
+                    database,
+                    driver,
+                    catalog,
+                    object : Rg05IdentitySource {
+                        override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation", "reconciliation")
+                    },
+                )
+            val snapshot =
+                Rg05ManualSnapshot(
+                    LedgerId("ledger-a"),
+                    RequestId("request"),
+                    Instant.parse("2026-04-10T10:30:00Z"),
+                    "2026-04-10T10:30:00Z",
+                    Money.ofMinor(10_000, currency),
+                    AccountId("asset"),
+                    listOf(
+                        MergedPaymentItem("a", Money.ofMinor(4_000, currency), CategoryId("daily"), "daily", Instant.parse("2026-04-10T09:00:00Z")),
+                        MergedPaymentItem("b", Money.ofMinor(6_000, currency), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
+                    ),
+                    true,
+                )
             val operation = Rg05PreparedOperation.Manual(snapshot, MergedPaymentExpenseIds(TransactionId("tx"), TransactionVersionId("v"), PostingSetId("set"), listOf(PostingId("expense-a"), PostingId("expense-b")), PostingId("asset-posting")), "relation", "", "", mapOf("a" to "consumption-a", "b" to "consumption-b"), mapOf("a" to "allocation-a", "b" to "allocation-b"))
             assertEquals(
                 Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "explicit_confirmation"),
@@ -127,20 +205,23 @@ class SqlDelightRg05StoreTest {
         }
     }
 
-    private fun catalog() = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            listOf(
-                Account(AccountId("asset"), LedgerId("ledger-a"), AccountKind.ASSET, currency, true, true),
-                Account(AccountId("expense-a-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, currency, false, false),
-                Account(AccountId("expense-b-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, currency, false, false),
+    private fun catalog() =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                listOf(
+                    Account(AccountId("asset"), LedgerId("ledger-a"), AccountKind.ASSET, currency, true, true),
+                    Account(AccountId("expense-a-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, currency, false, false),
+                    Account(AccountId("expense-b-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, currency, false, false),
+                ),
+                listOf(
+                    Category(CategoryId("root"), LedgerId("ledger-a"), null, null, true),
+                    Category(CategoryId("daily"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-a-account"), true),
+                    Category(CategoryId("service"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-b-account"), true),
+                ),
             ),
-            listOf(
-                Category(CategoryId("root"), LedgerId("ledger-a"), null, null, true),
-                Category(CategoryId("daily"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-a-account"), true),
-                Category(CategoryId("service"), LedgerId("ledger-a"), CategoryId("root"), AccountId("expense-b-account"), true),
-            ),
-        ),
-    ).value
+        ).value
 
-    companion object { val currency = CurrencyUnit("CNY", 2) }
+    companion object {
+        val currency = CurrencyUnit("CNY", 2)
+    }
 }

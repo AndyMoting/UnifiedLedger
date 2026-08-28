@@ -26,13 +26,11 @@ import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.OperationSubjectRef
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
-import com.unifiedledger.domain.PostingReconciliation
 import com.unifiedledger.domain.PostingReconciliationStatus
 import com.unifiedledger.domain.PostingReplacement
 import com.unifiedledger.domain.PostingSet
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.ReconciliationEffect
-import com.unifiedledger.domain.ReconciliationMatch
 import com.unifiedledger.domain.ReconciliationMatchReason
 import com.unifiedledger.domain.ReconciliationMatchStatus
 import com.unifiedledger.domain.ReconciliationMatchStatusEntry
@@ -112,65 +110,70 @@ class SqlDelightRg12Store private constructor(
         ensureOpeningState()
     }
 
-    override fun commit(operation: Rg12Operation): Rg12ExecutionResult = database.transactionWithResult {
-        if (operation is Rg12Operation.RetryIdempotentInput) {
-            return@transactionWithResult replayRetry(operation)
-        }
-        val fingerprint = operationFingerprint(operation)
-        database.ledgerQueries.claimRg12Operation(
-            operation.ledgerId.value,
-            operation.identity.value,
-            operation.action.code,
-            operationClass(operation),
-            fingerprint,
-        )
-        if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
-            return@transactionWithResult replay(operation, fingerprint)
-        }
-        failureInjector.failAt(Rg12FailurePoint.AFTER_CLAIM)
+    override fun commit(operation: Rg12Operation): Rg12ExecutionResult =
+        database.transactionWithResult {
+            if (operation is Rg12Operation.RetryIdempotentInput) {
+                return@transactionWithResult replayRetry(operation)
+            }
+            val fingerprint = operationFingerprint(operation)
+            database.ledgerQueries.claimRg12Operation(
+                operation.ledgerId.value,
+                operation.identity.value,
+                operation.action.code,
+                operationClass(operation),
+                fingerprint,
+            )
+            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
+                return@transactionWithResult replay(operation, fingerprint)
+            }
+            failureInjector.failAt(Rg12FailurePoint.AFTER_CLAIM)
 
-        val before = loadPersistedSnapshot(operation.ledgerId)
-        val runtime = Rg12Runtime(catalog, before)
-        val result = runtime.commit(operation)
-        check(result !is Rg12ExecutionResult.RequestIdentityConflict) {
-            "newly claimed RG-12 operation returned an identity conflict"
+            val before = loadPersistedSnapshot(operation.ledgerId)
+            val runtime = Rg12Runtime(catalog, before)
+            val result = runtime.commit(operation)
+            check(result !is Rg12ExecutionResult.RequestIdentityConflict) {
+                "newly claimed RG-12 operation returned an identity conflict"
+            }
+            if (result is Rg12ExecutionResult.Accepted) {
+                persistDelta(operation, before, runtime.snapshot())
+            }
+            failureInjector.failAt(Rg12FailurePoint.AFTER_DELTA)
+            finalizeOperation(operation, fingerprint, result)
+            result
         }
-        if (result is Rg12ExecutionResult.Accepted) {
-            persistDelta(operation, before, runtime.snapshot())
+
+    fun snapshot(ledgerId: LedgerId): Rg12Snapshot = Rg12Runtime(catalog, loadPersistedSnapshot(ledgerId)).snapshot()
+
+    private fun operationFingerprint(operation: Rg12Operation): String = Rg12Runtime(catalog, emptyList()).operationFingerprint(operation)
+
+    private fun operationClass(operation: Rg12Operation): String =
+        when (operation) {
+            is Rg12Operation.CorrectTransactionVersion -> Rg12Action.CORRECT_TRANSACTION_VERSION.code
+            is Rg12Operation.RetryIdempotentInput -> operation.action.code
+            is Rg12Operation.InvalidInput -> "reject_invalid_rg12_input"
         }
-        failureInjector.failAt(Rg12FailurePoint.AFTER_DELTA)
-        finalizeOperation(operation, fingerprint, result)
-        result
-    }
-
-    fun snapshot(ledgerId: LedgerId): Rg12Snapshot =
-        Rg12Runtime(catalog, loadPersistedSnapshot(ledgerId)).snapshot()
-
-    private fun operationFingerprint(operation: Rg12Operation): String =
-        Rg12Runtime(catalog, emptyList()).operationFingerprint(operation)
-
-    private fun operationClass(operation: Rg12Operation): String = when (operation) {
-        is Rg12Operation.CorrectTransactionVersion -> Rg12Action.CORRECT_TRANSACTION_VERSION.code
-        is Rg12Operation.RetryIdempotentInput -> operation.action.code
-        is Rg12Operation.InvalidInput -> "reject_invalid_rg12_input"
-    }
 
     private fun replayRetry(operation: Rg12Operation.RetryIdempotentInput): Rg12ExecutionResult {
-        val saved = database.ledgerQueries
-            .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOneOrNull()
-            ?: return Rg12ExecutionResult.RequestIdentityConflict
+        val saved =
+            database.ledgerQueries
+                .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
+                .executeAsOneOrNull()
+                ?: return Rg12ExecutionResult.RequestIdentityConflict
         if (saved.outcome == "PENDING") {
             error("persisted RG-12 operation is still pending")
         }
         return replayOutcome(saved)
     }
 
-    private fun replay(operation: Rg12Operation, fingerprint: String): Rg12ExecutionResult {
-        val saved = database.ledgerQueries
-            .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOneOrNull()
-            ?: return Rg12ExecutionResult.RequestIdentityConflict
+    private fun replay(
+        operation: Rg12Operation,
+        fingerprint: String,
+    ): Rg12ExecutionResult {
+        val saved =
+            database.ledgerQueries
+                .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
+                .executeAsOneOrNull()
+                ?: return Rg12ExecutionResult.RequestIdentityConflict
         if (
             saved.action != operation.action.code ||
             saved.operation_class != operationClass(operation) ||
@@ -185,18 +188,21 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun replayOutcome(saved: com.unifiedledger.data.db.Rg12_operation): Rg12ExecutionResult {
-        val returned = database.ledgerQueries
-            .selectRg12ReturnedIds(saved.ledger_id, saved.identity_value)
-            .executeAsList()
-            .map(::restoreReturnedId)
+        val returned =
+            database.ledgerQueries
+                .selectRg12ReturnedIds(saved.ledger_id, saved.identity_value)
+                .executeAsList()
+                .map(::restoreReturnedId)
         return when (saved.outcome) {
             "ACCEPTED", "NO_CHANGE" -> Rg12ExecutionResult.NoChange(returned)
-            "REJECTED" -> Rg12ExecutionResult.Rejected(
-                reason = Rg12RejectionReason.values().single { it.code == saved.reason_code },
-                fieldPath = Rg12FieldPath(
-                    requireNotNull(saved.field_path) { "persisted RG-12 rejection without a field path" },
-                ),
-            )
+            "REJECTED" ->
+                Rg12ExecutionResult.Rejected(
+                    reason = Rg12RejectionReason.values().single { it.code == saved.reason_code },
+                    fieldPath =
+                        Rg12FieldPath(
+                            requireNotNull(saved.field_path) { "persisted RG-12 rejection without a field path" },
+                        ),
+                )
             else -> error("unknown RG-12 operation outcome ${saved.outcome}")
         }
     }
@@ -219,26 +225,30 @@ class SqlDelightRg12Store private constructor(
         fingerprint: String,
         result: Rg12ExecutionResult,
     ) {
-        val outcome = when (result) {
-            is Rg12ExecutionResult.Accepted -> "ACCEPTED"
-            is Rg12ExecutionResult.NoChange -> "NO_CHANGE"
-            is Rg12ExecutionResult.Rejected -> "REJECTED"
-            Rg12ExecutionResult.RequestIdentityConflict -> error("cannot finalize identity conflict")
-        }
+        val outcome =
+            when (result) {
+                is Rg12ExecutionResult.Accepted -> "ACCEPTED"
+                is Rg12ExecutionResult.NoChange -> "NO_CHANGE"
+                is Rg12ExecutionResult.Rejected -> "REJECTED"
+                Rg12ExecutionResult.RequestIdentityConflict -> error("cannot finalize identity conflict")
+            }
         val rejected = result as? Rg12ExecutionResult.Rejected
-        val changed = database.ledgerQueries.updateRg12OperationResult(
-            outcome,
-            rejected?.reason?.code,
-            rejected?.fieldPath?.value,
-            operation.ledgerId.value,
-            operation.identity.value,
-        ).value
+        val changed =
+            database.ledgerQueries
+                .updateRg12OperationResult(
+                    outcome,
+                    rejected?.reason?.code,
+                    rejected?.fieldPath?.value,
+                    operation.ledgerId.value,
+                    operation.identity.value,
+                ).value
         check(changed == 1L) { "RG-12 operation final result did not update" }
-        val returned = when (result) {
-            is Rg12ExecutionResult.Accepted -> result.returnedIds
-            is Rg12ExecutionResult.NoChange -> result.returnedIds
-            else -> emptyList()
-        }
+        val returned =
+            when (result) {
+                is Rg12ExecutionResult.Accepted -> result.returnedIds
+                is Rg12ExecutionResult.NoChange -> result.returnedIds
+                else -> emptyList()
+            }
         returned.forEachIndexed { index, id ->
             val stored = id.stored()
             database.ledgerQueries.insertRg12ReturnedId(
@@ -249,21 +259,26 @@ class SqlDelightRg12Store private constructor(
                 stored.second,
             )
         }
-        check(fingerprint == database.ledgerQueries
-            .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOne().input_fingerprint)
+        check(
+            fingerprint ==
+                database.ledgerQueries
+                    .selectRg12Operation(operation.ledgerId.value, operation.identity.value)
+                    .executeAsOne()
+                    .input_fingerprint,
+        )
     }
 
-    private fun Rg12ReturnedId.stored(): Pair<String, String> = when (this) {
-        is Rg12ReturnedId.Transaction -> "TRANSACTION" to id.value
-        is Rg12ReturnedId.Version -> "VERSION" to id.value
-        is Rg12ReturnedId.PostingSet -> "POSTING_SET" to id.value
-        is Rg12ReturnedId.Posting -> "POSTING" to id.value
-        is Rg12ReturnedId.Replacement -> "REPLACEMENT" to id
-        is Rg12ReturnedId.Confirmation -> "CONFIRMATION" to id
-        is Rg12ReturnedId.Match -> "MATCH" to id
-        is Rg12ReturnedId.Request -> "REQUEST" to id
-    }
+    private fun Rg12ReturnedId.stored(): Pair<String, String> =
+        when (this) {
+            is Rg12ReturnedId.Transaction -> "TRANSACTION" to id.value
+            is Rg12ReturnedId.Version -> "VERSION" to id.value
+            is Rg12ReturnedId.PostingSet -> "POSTING_SET" to id.value
+            is Rg12ReturnedId.Posting -> "POSTING" to id.value
+            is Rg12ReturnedId.Replacement -> "REPLACEMENT" to id
+            is Rg12ReturnedId.Confirmation -> "CONFIRMATION" to id
+            is Rg12ReturnedId.Match -> "MATCH" to id
+            is Rg12ReturnedId.Request -> "REQUEST" to id
+        }
 
     // ------------------------------------------------------------------ opening baseline
 
@@ -275,13 +290,18 @@ class SqlDelightRg12Store private constructor(
      * the ledger of its formal transactions.
      */
     private fun ensureOpeningState() {
-        val ledgerId = openingState.formalTransactions
-            .firstOrNull()?.formalTransaction?.transaction?.ledgerId ?: return
+        val ledgerId =
+            openingState.formalTransactions
+                .firstOrNull()
+                ?.formalTransaction
+                ?.transaction
+                ?.ledgerId ?: return
         database.transaction {
-            val existingTransactions = database.ledgerQueries
-                .selectRg12FormalTransactions(ledgerId.value)
-                .executeAsList()
-                .mapTo(mutableSetOf()) { it.transaction_id }
+            val existingTransactions =
+                database.ledgerQueries
+                    .selectRg12FormalTransactions(ledgerId.value)
+                    .executeAsList()
+                    .mapTo(mutableSetOf()) { it.transaction_id }
             openingState.formalTransactions.forEach { record ->
                 if (record.formalTransaction.transaction.id.value !in existingTransactions) {
                     persistFormalRecord(record)
@@ -298,9 +318,11 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningSemantics(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllPostingSemantics(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.posting_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllPostingSemantics(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.posting_id }
         openingState.postingSemantics.filterKeys { it !in existing }.forEach { (postingId, semantic) ->
             database.ledgerQueries.insertRg12PostingSemantic(
                 ledgerId.value,
@@ -313,9 +335,11 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningMatches(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllMatches(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.match_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllMatches(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.match_id }
         openingState.reconciliationMatches.filter { it.id !in existing }.forEach { match ->
             database.ledgerQueries.insertRg12ReconciliationMatch(
                 ledgerId.value,
@@ -338,9 +362,11 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningFacts(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllPostingReconciliations(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.reconciliation_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllPostingReconciliations(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.reconciliation_id }
         openingState.postingReconciliations.filter { it.id !in existing }.forEach { fact ->
             database.ledgerQueries.insertRg12PostingReconciliation(
                 ledgerId.value,
@@ -352,9 +378,11 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningLinks(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllPostingReplacements(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.replacement_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllPostingReplacements(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.replacement_id }
         openingState.postingReplacements.filter { it.id !in existing }.forEach { link ->
             database.ledgerQueries.insertRg12PostingReplacement(
                 ledgerId.value,
@@ -367,9 +395,11 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningConfirmations(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllConfirmations(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.confirmation_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllConfirmations(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.confirmation_id }
         openingState.confirmations.filter { it.id !in existing }.forEach { confirmation ->
             database.ledgerQueries.insertRg12Confirmation(
                 ledgerId.value,
@@ -384,18 +414,22 @@ class SqlDelightRg12Store private constructor(
     }
 
     private fun persistOpeningConsumptionRecords(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllConsumptionRecords(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.record_id }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllConsumptionRecords(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.record_id }
         openingState.consumptionRecords.filter { it.id !in existing }.forEach { record ->
             persistConsumptionRecord(ledgerId.value, record)
         }
     }
 
     private fun persistOpeningPeriods(ledgerId: LedgerId) {
-        val existing = database.ledgerQueries
-            .selectRg12AllReportPeriods(ledgerId.value)
-            .executeAsList().mapTo(mutableSetOf()) { it.period }
+        val existing =
+            database.ledgerQueries
+                .selectRg12AllReportPeriods(ledgerId.value)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.period }
         openingState.reportPeriods.filter { it !in existing }.forEach { period ->
             database.ledgerQueries.insertRg12ReportPeriod(ledgerId.value, period)
         }
@@ -462,7 +496,8 @@ class SqlDelightRg12Store private constructor(
                     posting.accountId.value,
                     posting.amount.minorUnits,
                     posting.amount.currency.code,
-                    posting.amount.currency.precision.toLong(),
+                    posting.amount.currency.precision
+                        .toLong(),
                 )
             }
         }
@@ -470,7 +505,10 @@ class SqlDelightRg12Store private constructor(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
             record.createdAtText ?: record.createdAt.toString(),
-            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
+            record.statisticsAtText ?: formal.versions
+                .last()
+                .times.statisticsAt
+                .toString(),
         )
     }
 
@@ -486,10 +524,12 @@ class SqlDelightRg12Store private constructor(
         before: Rg12Snapshot,
         after: Rg12Snapshot,
     ) {
-        val beforeVersionIds = before.formalTransactions
-            .flatMapTo(mutableSetOf()) { record -> record.formalTransaction.versions.map { it.id.value } }
-        val beforePostingSetIds = before.formalTransactions
-            .flatMapTo(mutableSetOf()) { record -> record.formalTransaction.postingSets.map { it.id.value } }
+        val beforeVersionIds =
+            before.formalTransactions
+                .flatMapTo(mutableSetOf()) { record -> record.formalTransaction.versions.map { it.id.value } }
+        val beforePostingSetIds =
+            before.formalTransactions
+                .flatMapTo(mutableSetOf()) { record -> record.formalTransaction.postingSets.map { it.id.value } }
         val beforeRecords = before.formalTransactions.associateBy { it.formalTransaction.transaction.id.value }
         after.formalTransactions.forEach { record ->
             val transactionId = record.formalTransaction.transaction.id.value
@@ -510,7 +550,8 @@ class SqlDelightRg12Store private constructor(
                             posting.accountId.value,
                             posting.amount.minorUnits,
                             posting.amount.currency.code,
-                            posting.amount.currency.precision.toLong(),
+                            posting.amount.currency.precision
+                                .toLong(),
                         )
                     }
                 }
@@ -559,10 +600,12 @@ class SqlDelightRg12Store private constructor(
                     "RG-12 current version was not advanced"
                 }
             }
-            val statisticsAtText = record.statisticsAtText
-                ?: formal.versions
-                    .first { it.id == formal.transaction.currentVersionId }
-                    .times.statisticsAt.toString()
+            val statisticsAtText =
+                record.statisticsAtText
+                    ?: formal.versions
+                        .first { it.id == formal.transaction.currentVersionId }
+                        .times.statisticsAt
+                        .toString()
             if (statisticsAtText != oldRecord.statisticsAtText) {
                 database.ledgerQueries.updateFormalTransactionStatisticsAtText(
                     statisticsAtText,
@@ -583,11 +626,13 @@ class SqlDelightRg12Store private constructor(
         before: Rg12Snapshot,
         after: Rg12Snapshot,
     ) {
-        val beforeTransactionIds = before.formalTransactions
-            .mapTo(mutableSetOf()) { it.formalTransaction.transaction.id.value }
-        val newFormal = after.formalTransactions.filter {
-            it.formalTransaction.transaction.id.value !in beforeTransactionIds
-        }
+        val beforeTransactionIds =
+            before.formalTransactions
+                .mapTo(mutableSetOf()) { it.formalTransaction.transaction.id.value }
+        val newFormal =
+            after.formalTransactions.filter {
+                it.formalTransaction.transaction.id.value !in beforeTransactionIds
+            }
         newFormal.forEach(::persistFormalRecord)
         persistAppendedFormalDelta(operation, before, after)
 
@@ -613,8 +658,11 @@ class SqlDelightRg12Store private constructor(
                     match.evidenceId,
                 )
             }
-            val beforeEntryIds = old?.statusHistory
-                ?.mapTo(mutableSetOf()) { it.id }.orEmpty()
+            val beforeEntryIds =
+                old
+                    ?.statusHistory
+                    ?.mapTo(mutableSetOf()) { it.id }
+                    .orEmpty()
             match.statusHistory.filter { it.id !in beforeEntryIds }.forEach { entry ->
                 database.ledgerQueries.insertRg12ReconciliationMatchHistory(
                     operation.ledgerId.value,
@@ -673,7 +721,10 @@ class SqlDelightRg12Store private constructor(
         }
     }
 
-    private fun persistConsumptionRecord(ledger: String, record: Rg12ConsumptionRecord) {
+    private fun persistConsumptionRecord(
+        ledger: String,
+        record: Rg12ConsumptionRecord,
+    ) {
         database.ledgerQueries.insertRg12ConsumptionRecord(
             ledger,
             record.id,
@@ -691,70 +742,84 @@ class SqlDelightRg12Store private constructor(
     private fun loadPersistedSnapshot(ledgerId: LedgerId): Rg12Snapshot {
         val ledger = ledgerId.value
         val q = database.ledgerQueries
-        val postingSemantics = q.selectRg12AllPostingSemantics(ledger).executeAsList().associate { row ->
-            row.posting_id to Rg12PostingSemantic(
-                role = row.role,
-                reconciliationEligible = row.reconciliation_eligible == 1L,
-                categoryId = row.category_id?.let { CategoryId(it) },
-            )
-        }
-        val reconciliationMatches = q.selectRg12AllMatches(ledger).executeAsList().map { row ->
-            val history = q.selectRg12MatchHistory(ledger, row.match_id).executeAsList().map { entry ->
-                ReconciliationMatchStatusEntry(
-                    id = entry.entry_id,
-                    sequence = entry.entry_sequence.toInt(),
-                    status = ReconciliationMatchStatus.valueOf(entry.status),
-                    at = Instant.parse(entry.entry_at),
-                    reason = ReconciliationMatchReason.valueOf(entry.reason),
+        val postingSemantics =
+            q.selectRg12AllPostingSemantics(ledger).executeAsList().associate { row ->
+                row.posting_id to
+                    Rg12PostingSemantic(
+                        role = row.role,
+                        reconciliationEligible = row.reconciliation_eligible == 1L,
+                        categoryId = row.category_id?.let { CategoryId(it) },
+                    )
+            }
+        val reconciliationMatches =
+            q.selectRg12AllMatches(ledger).executeAsList().map { row ->
+                val history =
+                    q.selectRg12MatchHistory(ledger, row.match_id).executeAsList().map { entry ->
+                        ReconciliationMatchStatusEntry(
+                            id = entry.entry_id,
+                            sequence = entry.entry_sequence.toInt(),
+                            status = ReconciliationMatchStatus.valueOf(entry.status),
+                            at = Instant.parse(entry.entry_at),
+                            reason = ReconciliationMatchReason.valueOf(entry.reason),
+                        )
+                    }
+                when (
+                    val created =
+                        createReconciliationMatch(
+                            row.match_id,
+                            PostingId(row.posting_id),
+                            row.evidence_id,
+                            history,
+                        )
+                ) {
+                    is DomainResult.Success -> created.value
+                    is DomainResult.Failure -> error("invalid persisted RG-12 reconciliation match ${row.match_id}")
+                }
+            }
+        val postingReconciliations =
+            q.selectRg12AllPostingReconciliations(ledger).executeAsList().map { row ->
+                when (
+                    val created =
+                        createPostingReconciliation(
+                            row.reconciliation_id,
+                            PostingId(row.posting_id),
+                            PostingReconciliationStatus.valueOf(row.status),
+                        )
+                ) {
+                    is DomainResult.Success -> created.value
+                    is DomainResult.Failure -> error("invalid persisted RG-12 posting reconciliation ${row.reconciliation_id}")
+                }
+            }
+        val postingReplacements =
+            q.selectRg12AllPostingReplacements(ledger).executeAsList().map { row ->
+                PostingReplacement(
+                    id = row.replacement_id,
+                    fromPostingId = PostingId(row.from_posting_id),
+                    toPostingId = PostingId(row.to_posting_id),
+                    reconciliationEffect = ReconciliationEffect.valueOf(row.reconciliation_effect),
                 )
             }
-            when (val created = createReconciliationMatch(
-                row.match_id,
-                PostingId(row.posting_id),
-                row.evidence_id,
-                history,
-            )) {
-                is DomainResult.Success -> created.value
-                is DomainResult.Failure -> error("invalid persisted RG-12 reconciliation match ${row.match_id}")
+        val confirmations =
+            q.selectRg12AllConfirmations(ledger).executeAsList().map { row ->
+                ExplicitOperationConfirmation(
+                    id = row.confirmation_id,
+                    operationId = row.operation_id,
+                    subject = OperationSubjectRef(kind = row.subject_kind, id = row.subject_id),
+                    createdAt = Instant.parse(row.confirmed_at),
+                    payload = emptyMap(),
+                )
             }
-        }
-        val postingReconciliations = q.selectRg12AllPostingReconciliations(ledger).executeAsList().map { row ->
-            when (val created = createPostingReconciliation(
-                row.reconciliation_id,
-                PostingId(row.posting_id),
-                PostingReconciliationStatus.valueOf(row.status),
-            )) {
-                is DomainResult.Success -> created.value
-                is DomainResult.Failure -> error("invalid persisted RG-12 posting reconciliation ${row.reconciliation_id}")
+        val consumptionRecords =
+            q.selectRg12AllConsumptionRecords(ledger).executeAsList().map { row ->
+                Rg12ConsumptionRecord(
+                    id = row.record_id,
+                    expensePostingId = PostingId(row.expense_posting_id),
+                    categoryId = row.category_id?.let { CategoryId(it) },
+                    amountText = row.amount_text,
+                    currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                    statisticsAtText = row.statistics_at_text,
+                )
             }
-        }
-        val postingReplacements = q.selectRg12AllPostingReplacements(ledger).executeAsList().map { row ->
-            PostingReplacement(
-                id = row.replacement_id,
-                fromPostingId = PostingId(row.from_posting_id),
-                toPostingId = PostingId(row.to_posting_id),
-                reconciliationEffect = ReconciliationEffect.valueOf(row.reconciliation_effect),
-            )
-        }
-        val confirmations = q.selectRg12AllConfirmations(ledger).executeAsList().map { row ->
-            ExplicitOperationConfirmation(
-                id = row.confirmation_id,
-                operationId = row.operation_id,
-                subject = OperationSubjectRef(kind = row.subject_kind, id = row.subject_id),
-                createdAt = Instant.parse(row.confirmed_at),
-                payload = emptyMap(),
-            )
-        }
-        val consumptionRecords = q.selectRg12AllConsumptionRecords(ledger).executeAsList().map { row ->
-            Rg12ConsumptionRecord(
-                id = row.record_id,
-                expensePostingId = PostingId(row.expense_posting_id),
-                categoryId = row.category_id?.let { CategoryId(it) },
-                amountText = row.amount_text,
-                currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
-                statisticsAtText = row.statistics_at_text,
-            )
-        }
         val reportPeriods = q.selectRg12AllReportPeriods(ledger).executeAsList().map { it.period }
         return Rg12Snapshot(
             formalTransactions = loadFormalTransactions(ledgerId),
@@ -774,66 +839,86 @@ class SqlDelightRg12Store private constructor(
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg12FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
-            .executeAsList().associateBy { it.transaction_id }
-        val versionCreatedAtTexts = database.ledgerQueries.selectRg12TransactionVersionMetadata(ledger)
-            .executeAsList().associate { TransactionVersionId(it.version_id) to it.created_at }
-        return database.ledgerQueries.selectRg12FormalTransactions(ledger).executeAsList().map { row ->
-            val versionRows = database.ledgerQueries.selectRg12FormalVersions(ledger, row.transaction_id)
+        val metadata =
+            database.ledgerQueries
+                .selectFormalTransactionMetadata(ledger)
                 .executeAsList()
-            val versions = versionRows.map { version ->
-                TransactionVersion(
-                    id = TransactionVersionId(version.version_id),
-                    transactionId = TransactionId(version.transaction_id),
-                    versionNumber = version.version_number.toInt(),
-                    postingSetId = PostingSetId(version.posting_set_id),
-                    times = TransactionTimes(
-                        occurredAt = Instant.parse(version.occurred_at),
-                        statisticsAt = Instant.parse(version.statistics_at),
-                        effectiveAt = Instant.parse(version.effective_at),
-                    ),
-                    note = version.note,
-                )
-            }
-            val versionIds = versions.mapTo(mutableSetOf()) { it.id }
-            val postingSets = versions.map { it.postingSetId }.distinct().map { postingSetId ->
-                val postings = database.ledgerQueries.selectRg12FormalPostings(ledger, postingSetId.value)
-                    .executeAsList().sortedBy { it.posting_index }.map { posting ->
-                        Posting(
-                            id = PostingId(posting.posting_id),
-                            accountId = AccountId(posting.account_id),
-                            amount = Money.ofMinor(
-                                posting.amount_minor,
-                                CurrencyUnit(posting.currency_code, posting.currency_precision.toInt()),
+                .associateBy { it.transaction_id }
+        val versionCreatedAtTexts =
+            database.ledgerQueries
+                .selectRg12TransactionVersionMetadata(ledger)
+                .executeAsList()
+                .associate { TransactionVersionId(it.version_id) to it.created_at }
+        return database.ledgerQueries.selectRg12FormalTransactions(ledger).executeAsList().map { row ->
+            val versionRows =
+                database.ledgerQueries
+                    .selectRg12FormalVersions(ledger, row.transaction_id)
+                    .executeAsList()
+            val versions =
+                versionRows.map { version ->
+                    TransactionVersion(
+                        id = TransactionVersionId(version.version_id),
+                        transactionId = TransactionId(version.transaction_id),
+                        versionNumber = version.version_number.toInt(),
+                        postingSetId = PostingSetId(version.posting_set_id),
+                        times =
+                            TransactionTimes(
+                                occurredAt = Instant.parse(version.occurred_at),
+                                statisticsAt = Instant.parse(version.statistics_at),
+                                effectiveAt = Instant.parse(version.effective_at),
                             ),
-                        )
-                    }
-                when (val created = PostingSet.create(postingSetId, postings)) {
-                    is DomainResult.Success -> created.value
-                    is DomainResult.Failure -> error("invalid persisted RG-12 posting set $postingSetId")
+                        note = version.note,
+                    )
                 }
-            }
-            val transaction = Transaction(
-                id = TransactionId(row.transaction_id),
-                ledgerId = LedgerId(row.ledger_id),
-                kind = TransactionKind.valueOf(row.kind),
-                currentVersionId = TransactionVersionId(row.current_version_id),
-            )
-            val formal = when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
-                is DomainResult.Success -> created.value
-                is DomainResult.Failure -> error("invalid persisted RG-12 formal transaction ${row.transaction_id}")
-            }
-            val savedMetadata = metadata[row.transaction_id]
-                ?: error("missing persisted RG-12 formal transaction metadata for ${row.transaction_id}")
+            val versionIds = versions.mapTo(mutableSetOf()) { it.id }
+            val postingSets =
+                versions.map { it.postingSetId }.distinct().map { postingSetId ->
+                    val postings =
+                        database.ledgerQueries
+                            .selectRg12FormalPostings(ledger, postingSetId.value)
+                            .executeAsList()
+                            .sortedBy { it.posting_index }
+                            .map { posting ->
+                                Posting(
+                                    id = PostingId(posting.posting_id),
+                                    accountId = AccountId(posting.account_id),
+                                    amount =
+                                        Money.ofMinor(
+                                            posting.amount_minor,
+                                            CurrencyUnit(posting.currency_code, posting.currency_precision.toInt()),
+                                        ),
+                                )
+                            }
+                    when (val created = PostingSet.create(postingSetId, postings)) {
+                        is DomainResult.Success -> created.value
+                        is DomainResult.Failure -> error("invalid persisted RG-12 posting set $postingSetId")
+                    }
+                }
+            val transaction =
+                Transaction(
+                    id = TransactionId(row.transaction_id),
+                    ledgerId = LedgerId(row.ledger_id),
+                    kind = TransactionKind.valueOf(row.kind),
+                    currentVersionId = TransactionVersionId(row.current_version_id),
+                )
+            val formal =
+                when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
+                    is DomainResult.Success -> created.value
+                    is DomainResult.Failure -> error("invalid persisted RG-12 formal transaction ${row.transaction_id}")
+                }
+            val savedMetadata =
+                metadata[row.transaction_id]
+                    ?: error("missing persisted RG-12 formal transaction metadata for ${row.transaction_id}")
             Rg12FormalTransactionRecord(
                 formalTransaction = formal,
                 createdAt = Instant.parse(savedMetadata.created_at),
                 createdAtText = savedMetadata.created_at,
                 statisticsAtText = savedMetadata.statistics_at_text,
                 versionCreatedAtTexts = versionCreatedAtTexts.filterKeys { it in versionIds },
-                versionConfirmationIds = versionRows
-                    .filter { it.confirmation_id != null }
-                    .associate { TransactionVersionId(it.version_id) to requireNotNull(it.confirmation_id) },
+                versionConfirmationIds =
+                    versionRows
+                        .filter { it.confirmation_id != null }
+                        .associate { TransactionVersionId(it.version_id) to requireNotNull(it.confirmation_id) },
             )
         }
     }

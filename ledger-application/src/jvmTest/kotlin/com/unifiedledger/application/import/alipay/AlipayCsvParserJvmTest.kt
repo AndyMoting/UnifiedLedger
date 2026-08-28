@@ -30,7 +30,6 @@ import kotlin.test.assertTrue
  * one tab when the merchant order number is empty.
  */
 class AlipayCsvParserJvmTest {
-
     private val inputRef = "batch-p405-a"
     private val gb18030: Charset = Charset.forName("GB18030")
 
@@ -40,14 +39,14 @@ class AlipayCsvParserJvmTest {
 
     // ---- Synthetic CSV builder (spec sections 1.1, 2.1-2.3) ----
 
-    private fun metadataLines(): List<String> =
-        (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
+    private fun metadataLines(): List<String> = (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
 
-    private fun headerLine(tokens: List<String> = AlipaySourceTokens.HEADER_TOKENS): String =
-        tokens.joinToString(",") + ","
+    private fun headerLine(tokens: List<String> = AlipaySourceTokens.HEADER_TOKENS): String = tokens.joinToString(",") + ","
 
-    private fun rawRow(fields: List<String>, trailingComma: Boolean = true): String =
-        fields.joinToString(",") + if (trailingComma) "," else ""
+    private fun rawRow(
+        fields: List<String>,
+        trailingComma: Boolean = true,
+    ): String = fields.joinToString(",") + if (trailingComma) "," else ""
 
     /** Generic frozen-shape data row in the REAL column layout (spec §9.2): time at index 0,
      *  category[1], counterparty[2], account[3], product 商品说明[4], direction[5], amount[6],
@@ -62,23 +61,43 @@ class AlipayCsvParserJvmTest {
         status: String,
         time: String,
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
-    ): String = rawRow(
-        listOf(
-            time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-            "SYN-SECRET-PRODUCT", direction, amount, "", status,
-            "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
-        ),
-    )
+    ): String =
+        rawRow(
+            listOf(
+                time,
+                category,
+                "SYN-SECRET-COUNTERPARTY",
+                "SYN-SECRET-ACCOUNT",
+                "SYN-SECRET-PRODUCT",
+                direction,
+                amount,
+                "",
+                status,
+                "SYN-SECRET-TXNO\t",
+                merchOrderNo?.let { "$it\t" } ?: "",
+                "SYN-SECRET-NOTE",
+            ),
+        )
 
     private fun a01Fields(
         txOrderField: String = "SYN-SECRET-TXNO\t",
         merchOrderField: String = "SYN-SECRET-MERCHNO\t",
         note: String = "SYN-SECRET-NOTE",
-    ): List<String> = listOf(
-        "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        "SYN-SECRET-PRODUCT", "支出", "128.50", "", "交易成功",
-        txOrderField, merchOrderField, note,
-    )
+    ): List<String> =
+        listOf(
+            "2026-08-01 12:30:45",
+            "网上支付",
+            "SYN-SECRET-COUNTERPARTY",
+            "SYN-SECRET-ACCOUNT",
+            "SYN-SECRET-PRODUCT",
+            "支出",
+            "128.50",
+            "",
+            "交易成功",
+            txOrderField,
+            merchOrderField,
+            note,
+        )
 
     private fun a01Row(
         txOrderField: String = "SYN-SECRET-TXNO\t",
@@ -86,11 +105,15 @@ class AlipayCsvParserJvmTest {
         note: String = "SYN-SECRET-NOTE",
     ): String = rawRow(a01Fields(txOrderField, merchOrderField, note))
 
-    private fun csvText(dataRows: List<String>, header: String = headerLine()): String = buildString {
-        metadataLines().forEach { append(it).append("\r\n") }
-        append(header).append("\n")
-        dataRows.forEach { append(it).append("\n") }
-    }
+    private fun csvText(
+        dataRows: List<String>,
+        header: String = headerLine(),
+    ): String =
+        buildString {
+            metadataLines().forEach { append(it).append("\r\n") }
+            append(header).append("\n")
+            dataRows.forEach { append(it).append("\n") }
+        }
 
     private fun csvBytes(
         dataRows: List<String>,
@@ -99,24 +122,25 @@ class AlipayCsvParserJvmTest {
     ): ByteArray = csvText(dataRows, header).toByteArray(charset)
 
     /** Frozen source record rows A-01..A-16 (spec section 1.2), batch-p405-a data area. */
-    private fun batchARows(): List<String> = listOf(
-        recordRow("网上支付", "支出", "128.50", "交易成功", "2026-08-01 12:30:45"),
-        recordRow("扫码支付", "支出", "12.50", "交易成功", "2026-08-05 09:00:00"),
-        recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
-        recordRow("网上支付", "不计收支", "45.60", "交易成功", "2026-08-09 21:15:30"),
-        recordRow("网上支付", "支出", "20.00", "交易关闭", "2026-08-10 09:30:00"),
-        recordRow("其他", "支出", "0.00", "交易成功", "2026-08-10 08:00:20"),
-        recordRow("账户存取", "不计收支", "100.00", "交易成功", "2026-08-10 10:00:00"),
-        recordRow("转账红包", "收入", "8.80", "交易成功", "2026-08-11 09:09:09"),
-        recordRow("网上支付", "不计收支", "128.50", "退款成功", "2026-08-11 11:00:00"),
-        recordRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:00:00"),
-        recordRow("亲友代付", "支出", "66.00", "代付成功", "2026-08-11 13:00:00"),
-        recordRow("神秘交易分类", "支出", "9.90", "交易成功", "2026-08-12 08:45:00"),
-        recordRow("网上支付", "支出", "abc", "交易成功", "2026-08-12 07:30:00"),
-        recordRow("网上支付", "支出", "10.00", "交易成功", "不是时间"),
-        recordRow("网上支付", "支出", "-10.00", "交易成功", "2026-08-12 09:15:00"),
-        recordRow("网上支付", "支出", "10.5", "交易成功", "2026-08-12 09:20:00"),
-    )
+    private fun batchARows(): List<String> =
+        listOf(
+            recordRow("网上支付", "支出", "128.50", "交易成功", "2026-08-01 12:30:45"),
+            recordRow("扫码支付", "支出", "12.50", "交易成功", "2026-08-05 09:00:00"),
+            recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
+            recordRow("网上支付", "不计收支", "45.60", "交易成功", "2026-08-09 21:15:30"),
+            recordRow("网上支付", "支出", "20.00", "交易关闭", "2026-08-10 09:30:00"),
+            recordRow("其他", "支出", "0.00", "交易成功", "2026-08-10 08:00:20"),
+            recordRow("账户存取", "不计收支", "100.00", "交易成功", "2026-08-10 10:00:00"),
+            recordRow("转账红包", "收入", "8.80", "交易成功", "2026-08-11 09:09:09"),
+            recordRow("网上支付", "不计收支", "128.50", "退款成功", "2026-08-11 11:00:00"),
+            recordRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:00:00"),
+            recordRow("亲友代付", "支出", "66.00", "代付成功", "2026-08-11 13:00:00"),
+            recordRow("神秘交易分类", "支出", "9.90", "交易成功", "2026-08-12 08:45:00"),
+            recordRow("网上支付", "支出", "abc", "交易成功", "2026-08-12 07:30:00"),
+            recordRow("网上支付", "支出", "10.00", "交易成功", "不是时间"),
+            recordRow("网上支付", "支出", "-10.00", "交易成功", "2026-08-12 09:15:00"),
+            recordRow("网上支付", "支出", "10.5", "交易成功", "2026-08-12 09:20:00"),
+        )
 
     private fun minimalZipBytes(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -128,12 +152,18 @@ class AlipayCsvParserJvmTest {
         return out.toByteArray()
     }
 
-    private fun accepted(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Accepted {
+    private fun accepted(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Accepted {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Accepted>(row)
     }
 
-    private fun rejected(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Rejected {
+    private fun rejected(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Rejected {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Rejected>(row)
     }
@@ -155,17 +185,24 @@ class AlipayCsvParserJvmTest {
         assertEquals(fieldRole, diagnostic.fieldRole)
     }
 
-    private fun outputStrings(result: AlipayBatchResult): List<String> = result.rows.flatMap { row ->
-        when (row) {
-            is AlipayRowResult.Accepted -> listOf(
-                row.facts.amountMinor.toString(), row.facts.currencyCode, row.facts.currencyPrecision.toString(),
-                row.facts.occurredAt, row.facts.directionToken, row.facts.statusToken ?: "",
-            )
-            is AlipayRowResult.Rejected -> emptyList()
-        } + row.diagnostics.flatMap {
-            listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "")
+    private fun outputStrings(result: AlipayBatchResult): List<String> =
+        result.rows.flatMap { row ->
+            when (row) {
+                is AlipayRowResult.Accepted ->
+                    listOf(
+                        row.facts.amountMinor.toString(),
+                        row.facts.currencyCode,
+                        row.facts.currencyPrecision.toString(),
+                        row.facts.occurredAt,
+                        row.facts.directionToken,
+                        row.facts.statusToken ?: "",
+                    )
+                is AlipayRowResult.Rejected -> emptyList()
+            } +
+                row.diagnostics.flatMap {
+                    listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "")
+                }
         }
-    }
 
     // ---- T-01..T-16: per-record parsing (P-01..P-16, fixtures A-01..A-16) ----
 
@@ -268,8 +305,8 @@ class AlipayCsvParserJvmTest {
         assertDiagnostic(a09.diagnostics.single(), "SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", 8)
     }
 
-    @Test // T-10 / P-10 (P4-06 registered amendment, D-107 section 1: the 信用借还×不计收支×还款
     // row is no longer a typed rejection; it routes to the credit repayment source)
+    @Test // T-10 / P-10 (P4-06 registered amendment, D-107 section 1: the 信用借还×不计收支×还款
     fun a10CreditRepaymentRowRoutesToCreditRepaymentSource() {
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
 
@@ -351,7 +388,11 @@ class AlipayCsvParserJvmTest {
             assertEquals(1, it.diagnostics.size, "rejected row carries exactly one diagnostic")
         }
 
-        val byCode = result.rows.flatMap { it.diagnostics }.groupingBy { it.code }.eachCount()
+        val byCode =
+            result.rows
+                .flatMap { it.diagnostics }
+                .groupingBy { it.code }
+                .eachCount()
         assertEquals(
             mapOf(
                 "REQUIRED_FACT_UNRESOLVED" to 2,
@@ -365,9 +406,10 @@ class AlipayCsvParserJvmTest {
         )
 
         // Frozen 11-entry diagnostic multiset (message is never compared, D-097:1459).
-        val multiset = result.rows
-            .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
-            .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
+        val multiset =
+            result.rows
+                .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
+                .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
         assertEquals(
             listOf(
                 Triple("REQUIRED_FACT_UNRESOLVED", 3, "direction"),
@@ -404,7 +446,10 @@ class AlipayCsvParserJvmTest {
         assertEquals(AlipayBatchOutcome.REJECTED, missingResult.outcome)
         assertEquals(0, missingResult.rows.size)
         assertDiagnostic(
-            assertIs(missingResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure",
+            assertIs(missingResult.diagnostic),
+            "STRUCTURE_MISMATCH",
+            "fatal",
+            "structure",
             expectedInputRef = "batch-p405-b1",
         )
 
@@ -414,47 +459,66 @@ class AlipayCsvParserJvmTest {
         assertEquals(AlipayBatchOutcome.REJECTED, extraResult.outcome)
         assertEquals(0, extraResult.rows.size)
         assertDiagnostic(
-            assertIs(extraResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure",
+            assertIs(extraResult.diagnostic),
+            "STRUCTURE_MISMATCH",
+            "fatal",
+            "structure",
             expectedInputRef = "batch-p405-b2",
         )
 
         // b3: misplaced columns (direction and amount headers swapped).
-        val swappedTokens = AlipaySourceTokens.HEADER_TOKENS.mapIndexed { index, token ->
-            when (index) {
-                5 -> AlipaySourceTokens.HEADER_TOKENS[6]
-                6 -> AlipaySourceTokens.HEADER_TOKENS[5]
-                else -> token
+        val swappedTokens =
+            AlipaySourceTokens.HEADER_TOKENS.mapIndexed { index, token ->
+                when (index) {
+                    5 -> AlipaySourceTokens.HEADER_TOKENS[6]
+                    6 -> AlipaySourceTokens.HEADER_TOKENS[5]
+                    else -> token
+                }
             }
-        }
         val swapped = csvBytes(listOf(a01Row()), header = headerLine(swappedTokens))
         val swappedResult = AlipayCsvParser.parse("batch-p405-b3", swapped)
         assertEquals(AlipayBatchOutcome.REJECTED, swappedResult.outcome)
         assertEquals(0, swappedResult.rows.size)
         assertDiagnostic(
-            assertIs(swappedResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure",
+            assertIs(swappedResult.diagnostic),
+            "STRUCTURE_MISMATCH",
+            "fatal",
+            "structure",
             expectedInputRef = "batch-p405-b3",
         )
 
         // b4: token off by one character (对方账号 -> 对方帐号).
-        val offByOneTokens = AlipaySourceTokens.HEADER_TOKENS.mapIndexed { index, token ->
-            if (index == 3) "对方帐号" else token
-        }
+        val offByOneTokens =
+            AlipaySourceTokens.HEADER_TOKENS.mapIndexed { index, token ->
+                if (index == 3) "对方帐号" else token
+            }
         val offByOne = csvBytes(listOf(a01Row()), header = headerLine(offByOneTokens))
         val offByOneResult = AlipayCsvParser.parse("batch-p405-b4", offByOne)
         assertEquals(AlipayBatchOutcome.REJECTED, offByOneResult.outcome)
         assertEquals(0, offByOneResult.rows.size)
         assertDiagnostic(
-            assertIs(offByOneResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure",
+            assertIs(offByOneResult.diagnostic),
+            "STRUCTURE_MISMATCH",
+            "fatal",
+            "structure",
             expectedInputRef = "batch-p405-b4",
         )
 
         // g1: truncated ten-line file never reaches the frozen header position.
-        val truncated = csvText(batchARows()).split("\n").take(10).joinToString("\n").toByteArray(gb18030)
+        val truncated =
+            csvText(batchARows())
+                .split("\n")
+                .take(10)
+                .joinToString("\n")
+                .toByteArray(gb18030)
         val truncatedResult = AlipayCsvParser.parse("batch-p405-g1", truncated)
         assertEquals(AlipayBatchOutcome.REJECTED, truncatedResult.outcome)
         assertEquals(0, truncatedResult.rows.size)
         assertDiagnostic(
-            assertIs(truncatedResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure",
+            assertIs(truncatedResult.diagnostic),
+            "STRUCTURE_MISMATCH",
+            "fatal",
+            "structure",
             expectedInputRef = "batch-p405-g1",
         )
     }
@@ -484,7 +548,10 @@ class AlipayCsvParserJvmTest {
         assertEquals(AlipayBatchOutcome.REJECTED, emptyResult.outcome)
         assertEquals(0, emptyResult.rows.size)
         assertDiagnostic(
-            assertIs(emptyResult.diagnostic), "INPUT_DECODE_FAILED", "fatal", "input",
+            assertIs(emptyResult.diagnostic),
+            "INPUT_DECODE_FAILED",
+            "fatal",
+            "input",
             expectedInputRef = "batch-p405-d",
         )
 
@@ -493,20 +560,33 @@ class AlipayCsvParserJvmTest {
         assertEquals(AlipayBatchOutcome.REJECTED, zipResult.outcome)
         assertEquals(0, zipResult.rows.size)
         assertDiagnostic(
-            assertIs(zipResult.diagnostic), "INPUT_UNSUPPORTED", "fatal", "input",
+            assertIs(zipResult.diagnostic),
+            "INPUT_UNSUPPORTED",
+            "fatal",
+            "input",
             expectedInputRef = "batch-p405-h",
         )
 
         // OLE2 magic is likewise an unsupported container.
-        val ole2 = byteArrayOf(
-            0xD0.toByte(), 0xCF.toByte(), 0x11.toByte(), 0xE0.toByte(),
-            0xA1.toByte(), 0xB1.toByte(), 0x1A.toByte(), 0xE1.toByte(),
-        ) + ByteArray(64)
+        val ole2 =
+            byteArrayOf(
+                0xD0.toByte(),
+                0xCF.toByte(),
+                0x11.toByte(),
+                0xE0.toByte(),
+                0xA1.toByte(),
+                0xB1.toByte(),
+                0x1A.toByte(),
+                0xE1.toByte(),
+            ) + ByteArray(64)
         val ole2Result = AlipayCsvParser.parse("batch-p405-h", ole2)
         assertEquals(AlipayBatchOutcome.REJECTED, ole2Result.outcome)
         assertEquals(0, ole2Result.rows.size)
         assertDiagnostic(
-            assertIs(ole2Result.diagnostic), "INPUT_UNSUPPORTED", "fatal", "input",
+            assertIs(ole2Result.diagnostic),
+            "INPUT_UNSUPPORTED",
+            "fatal",
+            "input",
             expectedInputRef = "batch-p405-h",
         )
 
@@ -516,29 +596,33 @@ class AlipayCsvParserJvmTest {
         assertEquals(AlipayBatchOutcome.REJECTED, oversizedResult.outcome)
         assertEquals(0, oversizedResult.rows.size)
         assertDiagnostic(
-            assertIs(oversizedResult.diagnostic), "INPUT_UNSAFE_OR_OVER_LIMIT", "fatal", "input",
+            assertIs(oversizedResult.diagnostic),
+            "INPUT_UNSAFE_OR_OVER_LIMIT",
+            "fatal",
+            "input",
             expectedInputRef = "batch-p405-i",
         )
     }
 
     @Test // T-21 / P-21
     fun rowStructureVariantsRejectAtRecordLevelWhileValidRowSurvives() {
-        val variants = listOf(
-            // e1: tab count 0 (trailing tabs stripped from both order columns).
-            "batch-p405-e1" to a01Row(txOrderField = "SYN-SECRET-TXNO", merchOrderField = "SYN-SECRET-MERCHNO"),
-            // e2: tab count 3 (merchant order number carries two trailing tabs).
-            "batch-p405-e2" to a01Row(merchOrderField = "SYN-SECRET-MERCHNO\t\t"),
-            // e3: field count 12 (trailing comma missing).
-            "batch-p405-e3" to rawRow(a01Fields(), trailingComma = false),
-            // e4: field count 14 (extra trailing separator).
-            "batch-p405-e4" to (a01Row() + ","),
-            // e5: thirteenth field non-empty.
-            "batch-p405-e5" to (a01Row() + "SYN-EXTRA-FIELD"),
-            // e6: residual CR in a data row.
-            "batch-p405-e6" to (a01Row() + "\r"),
-            // e7: tab outside the two order-number columns (note column).
-            "batch-p405-e7" to a01Row(note = "SYN-SECRET-NOTE\t"),
-        )
+        val variants =
+            listOf(
+                // e1: tab count 0 (trailing tabs stripped from both order columns).
+                "batch-p405-e1" to a01Row(txOrderField = "SYN-SECRET-TXNO", merchOrderField = "SYN-SECRET-MERCHNO"),
+                // e2: tab count 3 (merchant order number carries two trailing tabs).
+                "batch-p405-e2" to a01Row(merchOrderField = "SYN-SECRET-MERCHNO\t\t"),
+                // e3: field count 12 (trailing comma missing).
+                "batch-p405-e3" to rawRow(a01Fields(), trailingComma = false),
+                // e4: field count 14 (extra trailing separator).
+                "batch-p405-e4" to (a01Row() + ","),
+                // e5: thirteenth field non-empty.
+                "batch-p405-e5" to (a01Row() + "SYN-EXTRA-FIELD"),
+                // e6: residual CR in a data row.
+                "batch-p405-e6" to (a01Row() + "\r"),
+                // e7: tab outside the two order-number columns (note column).
+                "batch-p405-e7" to a01Row(note = "SYN-SECRET-NOTE\t"),
+            )
         for ((ref, variantRow) in variants) {
             val result = AlipayCsvParser.parse(ref, csvBytes(listOf(a01Row(), variantRow)))
             assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome, ref)
@@ -571,18 +655,20 @@ class AlipayCsvParserJvmTest {
 
     @Test // T-23 / P-23
     fun timeVectorsConvertToFrozenOffsetIsoTextDeterministically() {
-        val vectors = listOf(
-            "2026-08-01 12:30:45" to "2026-08-01T12:30:45+08:00",
-            "2026-08-05 09:00:00" to "2026-08-05T09:00:00+08:00",
-            "2026-08-06 18:45:15" to "2026-08-06T18:45:15+08:00",
-            "2026-08-09 21:15:30" to "2026-08-09T21:15:30+08:00",
-            "2026-08-10 09:30:00" to "2026-08-10T09:30:00+08:00",
-            "2026-08-10 08:00:20" to "2026-08-10T08:00:20+08:00",
-        )
-        val rows = vectors.map { (time, _) -> recordRow("网上支付", "支出", "10.00", "交易成功", time) } +
-            listOf("2026-08-01 12:30", "2026-13-01 00:00:00", "", "不是时间").map {
-                recordRow("网上支付", "支出", "10.00", "交易成功", it)
-            }
+        val vectors =
+            listOf(
+                "2026-08-01 12:30:45" to "2026-08-01T12:30:45+08:00",
+                "2026-08-05 09:00:00" to "2026-08-05T09:00:00+08:00",
+                "2026-08-06 18:45:15" to "2026-08-06T18:45:15+08:00",
+                "2026-08-09 21:15:30" to "2026-08-09T21:15:30+08:00",
+                "2026-08-10 09:30:00" to "2026-08-10T09:30:00+08:00",
+                "2026-08-10 08:00:20" to "2026-08-10T08:00:20+08:00",
+            )
+        val rows =
+            vectors.map { (time, _) -> recordRow("网上支付", "支出", "10.00", "交易成功", time) } +
+                listOf("2026-08-01 12:30", "2026-13-01 00:00:00", "", "不是时间").map {
+                    recordRow("网上支付", "支出", "10.00", "交易成功", it)
+                }
         val bytes = csvBytes(rows)
         val result = AlipayCsvParser.parse(inputRef, bytes)
 
@@ -591,19 +677,35 @@ class AlipayCsvParserJvmTest {
         }
         assertDiagnostic(
             rejected(result.rows, 6).diagnostics.single(),
-            "FIELD_TIME_INVALID", "record_error", "field", 6, "occurred_at",
+            "FIELD_TIME_INVALID",
+            "record_error",
+            "field",
+            6,
+            "occurred_at",
         )
         assertDiagnostic(
             rejected(result.rows, 7).diagnostics.single(),
-            "FIELD_TIME_INVALID", "record_error", "field", 7, "occurred_at",
+            "FIELD_TIME_INVALID",
+            "record_error",
+            "field",
+            7,
+            "occurred_at",
         )
         assertDiagnostic(
             rejected(result.rows, 8).diagnostics.single(),
-            "FIELD_TIME_INVALID", "record_error", "field", 8, "occurred_at",
+            "FIELD_TIME_INVALID",
+            "record_error",
+            "field",
+            8,
+            "occurred_at",
         )
         assertDiagnostic(
             rejected(result.rows, 9).diagnostics.single(),
-            "FIELD_TIME_INVALID", "record_error", "field", 9, "occurred_at",
+            "FIELD_TIME_INVALID",
+            "record_error",
+            "field",
+            9,
+            "occurred_at",
         )
 
         // Determinism: identical bytes always produce the identical result.
@@ -614,12 +716,13 @@ class AlipayCsvParserJvmTest {
 
     @Test // T-24
     fun amountShapeVectorsDeriveExactMinorUnitsAtFrozenPrecisionTwo() {
-        val valid = listOf(
-            "128.50" to 12850L,
-            "12.50" to 1250L,
-            "88.00" to 8800L,
-            "0.00" to 0L,
-        )
+        val valid =
+            listOf(
+                "128.50" to 12850L,
+                "12.50" to 1250L,
+                "88.00" to 8800L,
+                "0.00" to 0L,
+            )
         val validBytes = csvBytes(valid.map { (amount, _) -> recordRow("网上支付", "支出", amount, "交易成功", "2026-08-01 08:00:00") })
         val validResult = AlipayCsvParser.parse(inputRef, validBytes)
         assertEquals(AlipayBatchOutcome.COMPLETE, validResult.outcome)
@@ -643,19 +746,20 @@ class AlipayCsvParserJvmTest {
 
     @Test // T-25
     fun directionAndStatusTokenPolicyMatchesFrozenSets() {
-        val rows = listOf(
-            recordRow("其他", "收入", "10.00", "交易成功", "2026-08-01 10:00:00"),
-            recordRow("其他", "支出", "10.00", "交易成功", "2026-08-01 10:01:00"),
-            recordRow("其他", "不计收支", "10.00", "交易成功", "2026-08-01 10:02:00"),
-            recordRow("其他", "支出", "10.00", "交易关闭", "2026-08-01 10:03:00"),
-            recordRow("其他", "支出", "10.00", "等待确认收货", "2026-08-01 10:04:00"),
-            recordRow("其他", "不计收支", "10.00", "退款成功", "2026-08-01 10:05:00"),
-            recordRow("账户存取", "不计收支", "10.00", "交易成功", "2026-08-01 10:06:00"),
-            recordRow("转账红包", "收入", "10.00", "交易成功", "2026-08-01 10:07:00"),
-            recordRow("信用借还", "不计收支", "10.00", "还款", "2026-08-01 10:08:00"),
-            recordRow("亲友代付", "支出", "10.00", "代付成功", "2026-08-01 10:09:00"),
-            recordRow("神秘交易分类", "支出", "10.00", "交易成功", "2026-08-01 10:10:00"),
-        )
+        val rows =
+            listOf(
+                recordRow("其他", "收入", "10.00", "交易成功", "2026-08-01 10:00:00"),
+                recordRow("其他", "支出", "10.00", "交易成功", "2026-08-01 10:01:00"),
+                recordRow("其他", "不计收支", "10.00", "交易成功", "2026-08-01 10:02:00"),
+                recordRow("其他", "支出", "10.00", "交易关闭", "2026-08-01 10:03:00"),
+                recordRow("其他", "支出", "10.00", "等待确认收货", "2026-08-01 10:04:00"),
+                recordRow("其他", "不计收支", "10.00", "退款成功", "2026-08-01 10:05:00"),
+                recordRow("账户存取", "不计收支", "10.00", "交易成功", "2026-08-01 10:06:00"),
+                recordRow("转账红包", "收入", "10.00", "交易成功", "2026-08-01 10:07:00"),
+                recordRow("信用借还", "不计收支", "10.00", "还款", "2026-08-01 10:08:00"),
+                recordRow("亲友代付", "支出", "10.00", "代付成功", "2026-08-01 10:09:00"),
+                recordRow("神秘交易分类", "支出", "10.00", "交易成功", "2026-08-01 10:10:00"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
 
@@ -685,7 +789,10 @@ class AlipayCsvParserJvmTest {
         // unresolved direction.
         assertDiagnostic(
             rejected(result.rows, 5).diagnostics.single(),
-            "SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", 5,
+            "SPINE_ALIPAY_REFUND_UNSUPPORTED",
+            "unsupported",
+            "record",
+            5,
         )
 
         // Rejected family set: 账户存取 / 转账红包 / 亲友代付; the 信用借还 不计收支+还款 row
@@ -693,7 +800,10 @@ class AlipayCsvParserJvmTest {
         listOf(6, 7, 9).forEach { ordinal ->
             assertDiagnostic(
                 rejected(result.rows, ordinal).diagnostics.single(),
-                "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", "unsupported", "record", ordinal,
+                "SPINE_ALIPAY_UNSUPPORTED_TX_TYPE",
+                "unsupported",
+                "record",
+                ordinal,
             )
         }
         val repayment = accepted(result.rows, 8)
@@ -704,7 +814,10 @@ class AlipayCsvParserJvmTest {
         // Unknown category token cannot be routed.
         assertDiagnostic(
             rejected(result.rows, 10).diagnostics.single(),
-            "SPINE_ALIPAY_UNKNOWN_TOKEN", "unsupported", "record", 10,
+            "SPINE_ALIPAY_UNKNOWN_TOKEN",
+            "unsupported",
+            "record",
+            10,
         )
     }
 
@@ -712,12 +825,13 @@ class AlipayCsvParserJvmTest {
     fun orderIdTabInvariantsHoldAndNonPersistedColumnsNeverLeak() {
         // Tab invariant, both directions: two tabs (both order columns present) and one
         // tab (merchant order number empty) are both legal shapes.
-        val bothTabs = csvBytes(
-            listOf(
-                a01Row(),
-                recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
-            ),
-        )
+        val bothTabs =
+            csvBytes(
+                listOf(
+                    a01Row(),
+                    recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
+                ),
+            )
         val shapeResult = AlipayCsvParser.parse(inputRef, bothTabs)
         assertEquals(AlipayBatchOutcome.COMPLETE, shapeResult.outcome)
         assertEquals(a01Facts, accepted(shapeResult.rows, 0).facts)
@@ -729,11 +843,17 @@ class AlipayCsvParserJvmTest {
         // or diagnostics.
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
         val outputs = outputStrings(result)
-        val forbidden = (0..22).flatMap { listOf("SYN-META-PII-EXPORT-$it", "SYN-META-PII-NICK-$it") } +
-            listOf(
-                "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT", "SYN-SECRET-PRODUCT", "SYN-SECRET-METHOD",
-                "SYN-SECRET-TXNO", "SYN-SECRET-MERCHNO", "SYN-SECRET-NOTE",
-            )
+        val forbidden =
+            (0..22).flatMap { listOf("SYN-META-PII-EXPORT-$it", "SYN-META-PII-NICK-$it") } +
+                listOf(
+                    "SYN-SECRET-COUNTERPARTY",
+                    "SYN-SECRET-ACCOUNT",
+                    "SYN-SECRET-PRODUCT",
+                    "SYN-SECRET-METHOD",
+                    "SYN-SECRET-TXNO",
+                    "SYN-SECRET-MERCHNO",
+                    "SYN-SECRET-NOTE",
+                )
         forbidden.forEach { secret ->
             assertTrue(outputs.none { it == secret || it.contains(secret) }, "forbidden value leaked: $secret")
         }
@@ -767,13 +887,23 @@ class AlipayCsvParserJvmTest {
         // facts come from the real indices and the 商品说明 value (fields[4]) never appears
         // in the extracted facts or diagnostics. Synthetic values only.
         val productDescription = "SYN-PRODUCT-DESCRIPTION-VALUE"
-        val dataRow = rawRow(
-            listOf(
-                "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-                productDescription, "支出", "128.50", "", "交易成功",
-                "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
-            ),
-        )
+        val dataRow =
+            rawRow(
+                listOf(
+                    "2026-08-01 12:30:45",
+                    "网上支付",
+                    "SYN-SECRET-COUNTERPARTY",
+                    "SYN-SECRET-ACCOUNT",
+                    productDescription,
+                    "支出",
+                    "128.50",
+                    "",
+                    "交易成功",
+                    "SYN-SECRET-TXNO\t",
+                    "SYN-SECRET-MERCHNO\t",
+                    "SYN-SECRET-NOTE",
+                ),
+            )
         val bytes = csvBytes(listOf(dataRow))
         val result = AlipayCsvParser.parse("batch-p405-real-layout", bytes)
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)

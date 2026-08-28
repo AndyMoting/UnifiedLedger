@@ -44,7 +44,10 @@ class Rg10SchemaV13Test {
                         "STORED_VALUE_RECHARGE",
                         "STORED_VALUE_SPEND",
                     ),
-                    database.ledgerQueries.selectPersistedTransaction().executeAsList().map { it.kind },
+                    database.ledgerQueries
+                        .selectPersistedTransaction()
+                        .executeAsList()
+                        .map { it.kind },
                 )
             }
         } finally {
@@ -59,16 +62,49 @@ class Rg10SchemaV13Test {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             assertEquals(27, LedgerDatabase.Schema.version)
-            assertEquals(0L, database.ledgerQueries.selectRg10AllOperations("ledger-a").executeAsList().size.toLong())
-            assertEquals(0L, database.ledgerQueries.selectRg10AllLots("ledger-a").executeAsList().size.toLong())
-            assertEquals(0L, database.ledgerQueries.selectRg10AllCandidates("ledger-a").executeAsList().size.toLong())
-            assertEquals(0L, database.ledgerQueries.selectRg10AllReconstructions("ledger-a").executeAsList().size.toLong())
+            assertEquals(
+                0L,
+                database.ledgerQueries
+                    .selectRg10AllOperations("ledger-a")
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            )
+            assertEquals(
+                0L,
+                database.ledgerQueries
+                    .selectRg10AllLots("ledger-a")
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            )
+            assertEquals(
+                0L,
+                database.ledgerQueries
+                    .selectRg10AllCandidates("ledger-a")
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            )
+            assertEquals(
+                0L,
+                database.ledgerQueries
+                    .selectRg10AllReconstructions("ledger-a")
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            )
         } finally {
             driver.close()
         }
     }
 
-    private fun seedFormal(database: LedgerDatabase, prefix: String, kind: String, amountMinor: Long) {
+    private fun seedFormal(
+        database: LedgerDatabase,
+        prefix: String,
+        kind: String,
+        amountMinor: Long,
+    ) {
         val ledgerId = "ledger-rg10"
         val transactionId = "$prefix-tx"
         val postingSetId = "$prefix-posting-set"
@@ -109,29 +145,33 @@ class Rg10SchemaV13Test {
         )
     }
 
-    private fun storedKinds(driver: JdbcSqliteDriver): List<StoredKind> = driver.executeQuery(
-        identifier = null,
-        sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
-        mapper = { cursor ->
-            val rows = buildList {
-                while (cursor.next().value) {
-                    add(
-                        StoredKind(
-                            transactionId = requireNotNull(cursor.getString(0)),
-                            legacyKind = requireNotNull(cursor.getString(1)),
-                            canonicalKind = requireNotNull(cursor.getString(2)),
-                        ),
-                    )
-                }
-            }
-            QueryResult.Value(rows)
-        },
-        parameters = 0,
-    ).value
+    private fun storedKinds(driver: JdbcSqliteDriver): List<StoredKind> =
+        driver
+            .executeQuery(
+                identifier = null,
+                sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
+                mapper = { cursor ->
+                    val rows =
+                        buildList {
+                            while (cursor.next().value) {
+                                add(
+                                    StoredKind(
+                                        transactionId = requireNotNull(cursor.getString(0)),
+                                        legacyKind = requireNotNull(cursor.getString(1)),
+                                        canonicalKind = requireNotNull(cursor.getString(2)),
+                                    ),
+                                )
+                            }
+                        }
+                    QueryResult.Value(rows)
+                },
+                parameters = 0,
+            ).value
 
-    private fun sqliteProperties() = Properties().apply {
-        setProperty("foreign_keys", "true")
-    }
+    private fun sqliteProperties() =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+        }
 
     private data class StoredKind(
         val transactionId: String,

@@ -91,7 +91,6 @@ import kotlin.time.Instant
  * Count/delta assertions only ever supplement the complete canonical comparison.
  */
 class ImportSpineTransferEndToEndTest {
-
     // ---------- Frozen fixtures (spec section 1.1/1.2) ----------
 
     private val ledgerId = LedgerId("ledger-p404")
@@ -139,37 +138,66 @@ class ImportSpineTransferEndToEndTest {
         (1..37).map { "E-%02d".format(it) } + listOf("E-40", "E-41")
 
     // Each E case registers exactly once, in frozen order, at the test method that owns it.
-    private val registeredECaseIds: List<String> = listOf(
-        "E-01", "E-02", "E-03", "E-04", "E-05", "E-06", "E-07", "E-08", "E-09",
-        "E-10", "E-11", "E-12", "E-13", "E-14", "E-15", "E-16",
-        "E-17", "E-18", "E-19", "E-20", "E-21", "E-22", "E-23", "E-24", "E-25", "E-26", "E-27", "E-28",
-        "E-29", "E-30",
-        "E-31", "E-32",
-        "E-33",
-        "E-34",
-        "E-35",
-        "E-36",
-        "E-37",
-        "E-40",
-        "E-41",
-    )
+    private val registeredECaseIds: List<String> =
+        listOf(
+            "E-01",
+            "E-02",
+            "E-03",
+            "E-04",
+            "E-05",
+            "E-06",
+            "E-07",
+            "E-08",
+            "E-09",
+            "E-10",
+            "E-11",
+            "E-12",
+            "E-13",
+            "E-14",
+            "E-15",
+            "E-16",
+            "E-17",
+            "E-18",
+            "E-19",
+            "E-20",
+            "E-21",
+            "E-22",
+            "E-23",
+            "E-24",
+            "E-25",
+            "E-26",
+            "E-27",
+            "E-28",
+            "E-29",
+            "E-30",
+            "E-31",
+            "E-32",
+            "E-33",
+            "E-34",
+            "E-35",
+            "E-36",
+            "E-37",
+            "E-40",
+            "E-41",
+        )
 
     // Frozen B01..B13 case table (E-34, T-44): IDs, order and names.
-    private val bindingMismatchManifest = listOf(
-        "B01" to "reversed_legs",
-        "B02" to "wrong_ledger",
-        "B03" to "wrong_kind",
-        "B04" to "wrong_amount",
-        "B05" to "wrong_currency",
-        "B06" to "wrong_precision",
-        "B07" to "extra_posting",
-        "B08" to "multiple_versions_current_v2",
-        "B09" to "extra_posting_set",
-        "B10" to "wrong_occurred_at",
-        "B11" to "wrong_statistics_at",
-        "B12" to "wrong_effective_at",
-        "B13" to "non_null_note",
-    )
+    private val bindingMismatchManifest =
+        listOf(
+            "B01" to "reversed_legs",
+            "B02" to "wrong_ledger",
+            "B03" to "wrong_kind",
+            "B04" to "wrong_amount",
+            "B05" to "wrong_currency",
+            "B06" to "wrong_precision",
+            "B07" to "extra_posting",
+            "B08" to "multiple_versions_current_v2",
+            "B09" to "extra_posting_set",
+            "B10" to "wrong_occurred_at",
+            "B11" to "wrong_statistics_at",
+            "B12" to "wrong_effective_at",
+            "B13" to "non_null_note",
+        )
 
     // Frozen S01..S09 case table (E-36, T-53).
     private data class ScaleVector(
@@ -180,32 +208,37 @@ class ImportSpineTransferEndToEndTest {
         val expectedNormalizedMinor: Long?,
     )
 
-    private val scaleVectors = listOf(
-        ScaleVector("S01", "scale_0_up", 100L, 0, 10000L),
-        ScaleVector("S02", "scale_1_up", 1000L, 1, 10000L),
-        ScaleVector("S03", "scale_2_equal", 10000L, 2, 10000L),
-        ScaleVector("S04", "scale_3_exact_down", 100000L, 3, 10000L),
-        ScaleVector("S05", "scale_3_remainder", 100001L, 3, null),
-        ScaleVector("S06", "scale_19_remainder", 1L, 19, null),
-        ScaleVector("S07", "scale_up_overflow", Long.MAX_VALUE, 0, null),
-        ScaleVector("S08", "negative_scale", 10000L, -1, null),
-        ScaleVector("S09", "scale_gap_over_18", 1L, 21, null),
-    )
+    private val scaleVectors =
+        listOf(
+            ScaleVector("S01", "scale_0_up", 100L, 0, 10000L),
+            ScaleVector("S02", "scale_1_up", 1000L, 1, 10000L),
+            ScaleVector("S03", "scale_2_equal", 10000L, 2, 10000L),
+            ScaleVector("S04", "scale_3_exact_down", 100000L, 3, 10000L),
+            ScaleVector("S05", "scale_3_remainder", 100001L, 3, null),
+            ScaleVector("S06", "scale_19_remainder", 1L, 19, null),
+            ScaleVector("S07", "scale_up_overflow", Long.MAX_VALUE, 0, null),
+            ScaleVector("S08", "negative_scale", 10000L, -1, null),
+            ScaleVector("S09", "scale_gap_over_18", 1L, 21, null),
+        )
 
     // Frozen I01..I07 case table (E-37, T-54).
-    private val allocatedIdManifest = listOf(
-        "I01" to "wrong_confirmation_id",
-        "I02" to "wrong_status_history_id",
-        "I03" to "wrong_transaction_id",
-        "I04" to "wrong_version_id",
-        "I05" to "wrong_posting_set_id",
-        "I06" to "wrong_source_posting_id",
-        "I07" to "wrong_destination_posting_id",
-    )
+    private val allocatedIdManifest =
+        listOf(
+            "I01" to "wrong_confirmation_id",
+            "I02" to "wrong_status_history_id",
+            "I03" to "wrong_transaction_id",
+            "I04" to "wrong_version_id",
+            "I05" to "wrong_posting_set_id",
+            "I06" to "wrong_source_posting_id",
+            "I07" to "wrong_destination_posting_id",
+        )
 
     // ---------- Deterministic ID sources (P4-02 pattern) ----------
 
-    private fun intakeIds(prefix: String, statusId: String) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        statusId: String,
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
@@ -222,16 +255,20 @@ class ImportSpineTransferEndToEndTest {
     ) = ImportCommitIds(
         confirmationId = ImportConfirmationId(confirmation),
         statusHistoryId = ImportStatusHistoryId(statusId),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId(tx),
-            versionId = TransactionVersionId(version),
-            postingSetId = PostingSetId(postingSet),
-            postingIds = postingIds.map(::PostingId),
-        ),
+        formalIds =
+            ImportFormalIds(
+                transactionId = TransactionId(tx),
+                versionId = TransactionVersionId(version),
+                postingSetId = PostingSetId(postingSet),
+                postingIds = postingIds.map(::PostingId),
+            ),
     )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -239,8 +276,11 @@ class ImportSpineTransferEndToEndTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -248,8 +288,11 @@ class ImportSpineTransferEndToEndTest {
         }
     }
 
-    private class BatchStatusIdSource(private val batches: List<ImportStatusHistoryId>) : ImportStatusIdSource {
+    private class BatchStatusIdSource(
+        private val batches: List<ImportStatusHistoryId>,
+    ) : ImportStatusIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportStatusHistoryId {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "status id batch exhausted" }
@@ -259,27 +302,31 @@ class ImportSpineTransferEndToEndTest {
 
     // ---------- Catalog (spec section 1.1) ----------
 
-    private fun catalog(ledgerId: LedgerId): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(walletAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(bankAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(bankUsdAccountId, ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
-                Account(assetAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("p404 test catalog failure: ${result.violation}")
-    }
+    private fun catalog(ledgerId: LedgerId): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(walletAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(bankAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(bankUsdAccountId, ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
+                            Account(assetAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("p404 test catalog failure: ${result.violation}")
+        }
 
     // ---------- Executor (P4-02/P4-03 pattern; production transfer factory) ----------
 
@@ -294,21 +341,17 @@ class ImportSpineTransferEndToEndTest {
     ) {
         val store = SqlDelightImportSpineStore(database, driver)
 
-        fun intake(request: ImportIntakeRequest): ImportIntakeResult =
-            ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
+        fun intake(request: ImportIntakeRequest): ImportIntakeResult = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
-        fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
+        fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult = ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
 
         fun confirmWith(
             ids: ImportIdSource,
             factory: ImportCandidateFormalFactory,
             request: ImportCandidateConfirmRequest,
-        ): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, ids, factory, catalog).execute(request)
+        ): ImportCandidateDecisionResult = ConfirmImportCandidate(store, ids, factory, catalog).execute(request)
 
-        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
-            RejectImportCandidate(store, statusIds).execute(request)
+        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult = RejectImportCandidate(store, statusIds).execute(request)
     }
 
     private fun transferExecutor(
@@ -319,7 +362,12 @@ class ImportSpineTransferEndToEndTest {
         commitIds: ImportIdSource,
         statusIds: ImportStatusIdSource,
     ) = Executor(
-        database, driver, catalog, intakeIds, commitIds, statusIds,
+        database,
+        driver,
+        catalog,
+        intakeIds,
+        commitIds,
+        statusIds,
         TransferFlowFormalFactory(catalog, walletAccountId),
     )
 
@@ -357,12 +405,15 @@ class ImportSpineTransferEndToEndTest {
         decisionFields = ImportConfirmDecisionFields.TransferFlow(fromAccountId = from, toAccountId = to),
     )
 
-    private fun rejectRequest(requestId: String, candidate: String, hash: String) =
-        ImportCandidateRejectRequest(
-            identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
-            candidateId = ImportCandidateId(candidate),
-            expectedContentHash = hash,
-        )
+    private fun rejectRequest(
+        requestId: String,
+        candidate: String,
+        hash: String,
+    ) = ImportCandidateRejectRequest(
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        candidateId = ImportCandidateId(candidate),
+        expectedContentHash = hash,
+    )
 
     // ---------- Complete canonical state oracle (spec section 1.4) ----------
 
@@ -410,48 +461,65 @@ class ImportSpineTransferEndToEndTest {
         val report: Map<String, P404ReportProjection>,
     )
 
-    private fun compareCell(left: Any?, right: Any?): Int = when {
-        left == null && right == null -> 0
-        left == null -> -1
-        right == null -> 1
-        else -> when (left) {
-            is Long -> left.compareTo(right as Long)
-            is String -> left.compareTo(right as String)
-            else -> error("unsupported canonical cell type: $left")
-        }
-    }
-
-    private val rowComparator = Comparator<List<Any?>> { left, right ->
-        val limit = minOf(left.size, right.size)
-        for (index in 0 until limit) {
-            val compared = compareCell(left[index], right[index])
-            if (compared != 0) return@Comparator compared
-        }
-        left.size - right.size
-    }
-
-    private fun selectRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> =
-        driver.executeQuery(
-            null,
-            sql,
-            { cursor ->
-                val rows = mutableListOf<List<Any?>>()
-                while (cursor.next().value) {
-                    rows += longColumns.mapIndexed { index, isLong ->
-                        if (isLong) cursor.getLong(index) else cursor.getString(index)
-                    }
+    private fun compareCell(
+        left: Any?,
+        right: Any?,
+    ): Int =
+        when {
+            left == null && right == null -> 0
+            left == null -> -1
+            right == null -> 1
+            else ->
+                when (left) {
+                    is Long -> left.compareTo(right as Long)
+                    is String -> left.compareTo(right as String)
+                    else -> error("unsupported canonical cell type: $left")
                 }
-                app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-            },
-            0,
-        ).value
+        }
+
+    private val rowComparator =
+        Comparator<List<Any?>> { left, right ->
+            val limit = minOf(left.size, right.size)
+            for (index in 0 until limit) {
+                val compared = compareCell(left[index], right[index])
+                if (compared != 0) return@Comparator compared
+            }
+            left.size - right.size
+        }
+
+    private fun selectRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
 
     /**
      * Independent report reducer (spec section 1.4 item 3): computed from postings and
      * transaction kinds only; never calls a production factory or report helper. A formal
      * transfer yields internalTransfer = principal with every other dimension at zero.
      */
-    private fun reduceReport(transactions: List<ReportTx>, ledgerId: String, accounts: List<Account>): P404ReportProjection {
+    private fun reduceReport(
+        transactions: List<ReportTx>,
+        ledgerId: String,
+        accounts: List<Account>,
+    ): P404ReportProjection {
         val balances = LinkedHashMap<String, Long>()
         accounts.filter { it.ledgerId.value == ledgerId }.forEach { balances[it.id.value] = 0L }
         var internalTransfer = 0L
@@ -496,36 +564,43 @@ class ImportSpineTransferEndToEndTest {
         )
     }
 
-    private fun captureState(driver: JdbcSqliteDriver, accountsByLedger: Map<String, List<Account>>): P404CanonicalState {
-        val formalJoin = "FROM posting AS p " +
-            "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-            "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = v.ledger_id"
-        val formalRows = selectRows(
-            driver,
-            "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor $formalJoin ORDER BY t.transaction_id, p.posting_index",
-            listOf(false, false, false, false, true),
-        )
-        val formalTxs = formalRows
-            .groupBy { it[0] as String }
-            .map { (txId, rows) ->
-                ReportTx(
-                    ledgerId = rows.first()[1] as String,
-                    kind = rows.first()[2] as String,
-                    postings = rows.map { (it[3] as String) to (it[4] as Long) },
-                )
-            }
-            .sortedBy { it.ledgerId }
+    private fun captureState(
+        driver: JdbcSqliteDriver,
+        accountsByLedger: Map<String, List<Account>>,
+    ): P404CanonicalState {
+        val formalJoin =
+            "FROM posting AS p " +
+                "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = v.ledger_id"
+        val formalRows =
+            selectRows(
+                driver,
+                "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor $formalJoin ORDER BY t.transaction_id, p.posting_index",
+                listOf(false, false, false, false, true),
+            )
+        val formalTxs =
+            formalRows
+                .groupBy { it[0] as String }
+                .map { (txId, rows) ->
+                    ReportTx(
+                        ledgerId = rows.first()[1] as String,
+                        kind = rows.first()[2] as String,
+                        postings = rows.map { (it[3] as String) to (it[4] as Long) },
+                    )
+                }.sortedBy { it.ledgerId }
         val reportLedgers = (accountsByLedger.keys + formalTxs.map { it.ledgerId }).toSortedSet()
-        val report = reportLedgers.associateWith { ledger ->
-            reduceReport(formalTxs, ledger, accountsByLedger[ledger] ?: emptyList())
-        }
+        val report =
+            reportLedgers.associateWith { ledger ->
+                reduceReport(formalTxs, ledger, accountsByLedger[ledger] ?: emptyList())
+            }
         return P404CanonicalState(
             importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
-            importSourceRecord = selectRows(
-                driver,
-                "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token FROM import_source_record",
-                listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false),
-            ).sortedWith(rowComparator),
+            importSourceRecord =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token FROM import_source_record",
+                    listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false),
+                ).sortedWith(rowComparator),
             importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
             importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
             importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
@@ -542,7 +617,11 @@ class ImportSpineTransferEndToEndTest {
         )
     }
 
-    private fun assertCanonicalState(expected: P404CanonicalState, actual: P404CanonicalState, checkpoint: String) {
+    private fun assertCanonicalState(
+        expected: P404CanonicalState,
+        actual: P404CanonicalState,
+        checkpoint: String,
+    ) {
         assertEquals(expected.importRequest, actual.importRequest, "$checkpoint: import_request rows")
         assertEquals(expected.importSourceRecord, actual.importSourceRecord, "$checkpoint: import_source_record rows")
         assertEquals(expected.importEvidence, actual.importEvidence, "$checkpoint: import_evidence rows")
@@ -596,23 +675,36 @@ class ImportSpineTransferEndToEndTest {
             candidateId: String,
             statusId: String,
         ) {
-            val candidateKind = when (kind) {
-                ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
-                ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
-                ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
-                // P4-06 v3 kinds: unused by this P4-04/P4-05b oracle, mapped for exhaustiveness.
-                ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
-                ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
-                ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
-            }
+            val candidateKind =
+                when (kind) {
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                    // P4-06 v3 kinds: unused by this P4-04/P4-05b oracle, mapped for exhaustiveness.
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+                    ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+                    ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
+                }
             val complete = completeness == ImportCompleteness.VALID_COMPLETE
             requests += row(ledgerId, requestId, "intake")
-            sources += row(
-                ledgerId, sourceId, requestId, inputRef, ordinal, kind.storageValue, hash,
-                kind.contractVersion.toLong(), if (complete) "valid_complete" else "valid_incomplete",
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision.toLong(),
-                facts.occurredAt, facts.directionToken, facts.statusToken,
-            )
+            sources +=
+                row(
+                    ledgerId,
+                    sourceId,
+                    requestId,
+                    inputRef,
+                    ordinal,
+                    kind.storageValue,
+                    hash,
+                    kind.contractVersion.toLong(),
+                    if (complete) "valid_complete" else "valid_incomplete",
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision.toLong(),
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                )
             evidence += row(ledgerId, evidenceId, sourceId, "source_observation", facts.occurredAt)
             candidates += row(ledgerId, candidateId, sourceId, candidateKind, if (complete) "1.00" else "0.50", kind.storageValue, 1L)
             requirements += row(ledgerId, candidateId, 0L, "formal_transaction_creation")
@@ -655,7 +747,13 @@ class ImportSpineTransferEndToEndTest {
             formalTxs += ReportTx(ledgerId, "ACCOUNT_TRANSFER", listOf(fromAccountId to -amountMinor, toAccountId to amountMinor))
         }
 
-        fun reject(ledgerId: String, requestId: String, candidateId: String, hash: String, statusId: String) {
+        fun reject(
+            ledgerId: String,
+            requestId: String,
+            candidateId: String,
+            hash: String,
+            statusId: String,
+        ) {
             requests += row(ledgerId, requestId, "reject_candidate")
             decisions += row(ledgerId, requestId, "reject", candidateId, hash, null, null, null, null, null)
             statusHistory += row(ledgerId, candidateId, 2L, statusId, "rejected", requestId, "status_transition")
@@ -683,15 +781,15 @@ class ImportSpineTransferEndToEndTest {
                 transactionVersion = versions.sortedWith(rowComparator),
                 posting = postings.sortedWith(rowComparator),
                 ledgerTransactionCurrentVersion = currentVersions.sortedWith(rowComparator),
-                report = reportLedgers.associateWith { ledger ->
-                    reduce(formalTxs, ledger, accountsByLedger[ledger] ?: emptyList())
-                },
+                report =
+                    reportLedgers.associateWith { ledger ->
+                        reduce(formalTxs, ledger, accountsByLedger[ledger] ?: emptyList())
+                    },
             )
         }
     }
 
-    private fun P404ExpectedState.state(accountsByLedger: Map<String, List<Account>>): P404CanonicalState =
-        canonicalState(accountsByLedger, rowComparator, ::reduceReport)
+    private fun P404ExpectedState.state(accountsByLedger: Map<String, List<Account>>): P404CanonicalState = canonicalState(accountsByLedger, rowComparator, ::reduceReport)
 
     // ---------- T-13..T-21 (E-01..E-09): transfer intake ----------
 
@@ -703,23 +801,25 @@ class ImportSpineTransferEndToEndTest {
             val database = LedgerDatabase(driver)
             val cat = catalog(ledgerId)
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("t1", "status-t1-1"),
-                    intakeIds("t1o", "status-t1o-1"),
-                    intakeIds("t2", "status-t2-1"),
-                    intakeIds("t3", "status-t3-1"),
-                    intakeIds("t4", "status-t4-1"),
-                    intakeIds("t6", "status-t6-1"),
-                ),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("t1", "status-t1-1"),
+                        intakeIds("t1o", "status-t1o-1"),
+                        intakeIds("t2", "status-t2-1"),
+                        intakeIds("t3", "status-t3-1"),
+                        intakeIds("t4", "status-t4-1"),
+                        intakeIds("t6", "status-t6-1"),
+                    ),
+                )
             val executor = transferExecutor(database, driver, cat, intakeIds, BatchCommitIdSource(emptyList()), BatchStatusIdSource(emptyList()))
             val expected = P404ExpectedState()
 
             // E-01: intake T1 accepted (transfer_flow_source, contract_version 2).
-            val e01 = assertIs<ImportIntakeResult.Accepted>(
-                executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-            )
+            val e01 =
+                assertIs<ImportIntakeResult.Accepted>(
+                    executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.SOURCE, "source-t1"),
@@ -742,17 +842,19 @@ class ImportSpineTransferEndToEndTest {
             assertEquals("pending_confirmation", candidateT1.status)
 
             // E-02: same-request equivalent replay.
-            val e02 = assertIs<ImportIntakeResult.NoChange>(
-                executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-            )
+            val e02 =
+                assertIs<ImportIntakeResult.NoChange>(
+                    executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                )
             assertEquals(e01.receipt, e02.receipt)
             assertEquals("equivalent_replay", e02.reasonCode)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-02")
 
             // E-03: same raw identity, different amount: hard collision, zero writes.
-            val e03 = assertIs<ImportIntakeResult.Rejected>(
-                executor.intake(intakeRequest("req-t1-intake-2", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1PrimeFacts, ImportCompleteness.VALID_COMPLETE)),
-            )
+            val e03 =
+                assertIs<ImportIntakeResult.Rejected>(
+                    executor.intake(intakeRequest("req-t1-intake-2", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1PrimeFacts, ImportCompleteness.VALID_COMPLETE)),
+                )
             assertEquals("SPINE_IDENTITY_COLLISION", e03.diagnostic.code)
             assertEquals("fatal", e03.diagnostic.severity)
             assertEquals("record", e03.diagnostic.scope)
@@ -762,17 +864,19 @@ class ImportSpineTransferEndToEndTest {
 
             // E-04: same raw identity and facts but a different record kind: the kind is a
             // hash member, so the digest differs and the identity collides.
-            val e04 = assertIs<ImportIntakeResult.Rejected>(
-                executor.intake(intakeRequest("req-t1-intake-3", "batch-p404-a", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-            )
+            val e04 =
+                assertIs<ImportIntakeResult.Rejected>(
+                    executor.intake(intakeRequest("req-t1-intake-3", "batch-p404-a", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                )
             assertEquals("SPINE_IDENTITY_COLLISION", e04.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-04")
 
             // E-05: the ordinary kind on a fresh raw identity is an independent candidate
             // dimension; ordinary stays contract_version 1.
-            val e05 = assertIs<ImportIntakeResult.Accepted>(
-                executor.intake(intakeRequest("req-b-intake", "batch-p404-b", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-            )
+            val e05 =
+                assertIs<ImportIntakeResult.Accepted>(
+                    executor.intake(intakeRequest("req-b-intake", "batch-p404-b", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                )
             assertEquals(
                 ImportReceipt(ImportRequestId("req-b-intake"), ImportSourceId("source-t1o"), ImportEvidenceId("evidence-t1o"), ImportCandidateId("candidate-t1o"), null, null),
                 e05.receipt,
@@ -781,7 +885,13 @@ class ImportSpineTransferEndToEndTest {
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-05")
             val sourceT1o = database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, "req-b-intake").executeAsOne()
             assertEquals(1L, sourceT1o.contract_version)
-            assertEquals("ordinary_flow", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1o").executeAsOne().candidate_kind)
+            assertEquals(
+                "ordinary_flow",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1o")
+                    .executeAsOne()
+                    .candidate_kind,
+            )
 
             // E-06: intake T2 accepted (transfer_flow, in direction).
             assertIs<ImportIntakeResult.Accepted>(
@@ -796,7 +906,13 @@ class ImportSpineTransferEndToEndTest {
             )
             expected.intake(ledgerId.value, "req-t3-intake", "batch-p404-a", 2L, ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, hashT3, t3Facts, ImportCompleteness.VALID_COMPLETE, "source-t3", "evidence-t3", "candidate-t3", "status-t3-1")
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-07")
-            assertEquals("transfer_flow_missing_leg", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t3").executeAsOne().candidate_kind)
+            assertEquals(
+                "transfer_flow_missing_leg",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t3")
+                    .executeAsOne()
+                    .candidate_kind,
+            )
 
             // E-08: intake T4 accepted (missing-leg, in direction).
             assertIs<ImportIntakeResult.Accepted>(
@@ -804,7 +920,13 @@ class ImportSpineTransferEndToEndTest {
             )
             expected.intake(ledgerId.value, "req-t4-intake", "batch-p404-a", 3L, ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, hashT4, t4Facts, ImportCompleteness.VALID_COMPLETE, "source-t4", "evidence-t4", "candidate-t4", "status-t4-1")
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-08")
-            assertEquals("transfer_flow_missing_leg", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t4").executeAsOne().candidate_kind)
+            assertEquals(
+                "transfer_flow_missing_leg",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t4")
+                    .executeAsOne()
+                    .candidate_kind,
+            )
 
             // E-09: intake T6 accepted as an incomplete transfer candidate (unresolved
             // direction keeps the raw "/" token).
@@ -832,19 +954,21 @@ class ImportSpineTransferEndToEndTest {
             val database = LedgerDatabase(driver)
             val cat = catalog(ledgerId)
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("t1", "status-t1-1"),
-                    intakeIds("t2", "status-t2-1"),
-                    intakeIds("t3", "status-t3-1"),
-                ),
-            )
-            val commitIds = BatchCommitIdSource(
-                listOf(
-                    commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")),
-                    commitIds("confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2", listOf("posting-t2-out", "posting-t2-in")),
-                ),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("t1", "status-t1-1"),
+                        intakeIds("t2", "status-t2-1"),
+                        intakeIds("t3", "status-t3-1"),
+                    ),
+                )
+            val commitIds =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")),
+                        commitIds("confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2", listOf("posting-t2-out", "posting-t2-in")),
+                    ),
+                )
             val executor = transferExecutor(database, driver, cat, intakeIds, commitIds, BatchStatusIdSource(emptyList()))
             val expected = P404ExpectedState()
 
@@ -858,9 +982,10 @@ class ImportSpineTransferEndToEndTest {
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-10 setup")
 
             // E-10: confirm C1 wallet -> bank accepted; balanced two-leg asset transfer.
-            val e10 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
-            )
+            val e10 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-t1"),
@@ -874,11 +999,24 @@ class ImportSpineTransferEndToEndTest {
             )
             assertEquals(1, commitIds.calls.get())
             expected.confirmTransfer(
-                ledgerId.value, "req-t1-confirm", "candidate-t1", hashT1,
-                "account-wallet-wechat", "account-bank-a", "2026-08-14T10:00:00+08:00",
-                t1Facts.occurredAt, 10000L, "CNY", 2L,
-                "confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1",
-                "posting-t1-out", "posting-t1-in",
+                ledgerId.value,
+                "req-t1-confirm",
+                "candidate-t1",
+                hashT1,
+                "account-wallet-wechat",
+                "account-bank-a",
+                "2026-08-14T10:00:00+08:00",
+                t1Facts.occurredAt,
+                10000L,
+                "CNY",
+                2L,
+                "confirmation-t1",
+                "status-t1-2",
+                "tx-t1",
+                "version-t1-v1",
+                "posting-set-t1",
+                "posting-t1-out",
+                "posting-t1-in",
             )
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-10")
             // Frozen decision-snapshot four-column shape: category/funding NULL, from/to set.
@@ -913,41 +1051,46 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(mapOf("account-wallet-wechat" to -10000L, "account-bank-a" to 10000L, "account-bank-usd" to 0L, "account-asset-a" to 0L, "expense-account-food" to 0L, "income-account-salary" to 0L), reportT1.balancesByAccount)
 
             // E-11: same-request equivalent replay; factory and ID source untouched.
-            val e11 = assertIs<ImportCandidateDecisionResult.NoChange>(
-                executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
-            )
+            val e11 =
+                assertIs<ImportCandidateDecisionResult.NoChange>(
+                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
+                )
             assertEquals(e10.receipt, e11.receipt)
             assertEquals("equivalent_replay", e11.reasonCode)
             assertEquals(1, commitIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-11")
 
             // E-12: re-confirm the confirmed candidate with a new request.
-            val e12 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1-confirm-2", "candidate-t1", hashT1)),
-            )
+            val e12 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1-confirm-2", "candidate-t1", hashT1)),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", e12.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-12")
 
             // E-13: same request with a stale expected hash.
-            val e13 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT2)),
-            )
+            val e13 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT2)),
+                )
             assertEquals("SPINE_STALE_FINGERPRINT", e13.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-13")
 
             // E-14: same request with different legs: request identity conflict.
-            val e14 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1, from = bankAccountId, to = walletAccountId)),
-            )
+            val e14 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1, from = bankAccountId, to = walletAccountId)),
+                )
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", e14.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-14")
 
             // E-15: confirm C2 bank -> wallet (direction in: wallet is the TO leg).
-            val e15 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executor.confirm(
-                    transferConfirmRequest("req-t2-confirm", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
-                ),
-            )
+            val e15 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executor.confirm(
+                        transferConfirmRequest("req-t2-confirm", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
+                    ),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-t2"),
@@ -957,11 +1100,24 @@ class ImportSpineTransferEndToEndTest {
             )
             assertEquals(2, commitIds.calls.get())
             expected.confirmTransfer(
-                ledgerId.value, "req-t2-confirm", "candidate-t2", hashT2,
-                "account-bank-a", "account-wallet-wechat", "2026-08-14T11:00:00+08:00",
-                t2Facts.occurredAt, 20000L, "CNY", 2L,
-                "confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2",
-                "posting-t2-out", "posting-t2-in",
+                ledgerId.value,
+                "req-t2-confirm",
+                "candidate-t2",
+                hashT2,
+                "account-bank-a",
+                "account-wallet-wechat",
+                "2026-08-14T11:00:00+08:00",
+                t2Facts.occurredAt,
+                20000L,
+                "CNY",
+                2L,
+                "confirmation-t2",
+                "status-t2-2",
+                "tx-t2",
+                "version-t2-v1",
+                "posting-set-t2",
+                "posting-t2-out",
+                "posting-t2-in",
             )
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-15")
             val postingsT2 = database.ledgerQueries.selectRg12FormalPostings(ledgerId.value, "posting-set-t2").executeAsList()
@@ -979,11 +1135,16 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(0L, reportT2.externalCashOutflowMinor)
 
             // E-16: confirm the missing-leg candidate C3: gate closed.
-            val e16 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t3-confirm", "candidate-t3", hashT3)),
-            )
+            val e16 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t3-confirm", "candidate-t3", hashT3)),
+                )
             assertEquals("SPINE_TRANSFER_NOT_CONFIRMABLE", e16.diagnostic.code)
-            assertEquals("candidate-t3", e16.diagnostic.location.candidateId?.value)
+            assertEquals(
+                "candidate-t3",
+                e16.diagnostic.location.candidateId
+                    ?.value,
+            )
             assertEquals(2, commitIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-16")
         } finally {
@@ -1001,40 +1162,44 @@ class ImportSpineTransferEndToEndTest {
             val database = LedgerDatabase(driver)
             val cat = catalog(ledgerId)
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("t3", "status-t3-1"),
-                    intakeIds("t4", "status-t4-1"),
-                    intakeIds("t6", "status-t6-1"),
-                    intakeIds("t1b", "status-t1b-1"),
-                    // P4-07: T-1c carries the same exact business tuple as T-1b, so its
-                    // intake appends one directed duplicate candidate (subject t1c ->
-                    // possible existing t1b) per D-105 section 2.
-                    intakeIds("t1c", "status-t1c-1").copy(
-                        duplicateIds = listOf(
-                            com.unifiedledger.application.ImportDuplicateIntakeIds(
-                                com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-t1c-t1b"),
-                                ImportStatusHistoryId("duplicate-status-t1c-t1b"),
-                            ),
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("t3", "status-t3-1"),
+                        intakeIds("t4", "status-t4-1"),
+                        intakeIds("t6", "status-t6-1"),
+                        intakeIds("t1b", "status-t1b-1"),
+                        // P4-07: T-1c carries the same exact business tuple as T-1b, so its
+                        // intake appends one directed duplicate candidate (subject t1c ->
+                        // possible existing t1b) per D-105 section 2.
+                        intakeIds("t1c", "status-t1c-1").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-t1c-t1b"),
+                                        ImportStatusHistoryId("duplicate-status-t1c-t1b"),
+                                    ),
+                                ),
                         ),
+                        intakeIds("t1o", "status-t1o-1"),
                     ),
-                    intakeIds("t1o", "status-t1o-1"),
-                ),
-            )
-            val statusIds = BatchStatusIdSource(
-                listOf(ImportStatusHistoryId("status-t3-2"), ImportStatusHistoryId("status-t4-2")),
-            )
+                )
+            val statusIds =
+                BatchStatusIdSource(
+                    listOf(ImportStatusHistoryId("status-t3-2"), ImportStatusHistoryId("status-t4-2")),
+                )
             // Five failing attempt batches (E-21..E-25) plus the corrected batch 2 (E-26).
-            val attemptIds = BatchCommitIdSource(
-                listOf(
-                    commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
-                    commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
-                    commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
-                    commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
-                    commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
-                    commitIds("confirmation-t1b", "status-t1b-2", "tx-t1b", "version-t1b-v1", "posting-set-t1b", listOf("posting-t1b-out", "posting-t1b-in")),
-                ),
-            )
+            val attemptIds =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
+                        commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
+                        commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
+                        commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
+                        commitIds("confirmation-t1b-attempt-1", "status-t1b-2-attempt-1", "tx-t1b-attempt-1", "version-t1b-attempt-1-v1", "posting-set-t1b-attempt-1", listOf("posting-t1b-attempt-1-out", "posting-t1b-attempt-1-in")),
+                        commitIds("confirmation-t1b", "status-t1b-2", "tx-t1b", "version-t1b-v1", "posting-set-t1b", listOf("posting-t1b-out", "posting-t1b-in")),
+                    ),
+                )
             val executor = transferExecutor(database, driver, cat, intakeIds, attemptIds, statusIds)
             val expected = P404ExpectedState()
 
@@ -1054,9 +1219,10 @@ class ImportSpineTransferEndToEndTest {
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-17 setup")
 
             // E-17: confirm C4 missing-leg: gate closed.
-            val e17 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t4-confirm", "candidate-t4", hashT4, from = bankAccountId, to = walletAccountId)),
-            )
+            val e17 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t4-confirm", "candidate-t4", hashT4, from = bankAccountId, to = walletAccountId)),
+                )
             assertEquals("SPINE_TRANSFER_NOT_CONFIRMABLE", e17.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-17")
 
@@ -1078,57 +1244,70 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(2, statusIds.calls.get())
 
             // E-20: confirm the incomplete C6.
-            val e20 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t6-confirm", "candidate-t6", hashT6)),
-            )
+            val e20 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t6-confirm", "candidate-t6", hashT6)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", e20.diagnostic.code)
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-20")
 
             // E-21: direction gate failure (out row but wallet is the TO leg).
-            val e21 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e21 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e21.diagnostic.code)
             assertEquals(1, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-21")
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1b").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1b")
+                    .executeAsOne()
+                    .status,
+            )
 
             // E-22: same account both legs.
-            val e22 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = walletAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e22 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = walletAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e22.diagnostic.code)
             assertEquals(2, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-22")
 
             // E-23: destination leg is not a self-owned real asset.
-            val e23 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = AccountId("expense-account-food"), confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e23 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = AccountId("expense-account-food"), confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e23.diagnostic.code)
             assertEquals(3, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-23")
 
             // E-24: unknown destination account.
-            val e24 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = AccountId("account-unknown"), confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e24 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = AccountId("account-unknown"), confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e24.diagnostic.code)
             assertEquals(4, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-24")
 
             // E-25: currency mismatch between the two real asset legs.
-            val e25 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = bankUsdAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e25 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, from = walletAccountId, to = bankUsdAccountId, confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e25.diagnostic.code)
             assertEquals(5, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-25")
 
             // E-26: corrected retry on the same request identity accepts (batch 2 pinned).
-            val e26 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, confirmedAt = "2026-08-14T10:30:00+08:00")),
-            )
+            val e26 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executor.confirm(transferConfirmRequest("req-t1b-confirm", "candidate-t1b", hashT1, confirmedAt = "2026-08-14T10:30:00+08:00")),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-t1b"),
@@ -1138,38 +1317,60 @@ class ImportSpineTransferEndToEndTest {
             )
             assertEquals(6, attemptIds.calls.get())
             expected.confirmTransfer(
-                ledgerId.value, "req-t1b-confirm", "candidate-t1b", hashT1,
-                "account-wallet-wechat", "account-bank-a", "2026-08-14T10:30:00+08:00",
-                t1Facts.occurredAt, 10000L, "CNY", 2L,
-                "confirmation-t1b", "status-t1b-2", "tx-t1b", "version-t1b-v1", "posting-set-t1b",
-                "posting-t1b-out", "posting-t1b-in",
+                ledgerId.value,
+                "req-t1b-confirm",
+                "candidate-t1b",
+                hashT1,
+                "account-wallet-wechat",
+                "account-bank-a",
+                "2026-08-14T10:30:00+08:00",
+                t1Facts.occurredAt,
+                10000L,
+                "CNY",
+                2L,
+                "confirmation-t1b",
+                "status-t1b-2",
+                "tx-t1b",
+                "version-t1b-v1",
+                "posting-set-t1b",
+                "posting-t1b-out",
+                "posting-t1b-in",
             )
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-26")
-            assertEquals("confirmed", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1b").executeAsOne().status)
+            assertEquals(
+                "confirmed",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1b")
+                    .executeAsOne()
+                    .status,
+            )
 
             // E-27: transfer candidate + ordinary decision fields: kind mismatch.
-            val e27 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(
-                    ImportCandidateConfirmRequest(
-                        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-t1c-confirm")),
-                        candidateId = ImportCandidateId("candidate-t1c"),
-                        expectedContentHash = hashT1,
-                        explicitConfirmedAt = "2026-08-14T10:45:00+08:00",
-                        decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
-                            categoryId = CategoryId("category-food"),
-                            fundingAccountId = assetAccountId,
+            val e27 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(
+                        ImportCandidateConfirmRequest(
+                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-t1c-confirm")),
+                            candidateId = ImportCandidateId("candidate-t1c"),
+                            expectedContentHash = hashT1,
+                            explicitConfirmedAt = "2026-08-14T10:45:00+08:00",
+                            decisionFields =
+                                ImportConfirmDecisionFields.OrdinaryFlow(
+                                    categoryId = CategoryId("category-food"),
+                                    fundingAccountId = assetAccountId,
+                                ),
                         ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", e27.diagnostic.code)
             assertEquals(6, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-27")
 
             // E-28: ordinary candidate + transfer decision fields: kind mismatch.
-            val e28 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(transferConfirmRequest("req-b-confirm", "candidate-t1o", hashT1Ordinary)),
-            )
+            val e28 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(transferConfirmRequest("req-b-confirm", "candidate-t1o", hashT1Ordinary)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", e28.diagnostic.code)
             assertEquals(6, attemptIds.calls.get())
             assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-28")
@@ -1190,12 +1391,15 @@ class ImportSpineTransferEndToEndTest {
             // Setup: C1 and C2 pending.
             JdbcSqliteDriver(url).use { driver ->
                 val database = LedgerDatabase(driver)
-                val executor = transferExecutor(
-                    database, driver, cat,
-                    BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"), intakeIds("t2", "status-t2-1"))),
-                    BatchCommitIdSource(emptyList()),
-                    BatchStatusIdSource(emptyList()),
-                )
+                val executor =
+                    transferExecutor(
+                        database,
+                        driver,
+                        cat,
+                        BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"), intakeIds("t2", "status-t2-1"))),
+                        BatchCommitIdSource(emptyList()),
+                        BatchStatusIdSource(emptyList()),
+                    )
                 assertIs<ImportIntakeResult.Accepted>(executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)))
                 assertIs<ImportIntakeResult.Accepted>(executor.intake(intakeRequest("req-t2-intake", "batch-p404-a", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, t2Facts, ImportCompleteness.VALID_COMPLETE)))
             }
@@ -1207,25 +1411,40 @@ class ImportSpineTransferEndToEndTest {
 
             // E-29: same confirm request from two threads; the shared ID source is
             // consumed exactly once and the loser replays the original receipt.
-            val sharedIds = BatchCommitIdSource(
-                listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in"))),
-            )
-            val e29 = concurrentExecute(
-                url,
-                listOf(
-                    { confirmOn(url, cat, sharedIds, transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)) },
-                    { confirmOn(url, cat, sharedIds, transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)) },
-                ),
-            )
+            val sharedIds =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in"))),
+                )
+            val e29 =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { confirmOn(url, cat, sharedIds, transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)) },
+                        { confirmOn(url, cat, sharedIds, transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)) },
+                    ),
+                )
             assertEquals(1, e29.count { it is ImportCandidateDecisionResult.Accepted })
             assertEquals(1, e29.count { it is ImportCandidateDecisionResult.NoChange })
             assertEquals(1, sharedIds.calls.get())
             expected.confirmTransfer(
-                ledgerId.value, "req-t1-confirm", "candidate-t1", hashT1,
-                "account-wallet-wechat", "account-bank-a", "2026-08-14T10:00:00+08:00",
-                t1Facts.occurredAt, 10000L, "CNY", 2L,
-                "confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1",
-                "posting-t1-out", "posting-t1-in",
+                ledgerId.value,
+                "req-t1-confirm",
+                "candidate-t1",
+                hashT1,
+                "account-wallet-wechat",
+                "account-bank-a",
+                "2026-08-14T10:00:00+08:00",
+                t1Facts.occurredAt,
+                10000L,
+                "CNY",
+                2L,
+                "confirmation-t1",
+                "status-t1-2",
+                "tx-t1",
+                "version-t1-v1",
+                "posting-set-t1",
+                "posting-t1-out",
+                "posting-t1-in",
             )
             JdbcSqliteDriver(url).use { driver ->
                 assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-29")
@@ -1233,26 +1452,32 @@ class ImportSpineTransferEndToEndTest {
 
             // E-30: distinct confirm requests on the same candidate; exactly one winner,
             // the loser is SPINE_CANDIDATE_NOT_PENDING with zero residue and consumes no ID.
-            val sharedIds2 = BatchCommitIdSource(
-                listOf(commitIds("confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2", listOf("posting-t2-out", "posting-t2-in"))),
-            )
-            val e30 = concurrentExecute(
-                url,
-                listOf(
-                    {
-                        confirmOn(
-                            url, cat, sharedIds2,
-                            transferConfirmRequest("req-t2-confirm-a", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
-                        )
-                    },
-                    {
-                        confirmOn(
-                            url, cat, sharedIds2,
-                            transferConfirmRequest("req-t2-confirm-b", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
-                        )
-                    },
-                ),
-            )
+            val sharedIds2 =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2", listOf("posting-t2-out", "posting-t2-in"))),
+                )
+            val e30 =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        {
+                            confirmOn(
+                                url,
+                                cat,
+                                sharedIds2,
+                                transferConfirmRequest("req-t2-confirm-a", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
+                            )
+                        },
+                        {
+                            confirmOn(
+                                url,
+                                cat,
+                                sharedIds2,
+                                transferConfirmRequest("req-t2-confirm-b", "candidate-t2", hashT2, from = bankAccountId, to = walletAccountId, confirmedAt = "2026-08-14T11:00:00+08:00"),
+                            )
+                        },
+                    ),
+                )
             assertEquals(1, e30.count { it is ImportCandidateDecisionResult.Accepted })
             val e30Rejected = e30.filterIsInstance<ImportCandidateDecisionResult.Rejected>().single()
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", e30Rejected.diagnostic.code)
@@ -1262,11 +1487,24 @@ class ImportSpineTransferEndToEndTest {
             val e30Winner = e30.filterIsInstance<ImportCandidateDecisionResult.Accepted>().single()
             val winnerRequest = e30Winner.receipt.requestId.value
             expected.confirmTransfer(
-                ledgerId.value, winnerRequest, "candidate-t2", hashT2,
-                "account-bank-a", "account-wallet-wechat", "2026-08-14T11:00:00+08:00",
-                t2Facts.occurredAt, 20000L, "CNY", 2L,
-                "confirmation-t2", "status-t2-2", "tx-t2", "version-t2-v1", "posting-set-t2",
-                "posting-t2-out", "posting-t2-in",
+                ledgerId.value,
+                winnerRequest,
+                "candidate-t2",
+                hashT2,
+                "account-bank-a",
+                "account-wallet-wechat",
+                "2026-08-14T11:00:00+08:00",
+                t2Facts.occurredAt,
+                20000L,
+                "CNY",
+                2L,
+                "confirmation-t2",
+                "status-t2-2",
+                "tx-t2",
+                "version-t2-v1",
+                "posting-set-t2",
+                "posting-t2-out",
+                "posting-t2-in",
             )
             JdbcSqliteDriver(url).use { driver ->
                 assertCanonicalState(expected.state(accountsByLedger), captureState(driver, accountsByLedger), "E-30")
@@ -1281,28 +1519,33 @@ class ImportSpineTransferEndToEndTest {
         catalog: LedgerCatalog,
         commitIds: ImportIdSource,
         request: ImportCandidateConfirmRequest,
-    ): ImportCandidateDecisionResult = JdbcSqliteDriver(url).use { driver ->
-        val database = LedgerDatabase(driver)
-        ConfirmImportCandidate(
-            SqlDelightImportSpineStore(database, driver),
-            commitIds,
-            TransferFlowFormalFactory(catalog, walletAccountId),
-            catalog,
-        ).execute(request)
-    }
+    ): ImportCandidateDecisionResult =
+        JdbcSqliteDriver(url).use { driver ->
+            val database = LedgerDatabase(driver)
+            ConfirmImportCandidate(
+                SqlDelightImportSpineStore(database, driver),
+                commitIds,
+                TransferFlowFormalFactory(catalog, walletAccountId),
+                catalog,
+            ).execute(request)
+        }
 
-    private fun concurrentExecute(url: String, operations: List<() -> Any>): List<Any> {
+    private fun concurrentExecute(
+        url: String,
+        operations: List<() -> Any>,
+    ): List<Any> {
         val pool = Executors.newFixedThreadPool(operations.size)
         val ready = CountDownLatch(operations.size)
         val start = CountDownLatch(1)
         return try {
-            val futures = operations.map { operation ->
-                pool.submit<Any> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    operation()
+            val futures =
+                operations.map { operation ->
+                    pool.submit<Any> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        operation()
+                    }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(20, TimeUnit.SECONDS) }
@@ -1323,10 +1566,12 @@ class ImportSpineTransferEndToEndTest {
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
 
             // E-31: intake failure after the candidate insert (T1 copy @ batch-p404-d/0).
-            val failingIntakeStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
-            )
+            val failingIntakeStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
+                )
             val intakeBatch1 = BatchIntakeIdSource(listOf(intakeIds("d1-attempt-1", "status-d1-1-attempt-1")))
             assertFailsWith<IllegalStateException> {
                 ExecuteImportIntake(failingIntakeStore, intakeBatch1, ImportContentFingerprint()).execute(
@@ -1340,29 +1585,32 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(0, emptyState.importReceipt.size)
             // The identity stays usable: the corrected retry consumes batch 2.
             val intakeBatch2 = BatchIntakeIdSource(listOf(intakeIds("d1", "status-d1-1")))
-            val e31Retry = assertIs<ImportIntakeResult.Accepted>(
-                ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), intakeBatch2, ImportContentFingerprint()).execute(
-                    intakeRequest("req-d1-intake", "batch-p404-d", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE),
-                ),
-            )
+            val e31Retry =
+                assertIs<ImportIntakeResult.Accepted>(
+                    ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), intakeBatch2, ImportContentFingerprint()).execute(
+                        intakeRequest("req-d1-intake", "batch-p404-d", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE),
+                    ),
+                )
             assertEquals(1, intakeBatch2.calls.get())
             assertEquals("candidate-d1", e31Retry.receipt.candidateId.value)
 
             // E-32: confirm failure after the formal persist (new candidate @ batch-p404-d/1).
             // P4-07: D-2 shares T-1's exact business tuple with D-1, so the intake also
             // appends one directed duplicate candidate (subject d2 -> possible existing d1).
-            val intakeBatchD2 = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("d2", "status-d2-1").copy(
-                        duplicateIds = listOf(
-                            com.unifiedledger.application.ImportDuplicateIntakeIds(
-                                com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-d2-d1"),
-                                ImportStatusHistoryId("duplicate-status-d2-d1"),
-                            ),
+            val intakeBatchD2 =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("d2", "status-d2-1").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-d2-d1"),
+                                        ImportStatusHistoryId("duplicate-status-d2-d1"),
+                                    ),
+                                ),
                         ),
                     ),
-                ),
-            )
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), intakeBatchD2, ImportContentFingerprint()).execute(
                     intakeRequest("req-d2-intake", "batch-p404-d", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE),
@@ -1370,22 +1618,29 @@ class ImportSpineTransferEndToEndTest {
             )
             val hashD2 = fingerprint.digest(ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts)
             val preConfirmState = captureState(driver, accountsByLedger)
-            val failingConfirmStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
-            )
-            val attempt1 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-d2-attempt-1", "status-d2-2-attempt-1", "tx-d2-attempt-1",
-                        "version-d2-attempt-1-v1", "posting-set-d2-attempt-1",
-                        listOf("posting-d2-attempt-1-out", "posting-d2-attempt-1-in"),
+            val failingConfirmStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+                )
+            val attempt1 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-d2-attempt-1",
+                            "status-d2-2-attempt-1",
+                            "tx-d2-attempt-1",
+                            "version-d2-attempt-1-v1",
+                            "posting-set-d2-attempt-1",
+                            listOf("posting-d2-attempt-1-out", "posting-d2-attempt-1-in"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertFailsWith<IllegalStateException> {
                 ConfirmImportCandidate(
-                    failingConfirmStore, attempt1,
+                    failingConfirmStore,
+                    attempt1,
                     TransferFlowFormalFactory(cat, walletAccountId),
                     cat,
                 ).execute(transferConfirmRequest("req-d2-confirm", "candidate-d2", hashD2, confirmedAt = "2026-08-14T10:00:00+08:00"))
@@ -1393,19 +1648,28 @@ class ImportSpineTransferEndToEndTest {
             assertEquals(1, attempt1.calls.get())
             // Full rollback including the formal rows: every table matches the pre-state.
             assertCanonicalState(preConfirmState, captureState(driver, accountsByLedger), "E-32 rollback")
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-d2").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-d2")
+                    .executeAsOne()
+                    .status,
+            )
 
             // The corrected retry consumes batch 2 and commits all-or-nothing.
-            val batch2 = BatchCommitIdSource(
-                listOf(commitIds("confirmation-d2", "status-d2-2", "tx-d2", "version-d2-v1", "posting-set-d2", listOf("posting-d2-out", "posting-d2-in"))),
-            )
-            val e32Retry = assertIs<ImportCandidateDecisionResult.Accepted>(
-                ConfirmImportCandidate(
-                    SqlDelightImportSpineStore(database, driver), batch2,
-                    TransferFlowFormalFactory(cat, walletAccountId),
-                    cat,
-                ).execute(transferConfirmRequest("req-d2-confirm", "candidate-d2", hashD2, confirmedAt = "2026-08-14T10:00:00+08:00")),
-            )
+            val batch2 =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-d2", "status-d2-2", "tx-d2", "version-d2-v1", "posting-set-d2", listOf("posting-d2-out", "posting-d2-in"))),
+                )
+            val e32Retry =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    ConfirmImportCandidate(
+                        SqlDelightImportSpineStore(database, driver),
+                        batch2,
+                        TransferFlowFormalFactory(cat, walletAccountId),
+                        cat,
+                    ).execute(transferConfirmRequest("req-d2-confirm", "candidate-d2", hashD2, confirmedAt = "2026-08-14T10:00:00+08:00")),
+                )
             assertEquals(1, batch2.calls.get())
             assertEquals("tx-d2", e32Retry.receipt.transactionId?.value)
             assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1423,40 +1687,51 @@ class ImportSpineTransferEndToEndTest {
         val cat = catalog(ledgerId)
         val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
         try {
-            val originalReceipts = JdbcSqliteDriver(url).use { driver ->
-                LedgerDatabase.Schema.create(driver)
-                val database = LedgerDatabase(driver)
-                val executor = transferExecutor(
-                    database, driver, cat,
-                    BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
-                    BatchCommitIdSource(listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")))),
-                    BatchStatusIdSource(emptyList()),
-                )
-                val intake = assertIs<ImportIntakeResult.Accepted>(
-                    executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-                )
-                val confirm = assertIs<ImportCandidateDecisionResult.Accepted>(
-                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
-                )
-                intake.receipt to confirm.receipt
-            }
+            val originalReceipts =
+                JdbcSqliteDriver(url).use { driver ->
+                    LedgerDatabase.Schema.create(driver)
+                    val database = LedgerDatabase(driver)
+                    val executor =
+                        transferExecutor(
+                            database,
+                            driver,
+                            cat,
+                            BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
+                            BatchCommitIdSource(listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")))),
+                            BatchStatusIdSource(emptyList()),
+                        )
+                    val intake =
+                        assertIs<ImportIntakeResult.Accepted>(
+                            executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                        )
+                    val confirm =
+                        assertIs<ImportCandidateDecisionResult.Accepted>(
+                            executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
+                        )
+                    intake.receipt to confirm.receipt
+                }
             val preReopenState = JdbcSqliteDriver(url).use { driver -> captureState(driver, accountsByLedger) }
             // E-33: close and reopen the file database; replay E-10 and the intake.
             JdbcSqliteDriver(url).use { driver ->
                 val database = LedgerDatabase(driver)
-                val executor = transferExecutor(
-                    database, driver, cat,
-                    BatchIntakeIdSource(emptyList()),
-                    BatchCommitIdSource(emptyList()),
-                    BatchStatusIdSource(emptyList()),
-                )
-                val replayIntake = assertIs<ImportIntakeResult.NoChange>(
-                    executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
-                )
+                val executor =
+                    transferExecutor(
+                        database,
+                        driver,
+                        cat,
+                        BatchIntakeIdSource(emptyList()),
+                        BatchCommitIdSource(emptyList()),
+                        BatchStatusIdSource(emptyList()),
+                    )
+                val replayIntake =
+                    assertIs<ImportIntakeResult.NoChange>(
+                        executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
+                    )
                 assertEquals(originalReceipts.first, replayIntake.receipt)
-                val replayConfirm = assertIs<ImportCandidateDecisionResult.NoChange>(
-                    executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
-                )
+                val replayConfirm =
+                    assertIs<ImportCandidateDecisionResult.NoChange>(
+                        executor.confirm(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1)),
+                    )
                 assertEquals(originalReceipts.second, replayConfirm.receipt)
                 assertEquals("equivalent_replay", replayConfirm.reasonCode)
                 assertCanonicalState(preReopenState, captureState(driver, accountsByLedger), "E-33")
@@ -1506,64 +1781,72 @@ class ImportSpineTransferEndToEndTest {
         val inPostingId = destinationPostingIdOverride ?: ids.formalIds.postingIds[1]
         val fromLeg = if (legSwap) fields.toAccountId else fields.fromAccountId
         val toLeg = if (legSwap) fields.fromAccountId else fields.toAccountId
-        val postings = mutableListOf(
-            Posting(outPostingId, fromLeg, Money.ofMinor(-amount, currency)),
-            Posting(inPostingId, toLeg, Money.ofMinor(amount, currency)),
-        )
+        val postings =
+            mutableListOf(
+                Posting(outPostingId, fromLeg, Money.ofMinor(-amount, currency)),
+                Posting(inPostingId, toLeg, Money.ofMinor(amount, currency)),
+            )
         if (extraPosting) {
             postings += Posting(PostingId(ids.formalIds.postingIds[0].value + "-extra"), toLeg, Money.ofMinor(0L, currency))
         }
-        val soleSet = when (val created = PostingSet.create(setId, postings)) {
-            is DomainResult.Success -> created.value
-            is DomainResult.Failure -> error("malicious graph must stay domain-legal: ${created.violation}")
-        }
-        val postingSets = mutableListOf(soleSet)
-        if (extraPostingSet) {
-            val extraSet = when (val created = PostingSet.create(PostingSetId(setId.value + "-extra"), postings)) {
+        val soleSet =
+            when (val created = PostingSet.create(setId, postings)) {
                 is DomainResult.Success -> created.value
                 is DomainResult.Failure -> error("malicious graph must stay domain-legal: ${created.violation}")
             }
+        val postingSets = mutableListOf(soleSet)
+        if (extraPostingSet) {
+            val extraSet =
+                when (val created = PostingSet.create(PostingSetId(setId.value + "-extra"), postings)) {
+                    is DomainResult.Success -> created.value
+                    is DomainResult.Failure -> error("malicious graph must stay domain-legal: ${created.violation}")
+                }
             postingSets += extraSet
         }
         val sourceInstant = Instant.parse(input.resolved.occurredAt)
-        val times = com.unifiedledger.domain.TransactionTimes(
-            occurredAt = occurredOverride ?: sourceInstant,
-            statisticsAt = statisticsOverride ?: sourceInstant,
-            effectiveAt = effectiveOverride ?: sourceInstant,
-        )
-        val versions = mutableListOf(
-            TransactionVersion(
-                id = versionId,
-                transactionId = txId,
-                versionNumber = 1,
-                postingSetId = setId,
-                times = times,
-                note = noteOverride,
-            ),
-        )
+        val times =
+            com.unifiedledger.domain.TransactionTimes(
+                occurredAt = occurredOverride ?: sourceInstant,
+                statisticsAt = statisticsOverride ?: sourceInstant,
+                effectiveAt = effectiveOverride ?: sourceInstant,
+            )
+        val versions =
+            mutableListOf(
+                TransactionVersion(
+                    id = versionId,
+                    transactionId = txId,
+                    versionNumber = 1,
+                    postingSetId = setId,
+                    times = times,
+                    note = noteOverride,
+                ),
+            )
         var currentVersionId = versionId
         if (extraVersion) {
             val secondId = TransactionVersionId(versionId.value + "-v2")
-            versions += TransactionVersion(
-                id = secondId,
-                transactionId = txId,
-                versionNumber = 2,
-                postingSetId = setId,
-                times = times,
-                note = null,
-            )
+            versions +=
+                TransactionVersion(
+                    id = secondId,
+                    transactionId = txId,
+                    versionNumber = 2,
+                    postingSetId = setId,
+                    times = times,
+                    note = null,
+                )
             currentVersionId = secondId
         }
-        val transaction = Transaction(
-            id = txId,
-            ledgerId = ledgerOverride ?: input.ledgerId,
-            kind = kindOverride ?: TransactionKind.ACCOUNT_TRANSFER,
-            currentVersionId = currentVersionId,
-        )
-        val formal = when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
-            is DomainResult.Success -> created.value
-            is DomainResult.Failure -> error("malicious graph must stay domain-legal: ${created.violation}")
-        }
+        val transaction =
+            Transaction(
+                id = txId,
+                ledgerId = ledgerOverride ?: input.ledgerId,
+                kind = kindOverride ?: TransactionKind.ACCOUNT_TRANSFER,
+                currentVersionId = currentVersionId,
+            )
+        val formal =
+            when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
+                is DomainResult.Success -> created.value
+                is DomainResult.Failure -> error("malicious graph must stay domain-legal: ${created.violation}")
+            }
         return ImportFormalCommit(
             confirmationId = confirmationIdOverride ?: ids.confirmationId,
             statusHistoryId = statusHistoryIdOverride ?: ids.statusHistoryId,
@@ -1571,22 +1854,30 @@ class ImportSpineTransferEndToEndTest {
         )
     }
 
-    private fun bindingAttemptIds(caseId: String): ImportCommitIds = commitIds(
-        "attempt-binding-$caseId-confirmation",
-        "attempt-binding-$caseId-status",
-        "attempt-binding-$caseId-tx",
-        "attempt-binding-$caseId-version",
-        "attempt-binding-$caseId-posting-set",
-        listOf("attempt-binding-$caseId-posting-0", "attempt-binding-$caseId-posting-1"),
-    )
-
-    private fun setupPendingC1d(driver: JdbcSqliteDriver, database: LedgerDatabase, catalog: LedgerCatalog): P404ExpectedState {
-        val executor = transferExecutor(
-            database, driver, catalog,
-            BatchIntakeIdSource(listOf(intakeIds("t1d", "status-t1d-1"))),
-            BatchCommitIdSource(emptyList()),
-            BatchStatusIdSource(emptyList()),
+    private fun bindingAttemptIds(caseId: String): ImportCommitIds =
+        commitIds(
+            "attempt-binding-$caseId-confirmation",
+            "attempt-binding-$caseId-status",
+            "attempt-binding-$caseId-tx",
+            "attempt-binding-$caseId-version",
+            "attempt-binding-$caseId-posting-set",
+            listOf("attempt-binding-$caseId-posting-0", "attempt-binding-$caseId-posting-1"),
         )
+
+    private fun setupPendingC1d(
+        driver: JdbcSqliteDriver,
+        database: LedgerDatabase,
+        catalog: LedgerCatalog,
+    ): P404ExpectedState {
+        val executor =
+            transferExecutor(
+                database,
+                driver,
+                catalog,
+                BatchIntakeIdSource(listOf(intakeIds("t1d", "status-t1d-1"))),
+                BatchCommitIdSource(emptyList()),
+                BatchStatusIdSource(emptyList()),
+            )
         assertIs<ImportIntakeResult.Accepted>(
             executor.intake(intakeRequest("req-t1d-intake", "batch-p404-c", 2, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
         )
@@ -1602,17 +1893,36 @@ class ImportSpineTransferEndToEndTest {
         // The case table asserts ID set, order and names against the frozen manifest first.
         assertEquals(
             listOf(
-                "B01", "B02", "B03", "B04", "B05", "B06", "B07",
-                "B08", "B09", "B10", "B11", "B12", "B13",
+                "B01",
+                "B02",
+                "B03",
+                "B04",
+                "B05",
+                "B06",
+                "B07",
+                "B08",
+                "B09",
+                "B10",
+                "B11",
+                "B12",
+                "B13",
             ),
             bindingMismatchManifest.map { it.first },
         )
         assertEquals(
             listOf(
-                "reversed_legs", "wrong_ledger", "wrong_kind", "wrong_amount",
-                "wrong_currency", "wrong_precision", "extra_posting",
-                "multiple_versions_current_v2", "extra_posting_set",
-                "wrong_occurred_at", "wrong_statistics_at", "wrong_effective_at",
+                "reversed_legs",
+                "wrong_ledger",
+                "wrong_kind",
+                "wrong_amount",
+                "wrong_currency",
+                "wrong_precision",
+                "extra_posting",
+                "multiple_versions_current_v2",
+                "extra_posting_set",
+                "wrong_occurred_at",
+                "wrong_statistics_at",
+                "wrong_effective_at",
                 "non_null_note",
             ),
             bindingMismatchManifest.map { it.second },
@@ -1632,47 +1942,64 @@ class ImportSpineTransferEndToEndTest {
                 assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-34 $caseId pre")
 
                 val attemptIds = BatchCommitIdSource(listOf(bindingAttemptIds(caseId.lowercase())))
-                val maliciousFactory = ImportCandidateFormalFactory { input, ids ->
-                    DomainResult.Success(maliciousGraph(caseId, input, ids))
-                }
-                val result = ConfirmImportCandidate(
-                    SqlDelightImportSpineStore(database, driver),
-                    attemptIds,
-                    maliciousFactory,
-                    cat,
-                ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
+                val maliciousFactory =
+                    ImportCandidateFormalFactory { input, ids ->
+                        DomainResult.Success(maliciousGraph(caseId, input, ids))
+                    }
+                val result =
+                    ConfirmImportCandidate(
+                        SqlDelightImportSpineStore(database, driver),
+                        attemptIds,
+                        maliciousFactory,
+                        cat,
+                    ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
 
                 // Frozen spec contract (sections 1.3 E-34 and 4.2): the pre-persist binding
                 // validator rejects every mismatch with SPINE_REFERENCE_INTEGRITY_VIOLATION
                 // and zero residue before any persistFormal call.
                 val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result, "E-34 $caseId ($name) must be rejected")
                 assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", rejected.diagnostic.code, "E-34 $caseId ($name) diagnostic")
-                assertEquals("candidate-t1d", rejected.diagnostic.location.candidateId?.value)
+                assertEquals(
+                    "candidate-t1d",
+                    rejected.diagnostic.location.candidateId
+                        ?.value,
+                )
                 assertEquals(1, attemptIds.calls.get(), "E-34 $caseId consumed the attempt batch once")
                 assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-34 $caseId ($name) zero residue")
-                assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1d").executeAsOne().status)
+                assertEquals(
+                    "pending_confirmation",
+                    database.ledgerQueries
+                        .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1d")
+                        .executeAsOne()
+                        .status,
+                )
             } finally {
                 driver.close()
             }
         }
     }
 
-    private fun maliciousGraph(caseId: String, input: ImportCandidateFormalizationInput, ids: ImportCommitIds): ImportFormalCommit = when (caseId) {
-        "B01" -> buildTransferGraph(input, ids, legSwap = true)
-        "B02" -> buildTransferGraph(input, ids, ledgerOverride = otherLedgerId)
-        "B03" -> buildTransferGraph(input, ids, kindOverride = TransactionKind.EXPENSE)
-        "B04" -> buildTransferGraph(input, ids, amountOverride = 9999L)
-        "B05" -> buildTransferGraph(input, ids, currencyOverride = usd)
-        "B06" -> buildTransferGraph(input, ids, currencyOverride = CurrencyUnit("CNY", 3))
-        "B07" -> buildTransferGraph(input, ids, extraPosting = true)
-        "B08" -> buildTransferGraph(input, ids, extraVersion = true)
-        "B09" -> buildTransferGraph(input, ids, extraPostingSet = true)
-        "B10" -> buildTransferGraph(input, ids, occurredOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
-        "B11" -> buildTransferGraph(input, ids, statisticsOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
-        "B12" -> buildTransferGraph(input, ids, effectiveOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
-        "B13" -> buildTransferGraph(input, ids, noteOverride = "malicious-note")
-        else -> error("unknown binding mismatch case: $caseId")
-    }
+    private fun maliciousGraph(
+        caseId: String,
+        input: ImportCandidateFormalizationInput,
+        ids: ImportCommitIds,
+    ): ImportFormalCommit =
+        when (caseId) {
+            "B01" -> buildTransferGraph(input, ids, legSwap = true)
+            "B02" -> buildTransferGraph(input, ids, ledgerOverride = otherLedgerId)
+            "B03" -> buildTransferGraph(input, ids, kindOverride = TransactionKind.EXPENSE)
+            "B04" -> buildTransferGraph(input, ids, amountOverride = 9999L)
+            "B05" -> buildTransferGraph(input, ids, currencyOverride = usd)
+            "B06" -> buildTransferGraph(input, ids, currencyOverride = CurrencyUnit("CNY", 3))
+            "B07" -> buildTransferGraph(input, ids, extraPosting = true)
+            "B08" -> buildTransferGraph(input, ids, extraVersion = true)
+            "B09" -> buildTransferGraph(input, ids, extraPostingSet = true)
+            "B10" -> buildTransferGraph(input, ids, occurredOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
+            "B11" -> buildTransferGraph(input, ids, statisticsOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
+            "B12" -> buildTransferGraph(input, ids, effectiveOverride = t1OccurredInstant.plus(kotlin.time.Duration.parse("PT1S")))
+            "B13" -> buildTransferGraph(input, ids, noteOverride = "malicious-note")
+            else -> error("unknown binding mismatch case: $caseId")
+        }
 
     // ---------- T-45 (E-35): cross-ledger confirm ----------
 
@@ -1685,12 +2012,15 @@ class ImportSpineTransferEndToEndTest {
             val cat = catalog(ledgerId)
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts, otherLedgerId.value to emptyList<Account>())
             val expected = P404ExpectedState()
-            val executor = transferExecutor(
-                database, driver, cat,
-                BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
-                BatchCommitIdSource(emptyList()),
-                BatchStatusIdSource(emptyList()),
-            )
+            val executor =
+                transferExecutor(
+                    database,
+                    driver,
+                    cat,
+                    BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
+                    BatchCommitIdSource(emptyList()),
+                    BatchStatusIdSource(emptyList()),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
             )
@@ -1700,17 +2030,20 @@ class ImportSpineTransferEndToEndTest {
 
             // The other ledger attempts to confirm the same candidate_id text: the lookup
             // uses identity.ledgerId only, so the candidate is not found and nothing runs.
-            val commitIds = BatchCommitIdSource(
-                listOf(commitIds("confirmation-cross", "status-cross-2", "tx-cross", "version-cross-v1", "posting-set-cross", listOf("posting-cross-out", "posting-cross-in"))),
-            )
+            val commitIds =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-cross", "status-cross-2", "tx-cross", "version-cross-v1", "posting-set-cross", listOf("posting-cross-out", "posting-cross-in"))),
+                )
             var factoryCalls = 0
-            val spyingFactory = ImportCandidateFormalFactory { input, ids ->
-                factoryCalls++
-                TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
-            }
-            val result = ConfirmImportCandidate(SqlDelightImportSpineStore(database, driver), commitIds, spyingFactory, catalog(ledgerId)).execute(
-                transferConfirmRequest("req-cross-ledger-confirm", "candidate-t1", hashT1, identityLedger = otherLedgerId),
-            )
+            val spyingFactory =
+                ImportCandidateFormalFactory { input, ids ->
+                    factoryCalls++
+                    TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
+                }
+            val result =
+                ConfirmImportCandidate(SqlDelightImportSpineStore(database, driver), commitIds, spyingFactory, catalog(ledgerId)).execute(
+                    transferConfirmRequest("req-cross-ledger-confirm", "candidate-t1", hashT1, identityLedger = otherLedgerId),
+                )
             val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result)
             assertEquals("SPINE_CANDIDATE_NOT_FOUND", rejected.diagnostic.code)
             assertEquals(0, factoryCalls)
@@ -1724,21 +2057,32 @@ class ImportSpineTransferEndToEndTest {
 
     // ---------- T-46/T-47 (E-40/E-41): migration v21 -> v22 ----------
 
-    private fun migrationProps(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun migrationProps(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
-    private fun queryLong(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!)
-        },
-        0,
-    ).value
+    private fun queryLong(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getLong(0)!!)
+                },
+                0,
+            ).value
 
-    private fun queryLongJdbc(url: String, sql: String): Long =
+    private fun queryLongJdbc(
+        url: String,
+        sql: String,
+    ): Long =
         DriverManager.getConnection(url).use { connection ->
             connection.createStatement().use { statement ->
                 statement.executeQuery(sql).use { rows ->
@@ -1791,54 +2135,70 @@ class ImportSpineTransferEndToEndTest {
     )
 
     private fun normalizeSql(sql: String): String =
-        sql.replace(Regex("\\s+"), " ").trim().replace("( ", "(").replace(" )", ")")
+        sql
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
 
     /** Fresh-vs-migrated schema shape comparison (objects, FK lists, index shapes). */
     private fun schemaMetadata(url: String): SchemaMetadata =
         DriverManager.getConnection(url).use { connection ->
-            val objects = buildList {
-                connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY type, name",
-                    ).use { rows ->
-                        while (rows.next()) {
-                            add(listOf(rows.getString("type"), rows.getString("name"), rows.getString("tbl_name"), normalizeSql(rows.getString("sql"))).joinToString("|"))
-                        }
+            val objects =
+                buildList {
+                    connection.createStatement().use { statement ->
+                        statement
+                            .executeQuery(
+                                "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY type, name",
+                            ).use { rows ->
+                                while (rows.next()) {
+                                    add(listOf(rows.getString("type"), rows.getString("name"), rows.getString("tbl_name"), normalizeSql(rows.getString("sql"))).joinToString("|"))
+                                }
+                            }
                     }
                 }
-            }
-            val tableNames = objects.asSequence()
-                .filter { it.startsWith("table|") }
-                .map { it.substringAfter('|').substringBefore('|') }
-                .toList()
-            val foreignKeys = buildList {
-                tableNames.forEach { table ->
-                    connection.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
-                            while (rows.next()) {
-                                add(
-                                    listOf(
-                                        table, rows.getInt("id"), rows.getInt("seq"), rows.getString("table"),
-                                        rows.getString("from"), rows.getString("to"),
-                                        rows.getString("on_update"), rows.getString("on_delete"), rows.getString("match"),
-                                    ).joinToString("|"),
-                                )
+            val tableNames =
+                objects
+                    .asSequence()
+                    .filter { it.startsWith("table|") }
+                    .map { it.substringAfter('|').substringBefore('|') }
+                    .toList()
+            val foreignKeys =
+                buildList {
+                    tableNames.forEach { table ->
+                        connection.createStatement().use { statement ->
+                            statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
+                                while (rows.next()) {
+                                    add(
+                                        listOf(
+                                            table,
+                                            rows.getInt("id"),
+                                            rows.getInt("seq"),
+                                            rows.getString("table"),
+                                            rows.getString("from"),
+                                            rows.getString("to"),
+                                            rows.getString("on_update"),
+                                            rows.getString("on_delete"),
+                                            rows.getString("match"),
+                                        ).joinToString("|"),
+                                    )
+                                }
                             }
                         }
                     }
-                }
-            }.sorted()
-            val indexes = buildList {
-                tableNames.forEach { table ->
-                    connection.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
-                            while (rows.next()) {
-                                add(listOf(table, rows.getInt("unique"), rows.getString("origin"), rows.getInt("partial")).joinToString("|"))
+                }.sorted()
+            val indexes =
+                buildList {
+                    tableNames.forEach { table ->
+                        connection.createStatement().use { statement ->
+                            statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
+                                while (rows.next()) {
+                                    add(listOf(table, rows.getInt("unique"), rows.getString("origin"), rows.getInt("partial")).joinToString("|"))
+                                }
                             }
                         }
                     }
-                }
-            }.sorted()
+                }.sorted()
             SchemaMetadata(objects, foreignKeys, indexes)
         }
 
@@ -1860,26 +2220,28 @@ class ImportSpineTransferEndToEndTest {
         val ledgerTransactionCurrentVersion: List<List<Any?>>,
     )
 
-    private fun captureMigrationState(driver: JdbcSqliteDriver): MigrationState = MigrationState(
-        importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
-        importSourceRecord = selectRows(
-            driver,
-            "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token FROM import_source_record",
-            listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false),
-        ).sortedWith(rowComparator),
-        importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
-        importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
-        importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
-        importCandidateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
-        importCandidateDecisionSnapshot = selectRows(driver, "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, explicit_confirmed_at FROM import_candidate_decision_snapshot", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-        importConfirmation = selectRows(driver, "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-        importReceipt = selectRows(driver, "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-        ledgerTransaction = selectRows(driver, "SELECT transaction_id, ledger_id, kind, canonical_kind FROM ledger_transaction", listOf(false, false, false, false)).sortedWith(rowComparator),
-        postingSet = selectRows(driver, "SELECT posting_set_id, ledger_id FROM posting_set", listOf(false, false)).sortedWith(rowComparator),
-        transactionVersion = selectRows(driver, "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, confirmation_id FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false, false)).sortedWith(rowComparator),
-        posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
-        ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
-    )
+    private fun captureMigrationState(driver: JdbcSqliteDriver): MigrationState =
+        MigrationState(
+            importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
+            importSourceRecord =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token FROM import_source_record",
+                    listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false),
+                ).sortedWith(rowComparator),
+            importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
+            importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
+            importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
+            importCandidateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
+            importCandidateDecisionSnapshot = selectRows(driver, "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, explicit_confirmed_at FROM import_candidate_decision_snapshot", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
+            importConfirmation = selectRows(driver, "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
+            importReceipt = selectRows(driver, "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
+            ledgerTransaction = selectRows(driver, "SELECT transaction_id, ledger_id, kind, canonical_kind FROM ledger_transaction", listOf(false, false, false, false)).sortedWith(rowComparator),
+            postingSet = selectRows(driver, "SELECT posting_set_id, ledger_id FROM posting_set", listOf(false, false)).sortedWith(rowComparator),
+            transactionVersion = selectRows(driver, "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, confirmation_id FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false, false)).sortedWith(rowComparator),
+            posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
+            ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
+        )
 
     @Test
     fun executesE40VersionTwentyOneToTwentyTwoMigration() {
@@ -1934,57 +2296,63 @@ class ImportSpineTransferEndToEndTest {
                 // The v21 ordinary row replays through the intake equivalence once the
                 // replay presents the funding facts the v24 migration assigned
                 // (D-105 section 5: migrated sources carry UNRESOLVED + sentinel rule).
-                val migratedFacts = r1Facts.copy(
-                    fundingState = ImportFundingState.UNRESOLVED,
-                    fundingRuleId = "migration-v24-unresolved",
-                )
-                val replay = ExecuteImportIntake(
-                    SqlDelightImportSpineStore(database, driver),
-                    BatchIntakeIdSource(emptyList()),
-                    ImportContentFingerprint(),
-                ).execute(
-                    ImportIntakeRequest(
-                        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-v21-replay")),
-                        inputRef = "batch-p402-a",
-                        recordOrdinal = 0,
-                        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                        facts = migratedFacts,
-                        completeness = ImportCompleteness.VALID_COMPLETE,
-                        candidateGeneratedAt = "legacy-intake-v1",
-                    ),
-                )
-                assertIs<ImportIntakeResult.NoChange>(replay)
-                assertEquals("equivalent_replay", replay.reasonCode)
-                // Funding facts are source facts (D-105 section 3): replaying the same
-                // row with legacy SETTLED facts against the persisted UNRESOLVED row is
-                // a hard collision with zero writes.
-                val collision = assertIs<ImportIntakeResult.Rejected>(
+                val migratedFacts =
+                    r1Facts.copy(
+                        fundingState = ImportFundingState.UNRESOLVED,
+                        fundingRuleId = "migration-v24-unresolved",
+                    )
+                val replay =
                     ExecuteImportIntake(
                         SqlDelightImportSpineStore(database, driver),
                         BatchIntakeIdSource(emptyList()),
                         ImportContentFingerprint(),
                     ).execute(
                         ImportIntakeRequest(
-                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-v21-collision")),
+                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-v21-replay")),
                             inputRef = "batch-p402-a",
                             recordOrdinal = 0,
                             recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                            facts = r1Facts,
+                            facts = migratedFacts,
                             completeness = ImportCompleteness.VALID_COMPLETE,
                             candidateGeneratedAt = "legacy-intake-v1",
                         ),
-                    ),
-                )
+                    )
+                assertIs<ImportIntakeResult.NoChange>(replay)
+                assertEquals("equivalent_replay", replay.reasonCode)
+                // Funding facts are source facts (D-105 section 3): replaying the same
+                // row with legacy SETTLED facts against the persisted UNRESOLVED row is
+                // a hard collision with zero writes.
+                val collision =
+                    assertIs<ImportIntakeResult.Rejected>(
+                        ExecuteImportIntake(
+                            SqlDelightImportSpineStore(database, driver),
+                            BatchIntakeIdSource(emptyList()),
+                            ImportContentFingerprint(),
+                        ).execute(
+                            ImportIntakeRequest(
+                                identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-v21-collision")),
+                                inputRef = "batch-p402-a",
+                                recordOrdinal = 0,
+                                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                                facts = r1Facts,
+                                completeness = ImportCompleteness.VALID_COMPLETE,
+                                candidateGeneratedAt = "legacy-intake-v1",
+                            ),
+                        ),
+                    )
                 assertEquals("SPINE_IDENTITY_COLLISION", collision.diagnostic.code)
 
                 // New transfer v2 operations are usable after the migration.
                 val cat = catalog(ledgerId)
-                val executor = transferExecutor(
-                    database, driver, cat,
-                    BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
-                    BatchCommitIdSource(listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")))),
-                    BatchStatusIdSource(emptyList()),
-                )
+                val executor =
+                    transferExecutor(
+                        database,
+                        driver,
+                        cat,
+                        BatchIntakeIdSource(listOf(intakeIds("t1", "status-t1-1"))),
+                        BatchCommitIdSource(listOf(commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in")))),
+                        BatchStatusIdSource(emptyList()),
+                    )
                 assertIs<ImportIntakeResult.Accepted>(
                     executor.intake(intakeRequest("req-t1-intake", "batch-p404-a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, t1Facts, ImportCompleteness.VALID_COMPLETE)),
                 )
@@ -2004,22 +2372,29 @@ class ImportSpineTransferEndToEndTest {
                 )
 
                 // Guards re-armed: every rebuilt table rejects UPDATE/DELETE.
-                val rebuiltTables = listOf(
-                    "import_source_record", "import_evidence", "import_candidate",
-                    "import_candidate_requires_confirmation", "import_candidate_status_history",
-                    "import_candidate_decision_snapshot", "import_confirmation", "import_receipt",
-                )
+                val rebuiltTables =
+                    listOf(
+                        "import_source_record",
+                        "import_evidence",
+                        "import_candidate",
+                        "import_candidate_requires_confirmation",
+                        "import_candidate_status_history",
+                        "import_candidate_decision_snapshot",
+                        "import_confirmation",
+                        "import_receipt",
+                    )
                 rebuiltTables.forEach { table ->
-                    val updateColumn = when (table) {
-                        "import_source_record" -> "amount_minor = 1"
-                        "import_evidence" -> "observed_at = 'changed'"
-                        "import_candidate" -> "confidence = '9.99'"
-                        "import_candidate_requires_confirmation" -> "requirement = 'formal_transaction_creation'"
-                        "import_candidate_status_history" -> "status = 'incomplete'"
-                        "import_candidate_decision_snapshot" -> "decision = 'reject'"
-                        "import_confirmation" -> "confirmed_at = 'changed'"
-                        else -> "outcome = 'accepted'"
-                    }
+                    val updateColumn =
+                        when (table) {
+                            "import_source_record" -> "amount_minor = 1"
+                            "import_evidence" -> "observed_at = 'changed'"
+                            "import_candidate" -> "confidence = '9.99'"
+                            "import_candidate_requires_confirmation" -> "requirement = 'formal_transaction_creation'"
+                            "import_candidate_status_history" -> "status = 'incomplete'"
+                            "import_candidate_decision_snapshot" -> "decision = 'reject'"
+                            "import_confirmation" -> "confirmed_at = 'changed'"
+                            else -> "outcome = 'accepted'"
+                        }
                     assertFailsWith<SQLException>("$table UPDATE must abort") {
                         driver.execute(null, "UPDATE $table SET $updateColumn", 0)
                     }
@@ -2122,9 +2497,14 @@ class ImportSpineTransferEndToEndTest {
                 assertEquals(0L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'p404_test_inject'"))
                 // All eight v21 tables keep their original shape with guards attached.
                 listOf(
-                    "import_source_record", "import_evidence", "import_candidate",
-                    "import_candidate_requires_confirmation", "import_candidate_status_history",
-                    "import_candidate_decision_snapshot", "import_confirmation", "import_receipt",
+                    "import_source_record",
+                    "import_evidence",
+                    "import_candidate",
+                    "import_candidate_requires_confirmation",
+                    "import_candidate_status_history",
+                    "import_candidate_decision_snapshot",
+                    "import_confirmation",
+                    "import_receipt",
                 ).forEach { table ->
                     assertEquals(1L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '$table'"))
                     assertEquals(1L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = '${table}_guard_update'"))
@@ -2184,13 +2564,14 @@ class ImportSpineTransferEndToEndTest {
             // ImportCandidateDecisionSnapshot carries no ledgerId member: the only ledger
             // identity on the confirm path is ImportRequestIdentity.ledgerId (compile-time
             // shape; exercised end-to-end by E-35).
-            val snapshot = ImportCandidateDecisionSnapshot(
-                candidateId = ImportCandidateId("candidate-t1"),
-                decision = com.unifiedledger.application.ImportCandidateDecision.CONFIRM,
-                expectedContentHash = hashT1,
-                explicitConfirmedAt = null,
-                confirmDecisionFields = ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
-            )
+            val snapshot =
+                ImportCandidateDecisionSnapshot(
+                    candidateId = ImportCandidateId("candidate-t1"),
+                    decision = com.unifiedledger.application.ImportCandidateDecision.CONFIRM,
+                    expectedContentHash = hashT1,
+                    explicitConfirmedAt = null,
+                    confirmDecisionFields = ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
+                )
             assertEquals("candidate-t1", snapshot.candidateId.value)
 
             // commitOnce invokes allocateIds exactly once on the winning path and passes the
@@ -2204,16 +2585,21 @@ class ImportSpineTransferEndToEndTest {
             val allocated = commitIds("confirmation-t1", "status-t1-2", "tx-t1", "version-t1-v1", "posting-set-t1", listOf("posting-t1-out", "posting-t1-in"))
             val allocations = AtomicInteger(0)
             var factoryObservedIds: ImportCommitIds? = null
-            val spyingFactory = ImportCandidateFormalFactory { input, ids ->
-                factoryObservedIds = ids
-                TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
-            }
-            val confirmResult = ConfirmImportCandidate(
-                store,
-                ImportIdSource { allocations.incrementAndGet(); allocated },
-                spyingFactory,
-                catalog(ledgerId),
-            ).execute(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1))
+            val spyingFactory =
+                ImportCandidateFormalFactory { input, ids ->
+                    factoryObservedIds = ids
+                    TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
+                }
+            val confirmResult =
+                ConfirmImportCandidate(
+                    store,
+                    ImportIdSource {
+                        allocations.incrementAndGet()
+                        allocated
+                    },
+                    spyingFactory,
+                    catalog(ledgerId),
+                ).execute(transferConfirmRequest("req-t1-confirm", "candidate-t1", hashT1))
             assertIs<ImportCandidateDecisionResult.Accepted>(confirmResult)
             assertEquals(1, allocations.get())
             assertTrue(factoryObservedIds === allocated, "factory must receive the exact allocated instance")
@@ -2257,34 +2643,38 @@ class ImportSpineTransferEndToEndTest {
 
             // TransferFlowFormalFactory direction-gate unit vectors.
             val factory = TransferFlowFormalFactory(cat, walletAccountId)
-            val outInput = ImportCandidateFormalizationInput(
-                ledgerId,
-                ImportResolvedSourceFacts(10000, "CNY", 2, t1Facts.occurredAt, "out", "提现已到账"),
-                ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
-            )
+            val outInput =
+                ImportCandidateFormalizationInput(
+                    ledgerId,
+                    ImportResolvedSourceFacts(10000, "CNY", 2, t1Facts.occurredAt, "out", "提现已到账"),
+                    ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
+                )
             assertIs<DomainResult.Success<ImportFormalCommit>>(
                 factory.create(outInput, bindingAttemptIds("unit-out")),
             )
-            val inInput = ImportCandidateFormalizationInput(
-                ledgerId,
-                ImportResolvedSourceFacts(20000, "CNY", 2, t2Facts.occurredAt, "in", "支付成功"),
-                ImportConfirmDecisionFields.TransferFlow(bankAccountId, walletAccountId),
-            )
+            val inInput =
+                ImportCandidateFormalizationInput(
+                    ledgerId,
+                    ImportResolvedSourceFacts(20000, "CNY", 2, t2Facts.occurredAt, "in", "支付成功"),
+                    ImportConfirmDecisionFields.TransferFlow(bankAccountId, walletAccountId),
+                )
             assertIs<DomainResult.Success<ImportFormalCommit>>(
                 factory.create(inInput, bindingAttemptIds("unit-in")),
             )
-            val outWrongLeg = ImportCandidateFormalizationInput(
-                ledgerId,
-                outInput.resolved,
-                ImportConfirmDecisionFields.TransferFlow(bankAccountId, walletAccountId),
-            )
+            val outWrongLeg =
+                ImportCandidateFormalizationInput(
+                    ledgerId,
+                    outInput.resolved,
+                    ImportConfirmDecisionFields.TransferFlow(bankAccountId, walletAccountId),
+                )
             val outFailure = assertIs<DomainResult.Failure>(factory.create(outWrongLeg, bindingAttemptIds("unit-out-wrong")))
             assertEquals(DomainViolation.InvalidOrdinaryIncome, outFailure.violation)
-            val unknownDirection = ImportCandidateFormalizationInput(
-                ledgerId,
-                outInput.resolved.copy(directionToken = "/"),
-                ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
-            )
+            val unknownDirection =
+                ImportCandidateFormalizationInput(
+                    ledgerId,
+                    outInput.resolved.copy(directionToken = "/"),
+                    ImportConfirmDecisionFields.TransferFlow(walletAccountId, bankAccountId),
+                )
             val unknownFailure = assertIs<DomainResult.Failure>(factory.create(unknownDirection, bindingAttemptIds("unit-unknown")))
             assertEquals(DomainViolation.InvalidOrdinaryIncome, unknownFailure.violation)
 
@@ -2372,17 +2762,17 @@ class ImportSpineTransferEndToEndTest {
 
     // ---------- T-53 (E-36): source scale normalization vectors S01..S09 ----------
 
-    private fun scaleIntakeIds(caseId: String) =
-        intakeIds("attempt-scale-${caseId.lowercase()}", "attempt-scale-${caseId.lowercase()}-status-1")
+    private fun scaleIntakeIds(caseId: String) = intakeIds("attempt-scale-${caseId.lowercase()}", "attempt-scale-${caseId.lowercase()}-status-1")
 
-    private fun scaleCommitIds(caseId: String) = commitIds(
-        "attempt-scale-${caseId.lowercase()}-confirmation",
-        "attempt-scale-${caseId.lowercase()}-status-2",
-        "attempt-scale-${caseId.lowercase()}-tx",
-        "attempt-scale-${caseId.lowercase()}-version",
-        "attempt-scale-${caseId.lowercase()}-posting-set",
-        listOf("attempt-scale-${caseId.lowercase()}-posting-out", "attempt-scale-${caseId.lowercase()}-posting-in"),
-    )
+    private fun scaleCommitIds(caseId: String) =
+        commitIds(
+            "attempt-scale-${caseId.lowercase()}-confirmation",
+            "attempt-scale-${caseId.lowercase()}-status-2",
+            "attempt-scale-${caseId.lowercase()}-tx",
+            "attempt-scale-${caseId.lowercase()}-version",
+            "attempt-scale-${caseId.lowercase()}-posting-set",
+            listOf("attempt-scale-${caseId.lowercase()}-posting-out", "attempt-scale-${caseId.lowercase()}-posting-in"),
+        )
 
     @Test
     fun executesE36SourceScaleNormalizationVectorsS01ToS09() {
@@ -2390,9 +2780,15 @@ class ImportSpineTransferEndToEndTest {
         assertEquals(listOf("S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09"), scaleVectors.map { it.caseId })
         assertEquals(
             listOf(
-                "scale_0_up", "scale_1_up", "scale_2_equal", "scale_3_exact_down",
-                "scale_3_remainder", "scale_19_remainder", "scale_up_overflow",
-                "negative_scale", "scale_gap_over_18",
+                "scale_0_up",
+                "scale_1_up",
+                "scale_2_equal",
+                "scale_3_exact_down",
+                "scale_3_remainder",
+                "scale_19_remainder",
+                "scale_up_overflow",
+                "negative_scale",
+                "scale_gap_over_18",
             ),
             scaleVectors.map { it.name },
         )
@@ -2420,38 +2816,48 @@ class ImportSpineTransferEndToEndTest {
                 // reject it), so its confirm callback hands the production factory the same
                 // immutable input with the resolved scale set to -1: exactly branch (a) of
                 // the frozen normalization algorithm.
-                val factory = if (caseId == "S08") {
-                    ImportCandidateFormalFactory { input, ids ->
-                        TransferFlowFormalFactory(cat, walletAccountId).create(
-                            input.copy(resolved = input.resolved.copy(currencyPrecision = -1)),
-                            ids,
-                        )
+                val factory =
+                    if (caseId == "S08") {
+                        ImportCandidateFormalFactory { input, ids ->
+                            TransferFlowFormalFactory(cat, walletAccountId).create(
+                                input.copy(resolved = input.resolved.copy(currencyPrecision = -1)),
+                                ids,
+                            )
+                        }
+                    } else {
+                        TransferFlowFormalFactory(cat, walletAccountId)
                     }
-                } else {
-                    TransferFlowFormalFactory(cat, walletAccountId)
-                }
                 val executor = Executor(database, driver, cat, intakeIds, commitIds, BatchStatusIdSource(emptyList()), factory)
                 val expected = P404ExpectedState()
                 assertIs<ImportIntakeResult.Accepted>(
                     executor.intake(intakeRequest("req-scale-${caseId.lowercase()}-intake", "batch-p404-s", index, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_COMPLETE)),
                 )
                 expected.intake(
-                    ledgerId.value, "req-scale-${caseId.lowercase()}-intake", "batch-p404-s", index.toLong(),
-                    ImportRecordKind.TRANSFER_FLOW_SOURCE, hash, facts, ImportCompleteness.VALID_COMPLETE,
-                    "source-attempt-scale-${caseId.lowercase()}", "evidence-attempt-scale-${caseId.lowercase()}",
-                    "candidate-attempt-scale-${caseId.lowercase()}", "attempt-scale-${caseId.lowercase()}-status-1",
+                    ledgerId.value,
+                    "req-scale-${caseId.lowercase()}-intake",
+                    "batch-p404-s",
+                    index.toLong(),
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE,
+                    hash,
+                    facts,
+                    ImportCompleteness.VALID_COMPLETE,
+                    "source-attempt-scale-${caseId.lowercase()}",
+                    "evidence-attempt-scale-${caseId.lowercase()}",
+                    "candidate-attempt-scale-${caseId.lowercase()}",
+                    "attempt-scale-${caseId.lowercase()}-status-1",
                 )
                 val preState = expected.state(accountsByLedger)
                 assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-36 $caseId pre")
 
-                val result = executor.confirm(
-                    transferConfirmRequest(
-                        "req-scale-${caseId.lowercase()}-confirm",
-                        "candidate-attempt-scale-${caseId.lowercase()}",
-                        hash,
-                        confirmedAt = "2026-08-14T12:00:00+08:00",
-                    ),
-                )
+                val result =
+                    executor.confirm(
+                        transferConfirmRequest(
+                            "req-scale-${caseId.lowercase()}-confirm",
+                            "candidate-attempt-scale-${caseId.lowercase()}",
+                            hash,
+                            confirmedAt = "2026-08-14T12:00:00+08:00",
+                        ),
+                    )
 
                 val normalized = vector.expectedNormalizedMinor
                 if (normalized != null) {
@@ -2460,10 +2866,17 @@ class ImportSpineTransferEndToEndTest {
                     assertIs<ImportCandidateDecisionResult.Accepted>(result, "E-36 $caseId must accept")
                     assertEquals(1, commitIds.calls.get())
                     expected.confirmTransfer(
-                        ledgerId.value, "req-scale-${caseId.lowercase()}-confirm",
-                        "candidate-attempt-scale-${caseId.lowercase()}", hash,
-                        "account-wallet-wechat", "account-bank-a", "2026-08-14T12:00:00+08:00",
-                        facts.occurredAt, normalized, "CNY", 2L,
+                        ledgerId.value,
+                        "req-scale-${caseId.lowercase()}-confirm",
+                        "candidate-attempt-scale-${caseId.lowercase()}",
+                        hash,
+                        "account-wallet-wechat",
+                        "account-bank-a",
+                        "2026-08-14T12:00:00+08:00",
+                        facts.occurredAt,
+                        normalized,
+                        "CNY",
+                        2L,
                         "attempt-scale-${caseId.lowercase()}-confirmation",
                         "attempt-scale-${caseId.lowercase()}-status-2",
                         "attempt-scale-${caseId.lowercase()}-tx",
@@ -2490,7 +2903,10 @@ class ImportSpineTransferEndToEndTest {
                     assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-36 $caseId zero residue")
                     assertEquals(
                         "pending_confirmation",
-                        database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-attempt-scale-${caseId.lowercase()}").executeAsOne().status,
+                        database.ledgerQueries
+                            .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-attempt-scale-${caseId.lowercase()}")
+                            .executeAsOne()
+                            .status,
                     )
                 }
             } finally {
@@ -2501,14 +2917,15 @@ class ImportSpineTransferEndToEndTest {
 
     // ---------- T-54 (E-37): allocated ID binding vectors I01..I07 ----------
 
-    private fun allocatedAttemptIds(caseId: String): ImportCommitIds = commitIds(
-        "attempt-id-${caseId.lowercase()}-confirmation",
-        "attempt-id-${caseId.lowercase()}-status",
-        "attempt-id-${caseId.lowercase()}-tx",
-        "attempt-id-${caseId.lowercase()}-version",
-        "attempt-id-${caseId.lowercase()}-posting-set",
-        listOf("attempt-id-${caseId.lowercase()}-posting-0", "attempt-id-${caseId.lowercase()}-posting-1"),
-    )
+    private fun allocatedAttemptIds(caseId: String): ImportCommitIds =
+        commitIds(
+            "attempt-id-${caseId.lowercase()}-confirmation",
+            "attempt-id-${caseId.lowercase()}-status",
+            "attempt-id-${caseId.lowercase()}-tx",
+            "attempt-id-${caseId.lowercase()}-version",
+            "attempt-id-${caseId.lowercase()}-posting-set",
+            listOf("attempt-id-${caseId.lowercase()}-posting-0", "attempt-id-${caseId.lowercase()}-posting-1"),
+        )
 
     @Test
     fun executesE37AllocatedIdBindingVectorsI01ToI07() {
@@ -2516,9 +2933,13 @@ class ImportSpineTransferEndToEndTest {
         assertEquals(listOf("I01", "I02", "I03", "I04", "I05", "I06", "I07"), allocatedIdManifest.map { it.first })
         assertEquals(
             listOf(
-                "wrong_confirmation_id", "wrong_status_history_id", "wrong_transaction_id",
-                "wrong_version_id", "wrong_posting_set_id",
-                "wrong_source_posting_id", "wrong_destination_posting_id",
+                "wrong_confirmation_id",
+                "wrong_status_history_id",
+                "wrong_transaction_id",
+                "wrong_version_id",
+                "wrong_posting_set_id",
+                "wrong_source_posting_id",
+                "wrong_destination_posting_id",
             ),
             allocatedIdManifest.map { it.second },
         )
@@ -2536,15 +2957,17 @@ class ImportSpineTransferEndToEndTest {
                 assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-37 $caseId pre")
 
                 val attemptIds = BatchCommitIdSource(listOf(allocatedAttemptIds(caseId.lowercase())))
-                val swappedFactory = ImportCandidateFormalFactory { input, ids ->
-                    DomainResult.Success(idSwappedGraph(caseId, input, ids))
-                }
-                val result = ConfirmImportCandidate(
-                    SqlDelightImportSpineStore(database, driver),
-                    attemptIds,
-                    swappedFactory,
-                    cat,
-                ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
+                val swappedFactory =
+                    ImportCandidateFormalFactory { input, ids ->
+                        DomainResult.Success(idSwappedGraph(caseId, input, ids))
+                    }
+                val result =
+                    ConfirmImportCandidate(
+                        SqlDelightImportSpineStore(database, driver),
+                        attemptIds,
+                        swappedFactory,
+                        cat,
+                    ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
 
                 // Frozen spec contract (sections 1.3 E-37 and 4.2): every replaced ID is
                 // rejected item-by-item with SPINE_REFERENCE_INTEGRITY_VIOLATION before any
@@ -2553,7 +2976,13 @@ class ImportSpineTransferEndToEndTest {
                 assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", rejected.diagnostic.code, "E-37 $caseId ($name) diagnostic")
                 assertEquals(1, attemptIds.calls.get(), "E-37 $caseId consumed the attempt batch once")
                 assertCanonicalState(preState, captureState(driver, accountsByLedger), "E-37 $caseId ($name) zero residue")
-                assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1d").executeAsOne().status)
+                assertEquals(
+                    "pending_confirmation",
+                    database.ledgerQueries
+                        .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-t1d")
+                        .executeAsOne()
+                        .status,
+                )
             } finally {
                 driver.close()
             }
@@ -2569,26 +2998,32 @@ class ImportSpineTransferEndToEndTest {
             val accountsByLedger = mapOf(ledgerId.value to cat.accounts)
             val expected = setupPendingC1d(driver, database, cat)
             val preState = expected.state(accountsByLedger)
-            val malformedIds = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "attempt-id-shape-confirmation", "attempt-id-shape-status", "attempt-id-shape-tx",
-                        "attempt-id-shape-version", "attempt-id-shape-posting-set",
-                        listOf("attempt-id-shape-posting-0", "attempt-id-shape-posting-1", "attempt-id-shape-posting-2"),
+            val malformedIds =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "attempt-id-shape-confirmation",
+                            "attempt-id-shape-status",
+                            "attempt-id-shape-tx",
+                            "attempt-id-shape-version",
+                            "attempt-id-shape-posting-set",
+                            listOf("attempt-id-shape-posting-0", "attempt-id-shape-posting-1", "attempt-id-shape-posting-2"),
+                        ),
                     ),
-                ),
-            )
+                )
             var factoryCalls = 0
-            val countingFactory = ImportCandidateFormalFactory { input, ids ->
-                factoryCalls++
-                TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
-            }
-            val result = ConfirmImportCandidate(
-                SqlDelightImportSpineStore(database, driver),
-                malformedIds,
-                countingFactory,
-                cat,
-            ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
+            val countingFactory =
+                ImportCandidateFormalFactory { input, ids ->
+                    factoryCalls++
+                    TransferFlowFormalFactory(cat, walletAccountId).create(input, ids)
+                }
+            val result =
+                ConfirmImportCandidate(
+                    SqlDelightImportSpineStore(database, driver),
+                    malformedIds,
+                    countingFactory,
+                    cat,
+                ).execute(transferConfirmRequest("req-t1d-confirm", "candidate-t1d", hashT1))
             val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(result)
             assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", rejected.diagnostic.code)
             assertEquals(0, factoryCalls, "shape gate must run before the factory")
@@ -2598,16 +3033,21 @@ class ImportSpineTransferEndToEndTest {
         }
     }
 
-    private fun idSwappedGraph(caseId: String, input: ImportCandidateFormalizationInput, ids: ImportCommitIds): ImportFormalCommit = when (caseId) {
-        "I01" -> buildTransferGraph(input, ids, confirmationIdOverride = ImportConfirmationId("attempt-id-i01-wrong-confirmation"))
-        "I02" -> buildTransferGraph(input, ids, statusHistoryIdOverride = ImportStatusHistoryId("attempt-id-i02-wrong-status"))
-        "I03" -> buildTransferGraph(input, ids, transactionIdOverride = TransactionId("attempt-id-i03-wrong-tx"))
-        "I04" -> buildTransferGraph(input, ids, versionIdOverride = TransactionVersionId("attempt-id-i04-wrong-version"))
-        "I05" -> buildTransferGraph(input, ids, postingSetIdOverride = PostingSetId("attempt-id-i05-wrong-posting-set"))
-        "I06" -> buildTransferGraph(input, ids, sourcePostingIdOverride = PostingId("attempt-id-i06-wrong-posting-0"))
-        "I07" -> buildTransferGraph(input, ids, destinationPostingIdOverride = PostingId("attempt-id-i07-wrong-posting-1"))
-        else -> error("unknown allocated-id case: $caseId")
-    }
+    private fun idSwappedGraph(
+        caseId: String,
+        input: ImportCandidateFormalizationInput,
+        ids: ImportCommitIds,
+    ): ImportFormalCommit =
+        when (caseId) {
+            "I01" -> buildTransferGraph(input, ids, confirmationIdOverride = ImportConfirmationId("attempt-id-i01-wrong-confirmation"))
+            "I02" -> buildTransferGraph(input, ids, statusHistoryIdOverride = ImportStatusHistoryId("attempt-id-i02-wrong-status"))
+            "I03" -> buildTransferGraph(input, ids, transactionIdOverride = TransactionId("attempt-id-i03-wrong-tx"))
+            "I04" -> buildTransferGraph(input, ids, versionIdOverride = TransactionVersionId("attempt-id-i04-wrong-version"))
+            "I05" -> buildTransferGraph(input, ids, postingSetIdOverride = PostingSetId("attempt-id-i05-wrong-posting-set"))
+            "I06" -> buildTransferGraph(input, ids, sourcePostingIdOverride = PostingId("attempt-id-i06-wrong-posting-0"))
+            "I07" -> buildTransferGraph(input, ids, destinationPostingIdOverride = PostingId("attempt-id-i07-wrong-posting-1"))
+            else -> error("unknown allocated-id case: $caseId")
+        }
 }
 
 private fun row(vararg values: Any?): List<Any?> = listOf(*values)

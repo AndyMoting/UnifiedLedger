@@ -1,9 +1,42 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.*
+import com.unifiedledger.application.CandidateId
+import com.unifiedledger.application.CandidateStatus
+import com.unifiedledger.application.ConfirmationId
+import com.unifiedledger.application.EvidenceId
+import com.unifiedledger.application.ExecuteRg03Operation
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.ReturnedId
+import com.unifiedledger.application.ReturnedIdKind
+import com.unifiedledger.application.Rg03Command
+import com.unifiedledger.application.Rg03ExecutionError
+import com.unifiedledger.application.Rg03ExecutionResult
+import com.unifiedledger.application.Rg03ManualTransferSnapshot
+import com.unifiedledger.application.Rg03MirrorBindingResult
+import com.unifiedledger.application.Rg03MirrorScope
+import com.unifiedledger.application.Rg03MirrorSnapshot
+import com.unifiedledger.application.Rg03PersistedTransferCandidate
+import com.unifiedledger.application.Rg03PreparedOperation
+import com.unifiedledger.application.Rg03SourceSnapshot
+import com.unifiedledger.application.SourceCompleteness
+import com.unifiedledger.application.SourceRecordId
 import com.unifiedledger.data.db.LedgerDatabase
-import com.unifiedledger.domain.*
+import com.unifiedledger.domain.Account
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.AccountTransferIds
+import com.unifiedledger.domain.Category
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVersionId
 import java.nio.file.Files
 import java.sql.SQLException
 import java.util.Properties
@@ -51,6 +84,7 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(0, identities.mirrors)
         }
     }
+
     @Test
     fun `manual transfer claims typed snapshot atomically and replays equivalent or conflicts`() =
         Harness().use { harness ->
@@ -120,18 +154,19 @@ class SqlDelightRg03TransferStoreTest {
                 harness.store.commit(Rg03PreparedOperation.StoreSource(snapshot)),
             )
 
-            val conflicts = listOf(
-                snapshot.copy(sourceId = SourceRecordId("source-other")),
-                snapshot.copy(evidenceId = EvidenceId("evidence-other")),
-                snapshot.copy(observedAt = Instant.parse("2026-01-21T03:00:01Z")),
-                snapshot.copy(sourceAccountId = AccountId("asset-wallet-b")),
-                snapshot.copy(destinationAccountId = AccountId("asset-bank-a")),
-                snapshot.copy(sourceDebit = money(6_001)),
-                snapshot.copy(destinationCredit = money(5_901)),
-                snapshot.copy(fee = money(99)),
-                snapshot.copy(feeCategoryId = CategoryId("expense-category-financial")),
-                snapshot.copy(completeness = SourceCompleteness.MISSING_DESTINATION),
-            )
+            val conflicts =
+                listOf(
+                    snapshot.copy(sourceId = SourceRecordId("source-other")),
+                    snapshot.copy(evidenceId = EvidenceId("evidence-other")),
+                    snapshot.copy(observedAt = Instant.parse("2026-01-21T03:00:01Z")),
+                    snapshot.copy(sourceAccountId = AccountId("asset-wallet-b")),
+                    snapshot.copy(destinationAccountId = AccountId("asset-bank-a")),
+                    snapshot.copy(sourceDebit = money(6_001)),
+                    snapshot.copy(destinationCredit = money(5_901)),
+                    snapshot.copy(fee = money(99)),
+                    snapshot.copy(feeCategoryId = CategoryId("expense-category-financial")),
+                    snapshot.copy(completeness = SourceCompleteness.MISSING_DESTINATION),
+                )
             conflicts.forEach { conflict ->
                 assertIs<Rg03ExecutionResult.RequestIdentityConflict>(
                     harness.store.commit(Rg03PreparedOperation.StoreSource(conflict)),
@@ -197,31 +232,32 @@ class SqlDelightRg03TransferStoreTest {
     fun `invalid complete and incomplete sources reject before identity allocation or persistence`() {
         Harness().use { harness ->
             val complete = completeSource()
-            val completeCases = listOf(
-                complete.copy(sourceAccountId = AccountId("unknown-account")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.KNOWN_ACCOUNT_REQUIRED, "source_account_id"),
-                complete.copy(destinationAccountId = AccountId("asset-external-x")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.OWN_ACCOUNT_REQUIRED, "destination_account_id"),
-                complete.copy(sourceAccountId = AccountId("expense-account-transfer-fee")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.REAL_FINANCIAL_ACCOUNT_REQUIRED, "source_account_id"),
-                complete.copy(destinationAccountId = AccountId("asset-bank-a")) to
-                    Rg03ExecutionResult.Rejected(
-                        Rg03ExecutionError.DISTINCT_OWN_REAL_FINANCIAL_ACCOUNTS_REQUIRED,
-                        "destination_account_id",
-                    ),
-                complete.copy(destinationCredit = money(0), sourceDebit = money(100), fee = money(100)) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.MUST_BE_POSITIVE, "destination_credit_amount"),
-                complete.copy(fee = money(-1), sourceDebit = money(5_899)) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.FEE_MUST_NOT_BE_NEGATIVE, "fee_amount"),
-                complete.copy(fee = money(99)) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.AMOUNTS_MUST_BALANCE, "fee_amount"),
-                complete.copy(destinationAccountId = AccountId("asset-usd")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.SAME_CURRENCY_REQUIRED, "destination_currency"),
-                complete.copy(feeCategoryId = CategoryId("expense-category-financial")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.INVALID_FEE_CATEGORY, "fee_category_id"),
-                complete.copy(destinationAccountId = AccountId("liability-credit-c")) to
-                    Rg03ExecutionResult.Rejected(Rg03ExecutionError.ASSET_ACCOUNT_REQUIRED, "destination_account_id"),
-            )
+            val completeCases =
+                listOf(
+                    complete.copy(sourceAccountId = AccountId("unknown-account")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.KNOWN_ACCOUNT_REQUIRED, "source_account_id"),
+                    complete.copy(destinationAccountId = AccountId("asset-external-x")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.OWN_ACCOUNT_REQUIRED, "destination_account_id"),
+                    complete.copy(sourceAccountId = AccountId("expense-account-transfer-fee")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.REAL_FINANCIAL_ACCOUNT_REQUIRED, "source_account_id"),
+                    complete.copy(destinationAccountId = AccountId("asset-bank-a")) to
+                        Rg03ExecutionResult.Rejected(
+                            Rg03ExecutionError.DISTINCT_OWN_REAL_FINANCIAL_ACCOUNTS_REQUIRED,
+                            "destination_account_id",
+                        ),
+                    complete.copy(destinationCredit = money(0), sourceDebit = money(100), fee = money(100)) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.MUST_BE_POSITIVE, "destination_credit_amount"),
+                    complete.copy(fee = money(-1), sourceDebit = money(5_899)) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.FEE_MUST_NOT_BE_NEGATIVE, "fee_amount"),
+                    complete.copy(fee = money(99)) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.AMOUNTS_MUST_BALANCE, "fee_amount"),
+                    complete.copy(destinationAccountId = AccountId("asset-usd")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.SAME_CURRENCY_REQUIRED, "destination_currency"),
+                    complete.copy(feeCategoryId = CategoryId("expense-category-financial")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.INVALID_FEE_CATEGORY, "fee_category_id"),
+                    complete.copy(destinationAccountId = AccountId("liability-credit-c")) to
+                        Rg03ExecutionResult.Rejected(Rg03ExecutionError.ASSET_ACCOUNT_REQUIRED, "destination_account_id"),
+                )
             completeCases.forEachIndexed { index, (snapshot, expected) ->
                 assertEquals(
                     expected,
@@ -277,14 +313,15 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(Rg03DataCounts.sourceIntake(completeDetails = 1), harness.counts())
 
             val executor = ExecuteRg03Operation(harness.store, harness.store, harness.store)
-            val result = executor.execute(
-                Rg03Command.ConfirmCandidate(
-                    requestId = RequestId("request-rg03-confirm-candidate"),
-                    candidateId = recovered.candidateId,
-                    confirmed = true,
-                    ledgerId = LEDGER,
-                ),
-            )
+            val result =
+                executor.execute(
+                    Rg03Command.ConfirmCandidate(
+                        requestId = RequestId("request-rg03-confirm-candidate"),
+                        candidateId = recovered.candidateId,
+                        confirmed = true,
+                        ledgerId = LEDGER,
+                    ),
+                )
             assertIs<Rg03ExecutionResult.Accepted>(result)
             assertEquals(CandidateStatus.CONFIRMED, harness.store.load(LEDGER, recovered.candidateId)?.status)
             assertEquals(2L, harness.queries.countRg03CandidateStatuses().executeAsOne())
@@ -292,7 +329,10 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(3L, harness.queries.countPostings().executeAsOne())
             assertEquals(
                 listOf("MATCHED", "PENDING"),
-                harness.queries.selectRg03PostingReconciliations().executeAsList().map { it.status },
+                harness.queries
+                    .selectRg03PostingReconciliations()
+                    .executeAsList()
+                    .map { it.status },
             )
             assertEquals(1L, harness.queries.countRg03EvidenceLinks().executeAsOne())
             assertEquals(
@@ -351,7 +391,10 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(2L, harness.queries.countRg03EvidenceLinks().executeAsOne())
             assertEquals(
                 listOf("MATCHED", "MATCHED"),
-                harness.queries.selectRg03PostingReconciliations().executeAsList().map { it.status },
+                harness.queries
+                    .selectRg03PostingReconciliations()
+                    .executeAsList()
+                    .map { it.status },
             )
             assertEquals(1L, harness.queries.countTransactions().executeAsOne())
             assertEquals(3L, harness.queries.countPostings().executeAsOne())
@@ -381,16 +424,23 @@ class SqlDelightRg03TransferStoreTest {
 
     @Test
     fun `mirror scope binds only its confirmed lifecycle when another destination is pending`() {
-        val identities = object : Rg03IdentitySource by testIdentitySource() {
-            override fun source(requestId: RequestId) = if (requestId.value == "request-source-two") {
-                Rg03SourceCommitIds(CandidateId("candidate-two"), "status-pending-two")
-            } else testIdentitySource().source(requestId)
+        val identities =
+            object : Rg03IdentitySource by testIdentitySource() {
+                override fun source(requestId: RequestId) =
+                    if (requestId.value == "request-source-two") {
+                        Rg03SourceCommitIds(CandidateId("candidate-two"), "status-pending-two")
+                    } else {
+                        testIdentitySource().source(requestId)
+                    }
 
-            override fun transfer(requestId: RequestId) = if (requestId.value == "request-confirm-two") {
-                transferIds("imported-two", "confirmation-two", "status-confirmed-two")
-                    .copy(sourceEvidenceLinkId = "match-two")
-            } else testIdentitySource().transfer(requestId)
-        }
+                override fun transfer(requestId: RequestId) =
+                    if (requestId.value == "request-confirm-two") {
+                        transferIds("imported-two", "confirmation-two", "status-confirmed-two")
+                            .copy(sourceEvidenceLinkId = "match-two")
+                    } else {
+                        testIdentitySource().transfer(requestId)
+                    }
+            }
         Harness(identitySource = identities).use { harness ->
             val firstExecutor = ExecuteRg03Operation(harness.store, harness.store, harness.store)
             harness.store.commit(Rg03PreparedOperation.StoreSource(completeSource()))
@@ -398,11 +448,14 @@ class SqlDelightRg03TransferStoreTest {
                 firstExecutor.execute(Rg03Command.ConfirmCandidate(RequestId("request-rg03-confirm-candidate"), CandidateId("candidate-transfer-rg03"), true, LEDGER)),
             )
 
-            val second = completeSource().copy(
-                requestId = RequestId("request-source-two"), sourceId = SourceRecordId("source-two"),
-                evidenceId = EvidenceId("evidence-two"), sourceDebit = money(7_000),
-                destinationCredit = money(6_900),
-            )
+            val second =
+                completeSource().copy(
+                    requestId = RequestId("request-source-two"),
+                    sourceId = SourceRecordId("source-two"),
+                    evidenceId = EvidenceId("evidence-two"),
+                    sourceDebit = money(7_000),
+                    destinationCredit = money(6_900),
+                )
             harness.store.commit(Rg03PreparedOperation.StoreSource(second))
             val secondExecutor = ExecuteRg03Operation(harness.store, harness.store, harness.store)
             assertIs<Rg03ExecutionResult.Accepted>(
@@ -412,10 +465,17 @@ class SqlDelightRg03TransferStoreTest {
             assertIs<Rg03ExecutionResult.Accepted>(firstExecutor.execute(Rg03Command.ImportMirror(mirrorSnapshot())))
             assertEquals(
                 "posting-destination-rg03-imported",
-                harness.queries.selectRg03EvidenceLinkTargets().executeAsList()
-                    .single { it.link_id == "match-rg03-credit-mirror" }.posting_id,
+                harness.queries
+                    .selectRg03EvidenceLinkTargets()
+                    .executeAsList()
+                    .single { it.link_id == "match-rg03-credit-mirror" }
+                    .posting_id,
             )
-            val statuses = harness.queries.selectRg03PostingReconciliations().executeAsList().associate { it.posting_id to it.status }
+            val statuses =
+                harness.queries
+                    .selectRg03PostingReconciliations()
+                    .executeAsList()
+                    .associate { it.posting_id to it.status }
             assertEquals("MATCHED", statuses.getValue("posting-destination-rg03-imported"))
             assertEquals("PENDING", statuses.getValue("posting-destination-rg03-imported-two"))
         }
@@ -423,13 +483,15 @@ class SqlDelightRg03TransferStoreTest {
 
     @Test
     fun `accepted source on same executor replaces confirmed lifecycle before mirror`() {
-        val identities = object : Rg03IdentitySource by testIdentitySource() {
-            override fun source(requestId: RequestId) = if (requestId.value == "request-source-two") {
-                Rg03SourceCommitIds(CandidateId("candidate-two"), "status-pending-two")
-            } else {
-                testIdentitySource().source(requestId)
+        val identities =
+            object : Rg03IdentitySource by testIdentitySource() {
+                override fun source(requestId: RequestId) =
+                    if (requestId.value == "request-source-two") {
+                        Rg03SourceCommitIds(CandidateId("candidate-two"), "status-pending-two")
+                    } else {
+                        testIdentitySource().source(requestId)
+                    }
             }
-        }
         Harness(identitySource = identities).use { harness ->
             val executor = ExecuteRg03Operation(harness.store, harness.store, harness.store)
             assertIs<Rg03ExecutionResult.Accepted>(
@@ -445,11 +507,12 @@ class SqlDelightRg03TransferStoreTest {
                     ),
                 ),
             )
-            val second = completeSource().copy(
-                requestId = RequestId("request-source-two"),
-                sourceId = SourceRecordId("source-two"),
-                evidenceId = EvidenceId("evidence-two"),
-            )
+            val second =
+                completeSource().copy(
+                    requestId = RequestId("request-source-two"),
+                    sourceId = SourceRecordId("source-two"),
+                    evidenceId = EvidenceId("evidence-two"),
+                )
             assertIs<Rg03ExecutionResult.Accepted>(
                 executor.execute(Rg03Command.ImportSource(second)),
             )
@@ -466,8 +529,11 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(1L, harness.queries.countRg03EvidenceLinks().executeAsOne())
             assertEquals(
                 "PENDING",
-                harness.queries.selectRg03PostingReconciliations().executeAsList()
-                    .single { it.posting_id == "posting-destination-rg03-imported" }.status,
+                harness.queries
+                    .selectRg03PostingReconciliations()
+                    .executeAsList()
+                    .single { it.posting_id == "posting-destination-rg03-imported" }
+                    .status,
             )
         }
     }
@@ -527,9 +593,10 @@ class SqlDelightRg03TransferStoreTest {
                     ),
                 ),
             )
-            val target = assertIs<Rg03MirrorBindingResult.Unique>(
-                harness.store.resolve(LEDGER, Rg03MirrorScope(CandidateId("candidate-transfer-rg03"))),
-            ).target
+            val target =
+                assertIs<Rg03MirrorBindingResult.Unique>(
+                    harness.store.resolve(LEDGER, Rg03MirrorScope(CandidateId("candidate-transfer-rg03"))),
+                ).target
             val before = harness.counts()
             val reconciliationsBefore = harness.queries.selectRg03PostingReconciliations().executeAsList()
             failures.point = Rg03FailurePoint.MIRROR_AFTER_LINK
@@ -542,8 +609,11 @@ class SqlDelightRg03TransferStoreTest {
             assertEquals(reconciliationsBefore, harness.queries.selectRg03PostingReconciliations().executeAsList())
             assertEquals(
                 "PENDING",
-                harness.queries.selectRg03PostingReconciliations().executeAsList()
-                    .single { it.posting_id == target.destinationPostingId.value }.status,
+                harness.queries
+                    .selectRg03PostingReconciliations()
+                    .executeAsList()
+                    .single { it.posting_id == target.destinationPostingId.value }
+                    .status,
             )
         }
     }
@@ -554,10 +624,11 @@ class SqlDelightRg03TransferStoreTest {
             file.initialize()
             val snapshot = completeSource()
 
-            val results = runConcurrently(
-                { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
-                { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
-            )
+            val results =
+                runConcurrently(
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
+                )
 
             assertEquals(1, results.count { it is Rg03ExecutionResult.Accepted })
             assertEquals(1, results.count { it is Rg03ExecutionResult.NoChange })
@@ -574,10 +645,11 @@ class SqlDelightRg03TransferStoreTest {
             val snapshot = completeSource()
             val conflict = snapshot.copy(destinationCredit = money(5_899), fee = money(101))
 
-            val results = runConcurrently(
-                { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
-                { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(conflict)) } },
-            )
+            val results =
+                runConcurrently(
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(snapshot)) } },
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.StoreSource(conflict)) } },
+                )
 
             assertEquals(1, results.count { it is Rg03ExecutionResult.Accepted })
             assertEquals(1, results.count { it is Rg03ExecutionResult.RequestIdentityConflict })
@@ -600,22 +672,23 @@ class SqlDelightRg03TransferStoreTest {
             }
             val candidate = file.open().use { checkNotNull(it.store.load(LEDGER, candidateId)) }
 
-            val results = runConcurrently(
-                {
-                    file.open().use {
-                        it.store.commit(
-                            Rg03PreparedOperation.ConfirmCandidate(RequestId("request-confirm-concurrent-a"), candidate),
-                        )
-                    }
-                },
-                {
-                    file.open().use {
-                        it.store.commit(
-                            Rg03PreparedOperation.ConfirmCandidate(RequestId("request-confirm-concurrent-b"), candidate),
-                        )
-                    }
-                },
-            )
+            val results =
+                runConcurrently(
+                    {
+                        file.open().use {
+                            it.store.commit(
+                                Rg03PreparedOperation.ConfirmCandidate(RequestId("request-confirm-concurrent-a"), candidate),
+                            )
+                        }
+                    },
+                    {
+                        file.open().use {
+                            it.store.commit(
+                                Rg03PreparedOperation.ConfirmCandidate(RequestId("request-confirm-concurrent-b"), candidate),
+                            )
+                        }
+                    },
+                )
 
             assertEquals(1, results.count { it is Rg03ExecutionResult.Accepted })
             assertEquals(
@@ -653,26 +726,30 @@ class SqlDelightRg03TransferStoreTest {
                     ),
                 )
             }
-            val target = file.open().use { harness ->
-                assertIs<Rg03MirrorBindingResult.Unique>(
-                    harness.store.resolve(LEDGER, Rg03MirrorScope(candidateId)),
-                ).target
-            }
-            val first = mirrorSnapshot().copy(
-                requestId = RequestId("request-mirror-concurrent-a"),
-                sourceId = SourceRecordId("source-mirror-concurrent-a"),
-                evidenceId = EvidenceId("evidence-mirror-concurrent-a"),
-            )
-            val second = mirrorSnapshot().copy(
-                requestId = RequestId("request-mirror-concurrent-b"),
-                sourceId = SourceRecordId("source-mirror-concurrent-b"),
-                evidenceId = EvidenceId("evidence-mirror-concurrent-b"),
-            )
+            val target =
+                file.open().use { harness ->
+                    assertIs<Rg03MirrorBindingResult.Unique>(
+                        harness.store.resolve(LEDGER, Rg03MirrorScope(candidateId)),
+                    ).target
+                }
+            val first =
+                mirrorSnapshot().copy(
+                    requestId = RequestId("request-mirror-concurrent-a"),
+                    sourceId = SourceRecordId("source-mirror-concurrent-a"),
+                    evidenceId = EvidenceId("evidence-mirror-concurrent-a"),
+                )
+            val second =
+                mirrorSnapshot().copy(
+                    requestId = RequestId("request-mirror-concurrent-b"),
+                    sourceId = SourceRecordId("source-mirror-concurrent-b"),
+                    evidenceId = EvidenceId("evidence-mirror-concurrent-b"),
+                )
 
-            val results = runConcurrently(
-                { file.open().use { it.store.commit(Rg03PreparedOperation.MergeMirror(first, target)) } },
-                { file.open().use { it.store.commit(Rg03PreparedOperation.MergeMirror(second, target)) } },
-            )
+            val results =
+                runConcurrently(
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.MergeMirror(first, target)) } },
+                    { file.open().use { it.store.commit(Rg03PreparedOperation.MergeMirror(second, target)) } },
+                )
 
             assertEquals(1, results.count { it is Rg03ExecutionResult.Accepted })
             assertEquals(
@@ -685,8 +762,11 @@ class SqlDelightRg03TransferStoreTest {
                 assertEquals(Rg03DataCounts.MIRRORED_SOURCE, harness.counts())
                 assertEquals(
                     "MATCHED",
-                    harness.queries.selectRg03PostingReconciliations().executeAsList()
-                        .single { it.posting_id == target.destinationPostingId.value }.status,
+                    harness.queries
+                        .selectRg03PostingReconciliations()
+                        .executeAsList()
+                        .single { it.posting_id == target.destinationPostingId.value }
+                        .status,
                 )
             }
         }
@@ -713,29 +793,35 @@ class SqlDelightRg03TransferStoreTest {
         }
 
     @Test
-    fun `foreign keys reject cross ledger transfer owner references`() = Harness().use { harness ->
-        assertEquals("1", harness.queries.foreignKeysEnabled().executeAsOne())
-        assertFailsWith<SQLException> {
-            harness.driver.execute(
-                null,
-                """
+    fun `foreign keys reject cross ledger transfer owner references`() =
+        Harness().use { harness ->
+            assertEquals("1", harness.queries.foreignKeysEnabled().executeAsOne())
+            assertFailsWith<SQLException> {
+                harness.driver.execute(
+                    null,
+                    """
                     INSERT INTO rg03_candidate_status_history(
                       ledger_id, candidate_id, status_sequence, status, request_id
                     ) VALUES ('ledger-other', 'candidate-missing', 1, 'PENDING_CONFIRMATION', 'request-missing')
-                """.trimIndent(),
-                0,
-            )
+                    """.trimIndent(),
+                    0,
+                )
+            }
+            assertEquals(Rg03DataCounts.EMPTY, harness.counts())
         }
-        assertEquals(Rg03DataCounts.EMPTY, harness.counts())
-    }
 }
 
-private class CountingIdentitySource(private val delegate: Rg03IdentitySource) : Rg03IdentitySource {
+private class CountingIdentitySource(
+    private val delegate: Rg03IdentitySource,
+) : Rg03IdentitySource {
     var sources = 0
     var transfers = 0
     var mirrors = 0
+
     override fun source(requestId: RequestId) = delegate.source(requestId).also { sources++ }
+
     override fun transfer(requestId: RequestId) = delegate.transfer(requestId).also { transfers++ }
+
     override fun mirror(requestId: RequestId) = delegate.mirror(requestId).also { mirrors++ }
 }
 
@@ -762,22 +848,23 @@ private class Harness(
         store = SqlDelightRg03TransferStore(database, driver, catalog(), identitySource, failureInjector)
     }
 
-    fun counts() = Rg03DataCounts(
-        requests = queries.countRg03OperationRequests().executeAsOne(),
-        receipts = queries.countRg03OperationReceipts().executeAsOne(),
-        confirmations = queries.countRg03Confirmations().executeAsOne(),
-        sources = queries.countRg03SourceRecords().executeAsOne(),
-        completeDetails = queries.countRg03CompleteSourceDetails().executeAsOne(),
-        candidates = queries.countRg03Candidates().executeAsOne(),
-        candidateStatuses = queries.countRg03CandidateStatuses().executeAsOne(),
-        evidence = queries.countRg03Evidence().executeAsOne(),
-        evidenceLinks = queries.countRg03EvidenceLinks().executeAsOne(),
-        reconciliations = queries.countRg03PostingReconciliations().executeAsOne(),
-        transactions = queries.countTransactions().executeAsOne(),
-        versions = queries.countVersions().executeAsOne(),
-        postingSets = queries.countPostingSets().executeAsOne(),
-        postings = queries.countPostings().executeAsOne(),
-    )
+    fun counts() =
+        Rg03DataCounts(
+            requests = queries.countRg03OperationRequests().executeAsOne(),
+            receipts = queries.countRg03OperationReceipts().executeAsOne(),
+            confirmations = queries.countRg03Confirmations().executeAsOne(),
+            sources = queries.countRg03SourceRecords().executeAsOne(),
+            completeDetails = queries.countRg03CompleteSourceDetails().executeAsOne(),
+            candidates = queries.countRg03Candidates().executeAsOne(),
+            candidateStatuses = queries.countRg03CandidateStatuses().executeAsOne(),
+            evidence = queries.countRg03Evidence().executeAsOne(),
+            evidenceLinks = queries.countRg03EvidenceLinks().executeAsOne(),
+            reconciliations = queries.countRg03PostingReconciliations().executeAsOne(),
+            transactions = queries.countTransactions().executeAsOne(),
+            versions = queries.countVersions().executeAsOne(),
+            postingSets = queries.countPostingSets().executeAsOne(),
+            postings = queries.countPostings().executeAsOne(),
+        )
 
     override fun close() = driver.close()
 }
@@ -788,11 +875,12 @@ private class FileRg03Database private constructor(
 ) : AutoCloseable {
     fun initialize() = open(createSchema = true).close()
 
-    fun open(createSchema: Boolean = false): Harness = Harness(
-        identitySource = identitySource,
-        driver = JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}", rg03SqliteProperties()),
-        createSchema = createSchema,
-    )
+    fun open(createSchema: Boolean = false): Harness =
+        Harness(
+            identitySource = identitySource,
+            driver = JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}", rg03SqliteProperties()),
+            createSchema = createSchema,
+        )
 
     override fun close() {
         Files.deleteIfExists(path)
@@ -803,18 +891,22 @@ private class FileRg03Database private constructor(
     }
 }
 
-private fun <T> runConcurrently(first: () -> T, second: () -> T): List<T> {
+private fun <T> runConcurrently(
+    first: () -> T,
+    second: () -> T,
+): List<T> {
     val ready = CountDownLatch(2)
     val start = CountDownLatch(1)
     val executor = Executors.newFixedThreadPool(2)
     return try {
-        val futures = listOf(first, second).map { operation ->
-            executor.submit<T> {
-                ready.countDown()
-                check(start.await(5, TimeUnit.SECONDS))
-                operation()
+        val futures =
+            listOf(first, second).map { operation ->
+                executor.submit<T> {
+                    ready.countDown()
+                    check(start.await(5, TimeUnit.SECONDS))
+                    operation()
+                }
             }
-        }
         assertTrue(ready.await(5, TimeUnit.SECONDS))
         start.countDown()
         futures.map { it.get(15, TimeUnit.SECONDS) }
@@ -823,10 +915,11 @@ private fun <T> runConcurrently(first: () -> T, second: () -> T): List<T> {
     }
 }
 
-private fun rg03SqliteProperties() = Properties().apply {
-    setProperty("foreign_keys", "true")
-    setProperty("busy_timeout", "5000")
-}
+private fun rg03SqliteProperties() =
+    Properties().apply {
+        setProperty("foreign_keys", "true")
+        setProperty("busy_timeout", "5000")
+    }
 
 private data class Rg03DataCounts(
     val requests: Long,
@@ -849,22 +942,23 @@ private data class Rg03DataCounts(
         val CONFIRMED_SOURCE = Rg03DataCounts(2, 2, 1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 3)
         val MIRRORED_SOURCE = Rg03DataCounts(3, 3, 1, 2, 1, 1, 2, 2, 2, 2, 1, 1, 1, 3)
 
-        fun sourceIntake(completeDetails: Long) = Rg03DataCounts(
-            requests = 1,
-            receipts = 1,
-            confirmations = 0,
-            sources = 1,
-            completeDetails = completeDetails,
-            candidates = 1,
-            candidateStatuses = 1,
-            evidence = 1,
-            evidenceLinks = 0,
-            reconciliations = 0,
-            transactions = 0,
-            versions = 0,
-            postingSets = 0,
-            postings = 0,
-        )
+        fun sourceIntake(completeDetails: Long) =
+            Rg03DataCounts(
+                requests = 1,
+                receipts = 1,
+                confirmations = 0,
+                sources = 1,
+                completeDetails = completeDetails,
+                candidates = 1,
+                candidateStatuses = 1,
+                evidence = 1,
+                evidenceLinks = 0,
+                reconciliations = 0,
+                transactions = 0,
+                versions = 0,
+                postingSets = 0,
+                postings = 0,
+            )
     }
 }
 
@@ -873,57 +967,61 @@ private val CURRENCY = CurrencyUnit("CNY", 2)
 
 private fun money(minor: Long) = Money.ofMinor(minor, CURRENCY)
 
-private fun manualSnapshot() = Rg03ManualTransferSnapshot(
-    LEDGER,
-    RequestId("request-rg03-manual-create"),
-    Instant.parse("2026-01-20T02:00:00Z"),
-    AccountId("asset-bank-a"),
-    AccountId("asset-wallet-b"),
-    money(6_000),
-    money(5_900),
-    money(100),
-    CategoryId("expense-category-transfer-fee"),
-)
+private fun manualSnapshot() =
+    Rg03ManualTransferSnapshot(
+        LEDGER,
+        RequestId("request-rg03-manual-create"),
+        Instant.parse("2026-01-20T02:00:00Z"),
+        AccountId("asset-bank-a"),
+        AccountId("asset-wallet-b"),
+        money(6_000),
+        money(5_900),
+        money(100),
+        CategoryId("expense-category-transfer-fee"),
+    )
 
-private fun completeSource() = Rg03SourceSnapshot(
-    LEDGER,
-    RequestId("request-rg03-import-source"),
-    SourceRecordId("source-record-rg03-debit"),
-    EvidenceId("evidence-rg03-debit"),
-    Instant.parse("2026-01-21T03:00:00Z"),
-    AccountId("asset-bank-a"),
-    AccountId("asset-wallet-b"),
-    money(6_000),
-    money(5_900),
-    money(100),
-    CategoryId("expense-category-transfer-fee"),
-    SourceCompleteness.COMPLETE,
-)
+private fun completeSource() =
+    Rg03SourceSnapshot(
+        LEDGER,
+        RequestId("request-rg03-import-source"),
+        SourceRecordId("source-record-rg03-debit"),
+        EvidenceId("evidence-rg03-debit"),
+        Instant.parse("2026-01-21T03:00:00Z"),
+        AccountId("asset-bank-a"),
+        AccountId("asset-wallet-b"),
+        money(6_000),
+        money(5_900),
+        money(100),
+        CategoryId("expense-category-transfer-fee"),
+        SourceCompleteness.COMPLETE,
+    )
 
-private fun incompleteSource() = Rg03SourceSnapshot(
-    LEDGER,
-    RequestId("request-rg03-unknown-debit"),
-    SourceRecordId("source-record-rg03-unknown-debit"),
-    EvidenceId("evidence-rg03-unknown-debit"),
-    Instant.parse("2026-01-22T03:00:00Z"),
-    AccountId("asset-bank-a"),
-    null,
-    money(6_000),
-    null,
-    null,
-    CategoryId("expense-category-transfer-fee"),
-    SourceCompleteness.MISSING_DESTINATION,
-)
+private fun incompleteSource() =
+    Rg03SourceSnapshot(
+        LEDGER,
+        RequestId("request-rg03-unknown-debit"),
+        SourceRecordId("source-record-rg03-unknown-debit"),
+        EvidenceId("evidence-rg03-unknown-debit"),
+        Instant.parse("2026-01-22T03:00:00Z"),
+        AccountId("asset-bank-a"),
+        null,
+        money(6_000),
+        null,
+        null,
+        CategoryId("expense-category-transfer-fee"),
+        SourceCompleteness.MISSING_DESTINATION,
+    )
 
-private fun mirrorSnapshot() = Rg03MirrorSnapshot(
-    LEDGER,
-    RequestId("request-rg03-import-mirror"),
-    SourceRecordId("source-record-rg03-credit-mirror"),
-    EvidenceId("evidence-rg03-credit-mirror"),
-    Instant.parse("2026-01-21T03:01:00Z"),
-    AccountId("asset-wallet-b"),
-    money(5_900),
-)
+private fun mirrorSnapshot() =
+    Rg03MirrorSnapshot(
+        LEDGER,
+        RequestId("request-rg03-import-mirror"),
+        SourceRecordId("source-record-rg03-credit-mirror"),
+        EvidenceId("evidence-rg03-credit-mirror"),
+        Instant.parse("2026-01-21T03:01:00Z"),
+        AccountId("asset-wallet-b"),
+        money(5_900),
+    )
 
 private fun persistedCandidate(
     candidateId: String = "candidate-transfer-rg03",
@@ -946,73 +1044,86 @@ private fun persistedCandidate(
     observedAt = source.observedAt,
 )
 
-private fun catalog() = assertIs<DomainResult.Success<LedgerCatalog>>(
-    LedgerCatalog.create(
-        listOf(
-            Account(AccountId("asset-bank-a"), LEDGER, AccountKind.ASSET, CURRENCY, true, true),
-            Account(AccountId("asset-wallet-b"), LEDGER, AccountKind.ASSET, CURRENCY, true, true),
-            Account(AccountId("asset-external-x"), LEDGER, AccountKind.ASSET, CURRENCY, false, true),
-            Account(AccountId("liability-credit-c"), LEDGER, AccountKind.LIABILITY, CURRENCY, true, true),
-            Account(
-                AccountId("asset-usd"), LEDGER, AccountKind.ASSET, CurrencyUnit("USD", 2), true, true,
+private fun catalog() =
+    assertIs<DomainResult.Success<LedgerCatalog>>(
+        LedgerCatalog.create(
+            listOf(
+                Account(AccountId("asset-bank-a"), LEDGER, AccountKind.ASSET, CURRENCY, true, true),
+                Account(AccountId("asset-wallet-b"), LEDGER, AccountKind.ASSET, CURRENCY, true, true),
+                Account(AccountId("asset-external-x"), LEDGER, AccountKind.ASSET, CURRENCY, false, true),
+                Account(AccountId("liability-credit-c"), LEDGER, AccountKind.LIABILITY, CURRENCY, true, true),
+                Account(
+                    AccountId("asset-usd"),
+                    LEDGER,
+                    AccountKind.ASSET,
+                    CurrencyUnit("USD", 2),
+                    true,
+                    true,
+                ),
+                Account(
+                    AccountId("expense-account-transfer-fee"),
+                    LEDGER,
+                    AccountKind.EXPENSE,
+                    CURRENCY,
+                    false,
+                    false,
+                ),
             ),
-            Account(
-                AccountId("expense-account-transfer-fee"),
-                LEDGER,
-                AccountKind.EXPENSE,
-                CURRENCY,
-                false,
-                false,
+            listOf(
+                Category(CategoryId("expense-category-financial"), LEDGER, null, null, true),
+                Category(
+                    CategoryId("expense-category-transfer-fee"),
+                    LEDGER,
+                    CategoryId("expense-category-financial"),
+                    AccountId("expense-account-transfer-fee"),
+                    true,
+                ),
             ),
         ),
-        listOf(
-            Category(CategoryId("expense-category-financial"), LEDGER, null, null, true),
-            Category(
-                CategoryId("expense-category-transfer-fee"),
-                LEDGER,
-                CategoryId("expense-category-financial"),
-                AccountId("expense-account-transfer-fee"),
-                true,
-            ),
-        ),
-    ),
-).value
+    ).value
 
-private fun testIdentitySource(): Rg03IdentitySource = object : Rg03IdentitySource {
-    override fun source(requestId: RequestId): Rg03SourceCommitIds = when (requestId.value) {
-        "request-rg03-import-source" -> Rg03SourceCommitIds(CandidateId("candidate-transfer-rg03"), "status-pending-import")
-        "request-rg03-unknown-debit" -> Rg03SourceCommitIds(CandidateId("candidate-transfer-rg03-unknown-debit"), "status-pending-incomplete")
-        else -> error("No source identities for ${requestId.value}")
+private fun testIdentitySource(): Rg03IdentitySource =
+    object : Rg03IdentitySource {
+        override fun source(requestId: RequestId): Rg03SourceCommitIds =
+            when (requestId.value) {
+                "request-rg03-import-source" -> Rg03SourceCommitIds(CandidateId("candidate-transfer-rg03"), "status-pending-import")
+                "request-rg03-unknown-debit" -> Rg03SourceCommitIds(CandidateId("candidate-transfer-rg03-unknown-debit"), "status-pending-incomplete")
+                else -> error("No source identities for ${requestId.value}")
+            }
+
+        override fun transfer(requestId: RequestId): Rg03TransferCommitIds =
+            when (requestId.value) {
+                "request-rg03-manual-create" -> transferIds("manual", "confirmation-manual")
+                "request-rg03-confirm-candidate" -> transferIds("imported", "confirmation-imported", "status-confirmed-import")
+                "request-tampered-confirm" -> transferIds("tampered", "confirmation-tampered", "status-confirmed-tampered")
+                "request-second" -> transferIds("second", "confirmation-second")
+                else -> error("No transfer identities for ${requestId.value}")
+            }
+
+        override fun mirror(requestId: RequestId): Rg03MirrorCommitIds =
+            when (requestId.value) {
+                "request-rg03-import-mirror" -> Rg03MirrorCommitIds("match-rg03-credit-mirror")
+                else -> error("No mirror identities for ${requestId.value}")
+            }
     }
 
-    override fun transfer(requestId: RequestId): Rg03TransferCommitIds = when (requestId.value) {
-        "request-rg03-manual-create" -> transferIds("manual", "confirmation-manual")
-        "request-rg03-confirm-candidate" -> transferIds("imported", "confirmation-imported", "status-confirmed-import")
-        "request-tampered-confirm" -> transferIds("tampered", "confirmation-tampered", "status-confirmed-tampered")
-        "request-second" -> transferIds("second", "confirmation-second")
-        else -> error("No transfer identities for ${requestId.value}")
+private fun concurrentIdentitySource(): Rg03IdentitySource =
+    object : Rg03IdentitySource {
+        override fun source(requestId: RequestId) =
+            Rg03SourceCommitIds(
+                concurrentCandidateId(requestId),
+                "status-pending-${requestId.value}",
+            )
+
+        override fun transfer(requestId: RequestId) =
+            transferIds(
+                suffix = requestId.value,
+                confirmation = "confirmation-${requestId.value}",
+                candidateStatus = "status-confirmed-${requestId.value}",
+            ).copy(sourceEvidenceLinkId = "match-source-${requestId.value}")
+
+        override fun mirror(requestId: RequestId) = Rg03MirrorCommitIds("match-mirror-${requestId.value}")
     }
-
-    override fun mirror(requestId: RequestId): Rg03MirrorCommitIds = when (requestId.value) {
-        "request-rg03-import-mirror" -> Rg03MirrorCommitIds("match-rg03-credit-mirror")
-        else -> error("No mirror identities for ${requestId.value}")
-    }
-}
-
-private fun concurrentIdentitySource(): Rg03IdentitySource = object : Rg03IdentitySource {
-    override fun source(requestId: RequestId) = Rg03SourceCommitIds(
-        concurrentCandidateId(requestId),
-        "status-pending-${requestId.value}",
-    )
-
-    override fun transfer(requestId: RequestId) = transferIds(
-        suffix = requestId.value,
-        confirmation = "confirmation-${requestId.value}",
-        candidateStatus = "status-confirmed-${requestId.value}",
-    ).copy(sourceEvidenceLinkId = "match-source-${requestId.value}")
-
-    override fun mirror(requestId: RequestId) = Rg03MirrorCommitIds("match-mirror-${requestId.value}")
-}
 
 private fun concurrentCandidateId(requestId: RequestId) = CandidateId("candidate-${requestId.value}")
 
@@ -1036,18 +1147,20 @@ private fun transferIds(
     if (candidateStatus == null) null else "match-rg03-debit",
 )
 
-private fun collisionIdentitySource(): Rg03IdentitySource = object : Rg03IdentitySource by testIdentitySource() {
-    override fun transfer(requestId: RequestId): Rg03TransferCommitIds = Rg03TransferCommitIds(
-        ConfirmationId("confirmation-collision-${requestId.value}"),
-        AccountTransferIds(
-            TransactionId("tx-collision"),
-            TransactionVersionId("version-collision"),
-            PostingSetId("posting-set-collision"),
-            PostingId("posting-source-collision"),
-            PostingId("posting-destination-collision"),
-            PostingId("posting-fee-collision"),
-        ),
-        "reconciliation-source-collision-${requestId.value}",
-        "reconciliation-destination-collision-${requestId.value}",
-    )
-}
+private fun collisionIdentitySource(): Rg03IdentitySource =
+    object : Rg03IdentitySource by testIdentitySource() {
+        override fun transfer(requestId: RequestId): Rg03TransferCommitIds =
+            Rg03TransferCommitIds(
+                ConfirmationId("confirmation-collision-${requestId.value}"),
+                AccountTransferIds(
+                    TransactionId("tx-collision"),
+                    TransactionVersionId("version-collision"),
+                    PostingSetId("posting-set-collision"),
+                    PostingId("posting-source-collision"),
+                    PostingId("posting-destination-collision"),
+                    PostingId("posting-fee-collision"),
+                ),
+                "reconciliation-source-collision-${requestId.value}",
+                "reconciliation-destination-collision-${requestId.value}",
+            )
+    }

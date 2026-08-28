@@ -27,7 +27,6 @@ import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
-import com.unifiedledger.application.ImportResolvedSourceFacts
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
@@ -39,8 +38,6 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
@@ -48,13 +45,10 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import java.nio.file.Files
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -63,7 +57,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.time.Instant
 
 /**
  * T-24/T-25: v20 -> v21 migration (fresh = migrated, silo rows preserved, guards in
@@ -76,47 +69,60 @@ class ImportSpineMigrationCoexistenceTest {
     private val cny = CurrencyUnit("CNY", 2)
     private val hashR1 = "sha256:afd8167ab6353423ef5632ae2a458f79bc4788f833f304c66b2fc8cf552a07e2"
 
-    private fun migrationProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun migrationProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
-    private fun queryCount(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!)
-        },
-        0,
-    ).value
+    private fun queryCount(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getLong(0)!!)
+                },
+                0,
+            ).value
 
-    private fun spineCatalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("spine test catalog failure: ${result.violation}")
-    }
+    private fun spineCatalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("spine test catalog failure: ${result.violation}")
+        }
 
     private class FormalFactory(
         private val catalog: LedgerCatalog,
     ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
     @Test
@@ -218,56 +224,71 @@ class ImportSpineMigrationCoexistenceTest {
                     ),
                     Rg04ImportReturnedId(
                         Rg04ImportReturnedIdKind.TRANSACTION,
-                        (case.importOperations[2] as Rg04DecodedImportOperation.Confirm).snapshot.formalIds.transactionId.value,
+                        (case.importOperations[2] as Rg04DecodedImportOperation.Confirm)
+                            .snapshot.formalIds.transactionId.value,
                     ),
                 ),
                 rg04Replay.returnedIds,
             )
 
             // Shared spine on ledger-p402: intake + confirm + replay.
-            val intakeRequest = ImportIntakeRequest(
-                identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")),
-                inputRef = "batch-p402-a",
-                recordOrdinal = 0,
-                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-                facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-                completeness = ImportCompleteness.VALID_COMPLETE,
-                candidateGeneratedAt = "legacy-intake-v1",
-            )
-            val intakeIds = object : ImportIntakeIdSource {
-                override fun next() = ImportIntakeIds(
-                    ImportSourceId("source-a"), ImportEvidenceId("evidence-a"),
-                    ImportCandidateId("candidate-a"), ImportStatusHistoryId("status-a-1"),
+            val intakeRequest =
+                ImportIntakeRequest(
+                    identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")),
+                    inputRef = "batch-p402-a",
+                    recordOrdinal = 0,
+                    recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+                    completeness = ImportCompleteness.VALID_COMPLETE,
+                    candidateGeneratedAt = "legacy-intake-v1",
                 )
-            }
-            val commitIds = object : ImportIdSource {
-                override fun next() = ImportCommitIds(
-                    ImportConfirmationId("confirmation-a"), ImportStatusHistoryId("status-a-2"),
-                    ImportFormalIds(
-                        TransactionId("tx-a"), TransactionVersionId("version-a-v1"), PostingSetId("posting-set-a"),
-                        listOf(PostingId("posting-expense-a"), PostingId("posting-asset-a")),
-                    ),
-                )
-            }
+            val intakeIds =
+                object : ImportIntakeIdSource {
+                    override fun next() =
+                        ImportIntakeIds(
+                            ImportSourceId("source-a"),
+                            ImportEvidenceId("evidence-a"),
+                            ImportCandidateId("candidate-a"),
+                            ImportStatusHistoryId("status-a-1"),
+                        )
+                }
+            val commitIds =
+                object : ImportIdSource {
+                    override fun next() =
+                        ImportCommitIds(
+                            ImportConfirmationId("confirmation-a"),
+                            ImportStatusHistoryId("status-a-2"),
+                            ImportFormalIds(
+                                TransactionId("tx-a"),
+                                TransactionVersionId("version-a-v1"),
+                                PostingSetId("posting-set-a"),
+                                listOf(PostingId("posting-expense-a"), PostingId("posting-asset-a")),
+                            ),
+                        )
+                }
             val spineStore = SqlDelightImportSpineStore(database, driver)
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(spineStore, intakeIds, ImportContentFingerprint()).execute(intakeRequest),
             )
-            val confirmRequest = ImportCandidateConfirmRequest(
-                identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-confirm")),
-                candidateId = ImportCandidateId("candidate-a"),
-                expectedContentHash = hashR1,
-                explicitConfirmedAt = "2026-08-07T10:00:00+08:00",
-                decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
-                    categoryId = CategoryId("category-food"),
-                    fundingAccountId = AccountId("account-asset-a"),
-                ),
-            )
-            val confirm = ConfirmImportCandidate(
-                spineStore, commitIds,
-                FormalFactory(spineCatalog()),
-                spineCatalog(),
-            )
+            val confirmRequest =
+                ImportCandidateConfirmRequest(
+                    identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-a-confirm")),
+                    candidateId = ImportCandidateId("candidate-a"),
+                    expectedContentHash = hashR1,
+                    explicitConfirmedAt = "2026-08-07T10:00:00+08:00",
+                    decisionFields =
+                        ImportConfirmDecisionFields.OrdinaryFlow(
+                            categoryId = CategoryId("category-food"),
+                            fundingAccountId = AccountId("account-asset-a"),
+                        ),
+                )
+            val confirm =
+                ConfirmImportCandidate(
+                    spineStore,
+                    commitIds,
+                    FormalFactory(spineCatalog()),
+                    spineCatalog(),
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(confirm.execute(confirmRequest))
             assertIs<ImportCandidateDecisionResult.NoChange>(confirm.execute(confirmRequest))
 

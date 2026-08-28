@@ -16,7 +16,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 /**
  * P4-09 D2 (D-110 implementation spec section 4): the single populated v1 -> v25
@@ -43,45 +42,79 @@ class P409SingleChainMigrationTest {
 
     // Guard families enumerated name by name from 20.sqm..24.sqm (spec section 4.2);
     // the deduplicated v25 terminal state is 20 + 18 + 15 + 8 = 61 triggers.
-    private val importFamilyTriggers = listOf(
-        "import_request_guard_update", "import_request_guard_delete",
-        "import_source_record_guard_update", "import_source_record_guard_delete",
-        "import_evidence_guard_update", "import_evidence_guard_delete",
-        "import_candidate_guard_update", "import_candidate_guard_delete",
-        "import_candidate_requires_confirmation_guard_update", "import_candidate_requires_confirmation_guard_delete",
-        "import_candidate_status_history_guard_update", "import_candidate_status_history_guard_delete",
-        "import_candidate_decision_snapshot_guard_update", "import_candidate_decision_snapshot_guard_delete",
-        "import_confirmation_guard_update", "import_confirmation_guard_delete",
-        "import_receipt_guard_update", "import_receipt_guard_delete",
-        "import_status_history_sequence_guard", "import_status_history_transition_guard",
-    )
-    private val p408Triggers = listOf(
-        "reconciliation_request_guard_update", "reconciliation_request_guard_delete",
-        "reconciliation_snapshot_guard_update", "reconciliation_snapshot_guard_delete",
-        "reconciliation_receipt_guard_update", "reconciliation_receipt_guard_delete",
-        "evidence_link_guard_update", "evidence_link_guard_delete",
-        "evidence_link_history_guard_update", "evidence_link_history_guard_delete",
-        "posting_reconciliation_guard_delete", "posting_reconciliation_history_guard_update",
-        "posting_reconciliation_history_guard_delete", "evidence_link_history_sequence_guard",
-        "evidence_link_history_transition_guard", "posting_reconciliation_history_sequence_guard",
-        "posting_reconciliation_history_link_guard", "posting_reconciliation_update_guard",
-    )
-    private val duplicateFamilyTriggers = listOf(
-        "import_duplicate_candidate_guard_update", "import_duplicate_candidate_guard_delete",
-        "import_duplicate_history_guard_update", "import_duplicate_history_guard_delete",
-        "import_duplicate_review_request_guard_update", "import_duplicate_review_request_guard_delete",
-        "import_duplicate_review_snapshot_guard_update", "import_duplicate_review_snapshot_guard_delete",
-        "import_duplicate_review_receipt_guard_update", "import_duplicate_review_receipt_guard_delete",
-        "import_duplicate_history_sequence", "import_duplicate_history_terminal",
-        "import_duplicate_history_creation_owner", "import_duplicate_history_review_owner",
-        "import_duplicate_review_receipt_consistency",
-    )
-    private val v25NewTriggers = listOf(
-        "import_candidate_payment_profile_guard_update", "import_candidate_payment_profile_guard_delete",
-        "mixed_payment_group_guard_update", "mixed_payment_group_guard_delete",
-        "mixed_payment_group_leg_guard_update", "mixed_payment_group_leg_guard_delete",
-        "mixed_payment_group_complete", "mixed_payment_group_leg_before_head",
-    )
+    private val importFamilyTriggers =
+        listOf(
+            "import_request_guard_update",
+            "import_request_guard_delete",
+            "import_source_record_guard_update",
+            "import_source_record_guard_delete",
+            "import_evidence_guard_update",
+            "import_evidence_guard_delete",
+            "import_candidate_guard_update",
+            "import_candidate_guard_delete",
+            "import_candidate_requires_confirmation_guard_update",
+            "import_candidate_requires_confirmation_guard_delete",
+            "import_candidate_status_history_guard_update",
+            "import_candidate_status_history_guard_delete",
+            "import_candidate_decision_snapshot_guard_update",
+            "import_candidate_decision_snapshot_guard_delete",
+            "import_confirmation_guard_update",
+            "import_confirmation_guard_delete",
+            "import_receipt_guard_update",
+            "import_receipt_guard_delete",
+            "import_status_history_sequence_guard",
+            "import_status_history_transition_guard",
+        )
+    private val p408Triggers =
+        listOf(
+            "reconciliation_request_guard_update",
+            "reconciliation_request_guard_delete",
+            "reconciliation_snapshot_guard_update",
+            "reconciliation_snapshot_guard_delete",
+            "reconciliation_receipt_guard_update",
+            "reconciliation_receipt_guard_delete",
+            "evidence_link_guard_update",
+            "evidence_link_guard_delete",
+            "evidence_link_history_guard_update",
+            "evidence_link_history_guard_delete",
+            "posting_reconciliation_guard_delete",
+            "posting_reconciliation_history_guard_update",
+            "posting_reconciliation_history_guard_delete",
+            "evidence_link_history_sequence_guard",
+            "evidence_link_history_transition_guard",
+            "posting_reconciliation_history_sequence_guard",
+            "posting_reconciliation_history_link_guard",
+            "posting_reconciliation_update_guard",
+        )
+    private val duplicateFamilyTriggers =
+        listOf(
+            "import_duplicate_candidate_guard_update",
+            "import_duplicate_candidate_guard_delete",
+            "import_duplicate_history_guard_update",
+            "import_duplicate_history_guard_delete",
+            "import_duplicate_review_request_guard_update",
+            "import_duplicate_review_request_guard_delete",
+            "import_duplicate_review_snapshot_guard_update",
+            "import_duplicate_review_snapshot_guard_delete",
+            "import_duplicate_review_receipt_guard_update",
+            "import_duplicate_review_receipt_guard_delete",
+            "import_duplicate_history_sequence",
+            "import_duplicate_history_terminal",
+            "import_duplicate_history_creation_owner",
+            "import_duplicate_history_review_owner",
+            "import_duplicate_review_receipt_consistency",
+        )
+    private val v25NewTriggers =
+        listOf(
+            "import_candidate_payment_profile_guard_update",
+            "import_candidate_payment_profile_guard_delete",
+            "mixed_payment_group_guard_update",
+            "mixed_payment_group_guard_delete",
+            "mixed_payment_group_leg_guard_update",
+            "mixed_payment_group_leg_guard_delete",
+            "mixed_payment_group_complete",
+            "mixed_payment_group_leg_before_head",
+        )
 
     @Test
     fun populatedV1ToV25SingleChainReopensGuardedEqualsFreshAndAdvancesSeededRow() {
@@ -256,39 +289,40 @@ class P409SingleChainMigrationTest {
                 // Store segment (migrated side only): the seeded PENDING row advances to
                 // CHECKED through SqlDelightP408ReconciliationStore.confirmLink.
                 val store = SqlDelightP408ReconciliationStore(database, driver)
-                val accepted = assertIs<P408ReconciliationResult.Accepted>(
-                    store.confirmLink(
-                        P408ConfirmLinkRequest(
-                            ledgerId = ledger,
-                            requestId = "request-mig-advance",
-                            evidenceId = "evidence-mig-v2",
-                            candidateId = "candidate-mig",
-                            postingId = "posting-mig-transfer-out",
-                            transactionId = "tx-mig-transfer",
-                            amountMinor = 2000,
-                            currencyCode = "CNY",
-                            currencyPrecision = 2,
-                            direction = "out",
-                            accountId = "account-mig-a",
-                            responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                            basisVersion = 2,
-                            projectionId = "proj-evidence-mig-v2",
-                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-                            projectionRuleVersion = 1,
-                            normalizedAmountMinor = 2000,
-                            rawAmountMinor = 2000,
-                            rawCurrencyPrecision = 2,
-                            matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
-                            windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
-                            naturalDayDistance = 0,
-                            sourceOccurredAt = "2026-08-05T12:00:00+08:00",
-                            confirmedAt = "2026-08-05T13:00:00+08:00",
-                            linkId = "link-mig-advance",
-                            reconciliationId = "reconciliation-posting-mig-transfer-out",
-                            createdAt = "2026-08-05T13:00:00+08:00",
+                val accepted =
+                    assertIs<P408ReconciliationResult.Accepted>(
+                        store.confirmLink(
+                            P408ConfirmLinkRequest(
+                                ledgerId = ledger,
+                                requestId = "request-mig-advance",
+                                evidenceId = "evidence-mig-v2",
+                                candidateId = "candidate-mig",
+                                postingId = "posting-mig-transfer-out",
+                                transactionId = "tx-mig-transfer",
+                                amountMinor = 2000,
+                                currencyCode = "CNY",
+                                currencyPrecision = 2,
+                                direction = "out",
+                                accountId = "account-mig-a",
+                                responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                                basisVersion = 2,
+                                projectionId = "proj-evidence-mig-v2",
+                                projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                                projectionRuleVersion = 1,
+                                normalizedAmountMinor = 2000,
+                                rawAmountMinor = 2000,
+                                rawCurrencyPrecision = 2,
+                                matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
+                                windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
+                                naturalDayDistance = 0,
+                                sourceOccurredAt = "2026-08-05T12:00:00+08:00",
+                                confirmedAt = "2026-08-05T13:00:00+08:00",
+                                linkId = "link-mig-advance",
+                                reconciliationId = "reconciliation-posting-mig-transfer-out",
+                                createdAt = "2026-08-05T13:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals(2L, accepted.receipt.historySequence)
                 val advanced = database.ledgerQueries.selectP408PostingReconciliation(ledger, "posting-mig-transfer-out").executeAsOne()
                 assertEquals("CHECKED", advanced.status)
@@ -403,87 +437,102 @@ class P409SingleChainMigrationTest {
 
     // ---------- data-level equivalence projection (ruling 4 / section 4.3) ----------
 
-    private val rowComparator = Comparator<List<Any?>> { left, right ->
-        val size = maxOf(left.size, right.size)
-        for (index in 0 until size) {
-            val l = left.getOrNull(index)
-            val r = right.getOrNull(index)
-            val compare = when {
-                l == null && r == null -> 0
-                l == null -> -1
-                r == null -> 1
-                else -> l.toString().compareTo(r.toString())
+    private val rowComparator =
+        Comparator<List<Any?>> { left, right ->
+            val size = maxOf(left.size, right.size)
+            for (index in 0 until size) {
+                val l = left.getOrNull(index)
+                val r = right.getOrNull(index)
+                val compare =
+                    when {
+                        l == null && r == null -> 0
+                        l == null -> -1
+                        r == null -> 1
+                        else -> l.toString().compareTo(r.toString())
+                    }
+                if (compare != 0) return@Comparator compare
             }
-            if (compare != 0) return@Comparator compare
+            0
         }
-        0
-    }
 
-    private fun selectRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
-                }
-            }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
+    private fun selectRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
 
-    private fun projections(): List<Triple<String, String, List<Boolean>>> = listOf(
-        Triple("ledger_transaction", "SELECT transaction_id, ledger_id, kind, canonical_kind FROM ledger_transaction", listOf(false, false, false, false)),
-        Triple("posting_set", "SELECT posting_set_id, ledger_id FROM posting_set", listOf(false, false)),
-        Triple("transaction_version", "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, confirmation_id FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false, false)),
-        Triple("ledger_transaction_current_version", "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)),
-        Triple("posting", "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)),
-        Triple("rg03_operation_request", "SELECT ledger_id, request_id, action_type FROM rg03_operation_request", listOf(false, false, false)),
-        Triple("rg04_import_request", "SELECT ledger_id, request_id, action_type FROM rg04_import_request", listOf(false, false, false)),
-        Triple("import_request", "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)),
-        Triple(
-            "import_source_record",
-            "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
-            listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
-        ),
-        Triple("import_evidence", "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)),
-        Triple("import_candidate", "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)),
-        Triple("import_candidate_requires_confirmation", "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)),
-        Triple("import_candidate_status_history", "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)),
-        Triple(
-            "import_candidate_decision_snapshot",
-            "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
-            listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
-        ),
-        Triple("import_confirmation", "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)),
-        Triple("import_receipt", "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)),
-        Triple("import_candidate_payment_profile", "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile", listOf(false, false, false, false, false)),
-        Triple(
-            "import_duplicate_candidate",
-            "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
-            listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
-        ),
-        Triple("import_duplicate_status_history", "SELECT ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class FROM import_duplicate_status_history", listOf(false, false, true, false, false, false, false)),
-        Triple("import_duplicate_review_request", "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM import_duplicate_review_request", listOf(false, false, false, false, false, false)),
-        Triple("import_duplicate_review_snapshot", "SELECT ledger_id, request_id, candidate_id, expected_comparison_fingerprint, decision, reason_token, reviewed_at, reviewer_reference, generated_at, review_id FROM import_duplicate_review_snapshot", listOf(false, false, false, false, false, false, false, false, false, false)),
-        Triple("import_duplicate_review_receipt", "SELECT ledger_id, request_id, candidate_id, review_id, history_id, outcome FROM import_duplicate_review_receipt", listOf(false, false, false, false, false, false)),
-        Triple("reconciliation_request", "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM reconciliation_request", listOf(false, false, false, false, false, false)),
-        Triple(
-            "reconciliation_request_snapshot",
-            "SELECT ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision FROM reconciliation_request_snapshot",
-            listOf(false, false, false, false, false, false, true, false, true, false, false, false, true, false, true, true, false, false, false),
-        ),
-        Triple("evidence_link", "SELECT ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at FROM evidence_link", listOf(false, false, false, false, false, false, true, false, false, false, false)),
-        Triple("evidence_link_history", "SELECT ledger_id, link_id, sequence, state, reason, request_id, occurred_at FROM evidence_link_history", listOf(false, false, true, false, false, false, false)),
-        Triple("posting_reconciliation", "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
-        Triple("posting_reconciliation_history", "SELECT ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at FROM posting_reconciliation_history", listOf(false, false, true, false, false, false, false)),
-        Triple("reconciliation_receipt", "SELECT ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence FROM reconciliation_receipt", listOf(false, false, false, false, false, true)),
-        Triple("mixed_payment_group", "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group", listOf(false, false, false, false, false, true, false)),
-        Triple("mixed_payment_group_leg", "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg", listOf(false, false, true, false, false, true)),
-    )
+    private fun projections(): List<Triple<String, String, List<Boolean>>> =
+        listOf(
+            Triple("ledger_transaction", "SELECT transaction_id, ledger_id, kind, canonical_kind FROM ledger_transaction", listOf(false, false, false, false)),
+            Triple("posting_set", "SELECT posting_set_id, ledger_id FROM posting_set", listOf(false, false)),
+            Triple("transaction_version", "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, confirmation_id FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false, false)),
+            Triple("ledger_transaction_current_version", "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)),
+            Triple("posting", "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)),
+            Triple("rg03_operation_request", "SELECT ledger_id, request_id, action_type FROM rg03_operation_request", listOf(false, false, false)),
+            Triple("rg04_import_request", "SELECT ledger_id, request_id, action_type FROM rg04_import_request", listOf(false, false, false)),
+            Triple("import_request", "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)),
+            Triple(
+                "import_source_record",
+                "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
+                listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
+            ),
+            Triple("import_evidence", "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)),
+            Triple("import_candidate", "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)),
+            Triple("import_candidate_requires_confirmation", "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)),
+            Triple("import_candidate_status_history", "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)),
+            Triple(
+                "import_candidate_decision_snapshot",
+                "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
+                listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
+            ),
+            Triple("import_confirmation", "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)),
+            Triple("import_receipt", "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)),
+            Triple("import_candidate_payment_profile", "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile", listOf(false, false, false, false, false)),
+            Triple(
+                "import_duplicate_candidate",
+                "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
+                listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
+            ),
+            Triple("import_duplicate_status_history", "SELECT ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class FROM import_duplicate_status_history", listOf(false, false, true, false, false, false, false)),
+            Triple("import_duplicate_review_request", "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM import_duplicate_review_request", listOf(false, false, false, false, false, false)),
+            Triple("import_duplicate_review_snapshot", "SELECT ledger_id, request_id, candidate_id, expected_comparison_fingerprint, decision, reason_token, reviewed_at, reviewer_reference, generated_at, review_id FROM import_duplicate_review_snapshot", listOf(false, false, false, false, false, false, false, false, false, false)),
+            Triple("import_duplicate_review_receipt", "SELECT ledger_id, request_id, candidate_id, review_id, history_id, outcome FROM import_duplicate_review_receipt", listOf(false, false, false, false, false, false)),
+            Triple("reconciliation_request", "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM reconciliation_request", listOf(false, false, false, false, false, false)),
+            Triple(
+                "reconciliation_request_snapshot",
+                "SELECT ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision FROM reconciliation_request_snapshot",
+                listOf(false, false, false, false, false, false, true, false, true, false, false, false, true, false, true, true, false, false, false),
+            ),
+            Triple("evidence_link", "SELECT ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at FROM evidence_link", listOf(false, false, false, false, false, false, true, false, false, false, false)),
+            Triple("evidence_link_history", "SELECT ledger_id, link_id, sequence, state, reason, request_id, occurred_at FROM evidence_link_history", listOf(false, false, true, false, false, false, false)),
+            Triple("posting_reconciliation", "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
+            Triple("posting_reconciliation_history", "SELECT ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at FROM posting_reconciliation_history", listOf(false, false, true, false, false, false, false)),
+            Triple("reconciliation_receipt", "SELECT ledger_id, request_id, outcome, link_id, reconciliation_id, history_sequence FROM reconciliation_receipt", listOf(false, false, false, false, false, true)),
+            Triple("mixed_payment_group", "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group", listOf(false, false, false, false, false, true, false)),
+            Triple("mixed_payment_group_leg", "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg", listOf(false, false, true, false, false, true)),
+        )
 
-    private fun assertDataLevelEqual(freshDriver: JdbcSqliteDriver, migratedDriver: JdbcSqliteDriver) {
+    private fun assertDataLevelEqual(
+        freshDriver: JdbcSqliteDriver,
+        migratedDriver: JdbcSqliteDriver,
+    ) {
         projections().forEach { (table, sql, longColumns) ->
             val fresh = selectRows(freshDriver, sql, longColumns).sortedWith(rowComparator)
             val migrated = selectRows(migratedDriver, sql, longColumns).sortedWith(rowComparator)
@@ -494,20 +543,27 @@ class P409SingleChainMigrationTest {
 
     // ---------- local helper copies (LedgerDatabaseMigrationTest.kt :2711/:2757/:2839) ----------
 
-    private fun queryCount(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            check(cursor.next().value)
-            app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
-        },
-        0,
-    ).value
+    private fun queryCount(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 
-    private fun migrationSqliteProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun migrationSqliteProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
     private data class SchemaMetadata(
         val objects: List<String>,
@@ -517,79 +573,89 @@ class P409SingleChainMigrationTest {
 
     private fun schemaMetadata(url: String): SchemaMetadata =
         DriverManager.getConnection(url).use { connection ->
-            val objects = buildList {
-                connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        """
-                        SELECT type, name, tbl_name, sql
-                        FROM sqlite_master
-                        WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-                        ORDER BY type, name
-                        """.trimIndent(),
-                    ).use { rows ->
-                        while (rows.next()) {
-                            add(
-                                listOf(
-                                    rows.getString("type"),
-                                    rows.getString("name"),
-                                    rows.getString("tbl_name"),
-                                    normalizeSql(rows.getString("sql")),
-                                ).joinToString("|"),
-                            )
-                        }
+            val objects =
+                buildList {
+                    connection.createStatement().use { statement ->
+                        statement
+                            .executeQuery(
+                                """
+                                SELECT type, name, tbl_name, sql
+                                FROM sqlite_master
+                                WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+                                ORDER BY type, name
+                                """.trimIndent(),
+                            ).use { rows ->
+                                while (rows.next()) {
+                                    add(
+                                        listOf(
+                                            rows.getString("type"),
+                                            rows.getString("name"),
+                                            rows.getString("tbl_name"),
+                                            normalizeSql(rows.getString("sql")),
+                                        ).joinToString("|"),
+                                    )
+                                }
+                            }
                     }
                 }
-            }
-            val tableNames = objects.asSequence()
-                .filter { it.startsWith("table|") }
-                .map { it.substringAfter('|').substringBefore('|') }
-                .toList()
-            val foreignKeys = buildList {
-                tableNames.forEach { table ->
-                    connection.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
-                            while (rows.next()) {
-                                add(
-                                    listOf(
-                                        table,
-                                        rows.getInt("id"),
-                                        rows.getInt("seq"),
-                                        rows.getString("table"),
-                                        rows.getString("from"),
-                                        rows.getString("to"),
-                                        rows.getString("on_update"),
-                                        rows.getString("on_delete"),
-                                        rows.getString("match"),
-                                    ).joinToString("|"),
-                                )
+            val tableNames =
+                objects
+                    .asSequence()
+                    .filter { it.startsWith("table|") }
+                    .map { it.substringAfter('|').substringBefore('|') }
+                    .toList()
+            val foreignKeys =
+                buildList {
+                    tableNames.forEach { table ->
+                        connection.createStatement().use { statement ->
+                            statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
+                                while (rows.next()) {
+                                    add(
+                                        listOf(
+                                            table,
+                                            rows.getInt("id"),
+                                            rows.getInt("seq"),
+                                            rows.getString("table"),
+                                            rows.getString("from"),
+                                            rows.getString("to"),
+                                            rows.getString("on_update"),
+                                            rows.getString("on_delete"),
+                                            rows.getString("match"),
+                                        ).joinToString("|"),
+                                    )
+                                }
                             }
                         }
                     }
-                }
-            }.sorted()
-            val indexes = buildList {
-                tableNames.forEach { table ->
-                    connection.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
-                            while (rows.next()) {
-                                add(
-                                    listOf(
-                                        table,
-                                        rows.getString("name"),
-                                        rows.getInt("unique"),
-                                        rows.getString("origin"),
-                                        rows.getInt("partial"),
-                                    ).joinToString("|"),
-                                )
+                }.sorted()
+            val indexes =
+                buildList {
+                    tableNames.forEach { table ->
+                        connection.createStatement().use { statement ->
+                            statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
+                                while (rows.next()) {
+                                    add(
+                                        listOf(
+                                            table,
+                                            rows.getString("name"),
+                                            rows.getInt("unique"),
+                                            rows.getString("origin"),
+                                            rows.getInt("partial"),
+                                        ).joinToString("|"),
+                                    )
+                                }
                             }
                         }
                     }
-                }
-            }.sorted()
+                }.sorted()
             SchemaMetadata(objects, foreignKeys, indexes)
         }
 
     private fun normalizeSql(sql: String): String =
-        sql.replace(Regex("\\s+"), " ").trim().replace("( ", "(").replace(" )", ")")
+        sql
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
             .replace("\"rg07_operation\"", "rg07_operation")
 }

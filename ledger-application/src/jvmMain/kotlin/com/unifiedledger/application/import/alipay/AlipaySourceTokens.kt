@@ -30,10 +30,21 @@ object AlipaySourceTokens {
      *  index 0 交易时间=occurred_at, 1 交易分类=route, 2 交易对方, 3 对方账号, 4 商品说明,
      *  5 收/支=direction, 6 金额=amount, 7 收/付款方式, 8 交易状态=status, 9 交易订单号,
      *  10 商家订单号, 11 备注. Columns 2/3/4/7/9/10/11 are never persisted. */
-    val HEADER_TOKENS: List<String> = listOf(
-        "交易时间", "交易分类", "交易对方", "对方账号", "商品说明", "收/支",
-        "金额", "收/付款方式", "交易状态", "交易订单号", "商家订单号", "备注",
-    )
+    val HEADER_TOKENS: List<String> =
+        listOf(
+            "交易时间",
+            "交易分类",
+            "交易对方",
+            "对方账号",
+            "商品说明",
+            "收/支",
+            "金额",
+            "收/付款方式",
+            "交易状态",
+            "交易订单号",
+            "商家订单号",
+            "备注",
+        )
 
     const val HEADER_ROW_INDEX: Int = 23
     const val FIRST_DATA_ROW_INDEX: Int = 24
@@ -89,10 +100,11 @@ object AlipaySourceTokens {
      * direction is derived only from this exact mapping (P4-04 wechat token-family
      * precedent), provenance rule [YUEBAO_SUBTYPE_DIRECTION_RULE] with exact confidence.
      */
-    val YUEBAO_SUBTYPE_DIRECTION_MAP: Map<String, String> = mapOf(
-        "余额宝-自动转入" to "out",
-        "余额宝-转出到余额" to "in",
-    )
+    val YUEBAO_SUBTYPE_DIRECTION_MAP: Map<String, String> =
+        mapOf(
+            "余额宝-自动转入" to "out",
+            "余额宝-转出到余额" to "in",
+        )
 
     /** RL-04 frozen provenance rule for the subtype-derived direction fact (design §2.2, D-097:1455). */
     const val YUEBAO_SUBTYPE_DIRECTION_RULE: String = "yuebao_subtype_direction_v1"
@@ -144,12 +156,13 @@ object AlipaySourceTokens {
      * leg. Never returns or leaks the raw leg text.
      */
     fun normalizePaymentLegToken(rawLeg: String): String? {
-        val stripped = when {
-            LEG_TAIL_INSTALLMENT_FORM.matches(rawLeg) -> "花呗"
-            LEG_TAIL_4_DIGIT_MASK.containsMatchIn(rawLeg) -> rawLeg.dropLast(6)
-            rawLeg.endsWith(LEG_TAIL_PERSONAL_QUALIFIER) -> rawLeg.dropLast(LEG_TAIL_PERSONAL_QUALIFIER.length)
-            else -> rawLeg
-        }
+        val stripped =
+            when {
+                LEG_TAIL_INSTALLMENT_FORM.matches(rawLeg) -> "花呗"
+                LEG_TAIL_4_DIGIT_MASK.containsMatchIn(rawLeg) -> rawLeg.dropLast(6)
+                rawLeg.endsWith(LEG_TAIL_PERSONAL_QUALIFIER) -> rawLeg.dropLast(LEG_TAIL_PERSONAL_QUALIFIER.length)
+                else -> rawLeg
+            }
         return if (stripped in CREDIT_LEG_TOKENS || stripped in ASSET_LEG_TOKENS) stripped else null
     }
 

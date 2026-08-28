@@ -52,13 +52,33 @@ import com.unifiedledger.domain.createLendingSettlement
 import com.unifiedledger.domain.createLendingSourceRecord
 import kotlin.time.Instant
 
-data class Rg08CandidateId(val value: String)
-data class Rg08SourceRecordId(val value: String)
-data class Rg08EvidenceId(val value: String)
-data class Rg08EvidenceLinkId(val value: String)
-data class Rg08SettlementId(val value: String)
-data class Rg08ConfirmationId(val value: String)
-data class Rg08AuditLinkId(val value: String)
+data class Rg08CandidateId(
+    val value: String,
+)
+
+data class Rg08SourceRecordId(
+    val value: String,
+)
+
+data class Rg08EvidenceId(
+    val value: String,
+)
+
+data class Rg08EvidenceLinkId(
+    val value: String,
+)
+
+data class Rg08SettlementId(
+    val value: String,
+)
+
+data class Rg08ConfirmationId(
+    val value: String,
+)
+
+data class Rg08AuditLinkId(
+    val value: String,
+)
 
 data class Rg08OperationIdentity(
     val ledgerId: LedgerId,
@@ -71,7 +91,9 @@ data class Rg08OperationIdentity(
  * these classes (rename: [Rg08Action.VALIDATE_LENDING_EVENT] with zero formal/intake effect,
  * mirror merge: [Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION] with typed audit links).
  */
-enum class Rg08Action(val code: String) {
+enum class Rg08Action(
+    val code: String,
+) {
     VALIDATE_LENDING_EVENT("validate_lending_event"),
     VALIDATE_LENDING_SETTLEMENT("validate_lending_settlement"),
     CONFIRM_IMPORTED_LENDING_COLLECTION("confirm_imported_lending_collection"),
@@ -441,22 +463,62 @@ sealed interface Rg08Operation {
 }
 
 sealed interface Rg08ReturnedId {
-    data class Transaction(val id: TransactionId) : Rg08ReturnedId
-    data class Version(val id: TransactionVersionId) : Rg08ReturnedId
-    data class Position(val id: String) : Rg08ReturnedId
-    data class Settlement(val id: String) : Rg08ReturnedId
-    data class Component(val id: String) : Rg08ReturnedId
-    data class Candidate(val id: Rg08CandidateId) : Rg08ReturnedId
-    data class SourceRecord(val id: Rg08SourceRecordId) : Rg08ReturnedId
-    data class Evidence(val id: Rg08EvidenceId) : Rg08ReturnedId
-    data class EvidenceLink(val id: Rg08EvidenceLinkId) : Rg08ReturnedId
-    data class TargetPosting(val id: PostingId) : Rg08ReturnedId
-    data class Counterparty(val id: String) : Rg08ReturnedId
-    data class NameHistory(val id: String) : Rg08ReturnedId
-    data class Request(val id: String) : Rg08ReturnedId
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg08ReturnedId
+
+    data class Version(
+        val id: TransactionVersionId,
+    ) : Rg08ReturnedId
+
+    data class Position(
+        val id: String,
+    ) : Rg08ReturnedId
+
+    data class Settlement(
+        val id: String,
+    ) : Rg08ReturnedId
+
+    data class Component(
+        val id: String,
+    ) : Rg08ReturnedId
+
+    data class Candidate(
+        val id: Rg08CandidateId,
+    ) : Rg08ReturnedId
+
+    data class SourceRecord(
+        val id: Rg08SourceRecordId,
+    ) : Rg08ReturnedId
+
+    data class Evidence(
+        val id: Rg08EvidenceId,
+    ) : Rg08ReturnedId
+
+    data class EvidenceLink(
+        val id: Rg08EvidenceLinkId,
+    ) : Rg08ReturnedId
+
+    data class TargetPosting(
+        val id: PostingId,
+    ) : Rg08ReturnedId
+
+    data class Counterparty(
+        val id: String,
+    ) : Rg08ReturnedId
+
+    data class NameHistory(
+        val id: String,
+    ) : Rg08ReturnedId
+
+    data class Request(
+        val id: String,
+    ) : Rg08ReturnedId
 }
 
-enum class Rg08RejectionReason(val code: String) {
+enum class Rg08RejectionReason(
+    val code: String,
+) {
     EXACT_DECIMAL_STRING_REQUIRED("exact_decimal_string_required"),
     TOTAL_MUST_BE_POSITIVE("total_must_be_positive"),
     COMPONENTS_MUST_EQUAL_TOTAL("components_must_equal_total"),
@@ -484,7 +546,9 @@ enum class Rg08RejectionReason(val code: String) {
     PRINCIPAL_MUST_BE_POSITIVE("principal_must_be_positive"),
 }
 
-enum class Rg08FieldPath(val value: String) {
+enum class Rg08FieldPath(
+    val value: String,
+) {
     INPUT_REQUEST_ID("$.input.request_id"),
     INPUT_BEHAVIOR_CODE("$.input.behavior_code"),
     INPUT_COUNTERPARTY_ID("$.input.counterparty_id"),
@@ -523,19 +587,29 @@ enum class Rg08FieldPath(val value: String) {
 }
 
 sealed interface Rg08ExecutionResult {
-    class Accepted(returnedIds: List<Rg08ReturnedId>) : Rg08ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg08ReturnedId>,
+    ) : Rg08ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg08ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg08ReturnedId>) : Rg08ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg08ReturnedId>,
+    ) : Rg08ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg08ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -577,8 +651,7 @@ data class Rg08LendingCatalog(
 ) {
     fun counterparty(id: String): Rg08Counterparty? = counterparties.firstOrNull { it.id == id }
 
-    fun receivableAccountFor(counterpartyId: String): AccountId? =
-        receivableAccounts.firstOrNull { it.counterpartyId == counterpartyId }?.accountId
+    fun receivableAccountFor(counterpartyId: String): AccountId? = receivableAccounts.firstOrNull { it.counterpartyId == counterpartyId }?.accountId
 }
 
 data class Rg08PostingSemantic(
@@ -683,18 +756,19 @@ class Rg08Runtime(
                 Rg08ExecutionResult.RequestIdentityConflict
             }
         }
-        val result = when (operation) {
-            is Rg08Operation.ValidateLendingEvent -> validateLendingEvent(operation)
-            is Rg08Operation.ValidateLendingSettlement -> validateLendingSettlement(operation)
-            is Rg08Operation.IngestImportedCollectionCandidate -> ingestImportedCollectionCandidate(operation)
-            is Rg08Operation.RejectIncompleteImportedConfirmation -> rejectIncompleteImportedConfirmation(operation)
-            is Rg08Operation.ConfirmImportedCollection -> confirmImportedCollection(operation)
-            is Rg08Operation.AllocateLendingCollection -> allocateLendingCollection(operation)
-            is Rg08Operation.MergeImportedEvidence -> mergeImportedEvidence(operation)
-            is Rg08Operation.RenameCounterparty -> renameCounterparty(operation)
-            is Rg08Operation.RetryIdempotentInput -> replayRetry(operation)
-            is Rg08Operation.InvalidInput -> rejectInvalidInput(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg08Operation.ValidateLendingEvent -> validateLendingEvent(operation)
+                is Rg08Operation.ValidateLendingSettlement -> validateLendingSettlement(operation)
+                is Rg08Operation.IngestImportedCollectionCandidate -> ingestImportedCollectionCandidate(operation)
+                is Rg08Operation.RejectIncompleteImportedConfirmation -> rejectIncompleteImportedConfirmation(operation)
+                is Rg08Operation.ConfirmImportedCollection -> confirmImportedCollection(operation)
+                is Rg08Operation.AllocateLendingCollection -> allocateLendingCollection(operation)
+                is Rg08Operation.MergeImportedEvidence -> mergeImportedEvidence(operation)
+                is Rg08Operation.RenameCounterparty -> renameCounterparty(operation)
+                is Rg08Operation.RetryIdempotentInput -> replayRetry(operation)
+                is Rg08Operation.InvalidInput -> rejectInvalidInput(operation)
+            }
         if (result is Rg08ExecutionResult.Accepted || result is Rg08ExecutionResult.Rejected) {
             receipts[operation.identity] = Receipt(fingerprint, result)
             registerAnchorReceipts(operation, fingerprint, result)
@@ -702,28 +776,30 @@ class Rg08Runtime(
         return result
     }
 
-    fun snapshot(): Rg08Snapshot = Rg08Snapshot(
-        formalTransactions = formalTransactions.toList(),
-        positions = positions.map { it.copy(history = it.history.toList()) },
-        settlements = settlements.map { it.copy(components = it.components.toList(), history = it.history.toList()) },
-        candidates = candidates.map {
-            it.copy(
-                statusHistory = it.statusHistory.toList(),
-                sourceIds = it.sourceIds.toList(),
-                requiresConfirmation = it.requiresConfirmation.toList(),
-            )
-        },
-        confirmations = confirmations.toList(),
-        sourceRecords = sourceRecords.toList(),
-        evidence = evidence.toList(),
-        evidenceLinks = evidenceLinks.toList(),
-        auditLinks = auditLinks.toList(),
-        postingSemantics = postingSemantics.toMap(),
-        balances = replayBalances(),
-        reports = reports(),
-        reconciliation = reconciliation(),
-        counterpartyNames = counterpartyNames.toMap(),
-    )
+    fun snapshot(): Rg08Snapshot =
+        Rg08Snapshot(
+            formalTransactions = formalTransactions.toList(),
+            positions = positions.map { it.copy(history = it.history.toList()) },
+            settlements = settlements.map { it.copy(components = it.components.toList(), history = it.history.toList()) },
+            candidates =
+                candidates.map {
+                    it.copy(
+                        statusHistory = it.statusHistory.toList(),
+                        sourceIds = it.sourceIds.toList(),
+                        requiresConfirmation = it.requiresConfirmation.toList(),
+                    )
+                },
+            confirmations = confirmations.toList(),
+            sourceRecords = sourceRecords.toList(),
+            evidence = evidence.toList(),
+            evidenceLinks = evidenceLinks.toList(),
+            auditLinks = auditLinks.toList(),
+            postingSemantics = postingSemantics.toMap(),
+            balances = replayBalances(),
+            reports = reports(),
+            reconciliation = reconciliation(),
+            counterpartyNames = counterpartyNames.toMap(),
+        )
 
     fun operationFingerprint(operation: Rg08Operation): String = canonicalInput(operation)
 
@@ -747,18 +823,21 @@ class Rg08Runtime(
         if (input.principalAmount.currency != input.currency) {
             return rejected(Rg08RejectionReason.SAME_CURRENCY_REQUIRED, Rg08FieldPath.INPUT_CURRENCY)
         }
-        val funding = catalogAccount(input.fundingAccountId)
-            ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_FUNDING_ACCOUNT_ID)
+        val funding =
+            catalogAccount(input.fundingAccountId)
+                ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_FUNDING_ACCOUNT_ID)
         if (funding.kind != AccountKind.ASSET || !funding.ownedByUser || !funding.realAccount) {
             return rejected(Rg08RejectionReason.OWNED_ACCOUNT_REQUIRED, Rg08FieldPath.INPUT_FUNDING_ACCOUNT_ID)
         }
         if (funding.currency != input.currency) {
             return rejected(Rg08RejectionReason.SAME_CURRENCY_REQUIRED, Rg08FieldPath.INPUT_CURRENCY)
         }
-        val receivableAccountId = lendingCatalog.receivableAccountFor(input.counterpartyId)
-            ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
-        val receivable = catalogAccount(receivableAccountId)
-            ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val receivableAccountId =
+            lendingCatalog.receivableAccountFor(input.counterpartyId)
+                ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val receivable =
+            catalogAccount(receivableAccountId)
+                ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         if (receivable.kind != AccountKind.ASSET || !receivable.ownedByUser || !receivable.realAccount) {
             return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         }
@@ -766,38 +845,43 @@ class Rg08Runtime(
             return rejected(Rg08RejectionReason.SAME_CURRENCY_REQUIRED, Rg08FieldPath.INPUT_CURRENCY)
         }
         val principal = input.principalAmount.minorUnits
-        val position = when (
-            val result = createLendingPosition(
-                id = ids.positionId,
-                counterpartyId = input.counterpartyId,
-                receivableAccountId = receivableAccountId,
-                currency = input.currency,
-                principalBalanceMinor = principal,
-                history = listOf(
-                    LendingPositionHistoryEntry(
-                        id = ids.positionHistoryId,
-                        behaviorCode = LendingBehaviorCode.LEND,
-                        amountMinor = principal,
-                        principalBalanceAfterMinor = principal,
-                        transactionId = ids.transactionId,
-                        occurredAt = input.actualAt,
-                    ),
-                ),
+        val position =
+            when (
+                val result =
+                    createLendingPosition(
+                        id = ids.positionId,
+                        counterpartyId = input.counterpartyId,
+                        receivableAccountId = receivableAccountId,
+                        currency = input.currency,
+                        principalBalanceMinor = principal,
+                        history =
+                            listOf(
+                                LendingPositionHistoryEntry(
+                                    id = ids.positionHistoryId,
+                                    behaviorCode = LendingBehaviorCode.LEND,
+                                    amountMinor = principal,
+                                    principalBalanceAfterMinor = principal,
+                                    transactionId = ids.transactionId,
+                                    occurredAt = input.actualAt,
+                                ),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val formal =
+            when (val result = buildLendTransaction(operation.ledgerId, input, ids, receivableAccountId, principal)) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val record =
+            Rg08FormalTransactionRecord(
+                formal,
+                input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+                statisticsAtText = input.actualAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val formal = when (val result = buildLendTransaction(operation.ledgerId, input, ids, receivableAccountId, principal)) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(DomainResultFailureViolation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val record = Rg08FormalTransactionRecord(
-            formal,
-            input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-            statisticsAtText = input.actualAtText,
-        )
         if (
             !canAppendFormalTransaction(record) ||
             positions.any { it.id == ids.positionId } ||
@@ -808,51 +892,60 @@ class Rg08Runtime(
         ) {
             return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
         }
-        val source = when (
-            val result = createLendingSourceRecord(
-                id = ids.sourceId.value,
-                sourceRecordId = ids.sourceRecordId,
-                kind = LendingSourceKind.BANK_DEBIT,
-                observedAt = ids.sourceObservedAt,
-                bookingAt = input.actualAt,
-                valueAt = input.actualAt,
-                amountMinor = ids.sourceAmountMinor,
-                currency = input.currency,
-                immutablePayloadHash = LEND_DEBIT_PAYLOAD_HASH,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val evidenceItem = when (val result = createLendingEvidence(ids.evidenceId.value, source)) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val linkResult = when (val result = createLendingEvidenceLink(
-            id = ids.evidenceLinkId.value,
-            sourceId = source.id,
-            evidenceId = evidenceItem.id,
-            role = LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
-            targetPostingId = ids.fundingPostingId,
-            status = LendingEvidenceLinkStatus.MATCHED,
-        )) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val provenance = when (
-            val result = createLendingConfirmationProvenance(
-                id = ids.confirmationId.value,
-                confirmationRequestId = input.requestId.value,
-                role = LendingConfirmationRole.LENDING_EVENT_CONFIRMATION,
-                transactionKind = TransactionKind.LEND,
-                transactionId = ids.transactionId,
-                counterpartyId = input.counterpartyId,
-                confirmedAt = input.confirmedAt,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
-        }
+        val source =
+            when (
+                val result =
+                    createLendingSourceRecord(
+                        id = ids.sourceId.value,
+                        sourceRecordId = ids.sourceRecordId,
+                        kind = LendingSourceKind.BANK_DEBIT,
+                        observedAt = ids.sourceObservedAt,
+                        bookingAt = input.actualAt,
+                        valueAt = input.actualAt,
+                        amountMinor = ids.sourceAmountMinor,
+                        currency = input.currency,
+                        immutablePayloadHash = LEND_DEBIT_PAYLOAD_HASH,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val evidenceItem =
+            when (val result = createLendingEvidence(ids.evidenceId.value, source)) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val linkResult =
+            when (
+                val result =
+                    createLendingEvidenceLink(
+                        id = ids.evidenceLinkId.value,
+                        sourceId = source.id,
+                        evidenceId = evidenceItem.id,
+                        role = LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
+                        targetPostingId = ids.fundingPostingId,
+                        status = LendingEvidenceLinkStatus.MATCHED,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val provenance =
+            when (
+                val result =
+                    createLendingConfirmationProvenance(
+                        id = ids.confirmationId.value,
+                        confirmationRequestId = input.requestId.value,
+                        role = LendingConfirmationRole.LENDING_EVENT_CONFIRMATION,
+                        transactionKind = TransactionKind.LEND,
+                        transactionId = ids.transactionId,
+                        counterpartyId = input.counterpartyId,
+                        confirmedAt = input.confirmedAt,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
+            }
         formalTransactions += record
         positions += position
         sourceRecords += source
@@ -878,8 +971,9 @@ class Rg08Runtime(
         if (!input.explicitConfirmation) {
             return rejected(Rg08RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, Rg08FieldPath.INPUT_CONFIRMATION)
         }
-        val position = resolvePosition(input.linkedPositionId, input.counterpartyId)
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val position =
+            resolvePosition(input.linkedPositionId, input.counterpartyId)
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         return bookCollection(
             ledgerId = operation.ledgerId,
             confirmationRequestId = input.requestId.value,
@@ -903,14 +997,15 @@ class Rg08Runtime(
             destinationEvidenceLinkId = operation.ids.creditEvidenceLinkId,
             destinationSourceId = operation.ids.creditSourceId,
             destinationEvidenceId = operation.ids.creditEvidenceId,
-            returnedIds = listOf(
-                Rg08ReturnedId.Transaction(operation.ids.transactionId),
-                Rg08ReturnedId.Version(operation.ids.versionId),
-                Rg08ReturnedId.Settlement(operation.ids.settlementId),
-                Rg08ReturnedId.Component(operation.ids.principalComponentId),
-                Rg08ReturnedId.Component(operation.ids.interestComponentId),
-                Rg08ReturnedId.Component(operation.ids.feeComponentId),
-            ),
+            returnedIds =
+                listOf(
+                    Rg08ReturnedId.Transaction(operation.ids.transactionId),
+                    Rg08ReturnedId.Version(operation.ids.versionId),
+                    Rg08ReturnedId.Settlement(operation.ids.settlementId),
+                    Rg08ReturnedId.Component(operation.ids.principalComponentId),
+                    Rg08ReturnedId.Component(operation.ids.interestComponentId),
+                    Rg08ReturnedId.Component(operation.ids.feeComponentId),
+                ),
         )
     }
 
@@ -931,55 +1026,65 @@ class Rg08Runtime(
         if (missing != null) {
             return rejected(gateReason(missing), gateFieldPath(missing))
         }
-        val position = resolvePosition(null, input.counterpartyId)
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
-        val confirmedCandidate = buildConfirmedCandidate(pending, input, operation.ids)
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CANDIDATE)
-        val destinationSource = sourceRecords.firstOrNull { it.id in pending.sourceIds && it.kind == LendingSourceKind.BANK_CREDIT }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
-        val destinationEvidence = evidence.firstOrNull { it.sourceId == destinationSource.id }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_EVIDENCE)
+        val position =
+            resolvePosition(null, input.counterpartyId)
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val confirmedCandidate =
+            buildConfirmedCandidate(pending, input, operation.ids)
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CANDIDATE)
+        val destinationSource =
+            sourceRecords.firstOrNull { it.id in pending.sourceIds && it.kind == LendingSourceKind.BANK_CREDIT }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
+        val destinationEvidence =
+            evidence.firstOrNull { it.sourceId == destinationSource.id }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_EVIDENCE)
         val principalMinor = input.principalAmount.minorUnits
         val interestMinor = input.interestAmount.minorUnits
         val feeMinor = input.feeAmount.minorUnits
-        val totalReceivedMinor = checkedAdd(checkedAdd(principalMinor, interestMinor) ?: return rejected(
-            Rg08RejectionReason.DOMAIN_REJECTED,
-            Rg08FieldPath.INPUT_COMPONENTS,
-        ), feeMinor) ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COMPONENTS)
+        val totalReceivedMinor =
+            checkedAdd(
+                checkedAdd(principalMinor, interestMinor) ?: return rejected(
+                    Rg08RejectionReason.DOMAIN_REJECTED,
+                    Rg08FieldPath.INPUT_COMPONENTS,
+                ),
+                feeMinor,
+            ) ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_COMPONENTS)
         if (totalReceivedMinor != pending.proposedTotalReceivedMinor) {
             return rejected(Rg08RejectionReason.COMPONENTS_MUST_EQUAL_TOTAL, Rg08FieldPath.INPUT_COMPONENTS)
         }
-        val result = bookCollection(
-            ledgerId = operation.ledgerId,
-            confirmationRequestId = input.requestId.value,
-            behaviorCode = input.behaviorCode,
-            counterpartyId = input.counterpartyId,
-            position = position,
-            allocatedLendTransactionId = null,
-            destinationAccountId = input.destinationAccountId,
-            totalReceivedMinor = totalReceivedMinor,
-            principalMinor = principalMinor,
-            interestMinor = interestMinor,
-            feeMinor = feeMinor,
-            interestCategoryId = input.interestCategoryId,
-            currency = input.currency,
-            actualReceiptAt = input.actualReceiptAt,
-            actualReceiptAtText = input.actualReceiptAtText,
-            confirmedAt = input.confirmedAt,
-            confirmedAtText = input.confirmedAtText,
-            ids = toSettlementIds(operation.ids),
-            candidateId = pending.id,
-            destinationEvidenceLinkId = operation.ids.destinationEvidenceLinkId,
-            destinationSourceId = Rg08SourceRecordId(destinationSource.id),
-            destinationEvidenceId = Rg08EvidenceId(destinationEvidence.id),
-            returnedIds = listOf(
-                Rg08ReturnedId.Candidate(input.candidateId),
-                Rg08ReturnedId.Transaction(operation.ids.transactionId),
-                Rg08ReturnedId.Version(operation.ids.versionId),
-                Rg08ReturnedId.Settlement(operation.ids.settlementId),
-            ),
-            candidateConfirmedHistoryId = operation.ids.candidateConfirmedHistoryId,
-        )
+        val result =
+            bookCollection(
+                ledgerId = operation.ledgerId,
+                confirmationRequestId = input.requestId.value,
+                behaviorCode = input.behaviorCode,
+                counterpartyId = input.counterpartyId,
+                position = position,
+                allocatedLendTransactionId = null,
+                destinationAccountId = input.destinationAccountId,
+                totalReceivedMinor = totalReceivedMinor,
+                principalMinor = principalMinor,
+                interestMinor = interestMinor,
+                feeMinor = feeMinor,
+                interestCategoryId = input.interestCategoryId,
+                currency = input.currency,
+                actualReceiptAt = input.actualReceiptAt,
+                actualReceiptAtText = input.actualReceiptAtText,
+                confirmedAt = input.confirmedAt,
+                confirmedAtText = input.confirmedAtText,
+                ids = toSettlementIds(operation.ids),
+                candidateId = pending.id,
+                destinationEvidenceLinkId = operation.ids.destinationEvidenceLinkId,
+                destinationSourceId = Rg08SourceRecordId(destinationSource.id),
+                destinationEvidenceId = Rg08EvidenceId(destinationEvidence.id),
+                returnedIds =
+                    listOf(
+                        Rg08ReturnedId.Candidate(input.candidateId),
+                        Rg08ReturnedId.Transaction(operation.ids.transactionId),
+                        Rg08ReturnedId.Version(operation.ids.versionId),
+                        Rg08ReturnedId.Settlement(operation.ids.settlementId),
+                    ),
+                candidateConfirmedHistoryId = operation.ids.candidateConfirmedHistoryId,
+            )
         if (result is Rg08ExecutionResult.Accepted) {
             candidates[candidateIndex] = confirmedCandidate
         }
@@ -991,8 +1096,9 @@ class Rg08Runtime(
         if (lendingCatalog.counterparty(input.counterpartyId) == null) {
             return rejected(Rg08RejectionReason.UNKNOWN_COUNTERPARTY, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         }
-        val position = resolvePosition(null, input.counterpartyId)
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val position =
+            resolvePosition(null, input.counterpartyId)
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         if (input.totalReceived.minorUnits <= 0L) {
             return rejected(Rg08RejectionReason.TOTAL_MUST_BE_POSITIVE, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
         }
@@ -1005,8 +1111,9 @@ class Rg08Runtime(
         if (input.feeAmount.minorUnits > 0L) {
             return rejected(Rg08RejectionReason.NONZERO_FEE_ACCOUNTING_OUT_OF_SCOPE, Rg08FieldPath.INPUT_FEE_AMOUNT)
         }
-        val composed = checkedAdd(input.principalAmount.minorUnits, input.interestAmount.minorUnits)
-            ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+        val composed =
+            checkedAdd(input.principalAmount.minorUnits, input.interestAmount.minorUnits)
+                ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
         if (checkedAdd(composed, input.feeAmount.minorUnits) != input.totalReceived.minorUnits) {
             return rejected(Rg08RejectionReason.COMPONENTS_MUST_EQUAL_TOTAL, Rg08FieldPath.INPUT_COMPONENTS)
         }
@@ -1021,12 +1128,15 @@ class Rg08Runtime(
                 Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT,
             )
         }
-        val actualReceiptAt = input.actualReceiptAt
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_ACTUAL_RECEIPT_AT)
-        val confirmedAt = input.confirmedAt
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CONFIRMED_AT)
-        val interestCategoryId = input.interestCategoryId
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_INTEREST_CATEGORY_ID)
+        val actualReceiptAt =
+            input.actualReceiptAt
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_ACTUAL_RECEIPT_AT)
+        val confirmedAt =
+            input.confirmedAt
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CONFIRMED_AT)
+        val interestCategoryId =
+            input.interestCategoryId
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_INTEREST_CATEGORY_ID)
         return bookCollection(
             ledgerId = operation.ledgerId,
             confirmationRequestId = input.requestId.value,
@@ -1053,12 +1163,13 @@ class Rg08Runtime(
             // D-084 frozen contract (RG08-DEV-03): allocate returns the stable transaction,
             // version, settlement and position ids (frozen retry-rg08-request-cap-maximum
             // returned_stable_ids), not the request id.
-            returnedIds = listOf(
-                Rg08ReturnedId.Transaction(input.ids.transactionId),
-                Rg08ReturnedId.Version(input.ids.versionId),
-                Rg08ReturnedId.Settlement(input.ids.settlementId),
-                Rg08ReturnedId.Position(position.id),
-            ),
+            returnedIds =
+                listOf(
+                    Rg08ReturnedId.Transaction(input.ids.transactionId),
+                    Rg08ReturnedId.Version(input.ids.versionId),
+                    Rg08ReturnedId.Settlement(input.ids.settlementId),
+                    Rg08ReturnedId.Position(position.id),
+                ),
         )
     }
 
@@ -1126,13 +1237,15 @@ class Rg08Runtime(
         if (feeMinor > 0L) {
             return rejected(Rg08RejectionReason.NONZERO_FEE_ACCOUNTING_OUT_OF_SCOPE, Rg08FieldPath.INPUT_FEE_AMOUNT)
         }
-        val interestAccountId = exactInterestAccountId(interestCategoryId)
-            ?: return rejected(
-                Rg08RejectionReason.ACTIVE_EXACT_INTEREST_CATEGORY_REQUIRED,
-                Rg08FieldPath.INPUT_INTEREST_CATEGORY_ID,
-            )
-        val destination = catalogAccount(destinationAccountId)
-            ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
+        val interestAccountId =
+            exactInterestAccountId(interestCategoryId)
+                ?: return rejected(
+                    Rg08RejectionReason.ACTIVE_EXACT_INTEREST_CATEGORY_REQUIRED,
+                    Rg08FieldPath.INPUT_INTEREST_CATEGORY_ID,
+                )
+        val destination =
+            catalogAccount(destinationAccountId)
+                ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
         if (destination.kind != AccountKind.ASSET || !destination.ownedByUser) {
             return rejected(Rg08RejectionReason.OWNED_ACCOUNT_REQUIRED, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
         }
@@ -1145,81 +1258,96 @@ class Rg08Runtime(
         if (interestAccountId.currency != currency) {
             return rejected(Rg08RejectionReason.SAME_CURRENCY_REQUIRED, Rg08FieldPath.INPUT_INTEREST_CATEGORY_ID)
         }
-        val settlement = when (
-            val result = createLendingSettlement(
-                id = ids.settlementId,
-                catalog = catalog,
-                position = position,
-                transactionId = ids.transactionId,
-                destinationAccountId = destinationAccountId,
-                interestCategoryId = interestCategoryId,
-                totalReceivedMinor = totalReceivedMinor,
-                currency = currency,
-                actualReceiptAt = actualReceiptAt,
-                confirmedAt = confirmedAt,
-                components = listOf(
-                    LendingSettlementComponent(ids.principalComponentId, LendingComponentKind.PRINCIPAL, principalMinor, ids.principalPostingId),
-                    LendingSettlementComponent(ids.interestComponentId, LendingComponentKind.INTEREST, interestMinor, ids.interestPostingId),
-                    LendingSettlementComponent(ids.feeComponentId, LendingComponentKind.FEE, 0L, null),
-                ),
-                history = listOf(
-                    LendingSettlementHistoryEntry(
-                        id = ids.settlementHistoryId,
-                        status = LendingSettlementStatus.CONFIRMED,
-                        occurredAt = confirmedAt,
+        val settlement =
+            when (
+                val result =
+                    createLendingSettlement(
+                        id = ids.settlementId,
+                        catalog = catalog,
+                        position = position,
                         transactionId = ids.transactionId,
-                        formalEffectCount = 1,
-                    ),
-                ),
+                        destinationAccountId = destinationAccountId,
+                        interestCategoryId = interestCategoryId,
+                        totalReceivedMinor = totalReceivedMinor,
+                        currency = currency,
+                        actualReceiptAt = actualReceiptAt,
+                        confirmedAt = confirmedAt,
+                        components =
+                            listOf(
+                                LendingSettlementComponent(ids.principalComponentId, LendingComponentKind.PRINCIPAL, principalMinor, ids.principalPostingId),
+                                LendingSettlementComponent(ids.interestComponentId, LendingComponentKind.INTEREST, interestMinor, ids.interestPostingId),
+                                LendingSettlementComponent(ids.feeComponentId, LendingComponentKind.FEE, 0L, null),
+                            ),
+                        history =
+                            listOf(
+                                LendingSettlementHistoryEntry(
+                                    id = ids.settlementHistoryId,
+                                    status = LendingSettlementStatus.CONFIRMED,
+                                    occurredAt = confirmedAt,
+                                    transactionId = ids.transactionId,
+                                    formalEffectCount = 1,
+                                ),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+            }
+        val remaining =
+            checkedSubtract(position.principalBalanceMinor, principalMinor)
+                ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+        val updatedPosition =
+            when (
+                val result =
+                    createLendingPosition(
+                        id = position.id,
+                        counterpartyId = position.counterpartyId,
+                        receivableAccountId = position.receivableAccountId,
+                        currency = position.currency,
+                        principalBalanceMinor = remaining,
+                        history =
+                            position.history +
+                                LendingPositionHistoryEntry(
+                                    id = ids.positionHistoryId,
+                                    behaviorCode = LendingBehaviorCode.COLLECT,
+                                    amountMinor =
+                                        checkedNegate(principalMinor)
+                                            ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT),
+                                    principalBalanceAfterMinor = remaining,
+                                    transactionId = ids.transactionId,
+                                    occurredAt = actualReceiptAt,
+                                ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
+            }
+        val formal =
+            when (
+                val result =
+                    buildCollectTransaction(
+                        ledgerId,
+                        ids,
+                        destinationAccountId,
+                        position.receivableAccountId,
+                        interestAccountId,
+                        totalReceivedMinor,
+                        principalMinor,
+                        interestMinor,
+                        currency,
+                        actualReceiptAt,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+            }
+        val record =
+            Rg08FormalTransactionRecord(
+                formal,
+                confirmedAt,
+                createdAtText = confirmedAtText,
+                statisticsAtText = actualReceiptAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-        }
-        val remaining = checkedSubtract(position.principalBalanceMinor, principalMinor)
-            ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        val updatedPosition = when (
-            val result = createLendingPosition(
-                id = position.id,
-                counterpartyId = position.counterpartyId,
-                receivableAccountId = position.receivableAccountId,
-                currency = position.currency,
-                principalBalanceMinor = remaining,
-                history = position.history + LendingPositionHistoryEntry(
-                    id = ids.positionHistoryId,
-                    behaviorCode = LendingBehaviorCode.COLLECT,
-                    amountMinor = checkedNegate(principalMinor)
-                        ?: return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT),
-                    principalBalanceAfterMinor = remaining,
-                    transactionId = ids.transactionId,
-                    occurredAt = actualReceiptAt,
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT)
-        }
-        val formal = when (val result = buildCollectTransaction(
-            ledgerId,
-            ids,
-            destinationAccountId,
-            position.receivableAccountId,
-            interestAccountId,
-            totalReceivedMinor,
-            principalMinor,
-            interestMinor,
-            currency,
-            actualReceiptAt,
-        )) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-        }
-        val record = Rg08FormalTransactionRecord(
-            formal,
-            confirmedAt,
-            createdAtText = confirmedAtText,
-            statisticsAtText = actualReceiptAtText,
-        )
         if (
             !canAppendFormalTransaction(record) ||
             settlements.any { it.id == ids.settlementId } ||
@@ -1238,58 +1366,67 @@ class Rg08Runtime(
         val newLinks = mutableListOf<LendingEvidenceLink>()
         val newAuditLinks = mutableListOf<LendingAuditLink>()
         if (ids.confirmationSourceId != null) {
-            val confirmationSource = when (
-                val result = createLendingSourceRecord(
-                    id = ids.confirmationSourceId.value,
-                    sourceRecordId = checkNotNull(ids.confirmationSourceRecordId),
-                    kind = LendingSourceKind.EXPLICIT_MANUAL_LENDING_CONFIRMATION,
-                    observedAt = checkNotNull(ids.confirmationSourceObservedAt),
-                    amountMinor = totalReceivedMinor,
-                    currency = currency,
-                    immutablePayloadHash = MANUAL_CONFIRMATION_PAYLOAD_HASH,
-                )
-            ) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
-            }
+            val confirmationSource =
+                when (
+                    val result =
+                        createLendingSourceRecord(
+                            id = ids.confirmationSourceId.value,
+                            sourceRecordId = checkNotNull(ids.confirmationSourceRecordId),
+                            kind = LendingSourceKind.EXPLICIT_MANUAL_LENDING_CONFIRMATION,
+                            observedAt = checkNotNull(ids.confirmationSourceObservedAt),
+                            amountMinor = totalReceivedMinor,
+                            currency = currency,
+                            immutablePayloadHash = MANUAL_CONFIRMATION_PAYLOAD_HASH,
+                        )
+                ) {
+                    is DomainResult.Success -> result.value
+                    is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
+                }
             newSources += confirmationSource
         }
         if (ids.creditSourceId != null) {
-            val creditSource = when (
-                val result = createLendingSourceRecord(
-                    id = ids.creditSourceId.value,
-                    sourceRecordId = checkNotNull(ids.creditSourceRecordId),
-                    kind = LendingSourceKind.BANK_CREDIT,
-                    observedAt = checkNotNull(ids.creditSourceObservedAt),
-                    bookingAt = checkNotNull(ids.creditSourceBookingAt),
-                    valueAt = checkNotNull(ids.creditSourceValueAt),
-                    accountId = destinationAccountId,
-                    amountMinor = totalReceivedMinor,
-                    currency = currency,
-                    immutablePayloadHash = MANUAL_CREDIT_PAYLOAD_HASH,
-                )
-            ) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-            }
-            newSources += creditSource
-            val creditEvidence = when (val result = createLendingEvidence(checkNotNull(ids.creditEvidenceId).value, creditSource)) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-            }
-            newEvidence += creditEvidence
-            if (ids.creditEvidenceLinkId != null) {
-                val linkResult = when (val result = createLendingEvidenceLink(
-                    id = ids.creditEvidenceLinkId.value,
-                    sourceId = creditSource.id,
-                    evidenceId = creditEvidence.id,
-                    role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
-                    targetPostingId = ids.destinationPostingId,
-                    status = LendingEvidenceLinkStatus.MATCHED,
-                )) {
+            val creditSource =
+                when (
+                    val result =
+                        createLendingSourceRecord(
+                            id = ids.creditSourceId.value,
+                            sourceRecordId = checkNotNull(ids.creditSourceRecordId),
+                            kind = LendingSourceKind.BANK_CREDIT,
+                            observedAt = checkNotNull(ids.creditSourceObservedAt),
+                            bookingAt = checkNotNull(ids.creditSourceBookingAt),
+                            valueAt = checkNotNull(ids.creditSourceValueAt),
+                            accountId = destinationAccountId,
+                            amountMinor = totalReceivedMinor,
+                            currency = currency,
+                            immutablePayloadHash = MANUAL_CREDIT_PAYLOAD_HASH,
+                        )
+                ) {
                     is DomainResult.Success -> result.value
                     is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
                 }
+            newSources += creditSource
+            val creditEvidence =
+                when (val result = createLendingEvidence(checkNotNull(ids.creditEvidenceId).value, creditSource)) {
+                    is DomainResult.Success -> result.value
+                    is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+                }
+            newEvidence += creditEvidence
+            if (ids.creditEvidenceLinkId != null) {
+                val linkResult =
+                    when (
+                        val result =
+                            createLendingEvidenceLink(
+                                id = ids.creditEvidenceLinkId.value,
+                                sourceId = creditSource.id,
+                                evidenceId = creditEvidence.id,
+                                role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
+                                targetPostingId = ids.destinationPostingId,
+                                status = LendingEvidenceLinkStatus.MATCHED,
+                            )
+                    ) {
+                        is DomainResult.Success -> result.value
+                        is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+                    }
                 newLinks += linkResult.link
                 newAuditLinks += linkResult.auditLinks
             }
@@ -1300,36 +1437,42 @@ class Rg08Runtime(
         // the credit branch already created the identical destination link (creditEvidenceLinkId),
         // so this branch must not fire a duplicate with the same id.
         if (ids.creditSourceId == null && destinationEvidenceLinkId != null && destinationSourceId != null && destinationEvidenceId != null) {
-            val linkResult = when (val result = createLendingEvidenceLink(
-                id = destinationEvidenceLinkId.value,
-                sourceId = destinationSourceId.value,
-                evidenceId = destinationEvidenceId.value,
-                role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
-                targetPostingId = ids.destinationPostingId,
-                status = LendingEvidenceLinkStatus.MATCHED,
-            )) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-            }
+            val linkResult =
+                when (
+                    val result =
+                        createLendingEvidenceLink(
+                            id = destinationEvidenceLinkId.value,
+                            sourceId = destinationSourceId.value,
+                            evidenceId = destinationEvidenceId.value,
+                            role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
+                            targetPostingId = ids.destinationPostingId,
+                            status = LendingEvidenceLinkStatus.MATCHED,
+                        )
+                ) {
+                    is DomainResult.Success -> result.value
+                    is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+                }
             newLinks += linkResult.link
             newAuditLinks += linkResult.auditLinks
         }
-        val provenance = when (
-            val result = createLendingConfirmationProvenance(
-                id = ids.confirmationId.value,
-                confirmationRequestId = confirmationRequestId,
-                role = LendingConfirmationRole.LENDING_SETTLEMENT_CONFIRMATION,
-                transactionKind = TransactionKind.COLLECT,
-                transactionId = ids.transactionId,
-                counterpartyId = counterpartyId,
-                confirmedAt = confirmedAt,
-                candidateId = candidateId,
-                settlementId = ids.settlementId,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
-        }
+        val provenance =
+            when (
+                val result =
+                    createLendingConfirmationProvenance(
+                        id = ids.confirmationId.value,
+                        confirmationRequestId = confirmationRequestId,
+                        role = LendingConfirmationRole.LENDING_SETTLEMENT_CONFIRMATION,
+                        transactionKind = TransactionKind.COLLECT,
+                        transactionId = ids.transactionId,
+                        counterpartyId = counterpartyId,
+                        confirmedAt = confirmedAt,
+                        candidateId = candidateId,
+                        settlementId = ids.settlementId,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_CONFIRMED_AT)
+            }
         formalTransactions += record
         positions[positions.indexOfFirst { it.id == position.id }] = updatedPosition
         settlements += settlement
@@ -1357,16 +1500,18 @@ class Rg08Runtime(
         if (lendingCatalog.counterparty(input.agreementCounterpartyId) == null) {
             return rejected(Rg08RejectionReason.UNKNOWN_COUNTERPARTY, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         }
-        val proposedDestination = catalogAccount(input.proposedDestinationAccountId)
-            ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
+        val proposedDestination =
+            catalogAccount(input.proposedDestinationAccountId)
+                ?: return rejected(Rg08RejectionReason.UNKNOWN_ACCOUNT, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
         if (proposedDestination.kind != AccountKind.ASSET || !proposedDestination.ownedByUser) {
             return rejected(Rg08RejectionReason.OWNED_ACCOUNT_REQUIRED, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
         }
         if (!proposedDestination.realAccount) {
             return rejected(Rg08RejectionReason.FINANCIAL_ASSET_ACCOUNT_REQUIRED, Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID)
         }
-        val relationshipPosition = positions.firstOrNull { it.counterpartyId == input.agreementCounterpartyId }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val relationshipPosition =
+            positions.firstOrNull { it.counterpartyId == input.agreementCounterpartyId }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         if (input.proposedTotalReceivedMinor <= 0L) {
             return rejected(Rg08RejectionReason.TOTAL_MUST_BE_POSITIVE, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
         }
@@ -1376,82 +1521,95 @@ class Rg08Runtime(
         if (input.creditOriginalSourcePayloadHash != input.creditImmutablePayloadHash) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
         }
-        val creditSource = when (
-            val result = createLendingSourceRecord(
-                id = input.creditSourceId.value,
-                sourceRecordId = input.creditSourceRecordId,
-                kind = LendingSourceKind.BANK_CREDIT,
-                observedAt = input.creditObservedAt,
-                bookingAt = input.creditBookingAt,
-                valueAt = input.creditValueAt,
-                accountId = input.creditAccountId,
-                amountMinor = input.creditAmountMinor,
-                currency = input.creditCurrency,
-                originalSourcePayloadHash = input.creditOriginalSourcePayloadHash,
-                immutablePayloadHash = input.creditImmutablePayloadHash,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val agreementSource = when (
-            val result = createLendingSourceRecord(
-                id = input.agreementSourceId.value,
-                sourceRecordId = input.agreementSourceRecordId,
-                kind = LendingSourceKind.LENDING_AGREEMENT,
-                observedAt = input.agreementObservedAt,
-                counterpartyId = input.agreementCounterpartyId,
-                currency = input.agreementCurrency,
-                immutablePayloadHash = input.agreementImmutablePayloadHash,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val creditEvidence = when (val result = createLendingEvidence(ids.creditEvidenceId.value, creditSource)) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val agreementEvidence = when (val result = createLendingEvidence(ids.agreementEvidenceId.value, agreementSource)) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val linkResult = when (val result = createLendingEvidenceLink(
-            id = ids.agreementEvidenceLinkId.value,
-            sourceId = agreementSource.id,
-            evidenceId = agreementEvidence.id,
-            role = LendingEvidenceLinkRole.COUNTERPARTY_LENDING_RELATIONSHIP,
-            targetPositionId = relationshipPosition.id,
-            status = LendingEvidenceLinkStatus.SUPPORTED,
-        )) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val candidate = when (
-            val result = createLendingCandidate(
-                id = input.candidateId.value,
-                type = input.candidateType,
-                status = LendingCandidateStatus.PENDING_CONFIRMATION,
-                proposedTotalReceivedMinor = input.proposedTotalReceivedMinor,
-                currency = input.creditCurrency,
-                proposedDestinationAccountId = input.proposedDestinationAccountId,
-                proposedActualReceiptAt = input.proposedActualReceiptAt,
-                sourceIds = listOf(input.creditSourceId.value, input.agreementSourceId.value),
-                ruleVersion = input.ruleVersion,
-                confidence = input.confidence,
-                statusHistory = listOf(
-                    LendingCandidateStatusHistoryEntry(
-                        id = ids.candidateHistoryId,
+        val creditSource =
+            when (
+                val result =
+                    createLendingSourceRecord(
+                        id = input.creditSourceId.value,
+                        sourceRecordId = input.creditSourceRecordId,
+                        kind = LendingSourceKind.BANK_CREDIT,
+                        observedAt = input.creditObservedAt,
+                        bookingAt = input.creditBookingAt,
+                        valueAt = input.creditValueAt,
+                        accountId = input.creditAccountId,
+                        amountMinor = input.creditAmountMinor,
+                        currency = input.creditCurrency,
+                        originalSourcePayloadHash = input.creditOriginalSourcePayloadHash,
+                        immutablePayloadHash = input.creditImmutablePayloadHash,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val agreementSource =
+            when (
+                val result =
+                    createLendingSourceRecord(
+                        id = input.agreementSourceId.value,
+                        sourceRecordId = input.agreementSourceRecordId,
+                        kind = LendingSourceKind.LENDING_AGREEMENT,
+                        observedAt = input.agreementObservedAt,
+                        counterpartyId = input.agreementCounterpartyId,
+                        currency = input.agreementCurrency,
+                        immutablePayloadHash = input.agreementImmutablePayloadHash,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val creditEvidence =
+            when (val result = createLendingEvidence(ids.creditEvidenceId.value, creditSource)) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val agreementEvidence =
+            when (val result = createLendingEvidence(ids.agreementEvidenceId.value, agreementSource)) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val linkResult =
+            when (
+                val result =
+                    createLendingEvidenceLink(
+                        id = ids.agreementEvidenceLinkId.value,
+                        sourceId = agreementSource.id,
+                        evidenceId = agreementEvidence.id,
+                        role = LendingEvidenceLinkRole.COUNTERPARTY_LENDING_RELATIONSHIP,
+                        targetPositionId = relationshipPosition.id,
+                        status = LendingEvidenceLinkStatus.SUPPORTED,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val candidate =
+            when (
+                val result =
+                    createLendingCandidate(
+                        id = input.candidateId.value,
+                        type = input.candidateType,
                         status = LendingCandidateStatus.PENDING_CONFIRMATION,
-                        occurredAt = input.agreementObservedAt,
-                        formalEffectCount = 0,
-                    ),
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
-        }
+                        proposedTotalReceivedMinor = input.proposedTotalReceivedMinor,
+                        currency = input.creditCurrency,
+                        proposedDestinationAccountId = input.proposedDestinationAccountId,
+                        proposedActualReceiptAt = input.proposedActualReceiptAt,
+                        sourceIds = listOf(input.creditSourceId.value, input.agreementSourceId.value),
+                        ruleVersion = input.ruleVersion,
+                        confidence = input.confidence,
+                        statusHistory =
+                            listOf(
+                                LendingCandidateStatusHistoryEntry(
+                                    id = ids.candidateHistoryId,
+                                    status = LendingCandidateStatus.PENDING_CONFIRMATION,
+                                    occurredAt = input.agreementObservedAt,
+                                    formalEffectCount = 0,
+                                ),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_TOTAL_RECEIVED)
+            }
         if (
             candidates.any { it.id == input.candidateId.value } ||
             sourceRecords.any { it.id == input.creditSourceId.value || it.id == input.agreementSourceId.value } ||
@@ -1479,8 +1637,9 @@ class Rg08Runtime(
         operation: Rg08Operation.RejectIncompleteImportedConfirmation,
     ): Rg08ExecutionResult {
         val input = operation.input
-        val candidate = candidates.firstOrNull { it.id == input.candidateId.value }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CANDIDATE)
+        val candidate =
+            candidates.firstOrNull { it.id == input.candidateId.value }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CANDIDATE)
         if (candidate.status != LendingCandidateStatus.PENDING_CONFIRMATION) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_CANDIDATE)
         }
@@ -1494,15 +1653,18 @@ class Rg08Runtime(
         if (input.mirrorOfSourceId == input.sourceId.value) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
         }
-        val originSource = sourceRecords.firstOrNull { it.id == input.mirrorOfSourceId }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
-        val mirrorEvidence = evidence.firstOrNull { it.id == input.mirrorOfEvidenceId }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_EVIDENCE)
+        val originSource =
+            sourceRecords.firstOrNull { it.id == input.mirrorOfSourceId }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_SOURCE)
+        val mirrorEvidence =
+            evidence.firstOrNull { it.id == input.mirrorOfEvidenceId }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_EVIDENCE)
         if (mirrorEvidence.sourceId != originSource.id) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_EVIDENCE)
         }
-        val mergedInto = evidenceLinks.firstOrNull { it.id == input.mergedIntoEvidenceLinkId }
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_TARGET_POSTING)
+        val mergedInto =
+            evidenceLinks.firstOrNull { it.id == input.mergedIntoEvidenceLinkId }
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_TARGET_POSTING)
         if (mergedInto.targetId != input.targetPostingId.value) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_TARGET_POSTING)
         }
@@ -1516,38 +1678,45 @@ class Rg08Runtime(
         ) {
             return rejected(Rg08RejectionReason.DOMAIN_REJECTED, Rg08FieldPath.INPUT_SOURCE)
         }
-        val source = when (
-            val result = createLendingSourceRecord(
-                id = input.sourceId.value,
-                sourceRecordId = input.sourceRecordId,
-                kind = LendingSourceKind.BANK_CREDIT_MIRROR,
-                observedAt = input.observedAt,
-                amountMinor = input.amountMinor,
-                currency = input.currency,
-                immutablePayloadHash = input.immutablePayloadHash,
-                mirrorOfSourceId = input.mirrorOfSourceId,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val evidenceItem = when (val result = createLendingEvidence(input.evidenceId.value, source)) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
-        val linkResult = when (val result = createLendingEvidenceLink(
-            id = input.evidenceLinkId.value,
-            sourceId = source.id,
-            evidenceId = evidenceItem.id,
-            role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
-            targetPostingId = input.targetPostingId,
-            status = LendingEvidenceLinkStatus.MERGED,
-            mirrorOfEvidenceId = input.mirrorOfEvidenceId,
-            mergedIntoEvidenceLinkId = input.mergedIntoEvidenceLinkId,
-        )) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
-        }
+        val source =
+            when (
+                val result =
+                    createLendingSourceRecord(
+                        id = input.sourceId.value,
+                        sourceRecordId = input.sourceRecordId,
+                        kind = LendingSourceKind.BANK_CREDIT_MIRROR,
+                        observedAt = input.observedAt,
+                        amountMinor = input.amountMinor,
+                        currency = input.currency,
+                        immutablePayloadHash = input.immutablePayloadHash,
+                        mirrorOfSourceId = input.mirrorOfSourceId,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val evidenceItem =
+            when (val result = createLendingEvidence(input.evidenceId.value, source)) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
+        val linkResult =
+            when (
+                val result =
+                    createLendingEvidenceLink(
+                        id = input.evidenceLinkId.value,
+                        sourceId = source.id,
+                        evidenceId = evidenceItem.id,
+                        role = LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
+                        targetPostingId = input.targetPostingId,
+                        status = LendingEvidenceLinkStatus.MERGED,
+                        mirrorOfEvidenceId = input.mirrorOfEvidenceId,
+                        mergedIntoEvidenceLinkId = input.mergedIntoEvidenceLinkId,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg08FieldPath.INPUT_SOURCE)
+            }
         sourceRecords += source
         evidence += evidenceItem
         evidenceLinks += linkResult.link
@@ -1564,8 +1733,9 @@ class Rg08Runtime(
 
     private fun renameCounterparty(operation: Rg08Operation.RenameCounterparty): Rg08ExecutionResult {
         val input = operation.input
-        val current = counterpartyNames[input.counterpartyId]
-            ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
+        val current =
+            counterpartyNames[input.counterpartyId]
+                ?: return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         if (current != input.oldDisplayName) {
             return rejected(Rg08RejectionReason.INVALID_RG08_INPUT, Rg08FieldPath.INPUT_COUNTERPARTY_ID)
         }
@@ -1579,8 +1749,9 @@ class Rg08Runtime(
     }
 
     private fun replayRetry(operation: Rg08Operation.RetryIdempotentInput): Rg08ExecutionResult {
-        val receipt = receipts[operation.identity]
-            ?: return Rg08ExecutionResult.RequestIdentityConflict
+        val receipt =
+            receipts[operation.identity]
+                ?: return Rg08ExecutionResult.RequestIdentityConflict
         return when (val result = receipt.result) {
             is Rg08ExecutionResult.Accepted -> Rg08ExecutionResult.NoChange(result.returnedIds)
             else -> result
@@ -1588,46 +1759,51 @@ class Rg08Runtime(
     }
 
     private fun rejectInvalidInput(operation: Rg08Operation.InvalidInput): Rg08ExecutionResult {
-        val (reason, fieldPath) = when (operation.input.predicate) {
-            Rg08InvalidPredicate.EXACT_DECIMAL_TOTAL ->
-                Rg08RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg08FieldPath.ATTEMPTED_TOTAL_RECEIVED
-            Rg08InvalidPredicate.TOTAL_POSITIVE ->
-                Rg08RejectionReason.TOTAL_MUST_BE_POSITIVE to Rg08FieldPath.ATTEMPTED_TOTAL_RECEIVED
-            Rg08InvalidPredicate.COMPONENTS_EQUAL_TOTAL ->
-                Rg08RejectionReason.COMPONENTS_MUST_EQUAL_TOTAL to Rg08FieldPath.ATTEMPTED_COMPONENTS
-            Rg08InvalidPredicate.COMPONENT_NONNEGATIVE ->
-                Rg08RejectionReason.COMPONENT_MUST_BE_NONNEGATIVE to Rg08FieldPath.ATTEMPTED_PRINCIPAL_AMOUNT
-            Rg08InvalidPredicate.FEE_ZERO ->
-                Rg08RejectionReason.FEE_MUST_BE_ZERO_IN_RG08_V1 to Rg08FieldPath.ATTEMPTED_FEE_AMOUNT
-            Rg08InvalidPredicate.FEE_OUT_OF_SCOPE ->
-                Rg08RejectionReason.NONZERO_FEE_ACCOUNTING_OUT_OF_SCOPE to Rg08FieldPath.ATTEMPTED_FEE_AMOUNT
-            Rg08InvalidPredicate.PRINCIPAL_EXCEEDS_OUTSTANDING ->
-                Rg08RejectionReason.PRINCIPAL_EXCEEDS_OUTSTANDING_POSITION to Rg08FieldPath.ATTEMPTED_PRINCIPAL_AMOUNT
-            Rg08InvalidPredicate.UNKNOWN_DESTINATION ->
-                Rg08RejectionReason.UNKNOWN_ACCOUNT to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
-            Rg08InvalidPredicate.UNOWNED_DESTINATION ->
-                Rg08RejectionReason.OWNED_ACCOUNT_REQUIRED to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
-            Rg08InvalidPredicate.NONFINANCIAL_DESTINATION ->
-                Rg08RejectionReason.FINANCIAL_ASSET_ACCOUNT_REQUIRED to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
-            Rg08InvalidPredicate.UNKNOWN_FUNDING_ACCOUNT ->
-                Rg08RejectionReason.UNKNOWN_ACCOUNT to Rg08FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID
-            Rg08InvalidPredicate.UNKNOWN_COUNTERPARTY ->
-                Rg08RejectionReason.UNKNOWN_COUNTERPARTY to Rg08FieldPath.ATTEMPTED_COUNTERPARTY_ID
-            Rg08InvalidPredicate.INVALID_BEHAVIOR ->
-                Rg08RejectionReason.INVALID_LENDING_BEHAVIOR to Rg08FieldPath.ATTEMPTED_BEHAVIOR_CODE
-            Rg08InvalidPredicate.EXPLICIT_COMPONENT_SPLIT ->
-                Rg08RejectionReason.EXPLICIT_COMPONENT_SPLIT_REQUIRED to Rg08FieldPath.ATTEMPTED_SPLIT_SOURCE
-            Rg08InvalidPredicate.SAME_CURRENCY ->
-                Rg08RejectionReason.SAME_CURRENCY_REQUIRED to Rg08FieldPath.ATTEMPTED_CURRENCY
-            Rg08InvalidPredicate.ACTIVE_EXACT_INTEREST_CATEGORY ->
-                Rg08RejectionReason.ACTIVE_EXACT_INTEREST_CATEGORY_REQUIRED to Rg08FieldPath.ATTEMPTED_INTEREST_CATEGORY_ID
-        }
+        val (reason, fieldPath) =
+            when (operation.input.predicate) {
+                Rg08InvalidPredicate.EXACT_DECIMAL_TOTAL ->
+                    Rg08RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg08FieldPath.ATTEMPTED_TOTAL_RECEIVED
+                Rg08InvalidPredicate.TOTAL_POSITIVE ->
+                    Rg08RejectionReason.TOTAL_MUST_BE_POSITIVE to Rg08FieldPath.ATTEMPTED_TOTAL_RECEIVED
+                Rg08InvalidPredicate.COMPONENTS_EQUAL_TOTAL ->
+                    Rg08RejectionReason.COMPONENTS_MUST_EQUAL_TOTAL to Rg08FieldPath.ATTEMPTED_COMPONENTS
+                Rg08InvalidPredicate.COMPONENT_NONNEGATIVE ->
+                    Rg08RejectionReason.COMPONENT_MUST_BE_NONNEGATIVE to Rg08FieldPath.ATTEMPTED_PRINCIPAL_AMOUNT
+                Rg08InvalidPredicate.FEE_ZERO ->
+                    Rg08RejectionReason.FEE_MUST_BE_ZERO_IN_RG08_V1 to Rg08FieldPath.ATTEMPTED_FEE_AMOUNT
+                Rg08InvalidPredicate.FEE_OUT_OF_SCOPE ->
+                    Rg08RejectionReason.NONZERO_FEE_ACCOUNTING_OUT_OF_SCOPE to Rg08FieldPath.ATTEMPTED_FEE_AMOUNT
+                Rg08InvalidPredicate.PRINCIPAL_EXCEEDS_OUTSTANDING ->
+                    Rg08RejectionReason.PRINCIPAL_EXCEEDS_OUTSTANDING_POSITION to Rg08FieldPath.ATTEMPTED_PRINCIPAL_AMOUNT
+                Rg08InvalidPredicate.UNKNOWN_DESTINATION ->
+                    Rg08RejectionReason.UNKNOWN_ACCOUNT to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
+                Rg08InvalidPredicate.UNOWNED_DESTINATION ->
+                    Rg08RejectionReason.OWNED_ACCOUNT_REQUIRED to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
+                Rg08InvalidPredicate.NONFINANCIAL_DESTINATION ->
+                    Rg08RejectionReason.FINANCIAL_ASSET_ACCOUNT_REQUIRED to Rg08FieldPath.ATTEMPTED_DESTINATION_ACCOUNT_ID
+                Rg08InvalidPredicate.UNKNOWN_FUNDING_ACCOUNT ->
+                    Rg08RejectionReason.UNKNOWN_ACCOUNT to Rg08FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID
+                Rg08InvalidPredicate.UNKNOWN_COUNTERPARTY ->
+                    Rg08RejectionReason.UNKNOWN_COUNTERPARTY to Rg08FieldPath.ATTEMPTED_COUNTERPARTY_ID
+                Rg08InvalidPredicate.INVALID_BEHAVIOR ->
+                    Rg08RejectionReason.INVALID_LENDING_BEHAVIOR to Rg08FieldPath.ATTEMPTED_BEHAVIOR_CODE
+                Rg08InvalidPredicate.EXPLICIT_COMPONENT_SPLIT ->
+                    Rg08RejectionReason.EXPLICIT_COMPONENT_SPLIT_REQUIRED to Rg08FieldPath.ATTEMPTED_SPLIT_SOURCE
+                Rg08InvalidPredicate.SAME_CURRENCY ->
+                    Rg08RejectionReason.SAME_CURRENCY_REQUIRED to Rg08FieldPath.ATTEMPTED_CURRENCY
+                Rg08InvalidPredicate.ACTIVE_EXACT_INTEREST_CATEGORY ->
+                    Rg08RejectionReason.ACTIVE_EXACT_INTEREST_CATEGORY_REQUIRED to Rg08FieldPath.ATTEMPTED_INTEREST_CATEGORY_ID
+            }
         return rejected(reason, fieldPath)
     }
 
     // ------------------------------------------------------------------ helpers
 
-    private fun registerAnchorReceipts(operation: Rg08Operation, fingerprint: String, result: Rg08ExecutionResult) {
+    private fun registerAnchorReceipts(
+        operation: Rg08Operation,
+        fingerprint: String,
+        result: Rg08ExecutionResult,
+    ) {
         if (result !is Rg08ExecutionResult.Accepted) return
         anchorReturnedIds(operation).forEach { (anchor, ids) ->
             if (anchor != operation.identity.value) {
@@ -1637,56 +1813,64 @@ class Rg08Runtime(
         }
     }
 
-    private fun anchorReturnedIds(operation: Rg08Operation): Map<String, List<Rg08ReturnedId>> = when (operation) {
-        is Rg08Operation.ValidateLendingEvent -> mapOf(
-            operation.ids.sourceId.value to listOf(
-                Rg08ReturnedId.SourceRecord(operation.ids.sourceId),
-                Rg08ReturnedId.Evidence(operation.ids.evidenceId),
-                Rg08ReturnedId.EvidenceLink(operation.ids.evidenceLinkId),
-                Rg08ReturnedId.TargetPosting(operation.ids.fundingPostingId),
-            ),
-        )
-        is Rg08Operation.ValidateLendingSettlement -> buildMap {
-            operation.ids.confirmationSourceId?.let { sourceId ->
-                put(
-                    sourceId.value,
-                    listOf(
-                        Rg08ReturnedId.SourceRecord(sourceId),
-                        Rg08ReturnedId.Transaction(operation.ids.transactionId),
-                        Rg08ReturnedId.Settlement(operation.ids.settlementId),
-                    ),
+    private fun anchorReturnedIds(operation: Rg08Operation): Map<String, List<Rg08ReturnedId>> =
+        when (operation) {
+            is Rg08Operation.ValidateLendingEvent ->
+                mapOf(
+                    operation.ids.sourceId.value to
+                        listOf(
+                            Rg08ReturnedId.SourceRecord(operation.ids.sourceId),
+                            Rg08ReturnedId.Evidence(operation.ids.evidenceId),
+                            Rg08ReturnedId.EvidenceLink(operation.ids.evidenceLinkId),
+                            Rg08ReturnedId.TargetPosting(operation.ids.fundingPostingId),
+                        ),
                 )
-            }
-            operation.ids.creditSourceId?.let { sourceId ->
-                put(
-                    sourceId.value,
-                    listOf(
-                        Rg08ReturnedId.SourceRecord(sourceId),
-                        Rg08ReturnedId.Evidence(operation.ids.creditEvidenceId!!),
-                        Rg08ReturnedId.EvidenceLink(operation.ids.creditEvidenceLinkId!!),
-                        Rg08ReturnedId.TargetPosting(operation.ids.destinationPostingId),
-                    ),
+            is Rg08Operation.ValidateLendingSettlement ->
+                buildMap {
+                    operation.ids.confirmationSourceId?.let { sourceId ->
+                        put(
+                            sourceId.value,
+                            listOf(
+                                Rg08ReturnedId.SourceRecord(sourceId),
+                                Rg08ReturnedId.Transaction(operation.ids.transactionId),
+                                Rg08ReturnedId.Settlement(operation.ids.settlementId),
+                            ),
+                        )
+                    }
+                    operation.ids.creditSourceId?.let { sourceId ->
+                        put(
+                            sourceId.value,
+                            listOf(
+                                Rg08ReturnedId.SourceRecord(sourceId),
+                                Rg08ReturnedId.Evidence(operation.ids.creditEvidenceId!!),
+                                Rg08ReturnedId.EvidenceLink(operation.ids.creditEvidenceLinkId!!),
+                                Rg08ReturnedId.TargetPosting(operation.ids.destinationPostingId),
+                            ),
+                        )
+                    }
+                }
+            is Rg08Operation.IngestImportedCollectionCandidate ->
+                mapOf(
+                    operation.input.agreementSourceId.value to
+                        listOf(
+                            Rg08ReturnedId.SourceRecord(operation.input.agreementSourceId),
+                            Rg08ReturnedId.Evidence(operation.ids.agreementEvidenceId),
+                            Rg08ReturnedId.EvidenceLink(operation.ids.agreementEvidenceLinkId),
+                            Rg08ReturnedId.Position(relationshipPositionId(operation.input.agreementCounterpartyId)),
+                        ),
                 )
-            }
+            is Rg08Operation.MergeImportedEvidence ->
+                mapOf(
+                    operation.input.requestId.value to
+                        listOf(
+                            Rg08ReturnedId.SourceRecord(operation.input.sourceId),
+                            Rg08ReturnedId.Evidence(operation.input.evidenceId),
+                            Rg08ReturnedId.EvidenceLink(operation.input.evidenceLinkId),
+                            Rg08ReturnedId.TargetPosting(operation.input.targetPostingId),
+                        ),
+                )
+            else -> emptyMap()
         }
-        is Rg08Operation.IngestImportedCollectionCandidate -> mapOf(
-            operation.input.agreementSourceId.value to listOf(
-                Rg08ReturnedId.SourceRecord(operation.input.agreementSourceId),
-                Rg08ReturnedId.Evidence(operation.ids.agreementEvidenceId),
-                Rg08ReturnedId.EvidenceLink(operation.ids.agreementEvidenceLinkId),
-                Rg08ReturnedId.Position(relationshipPositionId(operation.input.agreementCounterpartyId)),
-            ),
-        )
-        is Rg08Operation.MergeImportedEvidence -> mapOf(
-            operation.input.requestId.value to listOf(
-                Rg08ReturnedId.SourceRecord(operation.input.sourceId),
-                Rg08ReturnedId.Evidence(operation.input.evidenceId),
-                Rg08ReturnedId.EvidenceLink(operation.input.evidenceLinkId),
-                Rg08ReturnedId.TargetPosting(operation.input.targetPostingId),
-            ),
-        )
-        else -> emptyMap()
-    }
 
     private fun relationshipPositionId(counterpartyId: String): String =
         positions.firstOrNull { it.counterpartyId == counterpartyId }?.id
@@ -1697,36 +1881,42 @@ class Rg08Runtime(
         input: Rg08ConfirmImportedInput,
         ids: Rg08ConfirmImportedIds,
     ): LendingCandidate? {
-        val result = createLendingCandidate(
-            id = pending.id,
-            type = pending.type,
-            status = LendingCandidateStatus.CONFIRMED,
-            proposedTotalReceivedMinor = pending.proposedTotalReceivedMinor,
-            proposedPrincipalAmountMinor = input.principalAmount.minorUnits,
-            proposedInterestAmountMinor = input.interestAmount.minorUnits,
-            proposedFeeAmountMinor = input.feeAmount.minorUnits,
-            currency = pending.currency,
-            proposedDestinationAccountId = input.destinationAccountId,
-            proposedActualReceiptAt = input.actualReceiptAt,
-            proposedBehaviorCode = LendingBehaviorCode.COLLECT,
-            proposedCounterpartyId = input.counterpartyId,
-            sourceIds = pending.sourceIds,
-            ruleVersion = pending.ruleVersion,
-            confidence = pending.confidence,
-            statusHistory = pending.statusHistory + LendingCandidateStatusHistoryEntry(
-                id = ids.candidateConfirmedHistoryId,
+        val result =
+            createLendingCandidate(
+                id = pending.id,
+                type = pending.type,
                 status = LendingCandidateStatus.CONFIRMED,
-                occurredAt = input.confirmedAt,
-                formalEffectCount = 1,
-            ),
-        )
+                proposedTotalReceivedMinor = pending.proposedTotalReceivedMinor,
+                proposedPrincipalAmountMinor = input.principalAmount.minorUnits,
+                proposedInterestAmountMinor = input.interestAmount.minorUnits,
+                proposedFeeAmountMinor = input.feeAmount.minorUnits,
+                currency = pending.currency,
+                proposedDestinationAccountId = input.destinationAccountId,
+                proposedActualReceiptAt = input.actualReceiptAt,
+                proposedBehaviorCode = LendingBehaviorCode.COLLECT,
+                proposedCounterpartyId = input.counterpartyId,
+                sourceIds = pending.sourceIds,
+                ruleVersion = pending.ruleVersion,
+                confidence = pending.confidence,
+                statusHistory =
+                    pending.statusHistory +
+                        LendingCandidateStatusHistoryEntry(
+                            id = ids.candidateConfirmedHistoryId,
+                            status = LendingCandidateStatus.CONFIRMED,
+                            occurredAt = input.confirmedAt,
+                            formalEffectCount = 1,
+                        ),
+            )
         return when (result) {
             is DomainResult.Success -> result.value
             is DomainResult.Failure -> null
         }
     }
 
-    private fun resolvePosition(linkedPositionId: String?, counterpartyId: String): LendingPosition? {
+    private fun resolvePosition(
+        linkedPositionId: String?,
+        counterpartyId: String,
+    ): LendingPosition? {
         if (linkedPositionId != null) {
             return positions.firstOrNull { it.id == linkedPositionId }
         }
@@ -1734,8 +1924,9 @@ class Rg08Runtime(
     }
 
     private fun exactInterestAccountId(categoryId: CategoryId): com.unifiedledger.domain.Account? {
-        val category = catalog.categories.firstOrNull { it.id == categoryId }
-            ?: return null
+        val category =
+            catalog.categories.firstOrNull { it.id == categoryId }
+                ?: return null
         if (category.kind != CategoryKind.INCOME || !category.active) return null
         val account = category.postingAccountId?.let(::catalogAccount) ?: return null
         if (account.kind != AccountKind.INCOME) return null
@@ -1749,29 +1940,32 @@ class Rg08Runtime(
         receivableAccountId: AccountId,
         principalMinor: Long,
     ): DomainResult<FormalTransaction> {
-        val postingSet = when (
-            val result = PostingSet.create(
-                ids.postingSetId,
-                listOf(
-                    Posting(ids.receivablePostingId, receivableAccountId, Money.ofMinor(principalMinor, input.currency)),
-                    Posting(ids.fundingPostingId, input.fundingAccountId, Money.ofMinor(checkedNegate(principalMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), input.currency)),
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
-        }
+        val postingSet =
+            when (
+                val result =
+                    PostingSet.create(
+                        ids.postingSetId,
+                        listOf(
+                            Posting(ids.receivablePostingId, receivableAccountId, Money.ofMinor(principalMinor, input.currency)),
+                            Posting(ids.fundingPostingId, input.fundingAccountId, Money.ofMinor(checkedNegate(principalMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), input.currency)),
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
+            }
         return FormalTransaction.create(
             Transaction(ids.transactionId, ledgerId, TransactionKind.LEND, ids.versionId),
-            versions = listOf(
-                TransactionVersion(
-                    ids.versionId,
-                    ids.transactionId,
-                    versionNumber = 1,
-                    postingSetId = ids.postingSetId,
-                    times = TransactionTimes(input.actualAt, input.actualAt, input.actualAt),
+            versions =
+                listOf(
+                    TransactionVersion(
+                        ids.versionId,
+                        ids.transactionId,
+                        versionNumber = 1,
+                        postingSetId = ids.postingSetId,
+                        times = TransactionTimes(input.actualAt, input.actualAt, input.actualAt),
+                    ),
                 ),
-            ),
             postingSets = listOf(postingSet),
         )
     }
@@ -1788,70 +1982,79 @@ class Rg08Runtime(
         currency: CurrencyUnit,
         actualReceiptAt: Instant,
     ): DomainResult<FormalTransaction> {
-        val postingSet = when (
-            val result = PostingSet.create(
-                ids.postingSetId,
-                listOf(
-                    Posting(ids.destinationPostingId, destinationAccountId, Money.ofMinor(totalReceivedMinor, currency)),
-                    Posting(ids.principalPostingId, receivableAccountId, Money.ofMinor(checkedNegate(principalMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), currency)),
-                    Posting(ids.interestPostingId, interestAccountId.id, Money.ofMinor(checkedNegate(interestMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), currency)),
-                ),
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
-        }
+        val postingSet =
+            when (
+                val result =
+                    PostingSet.create(
+                        ids.postingSetId,
+                        listOf(
+                            Posting(ids.destinationPostingId, destinationAccountId, Money.ofMinor(totalReceivedMinor, currency)),
+                            Posting(ids.principalPostingId, receivableAccountId, Money.ofMinor(checkedNegate(principalMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), currency)),
+                            Posting(ids.interestPostingId, interestAccountId.id, Money.ofMinor(checkedNegate(interestMinor) ?: return DomainResult.Failure(DomainResultFailureViolation), currency)),
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return DomainResult.Failure(DomainResultFailureViolation)
+            }
         return FormalTransaction.create(
             Transaction(ids.transactionId, ledgerId, TransactionKind.COLLECT, ids.versionId),
-            versions = listOf(
-                TransactionVersion(
-                    ids.versionId,
-                    ids.transactionId,
-                    versionNumber = 1,
-                    postingSetId = ids.postingSetId,
-                    times = TransactionTimes(actualReceiptAt, actualReceiptAt, actualReceiptAt),
+            versions =
+                listOf(
+                    TransactionVersion(
+                        ids.versionId,
+                        ids.transactionId,
+                        versionNumber = 1,
+                        postingSetId = ids.postingSetId,
+                        times = TransactionTimes(actualReceiptAt, actualReceiptAt, actualReceiptAt),
+                    ),
                 ),
-            ),
             postingSets = listOf(postingSet),
         )
     }
 
-    private fun toSettlementIds(ids: Rg08ConfirmImportedIds): Rg08SettlementIds = Rg08SettlementIds(
-        transactionId = ids.transactionId,
-        versionId = ids.versionId,
-        postingSetId = ids.postingSetId,
-        destinationPostingId = ids.destinationPostingId,
-        principalPostingId = ids.principalPostingId,
-        interestPostingId = ids.interestPostingId,
-        settlementId = ids.settlementId,
-        settlementHistoryId = ids.settlementHistoryId,
-        positionHistoryId = ids.positionHistoryId,
-        confirmationId = ids.confirmationId,
-        principalComponentId = ids.principalComponentId,
-        interestComponentId = ids.interestComponentId,
-        feeComponentId = ids.feeComponentId,
-    )
+    private fun toSettlementIds(ids: Rg08ConfirmImportedIds): Rg08SettlementIds =
+        Rg08SettlementIds(
+            transactionId = ids.transactionId,
+            versionId = ids.versionId,
+            postingSetId = ids.postingSetId,
+            destinationPostingId = ids.destinationPostingId,
+            principalPostingId = ids.principalPostingId,
+            interestPostingId = ids.interestPostingId,
+            settlementId = ids.settlementId,
+            settlementHistoryId = ids.settlementHistoryId,
+            positionHistoryId = ids.positionHistoryId,
+            confirmationId = ids.confirmationId,
+            principalComponentId = ids.principalComponentId,
+            interestComponentId = ids.interestComponentId,
+            feeComponentId = ids.feeComponentId,
+        )
 
-    private fun gateReason(field: LendingConfirmationGateField): Rg08RejectionReason = when (field) {
-        LendingConfirmationGateField.BEHAVIOR_CODE -> Rg08RejectionReason.BEHAVIOR_CONFIRMATION_REQUIRED
-        LendingConfirmationGateField.COUNTERPARTY_ID -> Rg08RejectionReason.COUNTERPARTY_CONFIRMATION_REQUIRED
-        LendingConfirmationGateField.DESTINATION_ACCOUNT_ID -> Rg08RejectionReason.DESTINATION_CONFIRMATION_REQUIRED
-        LendingConfirmationGateField.PRINCIPAL_AMOUNT -> Rg08RejectionReason.PRINCIPAL_CONFIRMATION_REQUIRED
-        LendingConfirmationGateField.INTEREST_AND_FEE_AMOUNTS -> Rg08RejectionReason.INTEREST_AND_FEE_CONFIRMATION_REQUIRED
-        LendingConfirmationGateField.ACTUAL_RECEIPT_TIME -> Rg08RejectionReason.ACTUAL_RECEIPT_TIME_CONFIRMATION_REQUIRED
-    }
+    private fun gateReason(field: LendingConfirmationGateField): Rg08RejectionReason =
+        when (field) {
+            LendingConfirmationGateField.BEHAVIOR_CODE -> Rg08RejectionReason.BEHAVIOR_CONFIRMATION_REQUIRED
+            LendingConfirmationGateField.COUNTERPARTY_ID -> Rg08RejectionReason.COUNTERPARTY_CONFIRMATION_REQUIRED
+            LendingConfirmationGateField.DESTINATION_ACCOUNT_ID -> Rg08RejectionReason.DESTINATION_CONFIRMATION_REQUIRED
+            LendingConfirmationGateField.PRINCIPAL_AMOUNT -> Rg08RejectionReason.PRINCIPAL_CONFIRMATION_REQUIRED
+            LendingConfirmationGateField.INTEREST_AND_FEE_AMOUNTS -> Rg08RejectionReason.INTEREST_AND_FEE_CONFIRMATION_REQUIRED
+            LendingConfirmationGateField.ACTUAL_RECEIPT_TIME -> Rg08RejectionReason.ACTUAL_RECEIPT_TIME_CONFIRMATION_REQUIRED
+        }
 
-    private fun gateFieldPath(field: LendingConfirmationGateField): Rg08FieldPath = when (field) {
-        LendingConfirmationGateField.BEHAVIOR_CODE -> Rg08FieldPath.INPUT_BEHAVIOR_CODE
-        LendingConfirmationGateField.COUNTERPARTY_ID -> Rg08FieldPath.INPUT_COUNTERPARTY_ID
-        LendingConfirmationGateField.DESTINATION_ACCOUNT_ID -> Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID
-        LendingConfirmationGateField.PRINCIPAL_AMOUNT -> Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT
-        LendingConfirmationGateField.INTEREST_AND_FEE_AMOUNTS -> Rg08FieldPath.INPUT_INTEREST_AND_FEE_AMOUNTS
-        LendingConfirmationGateField.ACTUAL_RECEIPT_TIME -> Rg08FieldPath.INPUT_ACTUAL_RECEIPT_TIME
-    }
+    private fun gateFieldPath(field: LendingConfirmationGateField): Rg08FieldPath =
+        when (field) {
+            LendingConfirmationGateField.BEHAVIOR_CODE -> Rg08FieldPath.INPUT_BEHAVIOR_CODE
+            LendingConfirmationGateField.COUNTERPARTY_ID -> Rg08FieldPath.INPUT_COUNTERPARTY_ID
+            LendingConfirmationGateField.DESTINATION_ACCOUNT_ID -> Rg08FieldPath.INPUT_DESTINATION_ACCOUNT_ID
+            LendingConfirmationGateField.PRINCIPAL_AMOUNT -> Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT
+            LendingConfirmationGateField.INTEREST_AND_FEE_AMOUNTS -> Rg08FieldPath.INPUT_INTEREST_AND_FEE_AMOUNTS
+            LendingConfirmationGateField.ACTUAL_RECEIPT_TIME -> Rg08FieldPath.INPUT_ACTUAL_RECEIPT_TIME
+        }
 
-    private fun domainRejected(violation: com.unifiedledger.domain.DomainViolation, fieldPath: Rg08FieldPath): Rg08ExecutionResult {
-        return when (violation) {
+    private fun domainRejected(
+        violation: com.unifiedledger.domain.DomainViolation,
+        fieldPath: Rg08FieldPath,
+    ): Rg08ExecutionResult =
+        when (violation) {
             is LendingViolation.InvalidLendingBehavior ->
                 rejected(Rg08RejectionReason.INVALID_LENDING_BEHAVIOR, Rg08FieldPath.INPUT_BEHAVIOR_CODE)
             is LendingViolation.UnknownAccount ->
@@ -1909,68 +2112,76 @@ class Rg08Runtime(
             is LendingViolation.HistoryMustBeAppendOnly,
             is LendingViolation.InvalidPositionHistoryDirection,
             is LendingViolation.InvalidSettlementLifecycle,
-            is LendingViolation.InvalidFormalEffectCount ->
+            is LendingViolation.InvalidFormalEffectCount,
+            ->
                 rejected(Rg08RejectionReason.INVALID_RG08_INPUT, fieldPath)
             else -> rejected(Rg08RejectionReason.DOMAIN_REJECTED, fieldPath)
         }
-    }
 
     private fun catalogAccount(id: AccountId): Account? = catalog.accounts.firstOrNull { it.id == id }
 
     private fun postingExists(id: PostingId): Boolean =
-        formalTransactions.asSequence()
+        formalTransactions
+            .asSequence()
             .flatMap { it.formalTransaction.currentPostings().asSequence() }
             .any { it.id == id }
 
-    private fun replayBalances(): Map<AccountId, Money> = buildMap {
-        catalog.accounts.forEach { account ->
-            var total = 0L
-            formalTransactions
-                .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
-                .forEach { record ->
-                    record.formalTransaction.currentPostings()
-                        .filter { it.accountId == account.id }
-                        .forEach { posting ->
-                            check(posting.amount.currency == account.currency) { "RG-08 posting currency mismatch" }
-                            total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-08 balance overflow")
-                        }
-                }
-            put(account.id, Money.ofMinor(total, account.currency))
+    private fun replayBalances(): Map<AccountId, Money> =
+        buildMap {
+            catalog.accounts.forEach { account ->
+                var total = 0L
+                formalTransactions
+                    .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
+                    .forEach { record ->
+                        record.formalTransaction
+                            .currentPostings()
+                            .filter { it.accountId == account.id }
+                            .forEach { posting ->
+                                check(posting.amount.currency == account.currency) { "RG-08 posting currency mismatch" }
+                                total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-08 balance overflow")
+                            }
+                    }
+                put(account.id, Money.ofMinor(total, account.currency))
+            }
         }
-    }
 
     private fun reports(): Map<String, Rg08Report> {
         val periods = linkedMapOf<String, Rg08Report>()
         formalTransactions.forEach { record ->
             if (record.formalTransaction.transaction.kind !in LENDING_TRANSACTION_KINDS) return@forEach
-            val report = when (record.formalTransaction.transaction.kind) {
-                TransactionKind.LEND -> {
-                    val receivablePosting = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "RECEIVABLE" }
-                    Rg08Report(
-                        lendingPrincipalCashOutflowMinor = receivablePosting.amount.minorUnits,
-                        cashOutflowMinor = receivablePosting.amount.minorUnits,
-                    )
+            val report =
+                when (record.formalTransaction.transaction.kind) {
+                    TransactionKind.LEND -> {
+                        val receivablePosting =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "RECEIVABLE" }
+                        Rg08Report(
+                            lendingPrincipalCashOutflowMinor = receivablePosting.amount.minorUnits,
+                            cashOutflowMinor = receivablePosting.amount.minorUnits,
+                        )
+                    }
+                    TransactionKind.COLLECT -> {
+                        val settlement =
+                            settlements.firstOrNull { it.transactionId == record.formalTransaction.transaction.id }
+                                ?: return@forEach
+                        val principal = settlement.components.first { it.kind == LendingComponentKind.PRINCIPAL }.amountMinor
+                        val interest = settlement.components.first { it.kind == LendingComponentKind.INTEREST }.amountMinor
+                        val total = settlement.totalReceivedMinor
+                        Rg08Report(
+                            lendingPrincipalCashInflowMinor = principal,
+                            interestCashInflowMinor = interest,
+                            totalCashInflowMinor = total,
+                            ordinaryInterestIncomeMinor = interest,
+                            ordinaryIncomeMinor = interest,
+                            netWorthChangeMinor = interest,
+                        )
+                    }
+                    else -> Rg08Report()
                 }
-                TransactionKind.COLLECT -> {
-                    val settlement = settlements.firstOrNull { it.transactionId == record.formalTransaction.transaction.id }
-                        ?: return@forEach
-                    val principal = settlement.components.first { it.kind == LendingComponentKind.PRINCIPAL }.amountMinor
-                    val interest = settlement.components.first { it.kind == LendingComponentKind.INTEREST }.amountMinor
-                    val total = settlement.totalReceivedMinor
-                    Rg08Report(
-                        lendingPrincipalCashInflowMinor = principal,
-                        interestCashInflowMinor = interest,
-                        totalCashInflowMinor = total,
-                        ordinaryInterestIncomeMinor = interest,
-                        ordinaryIncomeMinor = interest,
-                        netWorthChangeMinor = interest,
-                    )
-                }
-                else -> Rg08Report()
-            }
-            val period = (record.statisticsAtText ?: record.formalTransaction.currentStatisticsAtText())
-                .substring(0, 7)
+            val period =
+                (record.statisticsAtText ?: record.formalTransaction.currentStatisticsAtText())
+                    .substring(0, 7)
             val current = periods[period] ?: Rg08Report()
             periods[period] = mergeReports(current, report)
         }
@@ -1981,53 +2192,61 @@ class Rg08Runtime(
         }
     }
 
-    private fun mergeReports(left: Rg08Report, right: Rg08Report): Rg08Report = Rg08Report(
-        consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
-        expenseMinor = checkedAdd(left.expenseMinor, right.expenseMinor)!!,
-        lendingPrincipalCashOutflowMinor = checkedAdd(left.lendingPrincipalCashOutflowMinor, right.lendingPrincipalCashOutflowMinor)!!,
-        cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
-        lendingPrincipalCashInflowMinor = checkedAdd(left.lendingPrincipalCashInflowMinor, right.lendingPrincipalCashInflowMinor)!!,
-        interestCashInflowMinor = checkedAdd(left.interestCashInflowMinor, right.interestCashInflowMinor)!!,
-        totalCashInflowMinor = checkedAdd(left.totalCashInflowMinor, right.totalCashInflowMinor)!!,
-        ordinaryInterestIncomeMinor = checkedAdd(left.ordinaryInterestIncomeMinor, right.ordinaryInterestIncomeMinor)!!,
-        ordinaryIncomeMinor = checkedAdd(left.ordinaryIncomeMinor, right.ordinaryIncomeMinor)!!,
-        netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
-    )
+    private fun mergeReports(
+        left: Rg08Report,
+        right: Rg08Report,
+    ): Rg08Report =
+        Rg08Report(
+            consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
+            expenseMinor = checkedAdd(left.expenseMinor, right.expenseMinor)!!,
+            lendingPrincipalCashOutflowMinor = checkedAdd(left.lendingPrincipalCashOutflowMinor, right.lendingPrincipalCashOutflowMinor)!!,
+            cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
+            lendingPrincipalCashInflowMinor = checkedAdd(left.lendingPrincipalCashInflowMinor, right.lendingPrincipalCashInflowMinor)!!,
+            interestCashInflowMinor = checkedAdd(left.interestCashInflowMinor, right.interestCashInflowMinor)!!,
+            totalCashInflowMinor = checkedAdd(left.totalCashInflowMinor, right.totalCashInflowMinor)!!,
+            ordinaryInterestIncomeMinor = checkedAdd(left.ordinaryInterestIncomeMinor, right.ordinaryInterestIncomeMinor)!!,
+            ordinaryIncomeMinor = checkedAdd(left.ordinaryIncomeMinor, right.ordinaryIncomeMinor)!!,
+            netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
+        )
 
-    private fun reconciliation(): Map<String, String> = buildMap {
-        formalTransactions
-            .filter { it.formalTransaction.transaction.kind in LENDING_TRANSACTION_KINDS }
-            .forEach { record ->
-                val transaction = record.formalTransaction.transaction
-                val postings = record.formalTransaction.currentPostings()
-                var allEligibleMatched = true
-                postings.forEach { posting ->
-                    val semantic = postingSemantics[posting.id.value] ?: return@forEach
-                    val matched = evidenceLinks.any {
-                        it.targetId == posting.id.value &&
-                            it.role in RECONCILIATION_POSTING_ROLES &&
-                            it.status == LendingEvidenceLinkStatus.MATCHED
+    private fun reconciliation(): Map<String, String> =
+        buildMap {
+            formalTransactions
+                .filter { it.formalTransaction.transaction.kind in LENDING_TRANSACTION_KINDS }
+                .forEach { record ->
+                    val transaction = record.formalTransaction.transaction
+                    val postings = record.formalTransaction.currentPostings()
+                    var allEligibleMatched = true
+                    postings.forEach { posting ->
+                        val semantic = postingSemantics[posting.id.value] ?: return@forEach
+                        val matched =
+                            evidenceLinks.any {
+                                it.targetId == posting.id.value &&
+                                    it.role in RECONCILIATION_POSTING_ROLES &&
+                                    it.status == LendingEvidenceLinkStatus.MATCHED
+                            }
+                        val status =
+                            when {
+                                !semantic.reconciliationEligible -> "not_applicable"
+                                matched -> "matched"
+                                else -> "pending"
+                            }
+                        put(posting.id.value, status)
+                        if (semantic.reconciliationEligible && status != "matched") {
+                            allEligibleMatched = false
+                        }
                     }
-                    val status = when {
-                        !semantic.reconciliationEligible -> "not_applicable"
-                        matched -> "matched"
-                        else -> "pending"
-                    }
-                    put(posting.id.value, status)
-                    if (semantic.reconciliationEligible && status != "matched") {
-                        allEligibleMatched = false
-                    }
+                    put(transaction.id.value, if (allEligibleMatched) "complete" else "pending")
                 }
-                put(transaction.id.value, if (allEligibleMatched) "complete" else "pending")
-            }
-    }
+        }
 
     private fun canAppendFormalTransaction(record: Rg08FormalTransactionRecord): Boolean {
         if (!catalogCompatible(record.formalTransaction) || formalIdCollision(record.formalTransaction)) {
             return false
         }
         val currentBalances = replayBalances()
-        record.formalTransaction.currentPostings()
+        record.formalTransaction
+            .currentPostings()
             .groupBy { it.accountId }
             .forEach { (accountId, postings) ->
                 var total = currentBalances[accountId]?.minorUnits ?: return false
@@ -2049,15 +2268,18 @@ class Rg08Runtime(
 
     private fun formalIdCollision(formal: FormalTransaction): Boolean {
         val transactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val versionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val postingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val postingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val versionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val postingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val postingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return formal.transaction.id in transactionIds ||
             formal.versions.any { it.id in versionIds } ||
             formal.postingSets.any { it.id in postingSetIds } ||
@@ -2065,244 +2287,267 @@ class Rg08Runtime(
     }
 
     private fun FormalTransaction.currentStatisticsAtText(): String =
-        versions.first { it.id == transaction.currentVersionId }.times.statisticsAt.toString()
+        versions
+            .first { it.id == transaction.currentVersionId }
+            .times.statisticsAt
+            .toString()
 
-    private fun canonicalInput(operation: Rg08Operation): String = when (operation) {
-        is Rg08Operation.ValidateLendingEvent -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.behaviorCode,
-            operation.input.counterpartyId,
-            operation.input.fundingAccountId.value,
-            canonicalMoney(operation.input.principalAmount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.actualAt.toString(),
-            operation.input.actualAtText,
-            operation.input.confirmedAt.toString(),
-            operation.input.confirmedAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.receivablePostingId.value,
-            operation.ids.fundingPostingId.value,
-            operation.ids.positionId,
-            operation.ids.positionHistoryId,
-            operation.ids.confirmationId.value,
-            operation.ids.sourceId.value,
-            operation.ids.sourceRecordId,
-            operation.ids.sourceObservedAt.toString(),
-            operation.ids.sourceObservedAtText,
-            operation.ids.sourceAmountMinor.toString(),
-            operation.ids.evidenceId.value,
-            operation.ids.evidenceLinkId.value,
-        )
-        is Rg08Operation.ValidateLendingSettlement -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.behaviorCode,
-            operation.input.counterpartyId,
-            operation.input.linkedPositionId,
-            operation.input.allocatedLendTransactionId?.value,
-            operation.input.destinationAccountId.value,
-            canonicalMoney(operation.input.totalReceived),
-            canonicalMoney(operation.input.principalAmount),
-            canonicalMoney(operation.input.interestAmount),
-            canonicalMoney(operation.input.feeAmount),
-            operation.input.interestCategoryId.value,
-            canonicalCurrency(operation.input.currency),
-            operation.input.actualReceiptAt.toString(),
-            operation.input.actualReceiptAtText,
-            operation.input.confirmedAt.toString(),
-            operation.input.confirmedAtText,
-            operation.input.explicitConfirmation.toString(),
-            canonicalSettlementIds(operation.ids),
-        )
-        is Rg08Operation.IngestImportedCollectionCandidate -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.creditSourceId.value,
-            operation.input.creditSourceRecordId,
-            operation.input.creditObservedAt.toString(),
-            operation.input.creditObservedAtText,
-            operation.input.creditBookingAt.toString(),
-            operation.input.creditBookingAtText,
-            operation.input.creditValueAt.toString(),
-            operation.input.creditValueAtText,
-            operation.input.creditAccountId.value,
-            operation.input.creditAmountMinor.toString(),
-            canonicalCurrency(operation.input.creditCurrency),
-            operation.input.creditOriginalSourcePayloadHash,
-            operation.input.creditImmutablePayloadHash,
-            operation.input.agreementSourceId.value,
-            operation.input.agreementSourceRecordId,
-            operation.input.agreementObservedAt.toString(),
-            operation.input.agreementObservedAtText,
-            operation.input.agreementCounterpartyId,
-            canonicalCurrency(operation.input.agreementCurrency),
-            operation.input.agreementImmutablePayloadHash,
-            operation.input.candidateId.value,
-            operation.input.candidateType,
-            operation.input.proposedTotalReceivedMinor.toString(),
-            operation.input.proposedDestinationAccountId.value,
-            operation.input.proposedActualReceiptAt.toString(),
-            operation.input.proposedActualReceiptAtText,
-            operation.input.ruleVersion.toString(),
-            operation.input.confidence,
-            operation.ids.creditEvidenceId.value,
-            operation.ids.agreementEvidenceId.value,
-            operation.ids.agreementEvidenceLinkId.value,
-            operation.ids.candidateHistoryId,
-        )
-        is Rg08Operation.RejectIncompleteImportedConfirmation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.candidateId.value,
-            operation.input.missingField.name,
-        )
-        is Rg08Operation.ConfirmImportedCollection -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.candidateId.value,
-            operation.input.behaviorCode,
-            operation.input.counterpartyId,
-            operation.input.destinationAccountId.value,
-            canonicalMoney(operation.input.principalAmount),
-            canonicalMoney(operation.input.interestAmount),
-            canonicalMoney(operation.input.feeAmount),
-            operation.input.interestCategoryId.value,
-            canonicalCurrency(operation.input.currency),
-            operation.input.actualReceiptAt.toString(),
-            operation.input.actualReceiptAtText,
-            operation.input.confirmedAt.toString(),
-            operation.input.confirmedAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.explicitlyConfirmedFields.sorted().joinToString("|"),
-            canonicalSettlementIds(toSettlementIds(operation.ids)),
-            operation.ids.candidateConfirmedHistoryId,
-            operation.ids.destinationEvidenceLinkId.value,
-        )
-        is Rg08Operation.AllocateLendingCollection -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.counterpartyId,
-            operation.input.destinationAccountId.value,
-            canonicalMoney(operation.input.totalReceived),
-            canonicalMoney(operation.input.principalAmount),
-            canonicalMoney(operation.input.interestAmount),
-            canonicalMoney(operation.input.feeAmount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.actualReceiptAt?.toString(),
-            operation.input.actualReceiptAtText,
-            operation.input.confirmedAt?.toString(),
-            operation.input.confirmedAtText,
-            canonicalSettlementIds(operation.input.ids),
-        )
-        is Rg08Operation.MergeImportedEvidence -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.sourceId.value,
-            operation.input.sourceRecordId,
-            operation.input.observedAt.toString(),
-            operation.input.observedAtText,
-            operation.input.amountMinor.toString(),
-            canonicalCurrency(operation.input.currency),
-            operation.input.mirrorOfSourceId,
-            operation.input.immutablePayloadHash,
-            operation.input.evidenceId.value,
-            operation.input.evidenceLinkId.value,
-            operation.input.targetPostingId.value,
-            operation.input.mirrorOfEvidenceId,
-            operation.input.mergedIntoEvidenceLinkId,
-        )
-        is Rg08Operation.RenameCounterparty -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.counterpartyId,
-            operation.input.oldDisplayName,
-            operation.input.newDisplayName,
-            operation.input.nameHistoryId,
-        )
-        is Rg08Operation.RetryIdempotentInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.inputId,
-        )
-        is Rg08Operation.InvalidInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.predicate.name,
-            operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
-                "$key=${value ?: "<null>"}"
-            },
-        )
-    }
+    private fun canonicalInput(operation: Rg08Operation): String =
+        when (operation) {
+            is Rg08Operation.ValidateLendingEvent ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.behaviorCode,
+                    operation.input.counterpartyId,
+                    operation.input.fundingAccountId.value,
+                    canonicalMoney(operation.input.principalAmount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.actualAt.toString(),
+                    operation.input.actualAtText,
+                    operation.input.confirmedAt.toString(),
+                    operation.input.confirmedAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.receivablePostingId.value,
+                    operation.ids.fundingPostingId.value,
+                    operation.ids.positionId,
+                    operation.ids.positionHistoryId,
+                    operation.ids.confirmationId.value,
+                    operation.ids.sourceId.value,
+                    operation.ids.sourceRecordId,
+                    operation.ids.sourceObservedAt.toString(),
+                    operation.ids.sourceObservedAtText,
+                    operation.ids.sourceAmountMinor.toString(),
+                    operation.ids.evidenceId.value,
+                    operation.ids.evidenceLinkId.value,
+                )
+            is Rg08Operation.ValidateLendingSettlement ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.behaviorCode,
+                    operation.input.counterpartyId,
+                    operation.input.linkedPositionId,
+                    operation.input.allocatedLendTransactionId?.value,
+                    operation.input.destinationAccountId.value,
+                    canonicalMoney(operation.input.totalReceived),
+                    canonicalMoney(operation.input.principalAmount),
+                    canonicalMoney(operation.input.interestAmount),
+                    canonicalMoney(operation.input.feeAmount),
+                    operation.input.interestCategoryId.value,
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.actualReceiptAt.toString(),
+                    operation.input.actualReceiptAtText,
+                    operation.input.confirmedAt.toString(),
+                    operation.input.confirmedAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    canonicalSettlementIds(operation.ids),
+                )
+            is Rg08Operation.IngestImportedCollectionCandidate ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.creditSourceId.value,
+                    operation.input.creditSourceRecordId,
+                    operation.input.creditObservedAt.toString(),
+                    operation.input.creditObservedAtText,
+                    operation.input.creditBookingAt.toString(),
+                    operation.input.creditBookingAtText,
+                    operation.input.creditValueAt.toString(),
+                    operation.input.creditValueAtText,
+                    operation.input.creditAccountId.value,
+                    operation.input.creditAmountMinor.toString(),
+                    canonicalCurrency(operation.input.creditCurrency),
+                    operation.input.creditOriginalSourcePayloadHash,
+                    operation.input.creditImmutablePayloadHash,
+                    operation.input.agreementSourceId.value,
+                    operation.input.agreementSourceRecordId,
+                    operation.input.agreementObservedAt.toString(),
+                    operation.input.agreementObservedAtText,
+                    operation.input.agreementCounterpartyId,
+                    canonicalCurrency(operation.input.agreementCurrency),
+                    operation.input.agreementImmutablePayloadHash,
+                    operation.input.candidateId.value,
+                    operation.input.candidateType,
+                    operation.input.proposedTotalReceivedMinor.toString(),
+                    operation.input.proposedDestinationAccountId.value,
+                    operation.input.proposedActualReceiptAt.toString(),
+                    operation.input.proposedActualReceiptAtText,
+                    operation.input.ruleVersion.toString(),
+                    operation.input.confidence,
+                    operation.ids.creditEvidenceId.value,
+                    operation.ids.agreementEvidenceId.value,
+                    operation.ids.agreementEvidenceLinkId.value,
+                    operation.ids.candidateHistoryId,
+                )
+            is Rg08Operation.RejectIncompleteImportedConfirmation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.candidateId.value,
+                    operation.input.missingField.name,
+                )
+            is Rg08Operation.ConfirmImportedCollection ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.candidateId.value,
+                    operation.input.behaviorCode,
+                    operation.input.counterpartyId,
+                    operation.input.destinationAccountId.value,
+                    canonicalMoney(operation.input.principalAmount),
+                    canonicalMoney(operation.input.interestAmount),
+                    canonicalMoney(operation.input.feeAmount),
+                    operation.input.interestCategoryId.value,
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.actualReceiptAt.toString(),
+                    operation.input.actualReceiptAtText,
+                    operation.input.confirmedAt.toString(),
+                    operation.input.confirmedAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.explicitlyConfirmedFields
+                        .sorted()
+                        .joinToString("|"),
+                    canonicalSettlementIds(toSettlementIds(operation.ids)),
+                    operation.ids.candidateConfirmedHistoryId,
+                    operation.ids.destinationEvidenceLinkId.value,
+                )
+            is Rg08Operation.AllocateLendingCollection ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.counterpartyId,
+                    operation.input.destinationAccountId.value,
+                    canonicalMoney(operation.input.totalReceived),
+                    canonicalMoney(operation.input.principalAmount),
+                    canonicalMoney(operation.input.interestAmount),
+                    canonicalMoney(operation.input.feeAmount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.actualReceiptAt?.toString(),
+                    operation.input.actualReceiptAtText,
+                    operation.input.confirmedAt?.toString(),
+                    operation.input.confirmedAtText,
+                    canonicalSettlementIds(operation.input.ids),
+                )
+            is Rg08Operation.MergeImportedEvidence ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.sourceId.value,
+                    operation.input.sourceRecordId,
+                    operation.input.observedAt.toString(),
+                    operation.input.observedAtText,
+                    operation.input.amountMinor.toString(),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.mirrorOfSourceId,
+                    operation.input.immutablePayloadHash,
+                    operation.input.evidenceId.value,
+                    operation.input.evidenceLinkId.value,
+                    operation.input.targetPostingId.value,
+                    operation.input.mirrorOfEvidenceId,
+                    operation.input.mergedIntoEvidenceLinkId,
+                )
+            is Rg08Operation.RenameCounterparty ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.counterpartyId,
+                    operation.input.oldDisplayName,
+                    operation.input.newDisplayName,
+                    operation.input.nameHistoryId,
+                )
+            is Rg08Operation.RetryIdempotentInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.inputId,
+                )
+            is Rg08Operation.InvalidInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.predicate.name,
+                    operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
+                        "$key=${value ?: "<null>"}"
+                    },
+                )
+        }
 
-    private fun canonicalSettlementIds(ids: Rg08SettlementIds): String = canonicalFields(
-        ids.transactionId.value,
-        ids.versionId.value,
-        ids.postingSetId.value,
-        ids.destinationPostingId.value,
-        ids.principalPostingId.value,
-        ids.interestPostingId.value,
-        ids.settlementId,
-        ids.settlementHistoryId,
-        ids.positionHistoryId,
-        ids.confirmationId.value,
-        ids.principalComponentId,
-        ids.interestComponentId,
-        ids.feeComponentId,
-        ids.confirmationSourceId?.value,
-        ids.confirmationSourceRecordId,
-        ids.confirmationSourceObservedAt?.toString(),
-        ids.confirmationSourceObservedAtText,
-        ids.creditSourceId?.value,
-        ids.creditSourceRecordId,
-        ids.creditSourceObservedAt?.toString(),
-        ids.creditSourceObservedAtText,
-        ids.creditSourceBookingAt?.toString(),
-        ids.creditSourceBookingAtText,
-        ids.creditSourceValueAt?.toString(),
-        ids.creditSourceValueAtText,
-        ids.creditEvidenceId?.value,
-        ids.creditEvidenceLinkId?.value,
-    )
+    private fun canonicalSettlementIds(ids: Rg08SettlementIds): String =
+        canonicalFields(
+            ids.transactionId.value,
+            ids.versionId.value,
+            ids.postingSetId.value,
+            ids.destinationPostingId.value,
+            ids.principalPostingId.value,
+            ids.interestPostingId.value,
+            ids.settlementId,
+            ids.settlementHistoryId,
+            ids.positionHistoryId,
+            ids.confirmationId.value,
+            ids.principalComponentId,
+            ids.interestComponentId,
+            ids.feeComponentId,
+            ids.confirmationSourceId?.value,
+            ids.confirmationSourceRecordId,
+            ids.confirmationSourceObservedAt?.toString(),
+            ids.confirmationSourceObservedAtText,
+            ids.creditSourceId?.value,
+            ids.creditSourceRecordId,
+            ids.creditSourceObservedAt?.toString(),
+            ids.creditSourceObservedAtText,
+            ids.creditSourceBookingAt?.toString(),
+            ids.creditSourceBookingAtText,
+            ids.creditSourceValueAt?.toString(),
+            ids.creditSourceValueAtText,
+            ids.creditEvidenceId?.value,
+            ids.creditEvidenceLinkId?.value,
+        )
 
-    private fun canonicalMoney(money: Money): String =
-        "${money.minorUnits}:${canonicalCurrency(money.currency)}"
+    private fun canonicalMoney(money: Money): String = "${money.minorUnits}:${canonicalCurrency(money.currency)}"
 
-    private fun canonicalCurrency(currency: CurrencyUnit): String =
-        "${currency.code}:${currency.precision}"
+    private fun canonicalCurrency(currency: CurrencyUnit): String = "${currency.code}:${currency.precision}"
 
-    private fun canonicalFields(vararg values: String?): String = buildString {
-        values.forEach { value ->
-            if (value == null) {
-                append("N;")
-            } else {
-                append("V").append(value.length).append(':').append(value).append(';')
+    private fun canonicalFields(vararg values: String?): String =
+        buildString {
+            values.forEach { value ->
+                if (value == null) {
+                    append("N;")
+                } else {
+                    append("V")
+                        .append(value.length)
+                        .append(':')
+                        .append(value)
+                        .append(';')
+                }
             }
         }
-    }
 
     private fun accepted(ids: List<Rg08ReturnedId>) = Rg08ExecutionResult.Accepted(ids)
 
-    private fun rejected(reason: Rg08RejectionReason, fieldPath: Rg08FieldPath) =
-        Rg08ExecutionResult.Rejected(reason, fieldPath)
+    private fun rejected(
+        reason: Rg08RejectionReason,
+        fieldPath: Rg08FieldPath,
+    ) = Rg08ExecutionResult.Rejected(reason, fieldPath)
 
     private companion object {
         val LENDING_TRANSACTION_KINDS = setOf(TransactionKind.LEND, TransactionKind.COLLECT)
-        val RECONCILIATION_POSTING_ROLES = setOf(
-            LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
-            LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
-        )
+        val RECONCILIATION_POSTING_ROLES =
+            setOf(
+                LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
+                LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
+            )
         const val LEND_DEBIT_PAYLOAD_HASH = "sha256:rg08-synthetic-lend-debit"
         const val MANUAL_CONFIRMATION_PAYLOAD_HASH = "sha256:rg08-synthetic-manual-confirmation"
         const val MANUAL_CREDIT_PAYLOAD_HASH = "sha256:rg08-synthetic-manual-credit"
@@ -2311,12 +2556,18 @@ class Rg08Runtime(
 
 private val DomainResultFailureViolation = com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction
 
-private fun checkedAdd(left: Long, right: Long): Long? {
+private fun checkedAdd(
+    left: Long,
+    right: Long,
+): Long? {
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null
     return left + right
 }
 
-private fun checkedSubtract(left: Long, right: Long): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
+private fun checkedSubtract(
+    left: Long,
+    right: Long,
+): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
 
 private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value

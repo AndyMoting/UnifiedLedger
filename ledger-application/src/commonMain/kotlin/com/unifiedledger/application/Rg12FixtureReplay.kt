@@ -30,7 +30,6 @@ import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.createPostingReconciliation
 import com.unifiedledger.domain.createReconciliationMatch
-import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -38,6 +37,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Instant
 
 /**
  * D-085 RG-12 fixture replay (shard 4 of the RG-12 runtime): derives the 12-operation plan
@@ -162,45 +162,58 @@ data class Rg12FixtureCase(
 fun parseRg12FixtureInputs(raw: String): Rg12FixtureInputs {
     val root = Json.parseToJsonElement(raw).jsonObject
     val ids = root.getValue("ids").jsonObject.mapValues { (_, value) -> value.jsonObject }
-    val times = root["times"]?.jsonObject?.mapValues { (_, value) ->
-        value.jsonObject.mapValues { (_, field) -> field.jsonPrimitive.content }
-    } ?: emptyMap()
+    val times =
+        root["times"]?.jsonObject?.mapValues { (_, value) ->
+            value.jsonObject.mapValues { (_, field) -> field.jsonPrimitive.content }
+        } ?: emptyMap()
     return Rg12FixtureInputs(ids, times)
 }
 
-fun adaptRg12Fixture(raw: String, inputs: Rg12FixtureInputs): Rg12FixtureCase {
+fun adaptRg12Fixture(
+    raw: String,
+    inputs: Rg12FixtureInputs,
+): Rg12FixtureCase {
     val fixture = Json.parseToJsonElement(raw).jsonObject
     val case = fixture.getValue("case").jsonObject
     val ledgerId = LedgerId(case.string("ledger_id"))
     val context = Rg12FixtureContext(inputs, ledgerId)
-    val states = fixture.getValue("states").jsonArray.map { it.jsonObject }.associateBy { it.string("id") }
+    val states =
+        fixture
+            .getValue("states")
+            .jsonArray
+            .map { it.jsonObject }
+            .associateBy { it.string("id") }
     val roots = fixture.getValue("roots").jsonArray.map { it.jsonObject }
     val rawOperations = fixture.getValue("operations").jsonArray.map { it.jsonObject }
 
-    val catalogs = buildMap {
-        roots.forEach { root -> put(root.string("id"), buildCatalog(states.getValue(root.string("initial_state_id")), ledgerId)) }
-    }
-    val baselines = buildMap {
-        roots.forEach { root -> put(root.string("id"), buildInitialSnapshot(states.getValue(root.string("initial_state_id")), ledgerId)) }
-    }
+    val catalogs =
+        buildMap {
+            roots.forEach { root -> put(root.string("id"), buildCatalog(states.getValue(root.string("initial_state_id")), ledgerId)) }
+        }
+    val baselines =
+        buildMap {
+            roots.forEach { root -> put(root.string("id"), buildInitialSnapshot(states.getValue(root.string("initial_state_id")), ledgerId)) }
+        }
     val initialStateIds = roots.associate { it.string("id") to it.string("initial_state_id") }
-    val staticSeeds = buildMap {
-        roots.forEach { root -> put(root.string("id"), buildStaticSeeds(states.getValue(root.string("initial_state_id")))) }
-    }
+    val staticSeeds =
+        buildMap {
+            roots.forEach { root -> put(root.string("id"), buildStaticSeeds(states.getValue(root.string("initial_state_id")))) }
+        }
     val reconciliationIds = buildReconciliationIds(states, inputs)
 
     val firstRequestOwners = mutableMapOf<String, String>()
-    val operations = rawOperations.mapIndexed { index, op ->
-        // Only accepted inputs own a request id; the shared `root-rejections-request` of the
-        // attempted inputs is projected per-op inside [adaptCorrect] and never forms a retry
-        // chain (the ten rejections are distinct operations).
-        val requestId = op["input"]?.jsonObject?.optionalString("request_id")
-        val retryOf = requestId?.let { firstRequestOwners[it] }
-        if (requestId != null && retryOf == null) {
-            firstRequestOwners[requestId] = op.string("id")
+    val operations =
+        rawOperations.mapIndexed { index, op ->
+            // Only accepted inputs own a request id; the shared `root-rejections-request` of the
+            // attempted inputs is projected per-op inside [adaptCorrect] and never forms a retry
+            // chain (the ten rejections are distinct operations).
+            val requestId = op["input"]?.jsonObject?.optionalString("request_id")
+            val retryOf = requestId?.let { firstRequestOwners[it] }
+            if (requestId != null && retryOf == null) {
+                firstRequestOwners[requestId] = op.string("id")
+            }
+            adaptOperation(op, "$.operations[$index]", context, retryOf)
         }
-        adaptOperation(op, "$.operations[$index]", context, retryOf)
-    }
     return Rg12FixtureCase(
         ledgerId = ledgerId,
         catalogs = catalogs,
@@ -213,7 +226,10 @@ fun adaptRg12Fixture(raw: String, inputs: Rg12FixtureInputs): Rg12FixtureCase {
     )
 }
 
-fun replayRg12Fixture(raw: String, inputs: Rg12FixtureInputs): Rg12FixtureReplaySummary {
+fun replayRg12Fixture(
+    raw: String,
+    inputs: Rg12FixtureInputs,
+): Rg12FixtureReplaySummary {
     val case = adaptRg12Fixture(raw, inputs)
     return Rg12FixtureReplaySummary(
         operations = case.allOperations,
@@ -244,23 +260,26 @@ private fun adaptOperation(
     }
     val input = op["input"]?.jsonObject
     val attempted = op["attempted_input"]?.jsonObject
-    val operation: Rg12Operation = when {
-        attempted != null -> adaptCorrect(
-            attempted,
-            context,
-            rejectChangedMatchedAsset = true,
-            opId = op.string("id"),
-            projectedRequestId = rejectionRequestId(op.string("id"), attempted.string("request_id")),
-        )
-        input != null -> adaptCorrect(
-            input,
-            context,
-            rejectChangedMatchedAsset = false,
-            opId = op.string("id"),
-            projectedRequestId = input.string("request_id"),
-        )
-        else -> error("RG-12 operation $sourcePath has neither input nor attempted_input")
-    }
+    val operation: Rg12Operation =
+        when {
+            attempted != null ->
+                adaptCorrect(
+                    attempted,
+                    context,
+                    rejectChangedMatchedAsset = true,
+                    opId = op.string("id"),
+                    projectedRequestId = rejectionRequestId(op.string("id"), attempted.string("request_id")),
+                )
+            input != null ->
+                adaptCorrect(
+                    input,
+                    context,
+                    rejectChangedMatchedAsset = false,
+                    opId = op.string("id"),
+                    projectedRequestId = input.string("request_id"),
+                )
+            else -> error("RG-12 operation $sourcePath has neither input nor attempted_input")
+        }
     val outcome = op.getValue("outcome").jsonObject
     return Rg12FixtureOperation(
         id = op.string("id"),
@@ -283,220 +302,260 @@ private fun adaptCorrect(
     projectedRequestId: String,
 ): Rg12Operation.CorrectTransactionVersion {
     val correctedAtText = input.string("corrected_at")
-    val replacements = input.getValue("replacement_postings").jsonArray.map { item ->
-        adaptReplacement(item.jsonObject, context)
-    }
-    val ids = context.inputs.ids[projectedRequestId]?.let(::anchoredCorrectIds)
-        ?: synthesizedCorrectIds(opId, replacements.size)
+    val replacements =
+        input.getValue("replacement_postings").jsonArray.map { item ->
+            adaptReplacement(item.jsonObject, context)
+        }
+    val ids =
+        context.inputs.ids[projectedRequestId]?.let(::anchoredCorrectIds)
+            ?: synthesizedCorrectIds(opId, replacements.size)
     return Rg12Operation.CorrectTransactionVersion(
         ledgerId = context.ledgerId,
-        input = Rg12CorrectInput(
-            requestId = RequestId(projectedRequestId),
-            transactionId = TransactionId(input.string("transaction_id")),
-            correctionKind = input.string("correction_kind"),
-            correctedAt = Instant.parse(correctedAtText),
-            correctedAtText = correctedAtText,
-            replacementPostings = replacements,
-            explicitConfirmation = input.optionalBoolean("explicit_confirmation") ?: false,
-            historyMutation = input["history_mutation"]?.jsonObject?.let(::adaptHistoryMutation),
-            rejectChangedMatchedAsset = rejectChangedMatchedAsset,
-        ),
+        input =
+            Rg12CorrectInput(
+                requestId = RequestId(projectedRequestId),
+                transactionId = TransactionId(input.string("transaction_id")),
+                correctionKind = input.string("correction_kind"),
+                correctedAt = Instant.parse(correctedAtText),
+                correctedAtText = correctedAtText,
+                replacementPostings = replacements,
+                explicitConfirmation = input.optionalBoolean("explicit_confirmation") ?: false,
+                historyMutation = input["history_mutation"]?.jsonObject?.let(::adaptHistoryMutation),
+                rejectChangedMatchedAsset = rejectChangedMatchedAsset,
+            ),
         ids = ids,
     )
 }
 
-private fun adaptReplacement(item: JsonObject, context: Rg12FixtureContext): ReplacementPostingInput {
+private fun adaptReplacement(
+    item: JsonObject,
+    context: Rg12FixtureContext,
+): ReplacementPostingInput {
     val currency = context.currency(item.string("currency"))
     return ReplacementPostingInput(
         sourcePostingId = PostingId(item.string("source_posting_id")),
-        facts = PostingFacts(
-            accountId = AccountId(item.string("account_id")),
-            // The raw JSON text of the amount field: the frozen reject-9 amount is the numeric
-            // literal 110.0, whose JSON text "110.0" the domain exact-decimal check rejects.
-            amountText = item.string("amount"),
-            currency = currency,
-            role = item.string("role"),
-            categoryId = item.optionalString("category_id")?.let(::CategoryId),
-        ),
+        facts =
+            PostingFacts(
+                accountId = AccountId(item.string("account_id")),
+                // The raw JSON text of the amount field: the frozen reject-9 amount is the numeric
+                // literal 110.0, whose JSON text "110.0" the domain exact-decimal check rejects.
+                amountText = item.string("amount"),
+                currency = currency,
+                role = item.string("role"),
+                categoryId = item.optionalString("category_id")?.let(::CategoryId),
+            ),
     )
 }
 
-private fun adaptHistoryMutation(input: JsonObject): HistoryMutationInput = HistoryMutationInput(
-    matchId = input.string("match_id"),
-    statusHistory = input.getValue("status_history").jsonArray.map { entry -> entry.jsonObject }.map { entry ->
-        ReconciliationMatchStatusEntry(
-            id = entry.string("id"),
-            sequence = entry.int("sequence"),
-            status = statusOf(entry.string("status")),
-            at = Instant.parse(entry.string("at")),
-            reason = reasonOf(entry.string("reason")),
-        )
-    },
-)
+private fun adaptHistoryMutation(input: JsonObject): HistoryMutationInput =
+    HistoryMutationInput(
+        matchId = input.string("match_id"),
+        statusHistory =
+            input.getValue("status_history").jsonArray.map { entry -> entry.jsonObject }.map { entry ->
+                ReconciliationMatchStatusEntry(
+                    id = entry.string("id"),
+                    sequence = entry.int("sequence"),
+                    status = statusOf(entry.string("status")),
+                    at = Instant.parse(entry.string("at")),
+                    reason = reasonOf(entry.string("reason")),
+                )
+            },
+    )
 
 /** Frozen request ids shared by more than one operation are projected onto per-op ids. */
-private fun rejectionRequestId(opId: String, frozenRequestId: String): String =
-    if (frozenRequestId == "root-rejections-request") "$opId-request" else frozenRequestId
+private fun rejectionRequestId(
+    opId: String,
+    frozenRequestId: String,
+): String = if (frozenRequestId == "root-rejections-request") "$opId-request" else frozenRequestId
 
-private fun anchoredCorrectIds(fields: JsonObject): Rg12CorrectIds = Rg12CorrectIds(
-    versionId = TransactionVersionId(fields.string("version_id")),
-    postingSetId = PostingSetId(fields.string("posting_set_id")),
-    postingIds = fields.jsonArray("posting_ids").map { PostingId(it.jsonPrimitive.content) },
-    replacementLinkIds = fields.jsonArray("replacement_link_ids").map { it.jsonPrimitive.content },
-    confirmationId = fields.string("confirmation_id"),
-    operationId = fields.string("operation_id"),
-    // `invalidation_entry_ids` is a non-null list in the typed boundary; the frozen nulls of the
-    // legs that are never invalidated are projected to the empty-string sentinel. The runtime
-    // only consumes the entry of an invalidated real leg, whose anchor is always present.
-    invalidationEntryIds = fields.nullableArray("invalidation_entry_ids").map { it ?: "" },
-    newMatchIds = fields.nullableArray("new_match_ids"),
-    newMatchEntryIds = fields.nullableArray("new_match_entry_ids"),
-    newMatchInvalidationEntryIds = fields.nullableArray("new_match_invalidation_entry_ids"),
-    reconciliationFactIds = fields.nullableArray("reconciliation_fact_ids"),
-    consumptionRecordId = fields.optionalString("consumption_record_id"),
-)
+private fun anchoredCorrectIds(fields: JsonObject): Rg12CorrectIds =
+    Rg12CorrectIds(
+        versionId = TransactionVersionId(fields.string("version_id")),
+        postingSetId = PostingSetId(fields.string("posting_set_id")),
+        postingIds = fields.jsonArray("posting_ids").map { PostingId(it.jsonPrimitive.content) },
+        replacementLinkIds = fields.jsonArray("replacement_link_ids").map { it.jsonPrimitive.content },
+        confirmationId = fields.string("confirmation_id"),
+        operationId = fields.string("operation_id"),
+        // `invalidation_entry_ids` is a non-null list in the typed boundary; the frozen nulls of the
+        // legs that are never invalidated are projected to the empty-string sentinel. The runtime
+        // only consumes the entry of an invalidated real leg, whose anchor is always present.
+        invalidationEntryIds = fields.nullableArray("invalidation_entry_ids").map { it ?: "" },
+        newMatchIds = fields.nullableArray("new_match_ids"),
+        newMatchEntryIds = fields.nullableArray("new_match_entry_ids"),
+        newMatchInvalidationEntryIds = fields.nullableArray("new_match_invalidation_entry_ids"),
+        reconciliationFactIds = fields.nullableArray("reconciliation_fact_ids"),
+        consumptionRecordId = fields.optionalString("consumption_record_id"),
+    )
 
 /**
  * Deterministic placeholder ids for the rejected operations. The ten frozen rejections fail in
  * the domain chain before any id is consumed, so these ids are inert; they only satisfy the
  * typed boundary with `replacement_postings`-aligned list sizes.
  */
-private fun synthesizedCorrectIds(opId: String, count: Int): Rg12CorrectIds = Rg12CorrectIds(
-    versionId = TransactionVersionId("$opId-v2"),
-    postingSetId = PostingSetId("$opId-set-v2"),
-    postingIds = List(count) { index -> PostingId("$opId-replacement-$index") },
-    replacementLinkIds = List(count) { index -> "$opId-replacement-link-$index" },
-    confirmationId = "$opId-confirmation",
-    operationId = opId,
-    invalidationEntryIds = List(count) { "" },
-    newMatchIds = List(count) { null },
-    newMatchEntryIds = List(count) { null },
-    newMatchInvalidationEntryIds = List(count) { null },
-    reconciliationFactIds = List(count) { null },
-    consumptionRecordId = "$opId-consumption-v2",
-)
+private fun synthesizedCorrectIds(
+    opId: String,
+    count: Int,
+): Rg12CorrectIds =
+    Rg12CorrectIds(
+        versionId = TransactionVersionId("$opId-v2"),
+        postingSetId = PostingSetId("$opId-set-v2"),
+        postingIds = List(count) { index -> PostingId("$opId-replacement-$index") },
+        replacementLinkIds = List(count) { index -> "$opId-replacement-link-$index" },
+        confirmationId = "$opId-confirmation",
+        operationId = opId,
+        invalidationEntryIds = List(count) { "" },
+        newMatchIds = List(count) { null },
+        newMatchEntryIds = List(count) { null },
+        newMatchInvalidationEntryIds = List(count) { null },
+        reconciliationFactIds = List(count) { null },
+        consumptionRecordId = "$opId-consumption-v2",
+    )
 
 // ------------------------------------------------------------------ initial states
 
-private fun buildInitialSnapshot(state: JsonObject, ledgerId: LedgerId): Rg12Snapshot {
+private fun buildInitialSnapshot(
+    state: JsonObject,
+    ledgerId: LedgerId,
+): Rg12Snapshot {
     val transactions = state.getValue("transactions").jsonArray.map { it.jsonObject }
     val versions = state.getValue("transaction_versions").jsonArray.map { it.jsonObject }
     val postingSets = state.getValue("posting_sets").jsonArray.map { it.jsonObject }
     val postings = state.getValue("postings").jsonArray.map { it.jsonObject }
     val domainEntities = state.getValue("domain_entities").jsonArray.map { it.jsonObject }
 
-    val formalRecords = transactions.map { transaction ->
-        val transactionId = transaction.string("id")
-        val currentVersionId = transaction.string("current_version_id")
-        val kind = when (transaction.string("type")) {
-            "expense" -> TransactionKind.EXPENSE
-            else -> error("unsupported RG-12 seed transaction type ${transaction.string("type")}")
-        }
-        val transactionVersions = versions
-            .filter { it.string("transaction_id") == transactionId }
-            .map { version ->
-                TransactionVersion(
-                    id = TransactionVersionId(version.string("id")),
-                    transactionId = TransactionId(transactionId),
-                    versionNumber = version.int("version_number"),
-                    postingSetId = PostingSetId(version.string("posting_set_id")),
-                    times = TransactionTimes(
-                        occurredAt = version.instant("occurred_at"),
-                        statisticsAt = version.instant("statistics_at"),
-                        effectiveAt = version.instant("effective_at"),
-                    ),
-                    note = version.optionalString("note"),
-                )
-            }
-        val referencedSetIds = transactionVersions.map { it.postingSetId }.toSet()
-        val transactionPostingSets = postingSets
-            .filter { PostingSetId(it.string("id")) in referencedSetIds }
-            .map { postingSet ->
-                val setPostings = postings
-                    .filter { it.string("posting_set_id") == postingSet.string("id") }
-                    .map { posting ->
-                        Posting(
-                            id = PostingId(posting.string("id")),
-                            accountId = AccountId(posting.string("account_id")),
-                            amount = posting.money("amount", posting.currencyUnit()),
+    val formalRecords =
+        transactions.map { transaction ->
+            val transactionId = transaction.string("id")
+            val currentVersionId = transaction.string("current_version_id")
+            val kind =
+                when (transaction.string("type")) {
+                    "expense" -> TransactionKind.EXPENSE
+                    else -> error("unsupported RG-12 seed transaction type ${transaction.string("type")}")
+                }
+            val transactionVersions =
+                versions
+                    .filter { it.string("transaction_id") == transactionId }
+                    .map { version ->
+                        TransactionVersion(
+                            id = TransactionVersionId(version.string("id")),
+                            transactionId = TransactionId(transactionId),
+                            versionNumber = version.int("version_number"),
+                            postingSetId = PostingSetId(version.string("posting_set_id")),
+                            times =
+                                TransactionTimes(
+                                    occurredAt = version.instant("occurred_at"),
+                                    statisticsAt = version.instant("statistics_at"),
+                                    effectiveAt = version.instant("effective_at"),
+                                ),
+                            note = version.optionalString("note"),
                         )
                     }
-                when (val result = PostingSet.create(PostingSetId(postingSet.string("id")), setPostings)) {
+            val referencedSetIds = transactionVersions.map { it.postingSetId }.toSet()
+            val transactionPostingSets =
+                postingSets
+                    .filter { PostingSetId(it.string("id")) in referencedSetIds }
+                    .map { postingSet ->
+                        val setPostings =
+                            postings
+                                .filter { it.string("posting_set_id") == postingSet.string("id") }
+                                .map { posting ->
+                                    Posting(
+                                        id = PostingId(posting.string("id")),
+                                        accountId = AccountId(posting.string("account_id")),
+                                        amount = posting.money("amount", posting.currencyUnit()),
+                                    )
+                                }
+                        when (val result = PostingSet.create(PostingSetId(postingSet.string("id")), setPostings)) {
+                            is DomainResult.Success -> result.value
+                            is DomainResult.Failure -> error("invalid RG-12 seed posting set ${postingSet.string("id")}")
+                        }
+                    }
+            val formal =
+                when (
+                    val result =
+                        FormalTransaction.create(
+                            transaction =
+                                Transaction(
+                                    id = TransactionId(transactionId),
+                                    ledgerId = ledgerId,
+                                    kind = kind,
+                                    currentVersionId = TransactionVersionId(currentVersionId),
+                                ),
+                            versions = transactionVersions,
+                            postingSets = transactionPostingSets,
+                        )
+                ) {
                     is DomainResult.Success -> result.value
-                    is DomainResult.Failure -> error("invalid RG-12 seed posting set ${postingSet.string("id")}")
+                    is DomainResult.Failure -> error("invalid RG-12 seed transaction $transactionId")
                 }
-            }
-        val formal = when (
-            val result = FormalTransaction.create(
-                transaction = Transaction(
-                    id = TransactionId(transactionId),
-                    ledgerId = ledgerId,
-                    kind = kind,
-                    currentVersionId = TransactionVersionId(currentVersionId),
-                ),
-                versions = transactionVersions,
-                postingSets = transactionPostingSets,
+            val currentVersion = versions.first { it.string("id") == currentVersionId }
+            Rg12FormalTransactionRecord(
+                formalTransaction = formal,
+                createdAt = Instant.parse(currentVersion.string("created_at")),
+                createdAtText = currentVersion.string("created_at"),
+                statisticsAtText = currentVersion.string("statistics_at"),
+                versionCreatedAtTexts =
+                    transactionVersions.associate { version ->
+                        version.id to versions.first { it.string("id") == version.id.value }.string("created_at")
+                    },
+                versionConfirmationIds = emptyMap(),
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> error("invalid RG-12 seed transaction $transactionId")
         }
-        val currentVersion = versions.first { it.string("id") == currentVersionId }
-        Rg12FormalTransactionRecord(
-            formalTransaction = formal,
-            createdAt = Instant.parse(currentVersion.string("created_at")),
-            createdAtText = currentVersion.string("created_at"),
-            statisticsAtText = currentVersion.string("statistics_at"),
-            versionCreatedAtTexts = transactionVersions.associate { version ->
-                version.id to versions.first { it.string("id") == version.id.value }.string("created_at")
-            },
-            versionConfirmationIds = emptyMap(),
-        )
-    }
 
-    val semantics = postings.associate { posting ->
-        posting.string("id") to Rg12PostingSemantic(
-            role = posting.optionalString("role"),
-            reconciliationEligible = posting.boolean("reconciliation_eligible"),
-            categoryId = posting.optionalString("category_id")?.let(::CategoryId),
-        )
-    }
-    val matches = domainEntities
-        .filter { it.string("type") == "reconciliation_match" }
-        .map { entity -> rehydrateMatch(entity) }
-    val consumptionRecords = domainEntities
-        .filter { it.string("type") == "consumption_record" }
-        .map { entity ->
-            val payload = entity.getValue("payload").jsonObject
-            Rg12ConsumptionRecord(
-                id = entity.string("id"),
-                expensePostingId = PostingId(payload.string("expense_posting_id")),
-                categoryId = payload.optionalString("category_id")?.let(::CategoryId),
-                amountText = payload.string("amount"),
-                currency = payload.currencyUnit(),
-                statisticsAtText = payload.string("statistics_at"),
-            )
+    val semantics =
+        postings.associate { posting ->
+            posting.string("id") to
+                Rg12PostingSemantic(
+                    role = posting.optionalString("role"),
+                    reconciliationEligible = posting.boolean("reconciliation_eligible"),
+                    categoryId = posting.optionalString("category_id")?.let(::CategoryId),
+                )
         }
-    val reconciliations = state["posting_reconciliations"]?.jsonArray?.map { element ->
-        val record = element.jsonObject
-        when (
-            val result = createPostingReconciliation(
-                id = record.string("id"),
-                postingId = PostingId(record.string("posting_id")),
-                status = when (record.string("status")) {
-                    "matched" -> PostingReconciliationStatus.MATCHED
-                    "pending" -> PostingReconciliationStatus.PENDING
-                    else -> error("unsupported RG-12 seed reconciliation status ${record.string("status")}")
-                },
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> error("invalid RG-12 seed reconciliation record ${record.string("id")}")
-        }
-    } ?: emptyList()
-    val reportPeriods = state.getValue("reports").jsonArray.map { report ->
-        report.jsonObject.string("period")
-    }.distinct()
+    val matches =
+        domainEntities
+            .filter { it.string("type") == "reconciliation_match" }
+            .map { entity -> rehydrateMatch(entity) }
+    val consumptionRecords =
+        domainEntities
+            .filter { it.string("type") == "consumption_record" }
+            .map { entity ->
+                val payload = entity.getValue("payload").jsonObject
+                Rg12ConsumptionRecord(
+                    id = entity.string("id"),
+                    expensePostingId = PostingId(payload.string("expense_posting_id")),
+                    categoryId = payload.optionalString("category_id")?.let(::CategoryId),
+                    amountText = payload.string("amount"),
+                    currency = payload.currencyUnit(),
+                    statisticsAtText = payload.string("statistics_at"),
+                )
+            }
+    val reconciliations =
+        state["posting_reconciliations"]?.jsonArray?.map { element ->
+            val record = element.jsonObject
+            when (
+                val result =
+                    createPostingReconciliation(
+                        id = record.string("id"),
+                        postingId = PostingId(record.string("posting_id")),
+                        status =
+                            when (record.string("status")) {
+                                "matched" -> PostingReconciliationStatus.MATCHED
+                                "pending" -> PostingReconciliationStatus.PENDING
+                                else -> error("unsupported RG-12 seed reconciliation status ${record.string("status")}")
+                            },
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> error("invalid RG-12 seed reconciliation record ${record.string("id")}")
+            }
+        } ?: emptyList()
+    val reportPeriods =
+        state
+            .getValue("reports")
+            .jsonArray
+            .map { report ->
+                report.jsonObject.string("period")
+            }.distinct()
 
     return Rg12Snapshot(
         formalTransactions = formalRecords,
@@ -516,100 +575,113 @@ private fun buildInitialSnapshot(state: JsonObject, ledgerId: LedgerId): Rg12Sna
 
 private fun rehydrateMatch(entity: JsonObject): ReconciliationMatch {
     val payload = entity.getValue("payload").jsonObject
-    val history = payload.getValue("status_history").jsonArray.map { element ->
-        val entry = element.jsonObject
-        ReconciliationMatchStatusEntry(
-            id = entry.string("id"),
-            sequence = entry.int("sequence"),
-            status = statusOf(entry.string("status")),
-            at = Instant.parse(entry.string("at")),
-            reason = reasonOf(entry.string("reason")),
-        )
-    }
+    val history =
+        payload.getValue("status_history").jsonArray.map { element ->
+            val entry = element.jsonObject
+            ReconciliationMatchStatusEntry(
+                id = entry.string("id"),
+                sequence = entry.int("sequence"),
+                status = statusOf(entry.string("status")),
+                at = Instant.parse(entry.string("at")),
+                reason = reasonOf(entry.string("reason")),
+            )
+        }
     return when (
-        val result = createReconciliationMatch(
-            id = entity.string("id"),
-            postingId = PostingId(payload.string("posting_id")),
-            evidenceId = payload.string("evidence_id"),
-            statusHistory = history,
-        )
+        val result =
+            createReconciliationMatch(
+                id = entity.string("id"),
+                postingId = PostingId(payload.string("posting_id")),
+                evidenceId = payload.string("evidence_id"),
+                statusHistory = history,
+            )
     ) {
         is DomainResult.Success -> result.value
         is DomainResult.Failure -> error("invalid RG-12 seed reconciliation match ${entity.string("id")}")
     }
 }
 
-private fun buildCatalog(state: JsonObject, ledgerId: LedgerId): LedgerCatalog {
+private fun buildCatalog(
+    state: JsonObject,
+    ledgerId: LedgerId,
+): LedgerCatalog {
     val catalog = state.getValue("catalog").jsonObject
-    val accounts = catalog.getValue("accounts").jsonArray.map { element ->
-        val account = element.jsonObject
-        Account(
-            id = AccountId(account.string("id")),
-            ledgerId = ledgerId,
-            kind = when (account.string("kind")) {
-                "asset" -> AccountKind.ASSET
-                "liability" -> AccountKind.LIABILITY
-                "equity" -> AccountKind.EQUITY
-                "income" -> AccountKind.INCOME
-                "expense" -> AccountKind.EXPENSE
-                else -> error("unsupported RG-12 account kind ${account.string("kind")}")
-            },
-            currency = CurrencyUnit(account.string("currency"), 2),
-            ownedByUser = account.boolean("owned_by_user"),
-            realAccount = account.boolean("real_account"),
-        )
-    }
-    val categories = catalog.getValue("categories").jsonArray.map { element ->
-        val category = element.jsonObject
-        Category(
-            id = CategoryId(category.string("id")),
-            ledgerId = ledgerId,
-            parentId = category.optionalString("parent_id")?.let(::CategoryId),
-            postingAccountId = category.optionalString("posting_account_id")?.let(::AccountId),
-            active = category.boolean("active"),
-        )
-    }
+    val accounts =
+        catalog.getValue("accounts").jsonArray.map { element ->
+            val account = element.jsonObject
+            Account(
+                id = AccountId(account.string("id")),
+                ledgerId = ledgerId,
+                kind =
+                    when (account.string("kind")) {
+                        "asset" -> AccountKind.ASSET
+                        "liability" -> AccountKind.LIABILITY
+                        "equity" -> AccountKind.EQUITY
+                        "income" -> AccountKind.INCOME
+                        "expense" -> AccountKind.EXPENSE
+                        else -> error("unsupported RG-12 account kind ${account.string("kind")}")
+                    },
+                currency = CurrencyUnit(account.string("currency"), 2),
+                ownedByUser = account.boolean("owned_by_user"),
+                realAccount = account.boolean("real_account"),
+            )
+        }
+    val categories =
+        catalog.getValue("categories").jsonArray.map { element ->
+            val category = element.jsonObject
+            Category(
+                id = CategoryId(category.string("id")),
+                ledgerId = ledgerId,
+                parentId = category.optionalString("parent_id")?.let(::CategoryId),
+                postingAccountId = category.optionalString("posting_account_id")?.let(::AccountId),
+                active = category.boolean("active"),
+            )
+        }
     return when (val result = LedgerCatalog.create(accounts, categories)) {
         is DomainResult.Success -> result.value
         is DomainResult.Failure -> error("invalid RG-12 catalog")
     }
 }
 
-private fun buildStaticSeeds(state: JsonObject): Rg12StaticSeeds = Rg12StaticSeeds(
-    sources = state.getValue("sources").jsonArray,
-    evidence = state.getValue("evidence").jsonArray,
-    evidenceLinks = state.getValue("evidence_links").jsonArray,
-)
+private fun buildStaticSeeds(state: JsonObject): Rg12StaticSeeds =
+    Rg12StaticSeeds(
+        sources = state.getValue("sources").jsonArray,
+        evidence = state.getValue("evidence").jsonArray,
+        evidenceLinks = state.getValue("evidence_links").jsonArray,
+    )
 
 private fun buildReconciliationIds(
     states: Map<String, JsonObject>,
     inputs: Rg12FixtureInputs,
-): Map<String, String> = buildMap {
-    states.values.forEach { state ->
-        state["posting_reconciliations"]?.jsonArray?.forEach { element ->
-            val record = element.jsonObject
-            put(record.string("posting_id"), record.string("id"))
+): Map<String, String> =
+    buildMap {
+        states.values.forEach { state ->
+            state["posting_reconciliations"]?.jsonArray?.forEach { element ->
+                val record = element.jsonObject
+                put(record.string("posting_id"), record.string("id"))
+            }
+        }
+        inputs.ids.forEach { (_, fields) ->
+            val postingIds = fields["posting_ids"]?.jsonArray ?: return@forEach
+            val factIds = fields["reconciliation_fact_ids"]?.jsonArray ?: return@forEach
+            postingIds.zip(factIds).forEach { (postingId, factId) ->
+                val fact = factId.takeUnless { it is JsonNull }?.jsonPrimitive?.content ?: return@forEach
+                put(postingId.jsonPrimitive.content, fact)
+            }
         }
     }
-    inputs.ids.forEach { (_, fields) ->
-        val postingIds = fields["posting_ids"]?.jsonArray ?: return@forEach
-        val factIds = fields["reconciliation_fact_ids"]?.jsonArray ?: return@forEach
-        postingIds.zip(factIds).forEach { (postingId, factId) ->
-            val fact = factId.takeUnless { it is JsonNull }?.jsonPrimitive?.content ?: return@forEach
-            put(postingId.jsonPrimitive.content, fact)
-        }
-    }
-}
 
 // ------------------------------------------------------------------ helpers
 
 private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
 
-private fun JsonObject.optionalString(key: String): String? =
-    this[key]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content
+private fun JsonObject.optionalString(key: String): String? = this[key]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content
 
 private fun JsonObject.optionalBoolean(key: String): Boolean? =
-    this[key]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+    this[key]
+        ?.takeUnless { it is JsonNull }
+        ?.jsonPrimitive
+        ?.content
+        ?.toBooleanStrictOrNull()
 
 private fun JsonObject.boolean(key: String): Boolean = getValue(key).jsonPrimitive.content.toBooleanStrict()
 
@@ -617,7 +689,10 @@ private fun JsonObject.int(key: String): Int = getValue(key).jsonPrimitive.conte
 
 private fun JsonObject.instant(key: String): Instant = Instant.parse(string(key))
 
-private fun JsonObject.money(key: String, currency: CurrencyUnit): com.unifiedledger.domain.Money {
+private fun JsonObject.money(
+    key: String,
+    currency: CurrencyUnit,
+): com.unifiedledger.domain.Money {
     val text = string(key)
     require(text.matches(Regex("[+-]?\\d+\\.\\d{2}"))) { "RG-12 requires exact two-place decimal: $text" }
     val negative = text.startsWith("-")
@@ -625,10 +700,12 @@ private fun JsonObject.money(key: String, currency: CurrencyUnit): com.unifiedle
     val parts = unsigned.split('.')
     val major = parts[0].toLongOrNull() ?: error("RG-12 amount exceeds minor-unit range")
     val fraction = parts[1].toLongOrNull() ?: error("RG-12 amount exceeds minor-unit range")
-    val minor = checkedRg12Add(checkedRg12Multiply(major, 100L), fraction)
-        ?: error("RG-12 amount exceeds minor-unit range")
+    val minor =
+        checkedRg12Add(checkedRg12Multiply(major, 100L), fraction)
+            ?: error("RG-12 amount exceeds minor-unit range")
     val signedMinor = if (negative) checkedRg12Negate(minor) ?: error("RG-12 amount exceeds minor-unit range") else minor
-    return com.unifiedledger.domain.Money.ofMinor(signedMinor, currency)
+    return com.unifiedledger.domain.Money
+        .ofMinor(signedMinor, currency)
 }
 
 private fun JsonObject.currencyUnit(): CurrencyUnit = CurrencyUnit(string("currency"), 2)
@@ -640,19 +717,24 @@ private fun JsonObject.nullableArray(key: String): List<String?> =
         element.takeUnless { it is JsonNull }?.jsonPrimitive?.content
     }
 
-private fun statusOf(value: String): ReconciliationMatchStatus = when (value) {
-    "matched" -> ReconciliationMatchStatus.MATCHED
-    "invalidated" -> ReconciliationMatchStatus.INVALIDATED
-    else -> error("unsupported RG-12 seed match status $value")
-}
+private fun statusOf(value: String): ReconciliationMatchStatus =
+    when (value) {
+        "matched" -> ReconciliationMatchStatus.MATCHED
+        "invalidated" -> ReconciliationMatchStatus.INVALIDATED
+        else -> error("unsupported RG-12 seed match status $value")
+    }
 
-private fun reasonOf(value: String): ReconciliationMatchReason = when (value) {
-    "exact_evidence" -> ReconciliationMatchReason.EXACT_EVIDENCE
-    "posting_replaced" -> ReconciliationMatchReason.POSTING_REPLACED
-    else -> error("unsupported RG-12 seed match reason $value")
-}
+private fun reasonOf(value: String): ReconciliationMatchReason =
+    when (value) {
+        "exact_evidence" -> ReconciliationMatchReason.EXACT_EVIDENCE
+        "posting_replaced" -> ReconciliationMatchReason.POSTING_REPLACED
+        else -> error("unsupported RG-12 seed match reason $value")
+    }
 
-private fun checkedRg12Multiply(left: Long, right: Long): Long? {
+private fun checkedRg12Multiply(
+    left: Long,
+    right: Long,
+): Long? {
     if (left == 0L || right == 0L) return 0L
     if (left == Long.MIN_VALUE && right == -1L) return null
     if (right == Long.MIN_VALUE && left == -1L) return null
@@ -660,7 +742,10 @@ private fun checkedRg12Multiply(left: Long, right: Long): Long? {
     return if (result / right == left) result else null
 }
 
-private fun checkedRg12Add(left: Long?, right: Long): Long? {
+private fun checkedRg12Add(
+    left: Long?,
+    right: Long,
+): Long? {
     left ?: return null
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null

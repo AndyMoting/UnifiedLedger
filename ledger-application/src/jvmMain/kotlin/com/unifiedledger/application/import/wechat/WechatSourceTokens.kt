@@ -10,10 +10,20 @@ package com.unifiedledger.application.import.wechat
  */
 object WechatSourceTokens {
     /** Frozen 11-column header (0-based row 17), byte-level exact match. */
-    val HEADER_TOKENS: List<String> = listOf(
-        "交易时间", "交易类型", "交易对方", "商品", "收/支",
-        "金额(元)", "支付方式", "当前状态", "交易单号", "商户单号", "备注",
-    )
+    val HEADER_TOKENS: List<String> =
+        listOf(
+            "交易时间",
+            "交易类型",
+            "交易对方",
+            "商品",
+            "收/支",
+            "金额(元)",
+            "支付方式",
+            "当前状态",
+            "交易单号",
+            "商户单号",
+            "备注",
+        )
 
     const val HEADER_ROW_INDEX: Int = 17
     const val FIRST_DATA_ROW_INDEX: Int = 18

@@ -18,7 +18,9 @@ enum class PeriodicAllocationCadence {
 sealed interface PeriodicAllocationAnchor {
     data object MonthEnd : PeriodicAllocationAnchor
 
-    data class DayOfMonth(val day: Int) : PeriodicAllocationAnchor
+    data class DayOfMonth(
+        val day: Int,
+    ) : PeriodicAllocationAnchor
 }
 
 /** Derived `allocation_status` of a schedule: `active` or `recognized` (design doc, line 44). */
@@ -115,15 +117,16 @@ fun createPeriodicAllocationSchedule(
     if (!isSupportedPeriodicAllocationCurrency(currency)) {
         return DomainResult.Failure(PeriodicAllocationViolation.UnsupportedCurrency())
     }
-    val validatedAnchor = when (val candidate = anchor) {
-        PeriodicAllocationAnchor.MonthEnd -> candidate
-        is PeriodicAllocationAnchor.DayOfMonth -> {
-            if (candidate.day < 1 || candidate.day > 28) {
-                return DomainResult.Failure(PeriodicAllocationViolation.InvalidAnchor())
+    val validatedAnchor =
+        when (val candidate = anchor) {
+            PeriodicAllocationAnchor.MonthEnd -> candidate
+            is PeriodicAllocationAnchor.DayOfMonth -> {
+                if (candidate.day < 1 || candidate.day > 28) {
+                    return DomainResult.Failure(PeriodicAllocationViolation.InvalidAnchor())
+                }
+                candidate
             }
-            candidate
         }
-    }
     return DomainResult.Success(
         PeriodicAllocationSchedule(
             id = id,
@@ -147,7 +150,10 @@ fun createPeriodicAllocationSchedule(
  * (`totalMinor < count`) fails with `must_be_positive` (fail-closed hardening; the frozen
  * contract only splits totals that keep every installment positive).
  */
-fun splitAmountIntoInstallments(totalMinor: Long, count: Int): DomainResult<List<Long>> {
+fun splitAmountIntoInstallments(
+    totalMinor: Long,
+    count: Int,
+): DomainResult<List<Long>> {
     if (count < 1) {
         return DomainResult.Failure(
             PeriodicAllocationViolation.InvalidInstallmentCount(),
@@ -231,19 +237,24 @@ fun createInitialInstallments(
     if (installmentIds.toSet().size != installmentIds.size) {
         return DomainResult.Failure(PeriodicAllocationViolation.IdentityRequired())
     }
-    val amounts = when (val split = splitAmountIntoInstallments(schedule.totalAmountMinor, installmentIds.size)) {
-        is DomainResult.Success -> split.value
-        is DomainResult.Failure -> return DomainResult.Failure(split.violation)
-    }
-    val dates = when (val generated = generateInstallmentScheduledDates(
-        startAt = schedule.startAt,
-        anchor = schedule.anchor,
-        count = installmentIds.size,
-        utcOffsetSeconds = utcOffsetSeconds,
-    )) {
-        is DomainResult.Success -> generated.value
-        is DomainResult.Failure -> return DomainResult.Failure(generated.violation)
-    }
+    val amounts =
+        when (val split = splitAmountIntoInstallments(schedule.totalAmountMinor, installmentIds.size)) {
+            is DomainResult.Success -> split.value
+            is DomainResult.Failure -> return DomainResult.Failure(split.violation)
+        }
+    val dates =
+        when (
+            val generated =
+                generateInstallmentScheduledDates(
+                    startAt = schedule.startAt,
+                    anchor = schedule.anchor,
+                    count = installmentIds.size,
+                    utcOffsetSeconds = utcOffsetSeconds,
+                )
+        ) {
+            is DomainResult.Success -> generated.value
+            is DomainResult.Failure -> return DomainResult.Failure(generated.violation)
+        }
     return buildInstallments(schedule.id, revisionId, installmentIds, amounts, dates, schedule.currency)
 }
 
@@ -273,25 +284,31 @@ fun createRevisedInstallments(
     if (installmentIds.toSet().size != installmentIds.size) {
         return DomainResult.Failure(PeriodicAllocationViolation.IdentityRequired())
     }
-    val throughInstallment = allInstallments.firstOrNull { it.id == recognizedThrough }
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
+    val throughInstallment =
+        allInstallments.firstOrNull { it.id == recognizedThrough }
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
     if (throughInstallment.scheduleId != schedule.id) {
         return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
     }
-    val amounts = when (val split = splitAmountIntoInstallments(remainingAmountMinor, installmentIds.size)) {
-        is DomainResult.Success -> split.value
-        is DomainResult.Failure -> return DomainResult.Failure(split.violation)
-    }
+    val amounts =
+        when (val split = splitAmountIntoInstallments(remainingAmountMinor, installmentIds.size)) {
+            is DomainResult.Success -> split.value
+            is DomainResult.Failure -> return DomainResult.Failure(split.violation)
+        }
     val start = nextAnchorDate(throughInstallment.scheduledAt, schedule.anchor, utcOffsetSeconds)
-    val dates = when (val generated = generateInstallmentScheduledDates(
-        startAt = start,
-        anchor = schedule.anchor,
-        count = installmentIds.size,
-        utcOffsetSeconds = utcOffsetSeconds,
-    )) {
-        is DomainResult.Success -> generated.value
-        is DomainResult.Failure -> return DomainResult.Failure(generated.violation)
-    }
+    val dates =
+        when (
+            val generated =
+                generateInstallmentScheduledDates(
+                    startAt = start,
+                    anchor = schedule.anchor,
+                    count = installmentIds.size,
+                    utcOffsetSeconds = utcOffsetSeconds,
+                )
+        ) {
+            is DomainResult.Success -> generated.value
+            is DomainResult.Failure -> return DomainResult.Failure(generated.violation)
+        }
     return buildInstallments(schedule.id, newRevisionId, installmentIds, amounts, dates, schedule.currency)
 }
 
@@ -401,8 +418,9 @@ fun validateInstallmentRecognition(
     requestedAmountMinor: Long,
     requestedCurrency: CurrencyUnit,
 ): DomainResult<Unit> {
-    val installment = installments.firstOrNull { it.id == requestedInstallmentId }
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
+    val installment =
+        installments.firstOrNull { it.id == requestedInstallmentId }
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
     if (installment.scheduleId != schedule.id) {
         return DomainResult.Failure(PeriodicAllocationViolation.UnknownInstallment())
     }
@@ -415,8 +433,9 @@ fun validateInstallmentRecognition(
     if (installment.id in recognizedInstallmentIds || installment.revisionId != latestRevision.id) {
         return DomainResult.Failure(PeriodicAllocationViolation.InstallmentNotPending())
     }
-    val recognizedSum = recognizedAmountMinorOrNull(installments, recognizedInstallmentIds)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val recognizedSum =
+        recognizedAmountMinorOrNull(installments, recognizedInstallmentIds)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
     val remaining = schedule.totalAmountMinor - recognizedSum
     if (requestedAmountMinor > remaining) {
         return DomainResult.Failure(PeriodicAllocationViolation.ExceedsRemainingPrepaid())
@@ -460,15 +479,22 @@ fun deriveInstallmentAllocationStatus(
  * `exact_decimal_string_required`; a parsed zero or negative amount fails with
  * `must_be_positive` (frozen operation-reject-malformed/zero/negative-amount).
  */
-fun parseExactDecimalMinorUnits(text: String, precision: Int): DomainResult<Long> {
-    val scale = scaleForPrecision(precision)
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
-    val match = Regex("^([0-9]+)\\.([0-9]{$precision})$").matchEntire(text)
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
-    val whole = match.groupValues[1].toLongOrNull()
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
-    val fraction = match.groupValues[2].toLongOrNull()
-        ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
+fun parseExactDecimalMinorUnits(
+    text: String,
+    precision: Int,
+): DomainResult<Long> {
+    val scale =
+        scaleForPrecision(precision)
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
+    val match =
+        Regex("^([0-9]+)\\.([0-9]{$precision})$").matchEntire(text)
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
+    val whole =
+        match.groupValues[1].toLongOrNull()
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
+    val fraction =
+        match.groupValues[2].toLongOrNull()
+            ?: return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
     val maxWhole = (Long.MAX_VALUE - (scale - 1L)) / scale
     if (whole > maxWhole) {
         return DomainResult.Failure(PeriodicAllocationViolation.ExactDecimalStringRequired())
@@ -480,8 +506,7 @@ fun parseExactDecimalMinorUnits(text: String, precision: Int): DomainResult<Long
     return DomainResult.Success(minor)
 }
 
-private fun isSupportedPeriodicAllocationCurrency(currency: CurrencyUnit): Boolean =
-    currency == CurrencyUnit(code = "CNY", precision = 2)
+private fun isSupportedPeriodicAllocationCurrency(currency: CurrencyUnit): Boolean = currency == CurrencyUnit(code = "CNY", precision = 2)
 
 private fun buildInstallments(
     scheduleId: String,
@@ -531,30 +556,54 @@ private fun scaleForPrecision(precision: Int): Long? {
 
 private const val SECONDS_PER_DAY = 86_400L
 
-private fun localDateOf(instant: Instant, utcOffsetSeconds: Int): Triple<Int, Int, Int> {
+private fun localDateOf(
+    instant: Instant,
+    utcOffsetSeconds: Int,
+): Triple<Int, Int, Int> {
     val localSeconds = instant.epochSeconds + utcOffsetSeconds
     return civilFromDays(localSeconds.floorDiv(SECONDS_PER_DAY))
 }
 
-private fun instantOfLocalDate(year: Int, month: Int, day: Int, utcOffsetSeconds: Int): Instant {
+private fun instantOfLocalDate(
+    year: Int,
+    month: Int,
+    day: Int,
+    utcOffsetSeconds: Int,
+): Instant {
     val days = daysFromCivil(year, month, day)
     return Instant.fromEpochSeconds(days * SECONDS_PER_DAY - utcOffsetSeconds)
 }
 
-private fun hitsAnchor(year: Int, month: Int, day: Int, anchor: PeriodicAllocationAnchor): Boolean =
-    day == anchorDay(year, month, anchor)
+private fun hitsAnchor(
+    year: Int,
+    month: Int,
+    day: Int,
+    anchor: PeriodicAllocationAnchor,
+): Boolean = day == anchorDay(year, month, anchor)
 
-private fun anchorDay(year: Int, month: Int, anchor: PeriodicAllocationAnchor): Int = when (anchor) {
-    PeriodicAllocationAnchor.MonthEnd -> lastDayOfMonth(year, month)
-    is PeriodicAllocationAnchor.DayOfMonth -> anchor.day
-}
+private fun anchorDay(
+    year: Int,
+    month: Int,
+    anchor: PeriodicAllocationAnchor,
+): Int =
+    when (anchor) {
+        PeriodicAllocationAnchor.MonthEnd -> lastDayOfMonth(year, month)
+        is PeriodicAllocationAnchor.DayOfMonth -> anchor.day
+    }
 
-private fun lastDayOfMonth(year: Int, month: Int): Int {
+private fun lastDayOfMonth(
+    year: Int,
+    month: Int,
+): Int {
     val (nextYear, nextMonth) = if (month == 12) year + 1 to 1 else year to month + 1
     return civilFromDays(daysFromCivil(nextYear, nextMonth, 1) - 1L).third
 }
 
-private fun daysFromCivil(year: Int, month: Int, day: Int): Long {
+private fun daysFromCivil(
+    year: Int,
+    month: Int,
+    day: Int,
+): Long {
     val adjustedYear = if (month <= 2) year - 1 else year
     val era = (if (adjustedYear >= 0) adjustedYear else adjustedYear - 399) / 400
     val yearOfEra = adjustedYear - era * 400

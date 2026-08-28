@@ -25,12 +25,10 @@ import kotlin.test.assertTrue
  * candidate and no profile: the D-099 zero-write discipline).
  */
 class AlipayCsvParserCreditJvmTest {
-
     private val inputRef = "batch-p406-a"
     private val gb18030: Charset = Charset.forName("GB18030")
 
-    private fun metadataLines(): List<String> =
-        (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
+    private fun metadataLines(): List<String> = (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
 
     private fun headerLine(): String = AlipaySourceTokens.HEADER_TOKENS.joinToString(",") + ","
 
@@ -43,24 +41,41 @@ class AlipayCsvParserCreditJvmTest {
         time: String,
         method: String,
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
-    ): String = listOf(
-        time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        "SYN-SECRET-PRODUCT", direction, amount, method, status,
-        "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
-    ).joinToString(",") + ","
+    ): String =
+        listOf(
+            time,
+            category,
+            "SYN-SECRET-COUNTERPARTY",
+            "SYN-SECRET-ACCOUNT",
+            "SYN-SECRET-PRODUCT",
+            direction,
+            amount,
+            method,
+            status,
+            "SYN-SECRET-TXNO\t",
+            merchOrderNo?.let { "$it\t" } ?: "",
+            "SYN-SECRET-NOTE",
+        ).joinToString(",") + ","
 
-    private fun csvBytes(dataRows: List<String>): ByteArray = buildString {
-        metadataLines().forEach { append(it).append("\r\n") }
-        append(headerLine()).append("\n")
-        dataRows.forEach { append(it).append("\n") }
-    }.toByteArray(gb18030)
+    private fun csvBytes(dataRows: List<String>): ByteArray =
+        buildString {
+            metadataLines().forEach { append(it).append("\r\n") }
+            append(headerLine()).append("\n")
+            dataRows.forEach { append(it).append("\n") }
+        }.toByteArray(gb18030)
 
-    private fun accepted(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Accepted {
+    private fun accepted(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Accepted {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Accepted>(row)
     }
 
-    private fun rejected(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Rejected {
+    private fun rejected(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Rejected {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Rejected>(row)
     }
@@ -69,21 +84,33 @@ class AlipayCsvParserCreditJvmTest {
     private val refundProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "花呗")
     private val mixedProfile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "余额宝", "花呗")
 
-    private fun v3Facts(amountMinor: Long, time: String, direction: String, status: String?) =
-        com.unifiedledger.application.ImportSourceFacts(
-            amountMinor, "CNY", 2, time, direction, status,
-            ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-        )
+    private fun v3Facts(
+        amountMinor: Long,
+        time: String,
+        direction: String,
+        status: String?,
+    ) = com.unifiedledger.application.ImportSourceFacts(
+        amountMinor,
+        "CNY",
+        2,
+        time,
+        direction,
+        status,
+        ImportFundingState.SETTLED,
+        IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+        1,
+    )
 
     // ---- Matrix 1: credit expense direct variant (judgment order 6e) ----
 
     @Test
     fun installmentMethodFormRoutesToCreditExpenseDirectVariant() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "100.00", "交易成功", "2026-08-01 12:30:45", "花呗分期(3期)"),
-            creditRow("扫码支付", "支出", "80.00", "交易成功", "2026-08-01 12:31:45", "花呗"),
-            creditRow("网上支付", "支出", "60.00", "交易成功", "2026-08-01 12:32:45", "花呗分期(12期)"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "100.00", "交易成功", "2026-08-01 12:30:45", "花呗分期(3期)"),
+                creditRow("扫码支付", "支出", "80.00", "交易成功", "2026-08-01 12:31:45", "花呗"),
+                creditRow("网上支付", "支出", "60.00", "交易成功", "2026-08-01 12:32:45", "花呗分期(12期)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
 
@@ -102,9 +129,10 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditExpenseNonSuccessStatusStaysValidIncompleteWithRawStatus() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "100.00", "交易关闭", "2026-08-01 12:30:45", "花呗分期(3期)"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "100.00", "交易关闭", "2026-08-01 12:30:45", "花呗分期(3期)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         val row = accepted(result.rows, 0)
         assertEquals(ImportRecordKind.CREDIT_EXPENSE_SOURCE, row.recordKind)
@@ -120,11 +148,12 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditBorrowRepayFamilyRoutesRepaymentWithDerivedDirectionAndAdvisoryAssetLeg() {
-        val rows = listOf(
-            creditRow("信用借还", "不计收支", "56.20", "还款", "2026-08-11 12:00:00", ""),
-            creditRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:05:00", "余额宝"),
-            creditRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:06:00", "招商银行储蓄卡(0123)"),
-        )
+        val rows =
+            listOf(
+                creditRow("信用借还", "不计收支", "56.20", "还款", "2026-08-11 12:00:00", ""),
+                creditRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:05:00", "余额宝"),
+                creditRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:06:00", "招商银行储蓄卡(0123)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
 
@@ -145,15 +174,16 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditRepaymentNonSuccessStatusStaysValidIncompleteWithRawStatus() {
-        val rows = listOf(
-            creditRow("信用借还", "不计收支", "56.20", "交易成功", "2026-08-11 12:00:00", ""),
-            creditRow("信用借还", "不计收支", "56.20", "交易关闭", "2026-08-11 12:01:00", ""),
-        )
+        val rows =
+            listOf(
+                creditRow("信用借还", "不计收支", "56.20", "交易成功", "2026-08-11 12:00:00", ""),
+                creditRow("信用借还", "不计收支", "56.20", "交易关闭", "2026-08-11 12:01:00", ""),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         listOf("交易成功", "交易关闭").forEachIndexed { index, raw ->
             val row = accepted(result.rows, index)
             assertEquals(ImportRecordKind.CREDIT_REPAYMENT_SOURCE, row.recordKind)
-            assertEquals(v3Facts(5620, "2026-08-11T12:0${index}:00+08:00", "out", raw), row.facts)
+            assertEquals(v3Facts(5620, "2026-08-11T12:0$index:00+08:00", "out", raw), row.facts)
             assertEquals(ImportCompleteness.VALID_INCOMPLETE, row.completeness)
             assertEquals("REQUIRED_FACT_UNRESOLVED", row.diagnostics.single().code)
             assertEquals("status", row.diagnostics.single().fieldRole)
@@ -164,19 +194,20 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditOnlyRefundMarkerRoutesToRefundVariantWithRefundSettledStatus() {
-        val rows = listOf(
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:00:00", "花呗分期(3期)"),
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:01:00", "花呗"),
-            // Set semantics: 花呗&花呗分期(3期) collapses to one credit leg.
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:02:00", "花呗&花呗分期(3期)"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:00:00", "花呗分期(3期)"),
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:01:00", "花呗"),
+                // Set semantics: 花呗&花呗分期(3期) collapses to one credit leg.
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:02:00", "花呗&花呗分期(3期)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
         rows.indices.forEach { index ->
             val row = accepted(result.rows, index)
             assertEquals(ImportRecordKind.CREDIT_EXPENSE_SOURCE, row.recordKind)
             assertEquals(
-                v3Facts(1535, "2026-08-12T09:0${index}:00+08:00", "in", "refund_settled"),
+                v3Facts(1535, "2026-08-12T09:0$index:00+08:00", "in", "refund_settled"),
                 row.facts,
             )
             assertEquals(ImportCompleteness.VALID_COMPLETE, row.completeness)
@@ -187,13 +218,14 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditRefundNonSuccessStatusStaysValidIncompleteAndOtherRefundShapesStayRejected() {
-        val rows = listOf(
-            creditRow("网上支付", "不计收支", "15.35", "退款关闭", "2026-08-12 09:00:00", "花呗"),
-            creditRow("网上支付", "支出", "15.35", "退款成功", "2026-08-12 09:01:00", "花呗"),
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:02:00", ""),
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:03:00", "余额宝"),
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:04:00", "余额宝&花呗"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "不计收支", "15.35", "退款关闭", "2026-08-12 09:00:00", "花呗"),
+                creditRow("网上支付", "支出", "15.35", "退款成功", "2026-08-12 09:01:00", "花呗"),
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:02:00", ""),
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:03:00", "余额宝"),
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-12 09:04:00", "余额宝&花呗"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
 
         // 1c negative: raw status preserved, zero rejection upgrade.
@@ -218,15 +250,35 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun nonWhitelistLegsRejectTypedWithZeroRecords() {
-        val vectors = listOf(
-            "红包", "优惠", "花呗立减", "闪购支付红包", "网上消费红包", "支付宝随机立减", "到店支付立减券",
-            "他人代付账户", "零钱", "零钱通", "数字人民币钱包", "信用卡", "(0123)", "花呗(abc)",
-            "招商银行储蓄卡(123)", "招商银行储蓄卡(01234)", "花呗分期", "账户余额(个人余额x)", "余额宝(1234",
-            "花呗&支付宝随机立减", "余额宝&", "SYN-SECRET-METHOD",
-        )
-        val rows = vectors.mapIndexed { index, method ->
-            creditRow("网上支付", "支出", "10.00", "交易成功", "2026-08-13 %02d:00:00".format(index), method)
-        }
+        val vectors =
+            listOf(
+                "红包",
+                "优惠",
+                "花呗立减",
+                "闪购支付红包",
+                "网上消费红包",
+                "支付宝随机立减",
+                "到店支付立减券",
+                "他人代付账户",
+                "零钱",
+                "零钱通",
+                "数字人民币钱包",
+                "信用卡",
+                "(0123)",
+                "花呗(abc)",
+                "招商银行储蓄卡(123)",
+                "招商银行储蓄卡(01234)",
+                "花呗分期",
+                "账户余额(个人余额x)",
+                "余额宝(1234",
+                "花呗&支付宝随机立减",
+                "余额宝&",
+                "SYN-SECRET-METHOD",
+            )
+        val rows =
+            vectors.mapIndexed { index, method ->
+                creditRow("网上支付", "支出", "10.00", "交易成功", "2026-08-13 %02d:00:00".format(index), method)
+            }
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
         assertEquals(0, result.rows.count { it is AlipayRowResult.Accepted })
@@ -245,12 +297,13 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun mixedLegExpenseActivatesAndNeutralAndIncomeFollowFrozenOrderSix() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 08:00:00", "余额宝&花呗"),
-            creditRow("网上支付", "不计收支", "120.00", "交易成功", "2026-08-14 08:01:00", "余额宝&花呗"),
-            creditRow("网上支付", "收入", "120.00", "交易成功", "2026-08-14 08:02:00", "余额宝&花呗"),
-            creditRow("网上支付", "收入", "120.00", "交易成功", "2026-08-14 08:03:00", "花呗"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 08:00:00", "余额宝&花呗"),
+                creditRow("网上支付", "不计收支", "120.00", "交易成功", "2026-08-14 08:01:00", "余额宝&花呗"),
+                creditRow("网上支付", "收入", "120.00", "交易成功", "2026-08-14 08:02:00", "余额宝&花呗"),
+                creditRow("网上支付", "收入", "120.00", "交易成功", "2026-08-14 08:03:00", "花呗"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
 
         // 6d (D-108 section 3): exactly one asset leg + one credit leg + 支出.
@@ -279,11 +332,12 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun mixedCompositionGateRejectsNonExactOnePlusOneLegsWithZeroRecords() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:00:00", "余额宝&招商银行储蓄卡(0123)&花呗"),
-            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:01:00", "余额宝&账户余额&花呗"),
-            creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:02:00", "招商银行储蓄卡(0123)&花呗"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:00:00", "余额宝&招商银行储蓄卡(0123)&花呗"),
+                creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:01:00", "余额宝&账户余额&花呗"),
+                creditRow("网上支付", "支出", "120.00", "交易成功", "2026-08-14 09:02:00", "招商银行储蓄卡(0123)&花呗"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
         // 6d composition gate (D-108 section 2 ruling 2): >1 asset leg or >1 credit
@@ -300,9 +354,10 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun foldedCreditTokensStayExactlyOneAndKeepTheDirectVariant() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "80.00", "交易成功", "2026-08-14 10:00:00", "花呗&花呗分期(3期)"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "80.00", "交易成功", "2026-08-14 10:00:00", "花呗&花呗分期(3期)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
         // 6e set semantics: folded duplicates stay exactly one credit token, so the
@@ -314,9 +369,10 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun mixedLegNonSuccessStatusStaysValidIncompleteWithRawStatus() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "120.00", "交易关闭", "2026-08-14 11:00:00", "余额宝&花呗"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "120.00", "交易关闭", "2026-08-14 11:00:00", "余额宝&花呗"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         val row = accepted(result.rows, 0)
         assertEquals(ImportRecordKind.MIXED_PAYMENT_SOURCE, row.recordKind)
@@ -332,13 +388,14 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun creditFamilyNegativeShapesKeepTypedRejections() {
-        val rows = listOf(
-            creditRow("信用借还", "支出", "10.00", "还款", "2026-08-15 08:00:00", ""),
-            creditRow("信用借还", "收入", "10.00", "还款", "2026-08-15 08:01:00", ""),
-            creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:02:00", "花呗"),
-            creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:03:00", "余额宝&招商银行储蓄卡(0123)"),
-            creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:04:00", "红包"),
-        )
+        val rows =
+            listOf(
+                creditRow("信用借还", "支出", "10.00", "还款", "2026-08-15 08:00:00", ""),
+                creditRow("信用借还", "收入", "10.00", "还款", "2026-08-15 08:01:00", ""),
+                creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:02:00", "花呗"),
+                creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:03:00", "余额宝&招商银行储蓄卡(0123)"),
+                creditRow("信用借还", "不计收支", "10.00", "还款", "2026-08-15 08:04:00", "红包"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(0, result.rows.count { it is AlipayRowResult.Accepted })
         // 3b: family membership gate (direction != 不计收支).
@@ -354,13 +411,14 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun assetOnlyOrEmptyLegsKeepOrdinaryV1PathWithZeroLegPersistence() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:00:00", ""),
-            creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:01:00", "账户余额(个人余额)"),
-            creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:02:00", "余额"),
-            creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:03:00", "余额宝(个人余额)"),
-            creditRow("网上支付", "不计收支", "10.00", "还款", "2026-08-16 08:04:00", ""),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:00:00", ""),
+                creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:01:00", "账户余额(个人余额)"),
+                creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:02:00", "余额"),
+                creditRow("网上支付", "支出", "128.50", "交易成功", "2026-08-16 08:03:00", "余额宝(个人余额)"),
+                creditRow("网上支付", "不计收支", "10.00", "还款", "2026-08-16 08:04:00", ""),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
         (0..3).forEach { ordinal ->
@@ -383,14 +441,24 @@ class AlipayCsvParserCreditJvmTest {
     @Test
     fun refundLegGatePrecedesRefundShapeGateAndInvestmentBranchIgnoresColumnSeven() {
         // The RL-04 row uses the frozen subtype in the product-description column.
-        val rows = listOf(
-            creditRow("网上支付", "支出", "15.35", "退款成功", "2026-08-17 08:00:00", "红包"),
+        val rows =
             listOf(
-                "2026-08-17 08:01:00", "投资理财", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-                "余额宝-自动转入", "不计收支", "10.00", "红包", "交易成功",
-                "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
-            ).joinToString(",") + ",",
-        )
+                creditRow("网上支付", "支出", "15.35", "退款成功", "2026-08-17 08:00:00", "红包"),
+                listOf(
+                    "2026-08-17 08:01:00",
+                    "投资理财",
+                    "SYN-SECRET-COUNTERPARTY",
+                    "SYN-SECRET-ACCOUNT",
+                    "余额宝-自动转入",
+                    "不计收支",
+                    "10.00",
+                    "红包",
+                    "交易成功",
+                    "SYN-SECRET-TXNO\t",
+                    "SYN-SECRET-MERCHNO\t",
+                    "SYN-SECRET-NOTE",
+                ).joinToString(",") + ",",
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         // 1a leg gate wins over the refund shape gate.
         assertEquals("SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG", rejected(result.rows, 0).diagnostics.single().code)
@@ -405,12 +473,13 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun v3BranchesReuseFrozenAmountAndTimeParsing() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "abc", "交易成功", "2026-08-18 08:00:00", "花呗"),
-            creditRow("网上支付", "支出", "10.00", "交易成功", "不是时间", "花呗"),
-            creditRow("信用借还", "不计收支", "12.5", "还款", "2026-08-18 08:02:00", ""),
-            creditRow("网上支付", "不计收支", "abc", "退款成功", "2026-08-18 08:03:00", "花呗"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "abc", "交易成功", "2026-08-18 08:00:00", "花呗"),
+                creditRow("网上支付", "支出", "10.00", "交易成功", "不是时间", "花呗"),
+                creditRow("信用借还", "不计收支", "12.5", "还款", "2026-08-18 08:02:00", ""),
+                creditRow("网上支付", "不计收支", "abc", "退款成功", "2026-08-18 08:03:00", "花呗"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals("FIELD_AMOUNT_INVALID", rejected(result.rows, 0).diagnostics.single().code)
         assertEquals("FIELD_TIME_INVALID", rejected(result.rows, 1).diagnostics.single().code)
@@ -422,11 +491,12 @@ class AlipayCsvParserCreditJvmTest {
 
     @Test
     fun normalizedTokensPersistButRawAnnotationsAndMasksNeverLeak() {
-        val rows = listOf(
-            creditRow("网上支付", "支出", "100.00", "交易成功", "2026-08-19 08:00:00", "花呗分期(3期)"),
-            creditRow("信用借还", "不计收支", "56.20", "还款", "2026-08-19 08:01:00", "招商银行储蓄卡(4567)"),
-            creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-19 08:02:00", "花呗分期(12期)"),
-        )
+        val rows =
+            listOf(
+                creditRow("网上支付", "支出", "100.00", "交易成功", "2026-08-19 08:00:00", "花呗分期(3期)"),
+                creditRow("信用借还", "不计收支", "56.20", "还款", "2026-08-19 08:01:00", "招商银行储蓄卡(4567)"),
+                creditRow("网上支付", "不计收支", "15.35", "退款成功", "2026-08-19 08:02:00", "花呗分期(12期)"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         val outputs = mutableListOf<String?>()
         result.rows.forEach { row ->

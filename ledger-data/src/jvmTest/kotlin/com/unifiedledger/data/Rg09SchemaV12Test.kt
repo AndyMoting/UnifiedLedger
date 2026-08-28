@@ -38,7 +38,10 @@ class Rg09SchemaV12Test {
                         "BALANCE_ADJUSTMENT",
                         "BALANCE_ADJUSTMENT_REVERSAL",
                     ),
-                    database.ledgerQueries.selectPersistedTransaction().executeAsList().map { it.kind },
+                    database.ledgerQueries
+                        .selectPersistedTransaction()
+                        .executeAsList()
+                        .map { it.kind },
                 )
             }
         } finally {
@@ -46,7 +49,12 @@ class Rg09SchemaV12Test {
         }
     }
 
-    private fun seedFormal(database: LedgerDatabase, prefix: String, kind: String, amountMinor: Long) {
+    private fun seedFormal(
+        database: LedgerDatabase,
+        prefix: String,
+        kind: String,
+        amountMinor: Long,
+    ) {
         val ledgerId = "ledger-rg09"
         val transactionId = "$prefix-tx"
         val postingSetId = "$prefix-posting-set"
@@ -87,29 +95,33 @@ class Rg09SchemaV12Test {
         )
     }
 
-    private fun storedKinds(driver: JdbcSqliteDriver): List<StoredKind> = driver.executeQuery(
-        identifier = null,
-        sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
-        mapper = { cursor ->
-            val rows = buildList {
-                while (cursor.next().value) {
-                    add(
-                        StoredKind(
-                            transactionId = requireNotNull(cursor.getString(0)),
-                            legacyKind = requireNotNull(cursor.getString(1)),
-                            canonicalKind = requireNotNull(cursor.getString(2)),
-                        ),
-                    )
-                }
-            }
-            QueryResult.Value(rows)
-        },
-        parameters = 0,
-    ).value
+    private fun storedKinds(driver: JdbcSqliteDriver): List<StoredKind> =
+        driver
+            .executeQuery(
+                identifier = null,
+                sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
+                mapper = { cursor ->
+                    val rows =
+                        buildList {
+                            while (cursor.next().value) {
+                                add(
+                                    StoredKind(
+                                        transactionId = requireNotNull(cursor.getString(0)),
+                                        legacyKind = requireNotNull(cursor.getString(1)),
+                                        canonicalKind = requireNotNull(cursor.getString(2)),
+                                    ),
+                                )
+                            }
+                        }
+                    QueryResult.Value(rows)
+                },
+                parameters = 0,
+            ).value
 
-    private fun sqliteProperties() = Properties().apply {
-        setProperty("foreign_keys", "true")
-    }
+    private fun sqliteProperties() =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+        }
 
     private data class StoredKind(
         val transactionId: String,

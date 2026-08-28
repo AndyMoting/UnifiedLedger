@@ -5,7 +5,9 @@ package com.unifiedledger.domain
  * behavior codes with their principal effect and settlement boolean; the enum itself is the
  * closed registry and [fromCode] is the only entry point for raw code strings.
  */
-enum class LendingPrincipalEffect(val code: String) {
+enum class LendingPrincipalEffect(
+    val code: String,
+) {
     INCREASE_PAYABLE("increase_payable"),
     INCREASE_RECEIVABLE("increase_receivable"),
     DECREASE_RECEIVABLE("decrease_receivable"),
@@ -24,7 +26,6 @@ enum class LendingBehaviorCode(
     ;
 
     companion object {
-        fun fromCode(code: String): LendingBehaviorCode? =
-            entries.firstOrNull { it.code == code }
+        fun fromCode(code: String): LendingBehaviorCode? = entries.firstOrNull { it.code == code }
     }
 }

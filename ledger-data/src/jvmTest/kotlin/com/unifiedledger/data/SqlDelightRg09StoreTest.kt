@@ -21,11 +21,11 @@ import java.nio.file.Path
 import java.sql.SQLException
 import java.util.Properties
 import kotlin.io.path.absolutePathString
-import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.time.Instant
 
 class SqlDelightRg09StoreTest {
     @Test
@@ -48,7 +48,14 @@ class SqlDelightRg09StoreTest {
                 expectedSnapshot = store.snapshot(fixture.ledgerId)
                 assertEquals(4L, database.ledgerQueries.countRg09FormalTransactions(fixture.ledgerId.value).executeAsOne())
                 assertEquals(4L, database.ledgerQueries.countRg09Operations(fixture.ledgerId.value).executeAsOne())
-                assertEquals(2L, database.ledgerQueries.selectRg09AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg09AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -82,11 +89,16 @@ class SqlDelightRg09StoreTest {
                 assertIs<Rg09ExecutionResult.Accepted>(store.commit(pending.operation), pending.id)
                 assertEquals(
                     "pending_confirmation",
-                    store.snapshot(fixture.ledgerId).candidates.single { it.id.value == "candidate-import-transfer-rg09" }.status,
+                    store
+                        .snapshot(fixture.ledgerId)
+                        .candidates
+                        .single { it.id.value == "candidate-import-transfer-rg09" }
+                        .status,
                 )
                 assertEquals(
                     listOf("PENDING_CONFIRMATION"),
-                    database.ledgerQueries.selectRg09AllCandidateHistory(fixture.ledgerId.value)
+                    database.ledgerQueries
+                        .selectRg09AllCandidateHistory(fixture.ledgerId.value)
                         .executeAsList()
                         .filter { it.candidate_id == "candidate-import-transfer-rg09" }
                         .map { it.status },
@@ -96,28 +108,36 @@ class SqlDelightRg09StoreTest {
                 assertIs<Rg09ExecutionResult.Accepted>(store.commit(transfer.operation), transfer.id)
                 assertEquals(
                     "pending_confirmation",
-                    store.snapshot(fixture.ledgerId).candidates.single { it.id.value == "candidate-import-transfer-rg09" }.status,
+                    store
+                        .snapshot(fixture.ledgerId)
+                        .candidates
+                        .single { it.id.value == "candidate-import-transfer-rg09" }
+                        .status,
                 )
 
                 val explanation = fixture.allOperations.single { it.id == "import-explanation-confirmation-rg09" }
                 assertIs<Rg09ExecutionResult.Accepted>(store.commit(explanation.operation), explanation.id)
-                val confirmed = store.snapshot(fixture.ledgerId).candidates.single {
-                    it.id.value == "candidate-import-transfer-rg09"
-                }
+                val confirmed =
+                    store.snapshot(fixture.ledgerId).candidates.single {
+                        it.id.value == "candidate-import-transfer-rg09"
+                    }
                 assertEquals("confirmed", confirmed.status)
                 assertEquals("adjustment-rg09", confirmed.adjustmentId?.value)
                 assertEquals("request-import-allocation-confirm-rg09", confirmed.confirmationRequestId?.value)
                 assertEquals(
                     listOf("PENDING_CONFIRMATION", "CONFIRMED"),
-                    database.ledgerQueries.selectRg09AllCandidateHistory(fixture.ledgerId.value)
+                    database.ledgerQueries
+                        .selectRg09AllCandidateHistory(fixture.ledgerId.value)
                         .executeAsList()
                         .filter { it.candidate_id == "candidate-import-transfer-rg09" }
                         .map { it.status },
                 )
-                val current = database.ledgerQueries.selectRg09Candidate(
-                    fixture.ledgerId.value,
-                    "candidate-import-transfer-rg09",
-                ).executeAsOne()
+                val current =
+                    database.ledgerQueries
+                        .selectRg09Candidate(
+                            fixture.ledgerId.value,
+                            "candidate-import-transfer-rg09",
+                        ).executeAsOne()
                 assertEquals("CONFIRMED", current.status)
                 assertEquals("adjustment-rg09", current.adjustment_id)
                 assertEquals("request-import-allocation-confirm-rg09", current.confirmation_request_id)
@@ -128,16 +148,19 @@ class SqlDelightRg09StoreTest {
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
                 assertPersistedSnapshotEquals(expectedSnapshot, store.snapshot(fixture.ledgerId))
-                val current = database.ledgerQueries.selectRg09Candidate(
-                    fixture.ledgerId.value,
-                    "candidate-import-transfer-rg09",
-                ).executeAsOne()
+                val current =
+                    database.ledgerQueries
+                        .selectRg09Candidate(
+                            fixture.ledgerId.value,
+                            "candidate-import-transfer-rg09",
+                        ).executeAsOne()
                 assertEquals("CONFIRMED", current.status)
                 assertEquals("adjustment-rg09", current.adjustment_id)
                 assertEquals("request-import-allocation-confirm-rg09", current.confirmation_request_id)
                 assertEquals(
                     listOf("PENDING_CONFIRMATION", "CONFIRMED"),
-                    database.ledgerQueries.selectRg09AllCandidateHistory(fixture.ledgerId.value)
+                    database.ledgerQueries
+                        .selectRg09AllCandidateHistory(fixture.ledgerId.value)
                         .executeAsList()
                         .filter { it.candidate_id == "candidate-import-transfer-rg09" }
                         .map { it.status },
@@ -165,14 +188,17 @@ class SqlDelightRg09StoreTest {
                 val evidence = fixture.allOperations.single { it.id == "link-first_transfer_asset_a-rg09" }
                 assertIs<Rg09ExecutionResult.Accepted>(store.commit(evidence.operation), evidence.id)
 
-                val current = database.ledgerQueries
-                    .selectRg09AllPostingReconciliations(fixture.ledgerId.value)
-                    .executeAsList().single { it.posting_id == "posting-transfer-a-rg09" }
+                val current =
+                    database.ledgerQueries
+                        .selectRg09AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.posting_id == "posting-transfer-a-rg09" }
                 assertEquals("MATCHED", current.status)
                 assertEquals(2L, current.latest_sequence)
                 assertEquals(
                     listOf("PENDING_EVIDENCE", "MATCHED"),
-                    database.ledgerQueries.selectRg09AllReconciliationHistory(fixture.ledgerId.value)
+                    database.ledgerQueries
+                        .selectRg09AllReconciliationHistory(fixture.ledgerId.value)
                         .executeAsList()
                         .filter { it.posting_id == "posting-transfer-a-rg09" }
                         .map { it.status },
@@ -185,9 +211,11 @@ class SqlDelightRg09StoreTest {
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
                 assertPersistedSnapshotEquals(expectedSnapshot, store.snapshot(fixture.ledgerId))
-                val current = database.ledgerQueries
-                    .selectRg09AllPostingReconciliations(fixture.ledgerId.value)
-                    .executeAsList().single { it.posting_id == "posting-transfer-a-rg09" }
+                val current =
+                    database.ledgerQueries
+                        .selectRg09AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.posting_id == "posting-transfer-a-rg09" }
                 assertEquals("MATCHED", current.status)
                 assertEquals(2L, current.latest_sequence)
             }
@@ -207,21 +235,24 @@ class SqlDelightRg09StoreTest {
         val original = fixture.openingTransactions.single()
         val originalFormal = original.formalTransaction
         val originalVersion = originalFormal.versions.single()
-        val times = TransactionTimes(
-            occurredAt = Instant.parse("2026-01-01T00:00:00Z"),
-            statisticsAt = Instant.parse("2026-01-02T00:00:00Z"),
-            effectiveAt = Instant.parse("2026-01-03T00:00:00Z"),
-        )
+        val times =
+            TransactionTimes(
+                occurredAt = Instant.parse("2026-01-01T00:00:00Z"),
+                statisticsAt = Instant.parse("2026-01-02T00:00:00Z"),
+                effectiveAt = Instant.parse("2026-01-03T00:00:00Z"),
+            )
         val version = originalVersion.copy(times = times)
-        val formal = assertIs<DomainResult.Success<FormalTransaction>>(
-            FormalTransaction.create(originalFormal.transaction, listOf(version), originalFormal.postingSets),
-        ).value
-        val record = original.copy(
-            formalTransaction = formal,
-            createdAt = Instant.parse("2026-01-04T00:00:00Z"),
-            createdAtText = "2026-01-04T08:00:00+08:00",
-            statisticsAtText = "2026-01-02T08:00:00+08:00",
-        )
+        val formal =
+            assertIs<DomainResult.Success<FormalTransaction>>(
+                FormalTransaction.create(originalFormal.transaction, listOf(version), originalFormal.postingSets),
+            ).value
+        val record =
+            original.copy(
+                formalTransaction = formal,
+                createdAt = Instant.parse("2026-01-04T00:00:00Z"),
+                createdAtText = "2026-01-04T08:00:00+08:00",
+                statisticsAtText = "2026-01-02T08:00:00+08:00",
+            )
         val path = Files.createTempFile("ledger-data-rg09-times-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
         try {
@@ -252,9 +283,10 @@ class SqlDelightRg09StoreTest {
             insertFormalWithoutRg09Metadata(database, record)
             val store = SqlDelightRg09Store(database, driver, fixture.catalog)
 
-            val failure = assertFailsWith<IllegalStateException> {
-                store.snapshot(fixture.ledgerId)
-            }
+            val failure =
+                assertFailsWith<IllegalStateException> {
+                    store.snapshot(fixture.ledgerId)
+                }
             assertEquals(
                 "missing persisted RG-09 formal transaction metadata for ${record.formalTransaction.transaction.id.value}",
                 failure.message,
@@ -306,15 +338,16 @@ class SqlDelightRg09StoreTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val failingStore = SqlDelightRg09Store(
-                database,
-                driver,
-                fixture.catalog,
-                fixture.openingTransactions,
-                Rg09FailureInjector { point ->
-                    if (point == Rg09FailurePoint.AFTER_DELTA) error("injected RG-09 rollback")
-                },
-            )
+            val failingStore =
+                SqlDelightRg09Store(
+                    database,
+                    driver,
+                    fixture.catalog,
+                    fixture.openingTransactions,
+                    Rg09FailureInjector { point ->
+                        if (point == Rg09FailurePoint.AFTER_DELTA) error("injected RG-09 rollback")
+                    },
+                )
             val preview = fixture.operations.first().operation
             val baseline = failingStore.snapshot(fixture.ledgerId)
 
@@ -353,14 +386,14 @@ class SqlDelightRg09StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_candidate_status_history(
-                          ledger_id, candidate_id, status_sequence, status_id, status, occurred_at,
-                          adjustment_id, confirmation_request_id, operation_identity
-                        ) VALUES (
-                          'ledger-rg09', 'candidate-adjustment-rg09', 4,
-                          'candidate-status-invalid-rg09', 'CONFIRMED', '2026-02-02T09:05:00+08:00',
-                          'adjustment-rg09', 'request-confirm-adjustment-rg09', 'request-confirm-adjustment-rg09'
-                        )
+                    INSERT INTO rg09_candidate_status_history(
+                      ledger_id, candidate_id, status_sequence, status_id, status, occurred_at,
+                      adjustment_id, confirmation_request_id, operation_identity
+                    ) VALUES (
+                      'ledger-rg09', 'candidate-adjustment-rg09', 4,
+                      'candidate-status-invalid-rg09', 'CONFIRMED', '2026-02-02T09:05:00+08:00',
+                      'adjustment-rg09', 'request-confirm-adjustment-rg09', 'request-confirm-adjustment-rg09'
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -369,13 +402,13 @@ class SqlDelightRg09StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_evidence_link(
-                          ledger_id, link_id, source_id, evidence_id, target_kind, target_id, role, status
-                        ) VALUES (
-                          'ledger-rg09', 'evidence-link-invalid-target-rg09',
-                          'source-target-observation-rg09', 'evidence-target-rg09',
-                          'POSTING', 'posting-adjustment-asset-rg09', 'REAL_ACCOUNT_POSTING', 'MATCHED'
-                        )
+                    INSERT INTO rg09_evidence_link(
+                      ledger_id, link_id, source_id, evidence_id, target_kind, target_id, role, status
+                    ) VALUES (
+                      'ledger-rg09', 'evidence-link-invalid-target-rg09',
+                      'source-target-observation-rg09', 'evidence-target-rg09',
+                      'POSTING', 'posting-adjustment-asset-rg09', 'REAL_ACCOUNT_POSTING', 'MATCHED'
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -384,17 +417,17 @@ class SqlDelightRg09StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_balance_adjustment(
-                          ledger_id, adjustment_id, transaction_id, observation_id,
-                          target_account_id, equity_account_id, currency_code, currency_precision,
-                          target_observed_at, target_observed_at_text, replayed_amount_minor,
-                          target_amount_minor, original_delta_minor
-                        ) VALUES (
-                          'ledger-rg09', 'adjustment-invalid-owner-rg09', 'transaction-transfer-rg09',
-                          'observation-target-rg09', 'asset-a', 'equity-balance-adjustments', 'CNY', 2,
-                          '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00', 10000,
-                          13000, 3000
-                        )
+                    INSERT INTO rg09_balance_adjustment(
+                      ledger_id, adjustment_id, transaction_id, observation_id,
+                      target_account_id, equity_account_id, currency_code, currency_precision,
+                      target_observed_at, target_observed_at_text, replayed_amount_minor,
+                      target_amount_minor, original_delta_minor
+                    ) VALUES (
+                      'ledger-rg09', 'adjustment-invalid-owner-rg09', 'transaction-transfer-rg09',
+                      'observation-target-rg09', 'asset-a', 'equity-balance-adjustments', 'CNY', 2,
+                      '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00', 10000,
+                      13000, 3000
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -403,11 +436,11 @@ class SqlDelightRg09StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_posting_semantic(
-                          ledger_id, posting_id, role, reconciliation_eligible
-                        ) VALUES (
-                          'ledger-rg09', 'posting-opening-a-rg09', 'TRANSFER_SOURCE', 1
-                        )
+                    INSERT INTO rg09_posting_semantic(
+                      ledger_id, posting_id, role, reconciliation_eligible
+                    ) VALUES (
+                      'ledger-rg09', 'posting-opening-a-rg09', 'TRANSFER_SOURCE', 1
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -416,16 +449,16 @@ class SqlDelightRg09StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_confirmation(
-                          ledger_id, confirmation_id, request_id, role, confirmed_at,
-                          confirmed_at_text, created_at, created_at_text, target_id
-                        ) VALUES (
-                          'ledger-rg09', 'confirmation-invalid-owner-rg09',
-                          'request-invalid-owner-rg09', 'REAL_TRANSFER_CONFIRMATION',
-                          '2026-02-12T02:00:00Z', '2026-02-12T10:00:00+08:00',
-                          '2026-02-12T02:00:00Z', '2026-02-12T10:00:00+08:00',
-                          'transaction-adjustment-rg09'
-                        )
+                    INSERT INTO rg09_confirmation(
+                      ledger_id, confirmation_id, request_id, role, confirmed_at,
+                      confirmed_at_text, created_at, created_at_text, target_id
+                    ) VALUES (
+                      'ledger-rg09', 'confirmation-invalid-owner-rg09',
+                      'request-invalid-owner-rg09', 'REAL_TRANSFER_CONFIRMATION',
+                      '2026-02-12T02:00:00Z', '2026-02-12T10:00:00+08:00',
+                      '2026-02-12T02:00:00Z', '2026-02-12T10:00:00+08:00',
+                      'transaction-adjustment-rg09'
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -486,7 +519,8 @@ class SqlDelightRg09StoreTest {
                     posting.accountId.value,
                     posting.amount.minorUnits,
                     posting.amount.currency.code,
-                    posting.amount.currency.precision.toLong(),
+                    posting.amount.currency.precision
+                        .toLong(),
                 )
             }
         }
@@ -498,8 +532,7 @@ class SqlDelightRg09StoreTest {
             loadRuntimeInputs(),
         )
 
-    private fun loadRuntimeInputs() =
-        parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json")))
+    private fun loadRuntimeInputs() = parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json")))
 
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
@@ -510,9 +543,10 @@ class SqlDelightRg09StoreTest {
         error("repository root not found")
     }
 
-    private fun sqliteProperties() = Properties().apply {
-        setProperty("foreign_keys", "true")
-    }
+    private fun sqliteProperties() =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+        }
 
     private fun assertPersistedSnapshotEquals(
         expected: Rg09Snapshot,
@@ -538,25 +572,31 @@ class SqlDelightRg09StoreTest {
         actual: Rg09FormalTransactionRecord,
     ) {
         assertEquals(
-            expected.formalTransaction.versions.single().times,
-            actual.formalTransaction.versions.single().times,
+            expected.formalTransaction.versions
+                .single()
+                .times,
+            actual.formalTransaction.versions
+                .single()
+                .times,
         )
         assertEquals(expected.createdAt, actual.createdAt)
         assertEquals(expected.createdAtText, actual.createdAtText)
         assertEquals(expected.statisticsAtText, actual.statisticsAtText)
     }
 
-    private fun formalProjection(record: Rg09FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map {
-            PostingSetProjection(it.id, it.postings)
-        },
-        createdAt = record.createdAt,
-        sourceRecordId = record.sourceRecordId?.value,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection(record: Rg09FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets =
+                record.formalTransaction.postingSets.map {
+                    PostingSetProjection(it.id, it.postings)
+                },
+            createdAt = record.createdAt,
+            sourceRecordId = record.sourceRecordId?.value,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
     private data class FormalRecordProjection(
         val transaction: Transaction,

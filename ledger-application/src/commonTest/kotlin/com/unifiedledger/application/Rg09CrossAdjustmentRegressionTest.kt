@@ -4,7 +4,6 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
-import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
@@ -40,7 +39,6 @@ import kotlin.time.Instant
  * applied sequentially, so any cross-observation state leak would surface as a failure.
  */
 class Rg09CrossAdjustmentRegressionTest {
-
     @Test
     fun `frozen golden main path and evidence path transitions hold on one runtime`() {
         val fixture = loadFixture()
@@ -316,16 +314,21 @@ class Rg09CrossAdjustmentRegressionTest {
      * convention (mirrors the full-state oracle projection).
      */
     private fun observationState(snapshot: Rg09Snapshot): String =
-        snapshot.reconciliation.entries.firstOrNull { it.key.startsWith("observation-") }?.value
+        snapshot.reconciliation.entries
+            .firstOrNull { it.key.startsWith("observation-") }
+            ?.value
             ?: error("RG-09 observation state missing")
 
-    private fun loadFixture(): Rg09FixtureCase = adaptRg09Fixture(
-        Files.readString(repositoryFile("golden/rules/rg-09.json")),
-        parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json"))),
-    )
+    private fun loadFixture(): Rg09FixtureCase =
+        adaptRg09Fixture(
+            Files.readString(repositoryFile("golden/rules/rg-09.json")),
+            parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json"))),
+        )
 
     private fun repositoryFile(relative: String): java.nio.file.Path {
-        var candidate = java.nio.file.Path.of(System.getProperty("user.dir"))
+        var candidate =
+            java.nio.file.Path
+                .of(System.getProperty("user.dir"))
         repeat(8) {
             if (Files.isRegularFile(candidate.resolve("settings.gradle.kts"))) return candidate.resolve(relative)
             candidate = candidate.parent ?: error("repository root not found")
@@ -345,35 +348,41 @@ class Rg09CrossAdjustmentRegressionTest {
         private val targetTime = Instant.parse("2026-01-31T15:59:59Z")
         private val targetTimeText = "2026-01-31T23:59:59+08:00"
 
-        fun account(accountId: String, targetMinor: Long): ObservedAccount {
-            val suffix = "reg-${accountId}"
+        fun account(
+            accountId: String,
+            targetMinor: Long,
+        ): ObservedAccount {
+            val suffix = "reg-$accountId"
             val candidateId = Rg09CandidateId("candidate-$suffix")
             val observationId = "observation-$suffix"
             val fingerprint = Rg09LedgerFingerprint.digest(runtime.snapshot().formalTransactions, targetTime)
             val savedAt = Instant.parse("2026-02-01T09:00:00+08:00")
-            val operation = Rg09Operation.PreviewTargetBalance(
-                ledgerId = fixture.ledgerId,
-                input = Rg09PreviewTargetBalanceInput(
-                    requestId = RequestId("request-preview-$suffix"),
-                    accountId = AccountId(accountId),
-                    targetAmount = Money.ofMinor(targetMinor.toLong(), cny),
-                    targetObservedAt = targetTime,
-                    savedAt = savedAt,
-                    currency = cny,
-                    explicitConfirmation = false,
-                    immutablePayloadDigest = "sha256:rg09-regression-$suffix",
-                    ledgerFingerprint = fingerprint,
-                    targetObservedAtText = targetTimeText,
-                    savedAtText = "2026-02-01T09:00:00+08:00",
-                ),
-                ids = Rg09PreviewIds(
-                    observationId = Rg09ObservationId(observationId),
-                    sourceRecordId = Rg09SourceRecordId("source-$suffix"),
-                    evidenceId = Rg09EvidenceId("evidence-$suffix"),
-                    evidenceLinkId = Rg09EvidenceLinkId("evidence-link-$suffix"),
-                    candidateId = candidateId,
-                ),
-            )
+            val operation =
+                Rg09Operation.PreviewTargetBalance(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg09PreviewTargetBalanceInput(
+                            requestId = RequestId("request-preview-$suffix"),
+                            accountId = AccountId(accountId),
+                            targetAmount = Money.ofMinor(targetMinor.toLong(), cny),
+                            targetObservedAt = targetTime,
+                            savedAt = savedAt,
+                            currency = cny,
+                            explicitConfirmation = false,
+                            immutablePayloadDigest = "sha256:rg09-regression-$suffix",
+                            ledgerFingerprint = fingerprint,
+                            targetObservedAtText = targetTimeText,
+                            savedAtText = "2026-02-01T09:00:00+08:00",
+                        ),
+                    ids =
+                        Rg09PreviewIds(
+                            observationId = Rg09ObservationId(observationId),
+                            sourceRecordId = Rg09SourceRecordId("source-$suffix"),
+                            evidenceId = Rg09EvidenceId("evidence-$suffix"),
+                            evidenceLinkId = Rg09EvidenceLinkId("evidence-link-$suffix"),
+                            candidateId = candidateId,
+                        ),
+                )
             assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(operation))
             return ObservedAccount(AccountId(accountId), candidateId, observationId, suffix)
         }
@@ -381,64 +390,75 @@ class Rg09CrossAdjustmentRegressionTest {
         fun confirmAdjustment(account: ObservedAccount) {
             val candidate = runtime.snapshot().candidates.single { it.id == account.candidateId }
             val suffix = account.suffix
-            val operation = Rg09Operation.ConfirmBalanceAdjustment(
-                ledgerId = fixture.ledgerId,
-                input = Rg09ConfirmBalanceAdjustmentInput(
-                    requestId = RequestId("request-confirm-$suffix"),
-                    candidateId = candidate.id,
-                    ledgerFingerprint = candidate.ledgerFingerprint,
-                    explicitConfirmation = true,
-                    confirmedAt = Instant.parse("2026-02-01T02:00:00+08:00"),
-                    confirmedAtText = "2026-02-01T02:00:00+08:00",
-                ),
-                ids = Rg09AdjustmentCommitIds(
-                    confirmationId = Rg09ConfirmationId("confirmation-adjustment-$suffix"),
-                    adjustmentId = Rg09AdjustmentId("adjustment-$suffix"),
-                    transactionId = TransactionId("transaction-adjustment-$suffix"),
-                    versionId = TransactionVersionId("version-adjustment-$suffix-v1"),
-                    postingSetId = PostingSetId("posting-set-adjustment-$suffix"),
-                    targetPostingId = PostingId("posting-adjustment-$suffix-target"),
-                    equityPostingId = PostingId("posting-adjustment-$suffix-equity"),
-                    historyId = "history-adjustment-$suffix-open",
-                ),
-            )
+            val operation =
+                Rg09Operation.ConfirmBalanceAdjustment(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg09ConfirmBalanceAdjustmentInput(
+                            requestId = RequestId("request-confirm-$suffix"),
+                            candidateId = candidate.id,
+                            ledgerFingerprint = candidate.ledgerFingerprint,
+                            explicitConfirmation = true,
+                            confirmedAt = Instant.parse("2026-02-01T02:00:00+08:00"),
+                            confirmedAtText = "2026-02-01T02:00:00+08:00",
+                        ),
+                    ids =
+                        Rg09AdjustmentCommitIds(
+                            confirmationId = Rg09ConfirmationId("confirmation-adjustment-$suffix"),
+                            adjustmentId = Rg09AdjustmentId("adjustment-$suffix"),
+                            transactionId = TransactionId("transaction-adjustment-$suffix"),
+                            versionId = TransactionVersionId("version-adjustment-$suffix-v1"),
+                            postingSetId = PostingSetId("posting-set-adjustment-$suffix"),
+                            targetPostingId = PostingId("posting-adjustment-$suffix-target"),
+                            equityPostingId = PostingId("posting-adjustment-$suffix-equity"),
+                            historyId = "history-adjustment-$suffix-open",
+                        ),
+                )
             assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(operation))
         }
 
-        fun transfer(suffix: String, targetAccountId: AccountId, counterAccountId: AccountId, amountMinor: Long): ConfirmedTransfer {
-            val operation = Rg09Operation.ConfirmRealTransfer(
-                ledgerId = fixture.ledgerId,
-                input = Rg09ConfirmRealTransferInput(
-                    requestId = RequestId("request-transfer-$suffix"),
-                    targetAccountId = targetAccountId,
-                    counterAccountId = counterAccountId,
-                    amount = Money.ofMinor(amountMinor, cny),
-                    actualOccurredAt = Instant.parse("2026-01-20T04:00:00Z"),
-                    discoveredAt = Instant.parse("2026-02-10T09:30:00+08:00"),
-                    confirmedAt = Instant.parse("2026-02-01T03:00:00+08:00"),
-                    immutablePayloadDigest = "sha256:rg09-regression-transfer-$suffix",
-                    explicitConfirmation = true,
-                    confirmsTargetAccount = true,
-                    confirmsCounterAccount = true,
-                    confirmsActualOccurredAt = true,
-                    confirmsCurrency = true,
-                    confirmsAmount = true,
-                    confirmsExplanationAllocation = false,
-                    targetAccountDirection = "increase",
-                    actualOccurredAtText = "2026-01-20T12:00:00+08:00",
-                    discoveredAtText = "2026-02-10T09:30:00+08:00",
-                    confirmedAtText = "2026-02-01T03:00:00+08:00",
-                ),
-                ids = Rg09TransferCommitIds(
-                    confirmationId = Rg09ConfirmationId("confirmation-transfer-$suffix"),
-                    sourceRecordId = Rg09SourceRecordId("source-transfer-$suffix"),
-                    transactionId = TransactionId("transaction-$suffix"),
-                    versionId = TransactionVersionId("version-$suffix-v1"),
-                    postingSetId = PostingSetId("posting-set-$suffix"),
-                    sourcePostingId = PostingId("posting-$suffix-source"),
-                    destinationPostingId = PostingId("posting-$suffix-destination"),
-                ),
-            )
+        fun transfer(
+            suffix: String,
+            targetAccountId: AccountId,
+            counterAccountId: AccountId,
+            amountMinor: Long,
+        ): ConfirmedTransfer {
+            val operation =
+                Rg09Operation.ConfirmRealTransfer(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg09ConfirmRealTransferInput(
+                            requestId = RequestId("request-transfer-$suffix"),
+                            targetAccountId = targetAccountId,
+                            counterAccountId = counterAccountId,
+                            amount = Money.ofMinor(amountMinor, cny),
+                            actualOccurredAt = Instant.parse("2026-01-20T04:00:00Z"),
+                            discoveredAt = Instant.parse("2026-02-10T09:30:00+08:00"),
+                            confirmedAt = Instant.parse("2026-02-01T03:00:00+08:00"),
+                            immutablePayloadDigest = "sha256:rg09-regression-transfer-$suffix",
+                            explicitConfirmation = true,
+                            confirmsTargetAccount = true,
+                            confirmsCounterAccount = true,
+                            confirmsActualOccurredAt = true,
+                            confirmsCurrency = true,
+                            confirmsAmount = true,
+                            confirmsExplanationAllocation = false,
+                            targetAccountDirection = "increase",
+                            actualOccurredAtText = "2026-01-20T12:00:00+08:00",
+                            discoveredAtText = "2026-02-10T09:30:00+08:00",
+                            confirmedAtText = "2026-02-01T03:00:00+08:00",
+                        ),
+                    ids =
+                        Rg09TransferCommitIds(
+                            confirmationId = Rg09ConfirmationId("confirmation-transfer-$suffix"),
+                            sourceRecordId = Rg09SourceRecordId("source-transfer-$suffix"),
+                            transactionId = TransactionId("transaction-$suffix"),
+                            versionId = TransactionVersionId("version-$suffix-v1"),
+                            postingSetId = PostingSetId("posting-set-$suffix"),
+                            sourcePostingId = PostingId("posting-$suffix-source"),
+                            destinationPostingId = PostingId("posting-$suffix-destination"),
+                        ),
+                )
             assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(operation))
             return ConfirmedTransfer(
                 suffix = suffix,
@@ -449,48 +469,55 @@ class Rg09CrossAdjustmentRegressionTest {
             )
         }
 
-        fun allocate(account: ObservedAccount, realTransactionId: TransactionId, amountMinor: Long) {
+        fun allocate(
+            account: ObservedAccount,
+            realTransactionId: TransactionId,
+            amountMinor: Long,
+        ) {
             val suffix = "${account.suffix}-alloc-$amountMinor"
-            val operation = Rg09Operation.ConfirmExplanationAllocation(
-                ledgerId = fixture.ledgerId,
-                input = Rg09ConfirmExplanationAllocationInput(
-                    requestId = RequestId("request-allocation-$suffix"),
-                    adjustmentId = Rg09AdjustmentId("adjustment-${account.suffix}"),
-                    transactionId = realTransactionId,
-                    targetAccountId = account.accountId,
-                    actualOccurredAt = Instant.parse("2026-01-20T04:00:00Z"),
-                    realTransactionAmount = Money.ofMinor(amountMinor, cny),
-                    targetObservedAt = targetTime,
-                    explanationAmount = Money.ofMinor(amountMinor, cny),
-                    confirmedAt = Instant.parse("2026-02-01T04:00:00+08:00"),
-                    explicitConfirmation = true,
-                    confirmsTargetAccount = true,
-                    confirmsActualOccurredAt = true,
-                    confirmsRealTransactionAmount = true,
-                    confirmsCurrency = true,
-                    confirmsTargetObservedAt = true,
-                    confirmsAllocationDirection = true,
-                    confirmsExplanationAmount = true,
-                    actualOccurredAtText = "2026-01-20T12:00:00+08:00",
-                    targetObservedAtText = targetTimeText,
-                    confirmedAtText = "2026-02-01T04:00:00+08:00",
-                    discoveredAt = Instant.parse("2026-02-10T09:30:00+08:00"),
-                    discoveredAtText = "2026-02-10T09:30:00+08:00",
-                ),
-                ids = Rg09AllocationCommitIds(
-                    confirmationId = Rg09ConfirmationId("confirmation-allocation-$suffix"),
-                    allocationId = Rg09AllocationId("allocation-$suffix"),
-                    reversalTransactionId = TransactionId("transaction-reversal-$suffix"),
-                    reversalVersionId = TransactionVersionId("version-reversal-$suffix-v1"),
-                    reversalPostingSetId = PostingSetId("posting-set-reversal-$suffix"),
-                    reversalTargetPostingId = PostingId("posting-reversal-$suffix-target"),
-                    reversalEquityPostingId = PostingId("posting-reversal-$suffix-equity"),
-                    adjustmentAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-adjustment"),
-                    explanationAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-explanation"),
-                    reversalAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-reversal"),
-                    historyId = "history-$suffix-allocation",
-                ),
-            )
+            val operation =
+                Rg09Operation.ConfirmExplanationAllocation(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg09ConfirmExplanationAllocationInput(
+                            requestId = RequestId("request-allocation-$suffix"),
+                            adjustmentId = Rg09AdjustmentId("adjustment-${account.suffix}"),
+                            transactionId = realTransactionId,
+                            targetAccountId = account.accountId,
+                            actualOccurredAt = Instant.parse("2026-01-20T04:00:00Z"),
+                            realTransactionAmount = Money.ofMinor(amountMinor, cny),
+                            targetObservedAt = targetTime,
+                            explanationAmount = Money.ofMinor(amountMinor, cny),
+                            confirmedAt = Instant.parse("2026-02-01T04:00:00+08:00"),
+                            explicitConfirmation = true,
+                            confirmsTargetAccount = true,
+                            confirmsActualOccurredAt = true,
+                            confirmsRealTransactionAmount = true,
+                            confirmsCurrency = true,
+                            confirmsTargetObservedAt = true,
+                            confirmsAllocationDirection = true,
+                            confirmsExplanationAmount = true,
+                            actualOccurredAtText = "2026-01-20T12:00:00+08:00",
+                            targetObservedAtText = targetTimeText,
+                            confirmedAtText = "2026-02-01T04:00:00+08:00",
+                            discoveredAt = Instant.parse("2026-02-10T09:30:00+08:00"),
+                            discoveredAtText = "2026-02-10T09:30:00+08:00",
+                        ),
+                    ids =
+                        Rg09AllocationCommitIds(
+                            confirmationId = Rg09ConfirmationId("confirmation-allocation-$suffix"),
+                            allocationId = Rg09AllocationId("allocation-$suffix"),
+                            reversalTransactionId = TransactionId("transaction-reversal-$suffix"),
+                            reversalVersionId = TransactionVersionId("version-reversal-$suffix-v1"),
+                            reversalPostingSetId = PostingSetId("posting-set-reversal-$suffix"),
+                            reversalTargetPostingId = PostingId("posting-reversal-$suffix-target"),
+                            reversalEquityPostingId = PostingId("posting-reversal-$suffix-equity"),
+                            adjustmentAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-adjustment"),
+                            explanationAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-explanation"),
+                            reversalAuditLinkId = Rg09AuditLinkId("audit-link-$suffix-reversal"),
+                            historyId = "history-$suffix-allocation",
+                        ),
+                )
             assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(operation))
         }
 
@@ -502,28 +529,31 @@ class Rg09CrossAdjustmentRegressionTest {
             postingSide: String,
         ) {
             val bookingAt = Instant.parse("2026-01-20T04:00:00Z")
-            val suffix = "${transfer.suffix}-${postingId}"
-            val operation = Rg09Operation.LinkRealPostingEvidence(
-                ledgerId = fixture.ledgerId,
-                input = Rg09LinkRealPostingEvidenceInput(
-                    requestId = RequestId("request-link-$suffix"),
-                    sourceId = Rg09SourceRecordId("source-link-$suffix"),
-                    evidenceId = Rg09EvidenceId("evidence-link-$suffix"),
-                    targetPostingId = PostingId(postingId),
-                    accountId = postingAccountId,
-                    amount = Money.ofMinor(amountMinor, cny),
-                    postingSide = postingSide,
-                    observedAt = Instant.parse("2026-02-11T09:00:00+08:00"),
-                    bookingAt = bookingAt,
-                    immutablePayloadDigest = "sha256:rg09-regression-evidence-$suffix",
-                    explicitConfirmation = true,
-                    observedAtText = "2026-02-11T09:00:00+08:00",
-                    bookingAtText = "2026-01-20T12:00:00+08:00",
-                ),
-                ids = Rg09PostingEvidenceIds(
-                    evidenceLinkId = Rg09EvidenceLinkId("evidence-link-record-$suffix"),
-                ),
-            )
+            val suffix = "${transfer.suffix}-$postingId"
+            val operation =
+                Rg09Operation.LinkRealPostingEvidence(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg09LinkRealPostingEvidenceInput(
+                            requestId = RequestId("request-link-$suffix"),
+                            sourceId = Rg09SourceRecordId("source-link-$suffix"),
+                            evidenceId = Rg09EvidenceId("evidence-link-$suffix"),
+                            targetPostingId = PostingId(postingId),
+                            accountId = postingAccountId,
+                            amount = Money.ofMinor(amountMinor, cny),
+                            postingSide = postingSide,
+                            observedAt = Instant.parse("2026-02-11T09:00:00+08:00"),
+                            bookingAt = bookingAt,
+                            immutablePayloadDigest = "sha256:rg09-regression-evidence-$suffix",
+                            explicitConfirmation = true,
+                            observedAtText = "2026-02-11T09:00:00+08:00",
+                            bookingAtText = "2026-01-20T12:00:00+08:00",
+                        ),
+                    ids =
+                        Rg09PostingEvidenceIds(
+                            evidenceLinkId = Rg09EvidenceLinkId("evidence-link-record-$suffix"),
+                        ),
+                )
             assertIs<Rg09ExecutionResult.Accepted>(runtime.commit(operation))
         }
 
@@ -534,41 +564,43 @@ class Rg09CrossAdjustmentRegressionTest {
             amountMinor: Long,
             effectiveAt: Instant,
         ) {
-            val postings = listOf(
-                Posting(
-                    id = PostingId("posting-$suffix-source"),
-                    accountId = sourceAccountId,
-                    amount = Money.ofMinor(-amountMinor, cny),
-                ),
-                Posting(
-                    id = PostingId("posting-$suffix-destination"),
-                    accountId = destinationAccountId,
-                    amount = Money.ofMinor(amountMinor, cny),
-                ),
-            )
+            val postings =
+                listOf(
+                    Posting(
+                        id = PostingId("posting-$suffix-source"),
+                        accountId = sourceAccountId,
+                        amount = Money.ofMinor(-amountMinor, cny),
+                    ),
+                    Posting(
+                        id = PostingId("posting-$suffix-destination"),
+                        accountId = destinationAccountId,
+                        amount = Money.ofMinor(amountMinor, cny),
+                    ),
+                )
             val postingSetId = PostingSetId("posting-set-$suffix")
             val postingSet = assertIs<DomainResult.Success<PostingSet>>(PostingSet.create(postingSetId, postings)).value
             val versionId = TransactionVersionId("version-$suffix-v1")
-            val formal = assertIs<DomainResult.Success<FormalTransaction>>(
-                FormalTransaction.create(
-                    Transaction(
-                        id = TransactionId("transaction-$suffix"),
-                        ledgerId = fixture.ledgerId,
-                        kind = TransactionKind.ACCOUNT_TRANSFER,
-                        currentVersionId = versionId,
-                    ),
-                    listOf(
-                        TransactionVersion(
-                            id = versionId,
-                            transactionId = TransactionId("transaction-$suffix"),
-                            versionNumber = 1,
-                            postingSetId = postingSetId,
-                            times = TransactionTimes.collapsed(effectiveAt),
+            val formal =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        Transaction(
+                            id = TransactionId("transaction-$suffix"),
+                            ledgerId = fixture.ledgerId,
+                            kind = TransactionKind.ACCOUNT_TRANSFER,
+                            currentVersionId = versionId,
                         ),
+                        listOf(
+                            TransactionVersion(
+                                id = versionId,
+                                transactionId = TransactionId("transaction-$suffix"),
+                                versionNumber = 1,
+                                postingSetId = postingSetId,
+                                times = TransactionTimes.collapsed(effectiveAt),
+                            ),
+                        ),
+                        listOf(postingSet),
                     ),
-                    listOf(postingSet),
-                ),
-            ).value
+                ).value
             runtime.appendExternalTransaction(
                 Rg09FormalTransactionRecord(
                     formal,
@@ -581,11 +613,19 @@ class Rg09CrossAdjustmentRegressionTest {
 
         fun state(key: String): String = runtime.snapshot().reconciliation.getValue(key)
 
-        fun assertObservationState(account: ObservedAccount, expected: String) {
+        fun assertObservationState(
+            account: ObservedAccount,
+            expected: String,
+        ) {
             assertEquals(expected, state(account.observationId))
         }
 
-        fun assertAdjustment(account: ObservedAccount, state: String, explainedMinor: Long, remainingMinor: Long) {
+        fun assertAdjustment(
+            account: ObservedAccount,
+            state: String,
+            explainedMinor: Long,
+            remainingMinor: Long,
+        ) {
             val adjustment = runtime.snapshot().adjustments.single { it.id.value == "adjustment-${account.suffix}" }
             assertEquals(state, adjustment.state)
             assertEquals(explainedMinor, adjustment.explainedAmount.minorUnits)

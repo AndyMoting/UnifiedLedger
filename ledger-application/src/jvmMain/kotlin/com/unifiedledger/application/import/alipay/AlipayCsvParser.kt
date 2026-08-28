@@ -29,8 +29,10 @@ import java.time.LocalDateTime
  * SPINE_ALIPAY_* are the three provider-specific codes.
  */
 object AlipayCsvParser {
-
-    fun parse(inputRef: String, bytes: ByteArray): AlipayBatchResult {
+    fun parse(
+        inputRef: String,
+        bytes: ByteArray,
+    ): AlipayBatchResult {
         bytePrecheck(inputRef, bytes)?.let { return rejected(it) }
         val text = decode(bytes) ?: return rejected(AlipayDiagnostics.decodeFailed(inputRef))
         val lines = text.split("\n")
@@ -48,9 +50,11 @@ object AlipayCsvParser {
             val line = lines[lineIndex]
             if (line.replace("\r", "").isEmpty()) continue // fully empty row / EOF blank: no record, no renumbering
             if (line.contains('\r')) {
-                rows += AlipayRowResult.Rejected(
-                    ordinal, listOf(AlipayDiagnostics.structureMismatchRecord(inputRef, ordinal)),
-                )
+                rows +=
+                    AlipayRowResult.Rejected(
+                        ordinal,
+                        listOf(AlipayDiagnostics.structureMismatchRecord(inputRef, ordinal)),
+                    )
                 continue
             }
             rows += parseDataRow(inputRef, ordinal, line)
@@ -63,7 +67,10 @@ object AlipayCsvParser {
     // Frozen byte pre-check order (spec section 2.1): empty, over-limit, PK zip, OLE2.
     // Encrypted-zip unpacking and the password channel belong to the platform adapter
     // layer; the parser never opens containers.
-    private fun bytePrecheck(inputRef: String, bytes: ByteArray): AlipayDiagnostic? {
+    private fun bytePrecheck(
+        inputRef: String,
+        bytes: ByteArray,
+    ): AlipayDiagnostic? {
         if (bytes.isEmpty()) return AlipayDiagnostics.decodeFailed(inputRef)
         if (bytes.size > AlipaySourceTokens.MAX_INPUT_BYTES) return AlipayDiagnostics.unsafeOrOverLimit(inputRef)
         if (isZipContainer(bytes) || isOle2Container(bytes)) return AlipayDiagnostics.unsupportedInput(inputRef)
@@ -77,20 +84,28 @@ object AlipayCsvParser {
         return strictDecode(GB18030, bytes)
     }
 
-    private fun strictDecode(charset: Charset, bytes: ByteArray): String? = try {
-        charset.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(bytes))
-            .toString()
-    } catch (failure: CharacterCodingException) {
-        null
-    }
+    private fun strictDecode(
+        charset: Charset,
+        bytes: ByteArray,
+    ): String? =
+        try {
+            charset
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (failure: CharacterCodingException) {
+            null
+        }
 
     // Header: frozen 0-based line 23, exactly 13 comma-separated fields (12 frozen
     // tokens in fixed order + empty trailing-comma field), byte-exact. No line-number
     // scanning and no drift tolerance (D-099:1536).
-    private fun headerViolation(inputRef: String, headerLine: String): AlipayDiagnostic? {
+    private fun headerViolation(
+        inputRef: String,
+        headerLine: String,
+    ): AlipayDiagnostic? {
         if (headerLine.contains('\r')) return AlipayDiagnostics.structureMismatchHeader(inputRef)
         val fields = headerLine.split(",")
         if (fields.size != AlipaySourceTokens.FIELD_COUNT) return AlipayDiagnostics.structureMismatchHeader(inputRef)
@@ -106,11 +121,16 @@ object AlipayCsvParser {
     // 信用借还 credit family branch (P4-06), (4) rejected category set, (5) unknown
     // category, (6) accepted categories with the P4-06 column-7 payment-leg gate ahead
     // of the P4-05 section 2.4 fact mapping. Every step short-circuits deterministically.
-    private fun parseDataRow(inputRef: String, ordinal: Int, line: String): AlipayRowResult {
+    private fun parseDataRow(
+        inputRef: String,
+        ordinal: Int,
+        line: String,
+    ): AlipayRowResult {
         val fields = line.split(",")
         if (fields.size != AlipaySourceTokens.FIELD_COUNT || fields.last().isNotEmpty() || !tabShapeValid(fields)) {
             return AlipayRowResult.Rejected(
-                ordinal, listOf(AlipayDiagnostics.structureMismatchRecord(inputRef, ordinal)),
+                ordinal,
+                listOf(AlipayDiagnostics.structureMismatchRecord(inputRef, ordinal)),
             )
         }
         val typeToken = fields[1]
@@ -140,12 +160,14 @@ object AlipayCsvParser {
         // Judgment order 6: accepted categories with the column-7 payment-leg gate ahead
         // of the frozen fact mapping. Empty or asset-only legs keep the ordinary v1 path
         // (zero column-7 reads for empty, zero persistence for asset-only).
-        val legs = parsePaymentLegs(fields[7])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
+        val legs =
+            parsePaymentLegs(fields[7])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
         if (legs.creditTokens.isNotEmpty()) {
             when (AlipaySourceTokens.DIRECTION_TOKEN_MAP[fields[5]]) {
                 "in" -> return AlipayRowResult.Rejected(
-                    ordinal, listOf(AlipayDiagnostics.creditIncomeUnsupported(inputRef, ordinal)),
+                    ordinal,
+                    listOf(AlipayDiagnostics.creditIncomeUnsupported(inputRef, ordinal)),
                 )
                 "out" -> {
                     if (legs.assetTokens.isNotEmpty()) {
@@ -154,7 +176,8 @@ object AlipayCsvParser {
                         // rejection (fail-closed, zero writes).
                         if (legs.assetTokens.size > 1 || legs.creditTokens.size > 1) {
                             return AlipayRowResult.Rejected(
-                                ordinal, listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
+                                ordinal,
+                                listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
                             )
                         }
                         return parseMixedPaymentRow(inputRef, ordinal, fields, statusRaw, legs)
@@ -163,7 +186,8 @@ object AlipayCsvParser {
                     // more than one distinct credit token is a typed rejection.
                     if (legs.creditTokens.size > 1) {
                         return AlipayRowResult.Rejected(
-                            ordinal, listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
+                            ordinal,
+                            listOf(AlipayDiagnostics.mixedPaymentUnsupported(inputRef, ordinal)),
                         )
                     }
                     return parseCreditExpenseRow(inputRef, ordinal, fields, statusRaw, legs)
@@ -173,38 +197,47 @@ object AlipayCsvParser {
                 // leg token persists (D-107 section 2.3 6g).
             }
         }
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
         val directionRaw = fields[5]
         val directionMapped = AlipaySourceTokens.DIRECTION_TOKEN_MAP[directionRaw]
         val statusMapped = AlipaySourceTokens.STATUS_TOKEN_MAP[statusRaw]
         val diagnostics = mutableListOf<AlipayDiagnostic>()
         if (directionMapped == null) {
-            diagnostics += AlipayDiagnostics.requiredFactUnresolved(
-                inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_DIRECTION,
-            )
+            diagnostics +=
+                AlipayDiagnostics.requiredFactUnresolved(
+                    inputRef,
+                    ordinal,
+                    AlipaySourceTokens.FIELD_ROLE_DIRECTION,
+                )
         }
         if (statusMapped == null) {
-            diagnostics += AlipayDiagnostics.requiredFactUnresolved(
-                inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS,
-            )
+            diagnostics +=
+                AlipayDiagnostics.requiredFactUnresolved(
+                    inputRef,
+                    ordinal,
+                    AlipaySourceTokens.FIELD_ROLE_STATUS,
+                )
         }
         val completeness = if (diagnostics.isEmpty()) ImportCompleteness.VALID_COMPLETE else ImportCompleteness.VALID_INCOMPLETE
         // D-105 section 4: no approved funding-state provider contract exists for Alipay
         // tokens yet, so the parser relays only the frozen legacy-settled funding facts.
-        val facts = ImportSourceFacts(
-            amountMinor = amountMinor,
-            currencyCode = AlipaySourceTokens.CURRENCY_CNY,
-            currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
-            occurredAt = occurredAt,
-            directionToken = directionMapped ?: directionRaw,
-            statusToken = statusMapped ?: statusRaw.ifEmpty { null },
-            fundingState = ImportFundingState.SETTLED,
-            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
-            fundingRuleVersion = 1,
-        )
+        val facts =
+            ImportSourceFacts(
+                amountMinor = amountMinor,
+                currencyCode = AlipaySourceTokens.CURRENCY_CNY,
+                currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
+                occurredAt = occurredAt,
+                directionToken = directionMapped ?: directionRaw,
+                statusToken = statusMapped ?: statusRaw.ifEmpty { null },
+                fundingState = ImportFundingState.SETTLED,
+                fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+                fundingRuleVersion = 1,
+            )
         return AlipayRowResult.Accepted(ordinal, ImportRecordKind.ORDINARY_FLOW_SOURCE, facts, completeness, diagnostics)
     }
 
@@ -213,7 +246,10 @@ object AlipayCsvParser {
     // and fails the whole row closed on any non-whitelist token. Normalized tokens are
     // deduplicated by set semantics. A null return is the typed rejection; raw leg text
     // never leaves this parser.
-    private data class PaymentLegs(val creditTokens: Set<String>, val assetTokens: Set<String>)
+    private data class PaymentLegs(
+        val creditTokens: Set<String>,
+        val assetTokens: Set<String>,
+    )
 
     private fun parsePaymentLegs(field7: String): PaymentLegs? {
         if (field7.isEmpty()) return PaymentLegs(emptySet(), emptySet())
@@ -238,32 +274,40 @@ object AlipayCsvParser {
         fields: List<String>,
         statusRaw: String,
     ): AlipayRowResult {
-        val legs = parsePaymentLegs(fields[7])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
+        val legs =
+            parsePaymentLegs(fields[7])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
         if (fields[5] != AlipaySourceTokens.NEUTRAL_DIRECTION_TOKEN) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.refundUnsupported(inputRef, ordinal)))
         }
         if (legs.creditTokens.isEmpty() || legs.assetTokens.isNotEmpty()) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.refundUnsupported(inputRef, ordinal)))
         }
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
-        val profile = ImportPaymentProfile(
-            variant = ImportPaymentVariant.CREDIT_EXPENSE_REFUND,
-            assetLegKindToken = null,
-            creditLegKindToken = legs.creditTokens.single(),
-        )
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val profile =
+            ImportPaymentProfile(
+                variant = ImportPaymentVariant.CREDIT_EXPENSE_REFUND,
+                assetLegKindToken = null,
+                creditLegKindToken = legs.creditTokens.single(),
+            )
         if (statusRaw == AlipaySourceTokens.CREDIT_REFUND_STATUS_SUCCESS) {
             return AlipayRowResult.Accepted(
-                ordinal, ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                ordinal,
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
                 v3Facts(amountMinor, occurredAt, "in", AlipaySourceTokens.STATUS_REFUND_SETTLED_VALUE),
-                ImportCompleteness.VALID_COMPLETE, emptyList(), profile,
+                ImportCompleteness.VALID_COMPLETE,
+                emptyList(),
+                profile,
             )
         }
         return AlipayRowResult.Accepted(
-            ordinal, ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+            ordinal,
+            ImportRecordKind.CREDIT_EXPENSE_SOURCE,
             v3Facts(amountMinor, occurredAt, "in", statusRaw.ifEmpty { null }),
             ImportCompleteness.VALID_INCOMPLETE,
             listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
@@ -283,8 +327,9 @@ object AlipayCsvParser {
         fields: List<String>,
         statusRaw: String,
     ): AlipayRowResult {
-        val legs = parsePaymentLegs(fields[7])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
+        val legs =
+            parsePaymentLegs(fields[7])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
         if (fields[5] != AlipaySourceTokens.NEUTRAL_DIRECTION_TOKEN) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unsupportedTxType(inputRef, ordinal)))
         }
@@ -294,24 +339,31 @@ object AlipayCsvParser {
         if (legs.assetTokens.size > 1) {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownPaymentLeg(inputRef, ordinal)))
         }
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
-        val profile = ImportPaymentProfile(
-            variant = ImportPaymentVariant.CREDIT_REPAYMENT,
-            assetLegKindToken = legs.assetTokens.singleOrNull(),
-            creditLegKindToken = null,
-        )
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val profile =
+            ImportPaymentProfile(
+                variant = ImportPaymentVariant.CREDIT_REPAYMENT,
+                assetLegKindToken = legs.assetTokens.singleOrNull(),
+                creditLegKindToken = null,
+            )
         if (statusRaw == AlipaySourceTokens.CREDIT_REPAYMENT_STATUS_SUCCESS) {
             return AlipayRowResult.Accepted(
-                ordinal, ImportRecordKind.CREDIT_REPAYMENT_SOURCE,
+                ordinal,
+                ImportRecordKind.CREDIT_REPAYMENT_SOURCE,
                 v3Facts(amountMinor, occurredAt, "out", AlipaySourceTokens.STATUS_SETTLED_VALUE),
-                ImportCompleteness.VALID_COMPLETE, emptyList(), profile,
+                ImportCompleteness.VALID_COMPLETE,
+                emptyList(),
+                profile,
             )
         }
         return AlipayRowResult.Accepted(
-            ordinal, ImportRecordKind.CREDIT_REPAYMENT_SOURCE,
+            ordinal,
+            ImportRecordKind.CREDIT_REPAYMENT_SOURCE,
             v3Facts(amountMinor, occurredAt, "out", statusRaw.ifEmpty { null }),
             ImportCompleteness.VALID_INCOMPLETE,
             listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
@@ -330,24 +382,31 @@ object AlipayCsvParser {
         statusRaw: String,
         legs: PaymentLegs,
     ): AlipayRowResult {
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
-        val profile = ImportPaymentProfile(
-            variant = ImportPaymentVariant.CREDIT_EXPENSE_DIRECT,
-            assetLegKindToken = null,
-            creditLegKindToken = legs.creditTokens.single(),
-        )
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val profile =
+            ImportPaymentProfile(
+                variant = ImportPaymentVariant.CREDIT_EXPENSE_DIRECT,
+                assetLegKindToken = null,
+                creditLegKindToken = legs.creditTokens.single(),
+            )
         if (statusRaw == AlipaySourceTokens.CREDIT_EXPENSE_STATUS_SUCCESS) {
             return AlipayRowResult.Accepted(
-                ordinal, ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                ordinal,
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
                 v3Facts(amountMinor, occurredAt, "out", AlipaySourceTokens.STATUS_SETTLED_VALUE),
-                ImportCompleteness.VALID_COMPLETE, emptyList(), profile,
+                ImportCompleteness.VALID_COMPLETE,
+                emptyList(),
+                profile,
             )
         }
         return AlipayRowResult.Accepted(
-            ordinal, ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+            ordinal,
+            ImportRecordKind.CREDIT_EXPENSE_SOURCE,
             v3Facts(amountMinor, occurredAt, "out", statusRaw.ifEmpty { null }),
             ImportCompleteness.VALID_INCOMPLETE,
             listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
@@ -366,24 +425,31 @@ object AlipayCsvParser {
         statusRaw: String,
         legs: PaymentLegs,
     ): AlipayRowResult {
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
-        val profile = ImportPaymentProfile(
-            variant = ImportPaymentVariant.MIXED_PAYMENT,
-            assetLegKindToken = legs.assetTokens.single(),
-            creditLegKindToken = legs.creditTokens.single(),
-        )
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val profile =
+            ImportPaymentProfile(
+                variant = ImportPaymentVariant.MIXED_PAYMENT,
+                assetLegKindToken = legs.assetTokens.single(),
+                creditLegKindToken = legs.creditTokens.single(),
+            )
         if (statusRaw == AlipaySourceTokens.CREDIT_EXPENSE_STATUS_SUCCESS) {
             return AlipayRowResult.Accepted(
-                ordinal, ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                ordinal,
+                ImportRecordKind.MIXED_PAYMENT_SOURCE,
                 v3Facts(amountMinor, occurredAt, "out", AlipaySourceTokens.STATUS_SETTLED_VALUE),
-                ImportCompleteness.VALID_COMPLETE, emptyList(), profile,
+                ImportCompleteness.VALID_COMPLETE,
+                emptyList(),
+                profile,
             )
         }
         return AlipayRowResult.Accepted(
-            ordinal, ImportRecordKind.MIXED_PAYMENT_SOURCE,
+            ordinal,
+            ImportRecordKind.MIXED_PAYMENT_SOURCE,
             v3Facts(amountMinor, occurredAt, "out", statusRaw.ifEmpty { null }),
             ImportCompleteness.VALID_INCOMPLETE,
             listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
@@ -393,7 +459,12 @@ object AlipayCsvParser {
 
     // Shared frozen fact assembly for every v3 branch (P4-06 section 2.3 closing rule):
     // same CNY constant, same precision-2 constant, same funding relay as all other rows.
-    private fun v3Facts(amountMinor: Long, occurredAt: String, directionToken: String, statusToken: String?): ImportSourceFacts =
+    private fun v3Facts(
+        amountMinor: Long,
+        occurredAt: String,
+        directionToken: String,
+        statusToken: String?,
+    ): ImportSourceFacts =
         ImportSourceFacts(
             amountMinor = amountMinor,
             currencyCode = AlipaySourceTokens.CURRENCY_CNY,
@@ -430,41 +501,52 @@ object AlipayCsvParser {
             return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.unknownToken(inputRef, ordinal)))
         }
         val directionMapped = AlipaySourceTokens.YUEBAO_SUBTYPE_DIRECTION_MAP.getValue(subtype)
-        val occurredAt = parseTime(fields[0])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
-        val amountMinor = parseAmount(fields[6])
-            ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
+        val occurredAt =
+            parseTime(fields[0])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldTimeInvalid(inputRef, ordinal)))
+        val amountMinor =
+            parseAmount(fields[6])
+                ?: return AlipayRowResult.Rejected(ordinal, listOf(AlipayDiagnostics.fieldAmountInvalid(inputRef, ordinal)))
         val statusMapped = AlipaySourceTokens.STATUS_TOKEN_MAP[statusRaw]
         if (statusMapped == null) {
-            val facts = ImportSourceFacts(
+            val facts =
+                ImportSourceFacts(
+                    amountMinor = amountMinor,
+                    currencyCode = AlipaySourceTokens.CURRENCY_CNY,
+                    currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
+                    occurredAt = occurredAt,
+                    directionToken = directionMapped,
+                    statusToken = statusRaw.ifEmpty { null },
+                    fundingState = ImportFundingState.SETTLED,
+                    fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+                    fundingRuleVersion = 1,
+                )
+            return AlipayRowResult.Accepted(
+                ordinal,
+                ImportRecordKind.TRANSFER_FLOW_SOURCE,
+                facts,
+                ImportCompleteness.VALID_INCOMPLETE,
+                listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
+            )
+        }
+        val facts =
+            ImportSourceFacts(
                 amountMinor = amountMinor,
                 currencyCode = AlipaySourceTokens.CURRENCY_CNY,
                 currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
                 occurredAt = occurredAt,
                 directionToken = directionMapped,
-                statusToken = statusRaw.ifEmpty { null },
+                statusToken = statusMapped,
                 fundingState = ImportFundingState.SETTLED,
                 fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
                 fundingRuleVersion = 1,
             )
-            return AlipayRowResult.Accepted(
-                ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_INCOMPLETE,
-                listOf(AlipayDiagnostics.requiredFactUnresolved(inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_STATUS)),
-            )
-        }
-        val facts = ImportSourceFacts(
-            amountMinor = amountMinor,
-            currencyCode = AlipaySourceTokens.CURRENCY_CNY,
-            currencyPrecision = AlipaySourceTokens.AMOUNT_PRECISION,
-            occurredAt = occurredAt,
-            directionToken = directionMapped,
-            statusToken = statusMapped,
-            fundingState = ImportFundingState.SETTLED,
-            fundingRuleId = IMPORT_FUNDING_RULE_LEGACY_SETTLED,
-            fundingRuleVersion = 1,
-        )
         return AlipayRowResult.Accepted(
-            ordinal, ImportRecordKind.TRANSFER_FLOW_SOURCE, facts, ImportCompleteness.VALID_COMPLETE, emptyList(),
+            ordinal,
+            ImportRecordKind.TRANSFER_FLOW_SOURCE,
+            facts,
+            ImportCompleteness.VALID_COMPLETE,
+            emptyList(),
         )
     }
 
@@ -481,7 +563,10 @@ object AlipayCsvParser {
         return trailingTabValue(fields[10], allowEmpty = true)
     }
 
-    private fun trailingTabValue(field: String, allowEmpty: Boolean): Boolean {
+    private fun trailingTabValue(
+        field: String,
+        allowEmpty: Boolean,
+    ): Boolean {
         if (field.isEmpty()) return allowEmpty
         return field.length >= 2 && field.endsWith('\t') && !field.dropLast(1).contains('\t')
     }
@@ -514,21 +599,28 @@ object AlipayCsvParser {
         }
     }
 
-    private fun rejected(diagnostic: AlipayDiagnostic): AlipayBatchResult =
-        AlipayBatchResult(AlipayBatchOutcome.REJECTED, emptyList(), diagnostic)
+    private fun rejected(diagnostic: AlipayDiagnostic): AlipayBatchResult = AlipayBatchResult(AlipayBatchOutcome.REJECTED, emptyList(), diagnostic)
 
     private fun isZipContainer(bytes: ByteArray): Boolean =
         bytes.size >= 4 &&
-            bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte() &&
-            ((bytes[2] == 3.toByte() && bytes[3] == 4.toByte()) ||
-                (bytes[2] == 5.toByte() && bytes[3] == 6.toByte()) ||
-                (bytes[2] == 7.toByte() && bytes[3] == 8.toByte()))
+            bytes[0] == 'P'.code.toByte() &&
+            bytes[1] == 'K'.code.toByte() &&
+            (
+                (bytes[2] == 3.toByte() && bytes[3] == 4.toByte()) ||
+                    (bytes[2] == 5.toByte() && bytes[3] == 6.toByte()) ||
+                    (bytes[2] == 7.toByte() && bytes[3] == 8.toByte())
+            )
 
     private fun isOle2Container(bytes: ByteArray): Boolean =
         bytes.size >= 8 &&
-            bytes[0] == 0xD0.toByte() && bytes[1] == 0xCF.toByte() && bytes[2] == 0x11.toByte() &&
-            bytes[3] == 0xE0.toByte() && bytes[4] == 0xA1.toByte() && bytes[5] == 0xB1.toByte() &&
-            bytes[6] == 0x1A.toByte() && bytes[7] == 0xE1.toByte()
+            bytes[0] == 0xD0.toByte() &&
+            bytes[1] == 0xCF.toByte() &&
+            bytes[2] == 0x11.toByte() &&
+            bytes[3] == 0xE0.toByte() &&
+            bytes[4] == 0xA1.toByte() &&
+            bytes[5] == 0xB1.toByte() &&
+            bytes[6] == 0x1A.toByte() &&
+            bytes[7] == 0xE1.toByte()
 
     private val TIME_SHAPE = Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
     private val AMOUNT_SHAPE = Regex("\\d+\\.\\d{2}")

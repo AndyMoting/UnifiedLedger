@@ -6,7 +6,9 @@ package com.unifiedledger.domain
  * reconciliation fact of an old posting; the replacement posting receives a fresh fact
  * (`matched` when preserved, `pending` when invalidated) and non-real postings carry no fact.
  */
-enum class PostingReconciliationStatus(val jsonName: String) {
+enum class PostingReconciliationStatus(
+    val jsonName: String,
+) {
     MATCHED("matched"),
     PENDING("pending"),
 }
@@ -15,7 +17,9 @@ enum class PostingReconciliationStatus(val jsonName: String) {
  * D-085 RG-12 derived `reconciliation_summary` of a transaction
  * (`derived_statuses` in rg-12.json): `matched`, `pending` or `partial`.
  */
-enum class ReconciliationSummary(val jsonName: String) {
+enum class ReconciliationSummary(
+    val jsonName: String,
+) {
     MATCHED("matched"),
     PENDING("pending"),
     PARTIAL("partial"),

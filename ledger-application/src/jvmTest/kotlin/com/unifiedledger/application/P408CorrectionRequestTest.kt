@@ -13,7 +13,6 @@ import kotlin.test.assertTrue
  * database.
  */
 class P408CorrectionRequestTest {
-
     @Test
     fun checkedCorrectionRequiresCompleteSuccessorAndProjectionQuartet() {
         assertFailsWith<IllegalArgumentException> {
@@ -81,11 +80,12 @@ class P408CorrectionRequestTest {
         // Output/generated id changes do not alter the identity: equivalent retry.
         assertEquals(
             request.fingerprint(),
-            request.copy(
-                successorLinkId = "link-b-other",
-                successorCreatedAt = "2026-08-10T16:00:00+08:00",
-                reconciliationId = "reconciliation-other",
-            ).fingerprint(),
+            request
+                .copy(
+                    successorLinkId = "link-b-other",
+                    successorCreatedAt = "2026-08-10T16:00:00+08:00",
+                    reconciliationId = "reconciliation-other",
+                ).fingerprint(),
         )
         // Semantic changes do.
         val invariant = request.fingerprint()
@@ -102,83 +102,87 @@ class P408CorrectionRequestTest {
         assertTrue(confirmFingerprintSample().startsWith("p408-confirm-v2|"))
     }
 
-    private fun checkedBase() = P408CorrectLinkRequest(
-        ledgerId = "ledger-a",
-        requestId = "correction-a",
-        evidenceId = "evidence-a",
-        previousLinkId = "link-a",
-        reason = P408CorrectionReason.POSTING_REPLACED,
-        affectedPostingId = "posting-a2",
-        resultState = P408CorrectionResultState.CHECKED,
-        successor = successorFacts(),
-        projectionId = "proj-evidence-a-2",
-        projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-        projectionRuleVersion = 1,
-        normalizedAmountMinor = 1000,
-        rawAmountMinor = 1000,
-        rawCurrencyPrecision = 2,
-        confirmedAt = "2026-08-10T14:00:00+08:00",
-        successorLinkId = "link-b",
-        successorCreatedAt = "2026-08-10T14:00:00+08:00",
-        reconciliationId = "reconciliation-posting-a2",
-    )
+    private fun checkedBase() =
+        P408CorrectLinkRequest(
+            ledgerId = "ledger-a",
+            requestId = "correction-a",
+            evidenceId = "evidence-a",
+            previousLinkId = "link-a",
+            reason = P408CorrectionReason.POSTING_REPLACED,
+            affectedPostingId = "posting-a2",
+            resultState = P408CorrectionResultState.CHECKED,
+            successor = successorFacts(),
+            projectionId = "proj-evidence-a-2",
+            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+            projectionRuleVersion = 1,
+            normalizedAmountMinor = 1000,
+            rawAmountMinor = 1000,
+            rawCurrencyPrecision = 2,
+            confirmedAt = "2026-08-10T14:00:00+08:00",
+            successorLinkId = "link-b",
+            successorCreatedAt = "2026-08-10T14:00:00+08:00",
+            reconciliationId = "reconciliation-posting-a2",
+        )
 
-    private fun invalidateOnlyBase() = P408CorrectLinkRequest(
-        ledgerId = "ledger-a",
-        requestId = "correction-missing",
-        evidenceId = "evidence-a",
-        previousLinkId = "link-a",
-        reason = P408CorrectionReason.CORRECTED,
-        affectedPostingId = "posting-a",
-        resultState = P408CorrectionResultState.MISSING,
-        confirmedAt = "2026-08-10T14:00:00+08:00",
-        reconciliationId = "reconciliation-posting-a",
-    )
+    private fun invalidateOnlyBase() =
+        P408CorrectLinkRequest(
+            ledgerId = "ledger-a",
+            requestId = "correction-missing",
+            evidenceId = "evidence-a",
+            previousLinkId = "link-a",
+            reason = P408CorrectionReason.CORRECTED,
+            affectedPostingId = "posting-a",
+            resultState = P408CorrectionResultState.MISSING,
+            confirmedAt = "2026-08-10T14:00:00+08:00",
+            reconciliationId = "reconciliation-posting-a",
+        )
 
-    private fun successorFacts() = P408SuccessorLinkFacts(
-        postingId = "posting-a2",
-        transactionId = "tx-a",
-        amountMinor = 1000,
-        currencyCode = "CNY",
-        currencyPrecision = 2,
-        direction = "out",
-        accountId = "account-bank-a",
-        responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-        candidateId = "candidate-transient-a2",
-        matchBasis = REQUIRED_MATCH_BASIS,
-        windowDays = 2,
-        naturalDayDistance = 0,
-        sourceOccurredAt = "2026-08-10T12:00:00+08:00",
-    )
+    private fun successorFacts() =
+        P408SuccessorLinkFacts(
+            postingId = "posting-a2",
+            transactionId = "tx-a",
+            amountMinor = 1000,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            direction = "out",
+            accountId = "account-bank-a",
+            responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+            candidateId = "candidate-transient-a2",
+            matchBasis = REQUIRED_MATCH_BASIS,
+            windowDays = 2,
+            naturalDayDistance = 0,
+            sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+        )
 
     /** Minimal confirm-family fingerprint for the disjointness probe. */
-    private fun confirmFingerprintSample(): String = P408ConfirmLinkRequest(
-        ledgerId = "ledger-a",
-        requestId = "request-a",
-        evidenceId = "evidence-a",
-        candidateId = "candidate-transient-a",
-        postingId = "posting-a",
-        transactionId = "tx-a",
-        amountMinor = 1000,
-        currencyCode = "CNY",
-        currencyPrecision = 2,
-        direction = "out",
-        accountId = "account-bank-a",
-        responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-        basisVersion = 2,
-        matchBasis = REQUIRED_MATCH_BASIS,
-        windowDays = 2,
-        naturalDayDistance = 0,
-        sourceOccurredAt = "2026-08-10T12:00:00+08:00",
-        confirmedAt = "2026-08-10T13:00:00+08:00",
-        linkId = "link-a",
-        reconciliationId = "reconciliation-posting-a",
-        createdAt = "2026-08-10T13:00:00+08:00",
-        projectionId = "proj-evidence-a",
-        projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-        projectionRuleVersion = 1,
-        normalizedAmountMinor = 1000,
-        rawAmountMinor = 1000,
-        rawCurrencyPrecision = 2,
-    ).fingerprint()
+    private fun confirmFingerprintSample(): String =
+        P408ConfirmLinkRequest(
+            ledgerId = "ledger-a",
+            requestId = "request-a",
+            evidenceId = "evidence-a",
+            candidateId = "candidate-transient-a",
+            postingId = "posting-a",
+            transactionId = "tx-a",
+            amountMinor = 1000,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            direction = "out",
+            accountId = "account-bank-a",
+            responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+            basisVersion = 2,
+            matchBasis = REQUIRED_MATCH_BASIS,
+            windowDays = 2,
+            naturalDayDistance = 0,
+            sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+            confirmedAt = "2026-08-10T13:00:00+08:00",
+            linkId = "link-a",
+            reconciliationId = "reconciliation-posting-a",
+            createdAt = "2026-08-10T13:00:00+08:00",
+            projectionId = "proj-evidence-a",
+            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+            projectionRuleVersion = 1,
+            normalizedAmountMinor = 1000,
+            rawAmountMinor = 1000,
+            rawCurrencyPrecision = 2,
+        ).fingerprint()
 }

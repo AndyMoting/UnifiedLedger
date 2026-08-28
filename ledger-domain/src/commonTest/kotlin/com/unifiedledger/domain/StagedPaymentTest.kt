@@ -75,11 +75,17 @@ class StagedPaymentTest {
         assertEquals(fixture.depositIds.expenseIds.transactionId, formal.transaction.id)
         assertEquals(
             listOf(8_000L, -8_000L),
-            formal.postingSets.single().postings.map { it.amount.minorUnits },
+            formal.postingSets
+                .single()
+                .postings
+                .map { it.amount.minorUnits },
         )
         assertEquals(
             listOf(fixture.expenseAccountId, fixture.fundingAccountId),
-            formal.postingSets.single().postings.map { it.accountId },
+            formal.postingSets
+                .single()
+                .postings
+                .map { it.accountId },
         )
         assertEquals(
             TransactionTimes.collapsed(fixture.depositAt),
@@ -102,7 +108,10 @@ class StagedPaymentTest {
                 listOf(22_000L, -22_000L),
             ),
             staged.formalTransactions.map { formal ->
-                formal.postingSets.single().postings.map { it.amount.minorUnits }
+                formal.postingSets
+                    .single()
+                    .postings
+                    .map { it.amount.minorUnits }
             },
         )
         assertEquals(fixture.total, staged.lifecycle.paidAmount)
@@ -114,7 +123,11 @@ class StagedPaymentTest {
         )
         assertEquals(
             listOf(fixture.depositAt, fixture.finalAt),
-            staged.formalTransactions.map { it.versions.single().times.statisticsAt },
+            staged.formalTransactions.map {
+                it.versions
+                    .single()
+                    .times.statisticsAt
+            },
         )
         assertEquals(
             setOf(
@@ -209,13 +222,14 @@ class StagedPaymentTest {
             ),
         )
 
-        val sourcedDeposit = success(
-            fixture.created().recordInstallment(
-                fixture.catalog,
-                fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
-                fixture.depositIds,
-            ),
-        )
+        val sourcedDeposit =
+            success(
+                fixture.created().recordInstallment(
+                    fixture.catalog,
+                    fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
+                    fixture.depositIds,
+                ),
+            )
         assertEquals(
             StagedPaymentViolation.FinalSourcePaymentMustBeLaterThanDeposit,
             failure(
@@ -232,13 +246,14 @@ class StagedPaymentTest {
     fun sourceTimePreservesExpectedOffsetTextAndCannotBeIllegallyConstructed() {
         val created = fixture.created()
         val sourceTime = fixture.depositSourceTime()
-        val sourced = success(
-            created.recordInstallment(
-                fixture.catalog,
-                fixture.depositCommand.copy(sourceTime = sourceTime),
-                fixture.depositIds,
-            ),
-        )
+        val sourced =
+            success(
+                created.recordInstallment(
+                    fixture.catalog,
+                    fixture.depositCommand.copy(sourceTime = sourceTime),
+                    fixture.depositIds,
+                ),
+            )
 
         assertEquals(fixture.depositAt, sourceTime.instant)
         assertEquals(fixture.depositSourceText, sourceTime.text)
@@ -418,13 +433,14 @@ class StagedPaymentTest {
     @Test
     fun fulfillmentAndCompletionAreStateOnlyWithZeroFinancialEffect() {
         val deposited = fixture.deposited()
-        val fulfilled = success(
-            deposited.changeFulfillment(
-                historyId = StagedPaymentHistoryId("history-fulfilled"),
-                fulfillment = StagedPaymentFulfillment.FULFILLED,
-                occurredAt = fixture.fulfilledAt,
-            ),
-        )
+        val fulfilled =
+            success(
+                deposited.changeFulfillment(
+                    historyId = StagedPaymentHistoryId("history-fulfilled"),
+                    fulfillment = StagedPaymentFulfillment.FULFILLED,
+                    occurredAt = fixture.fulfilledAt,
+                ),
+            )
 
         assertEquals(deposited.installments, fulfilled.installments)
         assertEquals(deposited.snapshot().formalTransactions, fulfilled.snapshot().formalTransactions)
@@ -432,7 +448,12 @@ class StagedPaymentTest {
         assertEquals(deposited.lifecycle.dueAmount, fulfilled.lifecycle.dueAmount)
         assertEquals(StagedPaymentProgress.PARTIALLY_PAID, fulfilled.paymentProgress)
         assertEquals(StagedPaymentFulfillment.FULFILLED, fulfilled.fulfillmentStatus)
-        assertEquals(0, fulfilled.lifecycle.stateHistory.last().stateTransitionEffectCount)
+        assertEquals(
+            0,
+            fulfilled.lifecycle.stateHistory
+                .last()
+                .stateTransitionEffectCount,
+        )
         assertEquals(
             StagedPaymentViolation.InvalidFulfillmentTransition,
             failure(
@@ -455,16 +476,27 @@ class StagedPaymentTest {
         )
 
         val finalized = fixture.finalizedAfterFulfillment()
-        val completed = success(
-            finalized.confirmCompletion(
-                historyId = StagedPaymentHistoryId("history-completed"),
-                occurredAt = fixture.afterCompletionAt,
-            ),
-        )
+        val completed =
+            success(
+                finalized.confirmCompletion(
+                    historyId = StagedPaymentHistoryId("history-completed"),
+                    occurredAt = fixture.afterCompletionAt,
+                ),
+            )
         assertEquals(finalized.installments, completed.installments)
         assertEquals(finalized.snapshot().formalTransactions, completed.snapshot().formalTransactions)
-        assertEquals(StagedPaymentEvent.COMPLETION_CONFIRMED, completed.lifecycle.stateHistory.last().event)
-        assertEquals(0, completed.lifecycle.stateHistory.last().stateTransitionEffectCount)
+        assertEquals(
+            StagedPaymentEvent.COMPLETION_CONFIRMED,
+            completed.lifecycle.stateHistory
+                .last()
+                .event,
+        )
+        assertEquals(
+            0,
+            completed.lifecycle.stateHistory
+                .last()
+                .stateTransitionEffectCount,
+        )
     }
 
     @Test
@@ -533,20 +565,22 @@ class StagedPaymentTest {
 
     @Test
     fun rehydratesEveryReachableSnapshotWithoutCatalogOrCommandReplay() {
-        val sourcedDeposit = success(
-            fixture.created().recordInstallment(
-                fixture.catalog,
-                fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
-                fixture.depositIds,
-            ),
-        )
-        val reachable = listOf(
-            fixture.created(),
-            sourcedDeposit,
-            fixture.fulfilled(),
-            fixture.finalized(),
-            fixture.completed(),
-        )
+        val sourcedDeposit =
+            success(
+                fixture.created().recordInstallment(
+                    fixture.catalog,
+                    fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
+                    fixture.depositIds,
+                ),
+            )
+        val reachable =
+            listOf(
+                fixture.created(),
+                sourcedDeposit,
+                fixture.fulfilled(),
+                fixture.finalized(),
+                fixture.completed(),
+            )
 
         reachable.forEach { original ->
             val restored = success(rehydrateStagedPayment(original.snapshot()))
@@ -577,26 +611,29 @@ class StagedPaymentTest {
     @Test
     fun snapshotValidationReturnsDeterministicIndexedFailuresForEveryInvariantFamily() {
         val valid = fixture.finalized().snapshot()
-        val relationFirst = valid.copy(
-            relation = valid.relation.copy(memberRefs = emptyList()),
-            lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
-        )
+        val relationFirst =
+            valid.copy(
+                relation = valid.relation.copy(memberRefs = emptyList()),
+                lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
+            )
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.RELATION_MEMBERSHIP, null),
             failure(rehydrateStagedPayment(relationFirst)),
         )
 
-        val lifecycleArithmetic = valid.copy(
-            lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
-        )
+        val lifecycleArithmetic =
+            valid.copy(
+                lifecycle = valid.lifecycle.copy(paidAmount = fixture.zero),
+            )
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.LIFECYCLE_ARITHMETIC, null),
             failure(rehydrateStagedPayment(lifecycleArithmetic)),
         )
 
-        val invalidHistory = valid.lifecycle.stateHistory.toMutableList().also {
-            it[1] = it[1].copy(sequence = 7)
-        }
+        val invalidHistory =
+            valid.lifecycle.stateHistory.toMutableList().also {
+                it[1] = it[1].copy(sequence = 7)
+            }
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.HISTORY, 1),
             failure(rehydrateStagedPayment(valid.copy(lifecycle = valid.lifecycle.copy(stateHistory = invalidHistory)))),
@@ -607,33 +644,37 @@ class StagedPaymentTest {
             failure(
                 rehydrateStagedPayment(
                     valid.copy(
-                        installments = valid.installments.mapIndexed { index, payment ->
-                            if (index == 0) payment.copy(statisticsAt = fixture.finalAt) else payment
-                        },
+                        installments =
+                            valid.installments.mapIndexed { index, payment ->
+                                if (index == 0) payment.copy(statisticsAt = fixture.finalAt) else payment
+                            },
                     ),
                 ),
             ),
         )
 
-        val invalidSource = fixture.deposited().snapshot().let { snapshot ->
-            val payment = snapshot.installments.single()
-            snapshot.copy(
-                installments = listOf(
-                    payment.copy(
-                        sourcePaymentAt = fixture.depositAt,
-                        sourcePaymentAtText = "not-an-instant",
-                    ),
-                ),
-            )
-        }
+        val invalidSource =
+            fixture.deposited().snapshot().let { snapshot ->
+                val payment = snapshot.installments.single()
+                snapshot.copy(
+                    installments =
+                        listOf(
+                            payment.copy(
+                                sourcePaymentAt = fixture.depositAt,
+                                sourcePaymentAtText = "not-an-instant",
+                            ),
+                        ),
+                )
+            }
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.SOURCE_TIME, 0),
             failure(rehydrateStagedPayment(invalidSource)),
         )
 
-        val duplicateHistoryIdentity = valid.lifecycle.stateHistory.toMutableList().also {
-            it[1] = it[1].copy(id = it[0].id)
-        }
+        val duplicateHistoryIdentity =
+            valid.lifecycle.stateHistory.toMutableList().also {
+                it[1] = it[1].copy(id = it[0].id)
+            }
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.IDENTITY, 1),
             failure(rehydrateStagedPayment(valid.copy(lifecycle = valid.lifecycle.copy(stateHistory = duplicateHistoryIdentity)))),
@@ -643,9 +684,10 @@ class StagedPaymentTest {
     @Test
     fun invalidHistoryStructurePrecedesDuplicateHistoryIdentity() {
         val valid = fixture.finalized().snapshot()
-        val competingHistory = valid.lifecycle.stateHistory.toMutableList().also {
-            it[1] = it[1].copy(id = it[0].id, sequence = 7)
-        }
+        val competingHistory =
+            valid.lifecycle.stateHistory.toMutableList().also {
+                it[1] = it[1].copy(id = it[0].id, sequence = 7)
+            }
 
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.HISTORY, 1),
@@ -661,20 +703,26 @@ class StagedPaymentTest {
     fun invalidInstallmentStructurePrecedesDuplicateInstallmentAndFormalIdentity() {
         val valid = fixture.finalized().snapshot()
         val firstInstallment = valid.installments.first()
-        val invalidInstallments = valid.installments.mapIndexed { index, payment ->
-            when (index) {
-                0 -> payment.copy(statisticsAt = fixture.finalAt)
-                else -> payment.copy(
-                    transactionId = firstInstallment.transactionId,
-                    expensePostingId = firstInstallment.expensePostingId,
-                    assetPostingId = firstInstallment.assetPostingId,
-                )
+        val invalidInstallments =
+            valid.installments.mapIndexed { index, payment ->
+                when (index) {
+                    0 -> payment.copy(statisticsAt = fixture.finalAt)
+                    else ->
+                        payment.copy(
+                            transactionId = firstInstallment.transactionId,
+                            expensePostingId = firstInstallment.expensePostingId,
+                            assetPostingId = firstInstallment.assetPostingId,
+                        )
+                }
             }
-        }
-        val firstFormalTransactionId = valid.formalTransactions.first().transaction.id
-        val duplicateFormalIdentity = valid.formalTransactions.mapIndexed { index, formal ->
-            if (index == 0) formal else formal.copy(transaction = formal.transaction.copy(id = firstFormalTransactionId))
-        }
+        val firstFormalTransactionId =
+            valid.formalTransactions
+                .first()
+                .transaction.id
+        val duplicateFormalIdentity =
+            valid.formalTransactions.mapIndexed { index, formal ->
+                if (index == 0) formal else formal.copy(transaction = formal.transaction.copy(id = firstFormalTransactionId))
+            }
 
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.INSTALLMENT, 0),
@@ -693,9 +741,10 @@ class StagedPaymentTest {
     fun rehydrationPreservesRawRelationRowsAndRejectsDuplicatesBeforeConstructingTheDomainSet() {
         val valid = fixture.deposited().snapshot()
         val duplicateRows = valid.relation.memberRefs + valid.relation.memberRefs.last()
-        val snapshot = valid.copy(
-            relation = valid.relation.copy(memberRefs = duplicateRows),
-        )
+        val snapshot =
+            valid.copy(
+                relation = valid.relation.copy(memberRefs = duplicateRows),
+            )
 
         assertEquals(3, snapshot.relation.memberRefs.size)
         assertEquals(
@@ -707,14 +756,16 @@ class StagedPaymentTest {
     @Test
     fun rehydrationIsCatalogFreeButLaterCommandsUseCurrentCatalogAdmission() {
         val historical = fixture.deposited()
-        val driftedCatalog = success(
-            LedgerCatalog.create(
-                accounts = fixture.catalog.accounts,
-                categories = fixture.catalog.categories.map { category ->
-                    if (category.id == fixture.categoryId) category.copy(active = false) else category
-                },
-            ),
-        )
+        val driftedCatalog =
+            success(
+                LedgerCatalog.create(
+                    accounts = fixture.catalog.accounts,
+                    categories =
+                        fixture.catalog.categories.map { category ->
+                            if (category.id == fixture.categoryId) category.copy(active = false) else category
+                        },
+                ),
+            )
 
         val restored = success(rehydrateStagedPayment(historical.snapshot()))
         assertEquals(historical.installments, restored.installments)
@@ -726,18 +777,20 @@ class StagedPaymentTest {
 
     @Test
     fun sourceTimeRehydrationIsStructuralAndDoesNotDependOnTheCurrentOffsetPolicy() {
-        val sourced = success(
-            fixture.created().recordInstallment(
-                fixture.catalog,
-                fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
-                fixture.depositIds,
-            ),
-        )
+        val sourced =
+            success(
+                fixture.created().recordInstallment(
+                    fixture.catalog,
+                    fixture.depositCommand.copy(sourceTime = fixture.depositSourceTime()),
+                    fixture.depositIds,
+                ),
+            )
         val snapshot = sourced.snapshot()
         val payment = snapshot.installments.single()
-        val utcTextSnapshot = snapshot.copy(
-            installments = listOf(payment.copy(sourcePaymentAtText = "2026-04-28T02:00:00Z")),
-        )
+        val utcTextSnapshot =
+            snapshot.copy(
+                installments = listOf(payment.copy(sourcePaymentAtText = "2026-04-28T02:00:00Z")),
+            )
 
         val restored = success(rehydrateStagedPayment(utcTextSnapshot))
         assertEquals(fixture.depositAt, restored.installments.single().sourcePaymentAt)
@@ -750,45 +803,54 @@ class StagedPaymentTest {
         val snapshot = deposited.snapshot()
         val original = snapshot.formalTransactions.single()
         val replacementVersionId = TransactionVersionId("version-deposit-2")
-        val metadataReplacement = original.copy(
-            transaction = original.transaction.copy(currentVersionId = replacementVersionId),
-            versions = original.versions + original.versions.single().copy(
-                id = replacementVersionId,
-                versionNumber = 2,
-                note = "corrected note",
-            ),
-            postingSets = original.postingSets,
-        )
+        val metadataReplacement =
+            original.copy(
+                transaction = original.transaction.copy(currentVersionId = replacementVersionId),
+                versions =
+                    original.versions +
+                        original.versions.single().copy(
+                            id = replacementVersionId,
+                            versionNumber = 2,
+                            note = "corrected note",
+                        ),
+                postingSets = original.postingSets,
+            )
         assertEquals(
             2,
             success(rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(metadataReplacement))))
-                .formalTransactions.single().versions.size,
+                .formalTransactions
+                .single()
+                .versions.size,
         )
 
-        val replacementSet = StagedPaymentPostingSetSnapshot(
-            PostingSetId("posting-set-deposit-2"),
-            listOf(
-                StagedPaymentPostingSnapshot(
-                    PostingId("posting-expense-deposit-2"),
-                    fixture.expenseAccountId,
-                    fixture.depositAmount,
+        val replacementSet =
+            StagedPaymentPostingSetSnapshot(
+                PostingSetId("posting-set-deposit-2"),
+                listOf(
+                    StagedPaymentPostingSnapshot(
+                        PostingId("posting-expense-deposit-2"),
+                        fixture.expenseAccountId,
+                        fixture.depositAmount,
+                    ),
+                    StagedPaymentPostingSnapshot(
+                        PostingId("posting-asset-deposit-2"),
+                        fixture.fundingAccountId,
+                        Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
+                    ),
                 ),
-                StagedPaymentPostingSnapshot(
-                    PostingId("posting-asset-deposit-2"),
-                    fixture.fundingAccountId,
-                    Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
-                ),
-            ),
-        )
-        val mismatchedReplacement = original.copy(
-            transaction = original.transaction.copy(currentVersionId = replacementVersionId),
-            versions = original.versions + original.versions.single().copy(
-                id = replacementVersionId,
-                versionNumber = 2,
-                postingSetId = replacementSet.id,
-            ),
-            postingSets = original.postingSets + replacementSet,
-        )
+            )
+        val mismatchedReplacement =
+            original.copy(
+                transaction = original.transaction.copy(currentVersionId = replacementVersionId),
+                versions =
+                    original.versions +
+                        original.versions.single().copy(
+                            id = replacementVersionId,
+                            versionNumber = 2,
+                            postingSetId = replacementSet.id,
+                        ),
+                postingSets = original.postingSets + replacementSet,
+            )
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, 0),
             failure(rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(mismatchedReplacement)))),
@@ -802,42 +864,48 @@ class StagedPaymentTest {
         val originalVersion = original.versions.single()
         val currentPostingSet = original.postingSets.single()
         val historicalExpensePostingId = PostingId("posting-expense-deposit-historical")
-        val historicalPostingSet = StagedPaymentPostingSetSnapshot(
-            PostingSetId("posting-set-deposit-historical"),
-            listOf(
-                StagedPaymentPostingSnapshot(
-                    historicalExpensePostingId,
-                    fixture.expenseAccountId,
-                    fixture.depositAmount,
+        val historicalPostingSet =
+            StagedPaymentPostingSetSnapshot(
+                PostingSetId("posting-set-deposit-historical"),
+                listOf(
+                    StagedPaymentPostingSnapshot(
+                        historicalExpensePostingId,
+                        fixture.expenseAccountId,
+                        fixture.depositAmount,
+                    ),
+                    StagedPaymentPostingSnapshot(
+                        PostingId("posting-asset-deposit-historical"),
+                        fixture.fundingAccountId,
+                        Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
+                    ),
                 ),
-                StagedPaymentPostingSnapshot(
-                    PostingId("posting-asset-deposit-historical"),
-                    fixture.fundingAccountId,
-                    Money.ofMinor(-fixture.depositAmount.minorUnits, fixture.cny),
-                ),
-            ),
-        )
+            )
         val currentVersionId = TransactionVersionId("version-deposit-current")
-        val multiVersionFormal = original.copy(
-            transaction = original.transaction.copy(currentVersionId = currentVersionId),
-            versions = listOf(
-                originalVersion.copy(postingSetId = historicalPostingSet.id),
-                originalVersion.copy(
-                    id = currentVersionId,
-                    versionNumber = 2,
-                    postingSetId = currentPostingSet.id,
-                ),
-            ),
-            postingSets = listOf(historicalPostingSet, currentPostingSet),
-        )
-        val restored = success(
-            rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(multiVersionFormal))),
-        )
-        val collidingIds = fixture.finalIds.copy(
-            expenseIds = fixture.finalIds.expenseIds.copy(
-                expensePostingId = historicalExpensePostingId,
-            ),
-        )
+        val multiVersionFormal =
+            original.copy(
+                transaction = original.transaction.copy(currentVersionId = currentVersionId),
+                versions =
+                    listOf(
+                        originalVersion.copy(postingSetId = historicalPostingSet.id),
+                        originalVersion.copy(
+                            id = currentVersionId,
+                            versionNumber = 2,
+                            postingSetId = currentPostingSet.id,
+                        ),
+                    ),
+                postingSets = listOf(historicalPostingSet, currentPostingSet),
+            )
+        val restored =
+            success(
+                rehydrateStagedPayment(snapshot.copy(formalTransactions = listOf(multiVersionFormal))),
+            )
+        val collidingIds =
+            fixture.finalIds.copy(
+                expenseIds =
+                    fixture.finalIds.expenseIds.copy(
+                        expensePostingId = historicalExpensePostingId,
+                    ),
+            )
 
         assertFailureLeavesAggregateUnchanged(restored, StagedPaymentViolation.DuplicateIdentity) {
             restored.recordInstallment(fixture.catalog, fixture.finalCommand, collidingIds)
@@ -849,19 +917,22 @@ class StagedPaymentTest {
         val valid = fixture.deposited().snapshot()
         val formal = valid.formalTransactions.single()
         val postingSet = formal.postingSets.single()
-        val malformedPostingSet = formal.copy(
-            postingSets = listOf(postingSet.copy(postings = postingSet.postings.take(1))),
-        )
+        val malformedPostingSet =
+            formal.copy(
+                postingSets = listOf(postingSet.copy(postings = postingSet.postings.take(1))),
+            )
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, 0),
             failure(rehydrateStagedPayment(valid.copy(formalTransactions = listOf(malformedPostingSet)))),
         )
 
-        val malformedChain = formal.copy(
-            versions = listOf(
-                formal.versions.single().copy(postingSetId = PostingSetId("missing-posting-set")),
-            ),
-        )
+        val malformedChain =
+            formal.copy(
+                versions =
+                    listOf(
+                        formal.versions.single().copy(postingSetId = PostingSetId("missing-posting-set")),
+                    ),
+            )
         assertEquals(
             StagedPaymentViolation.InvalidSnapshot(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, 0),
             failure(rehydrateStagedPayment(valid.copy(formalTransactions = listOf(malformedChain)))),
@@ -889,24 +960,27 @@ class StagedPaymentTest {
         val postingSets = originalFormal.postingSets.toMutableList()
         val postings = postingSets.single().postings.toMutableList()
         postingSets[0] = postingSets.single().copy(postings = postings)
-        val formalTransactions = mutableListOf(
-            originalFormal.copy(versions = versions, postingSets = postingSets),
-        )
-        val snapshot = StagedPaymentSnapshot(
-            ledgerId = original.ledgerId,
-            relation = StagedPaymentRelationSnapshot(original.relation.id, members),
-            lifecycle = StagedPaymentLifecycleSnapshot(
-                original.lifecycle.id,
-                original.lifecycle.totalAmount,
-                original.lifecycle.paidAmount,
-                original.lifecycle.dueAmount,
-                original.lifecycle.currency,
-                original.lifecycle.categoryId,
-                history,
-            ),
-            installments = installments,
-            formalTransactions = formalTransactions,
-        )
+        val formalTransactions =
+            mutableListOf(
+                originalFormal.copy(versions = versions, postingSets = postingSets),
+            )
+        val snapshot =
+            StagedPaymentSnapshot(
+                ledgerId = original.ledgerId,
+                relation = StagedPaymentRelationSnapshot(original.relation.id, members),
+                lifecycle =
+                    StagedPaymentLifecycleSnapshot(
+                        original.lifecycle.id,
+                        original.lifecycle.totalAmount,
+                        original.lifecycle.paidAmount,
+                        original.lifecycle.dueAmount,
+                        original.lifecycle.currency,
+                        original.lifecycle.categoryId,
+                        history,
+                    ),
+                installments = installments,
+                formalTransactions = formalTransactions,
+            )
         members.clear()
         history.clear()
         installments.clear()
@@ -923,12 +997,35 @@ class StagedPaymentTest {
         (snapshot.formalTransactions as MutableList).clear()
         (snapshot.formalTransactions.single().versions as MutableList).clear()
         (snapshot.formalTransactions.single().postingSets as MutableList).clear()
-        (snapshot.formalTransactions.single().postingSets.single().postings as MutableList).clear()
+        (
+            snapshot.formalTransactions
+                .single()
+                .postingSets
+                .single()
+                .postings as MutableList
+        ).clear()
         assertEquals(1, snapshot.installments.size)
         assertEquals(1, snapshot.formalTransactions.size)
-        assertEquals(1, snapshot.formalTransactions.single().versions.size)
-        assertEquals(1, snapshot.formalTransactions.single().postingSets.size)
-        assertEquals(2, snapshot.formalTransactions.single().postingSets.single().postings.size)
+        assertEquals(
+            1,
+            snapshot.formalTransactions
+                .single()
+                .versions.size,
+        )
+        assertEquals(
+            1,
+            snapshot.formalTransactions
+                .single()
+                .postingSets.size,
+        )
+        assertEquals(
+            2,
+            snapshot.formalTransactions
+                .single()
+                .postingSets
+                .single()
+                .postings.size,
+        )
 
         val restored = success(rehydrateStagedPayment(snapshot))
         val leakedMembers = restored.relation.memberRefs as MutableSet
@@ -941,14 +1038,37 @@ class StagedPaymentTest {
         leakedFormals.clear()
         clearIfMutable(restored.formalTransactions.single().versions)
         clearIfMutable(restored.formalTransactions.single().postingSets)
-        clearIfMutable(restored.formalTransactions.single().postingSets.single().postings)
+        clearIfMutable(
+            restored.formalTransactions
+                .single()
+                .postingSets
+                .single()
+                .postings,
+        )
         assertEquals(2, restored.relation.memberRefs.size)
         assertEquals(2, restored.lifecycle.stateHistory.size)
         assertEquals(1, restored.installments.size)
         assertEquals(1, restored.formalTransactions.size)
-        assertEquals(1, restored.formalTransactions.single().versions.size)
-        assertEquals(1, restored.formalTransactions.single().postingSets.size)
-        assertEquals(2, restored.formalTransactions.single().postingSets.single().postings.size)
+        assertEquals(
+            1,
+            restored.formalTransactions
+                .single()
+                .versions.size,
+        )
+        assertEquals(
+            1,
+            restored.formalTransactions
+                .single()
+                .postingSets.size,
+        )
+        assertEquals(
+            2,
+            restored.formalTransactions
+                .single()
+                .postingSets
+                .single()
+                .postings.size,
+        )
     }
 
     @Test
@@ -967,14 +1087,16 @@ class StagedPaymentTest {
 
     @Test
     fun wrapsOrdinaryExpenseDependencyFailuresInsideTheStagedResultBoundary() {
-        val inactiveCatalog = success(
-            LedgerCatalog.create(
-                accounts = fixture.catalog.accounts,
-                categories = fixture.catalog.categories.map { category ->
-                    if (category.id == fixture.categoryId) category.copy(active = false) else category
-                },
-            ),
-        )
+        val inactiveCatalog =
+            success(
+                LedgerCatalog.create(
+                    accounts = fixture.catalog.accounts,
+                    categories =
+                        fixture.catalog.categories.map { category ->
+                            if (category.id == fixture.categoryId) category.copy(active = false) else category
+                        },
+                ),
+            )
 
         assertEquals(
             StagedPaymentViolation.DependencyViolation(OrdinaryExpenseViolation.CategoryInactive),
@@ -993,8 +1115,7 @@ private fun reconciliationFact(
     postingId: PostingId,
     eligible: Boolean,
     status: StagedPaymentReconciliationStatus,
-): StagedPaymentReconciliationFact =
-    StagedPaymentReconciliationFact(postingId, eligible, status)
+): StagedPaymentReconciliationFact = StagedPaymentReconciliationFact(postingId, eligible, status)
 
 private fun assertFailureLeavesAggregateUnchanged(
     staged: StagedPayment,
@@ -1029,11 +1150,9 @@ private fun clearIfMutable(values: List<*>) {
     }
 }
 
-private inline fun <reified T> success(result: StagedPaymentResult<T>): T =
-    assertIs<StagedPaymentResult.Success<T>>(result).value
+private inline fun <reified T> success(result: StagedPaymentResult<T>): T = assertIs<StagedPaymentResult.Success<T>>(result).value
 
-private fun failure(result: StagedPaymentResult<*>): StagedPaymentViolation =
-    assertIs<StagedPaymentResult.Failure>(result).violation
+private fun failure(result: StagedPaymentResult<*>): StagedPaymentViolation = assertIs<StagedPaymentResult.Failure>(result).violation
 
 private class StagedPaymentFixture {
     val ledgerId = LedgerId("ledger-a")
@@ -1057,36 +1176,42 @@ private class StagedPaymentFixture {
     val finalAt = Instant.parse("2026-05-03T16:30:00+08:00")
     val afterCompletionAt = Instant.parse("2026-05-04T10:00:00+08:00")
 
-    val catalog = success(
-        LedgerCatalog.create(
-            accounts = listOf(
-                Account(fundingAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(expenseAccountId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+    val catalog =
+        success(
+            LedgerCatalog.create(
+                accounts =
+                    listOf(
+                        Account(fundingAccountId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                        Account(expenseAccountId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                    ),
+                categories =
+                    listOf(
+                        Category(CategoryId("expense-category-root"), ledgerId, null, null, active = true),
+                        Category(categoryId, ledgerId, CategoryId("expense-category-root"), expenseAccountId, active = true),
+                    ),
             ),
-            categories = listOf(
-                Category(CategoryId("expense-category-root"), ledgerId, null, null, active = true),
-                Category(categoryId, ledgerId, CategoryId("expense-category-root"), expenseAccountId, active = true),
-            ),
-        ),
-    )
+        )
 
-    val creationIds = StagedPaymentCreationIds(
-        relationId = relationId,
-        lifecycleId = lifecycleId,
-        historyId = StagedPaymentHistoryId("history-created"),
-    )
-    val depositCommand = RecordStagedPaymentInstallmentCommand(
-        role = StagedPaymentRole.DEPOSIT,
-        amount = depositAmount,
-        fundingAccountId = fundingAccountId,
-        actualPaymentAt = depositAt,
-    )
-    val finalCommand = RecordStagedPaymentInstallmentCommand(
-        role = StagedPaymentRole.FINAL,
-        amount = finalAmount,
-        fundingAccountId = fundingAccountId,
-        actualPaymentAt = finalAt,
-    )
+    val creationIds =
+        StagedPaymentCreationIds(
+            relationId = relationId,
+            lifecycleId = lifecycleId,
+            historyId = StagedPaymentHistoryId("history-created"),
+        )
+    val depositCommand =
+        RecordStagedPaymentInstallmentCommand(
+            role = StagedPaymentRole.DEPOSIT,
+            amount = depositAmount,
+            fundingAccountId = fundingAccountId,
+            actualPaymentAt = depositAt,
+        )
+    val finalCommand =
+        RecordStagedPaymentInstallmentCommand(
+            role = StagedPaymentRole.FINAL,
+            amount = finalAmount,
+            fundingAccountId = fundingAccountId,
+            actualPaymentAt = finalAt,
+        )
     val depositIds = paymentIds("deposit", StagedPaymentRole.DEPOSIT)
     val finalIds = paymentIds("final", StagedPaymentRole.FINAL)
 
@@ -1099,8 +1224,7 @@ private class StagedPaymentFixture {
 
     fun created(): StagedPayment = success(create())
 
-    fun deposited(): StagedPayment =
-        success(created().recordInstallment(catalog, depositCommand, depositIds))
+    fun deposited(): StagedPayment = success(created().recordInstallment(catalog, depositCommand, depositIds))
 
     fun fulfilled(): StagedPayment =
         success(
@@ -1111,11 +1235,9 @@ private class StagedPaymentFixture {
             ),
         )
 
-    fun finalized(): StagedPayment =
-        success(deposited().recordInstallment(catalog, finalCommand, finalIds))
+    fun finalized(): StagedPayment = success(deposited().recordInstallment(catalog, finalCommand, finalIds))
 
-    fun finalizedAfterFulfillment(): StagedPayment =
-        success(fulfilled().recordInstallment(catalog, finalCommand, finalIds))
+    fun finalizedAfterFulfillment(): StagedPayment = success(fulfilled().recordInstallment(catalog, finalCommand, finalIds))
 
     fun completed(): StagedPayment =
         success(
@@ -1134,18 +1256,22 @@ private class StagedPaymentFixture {
             ),
         )
 
-    fun paymentIds(label: String, role: StagedPaymentRole): StagedPaymentInstallmentIds {
+    fun paymentIds(
+        label: String,
+        role: StagedPaymentRole,
+    ): StagedPaymentInstallmentIds {
         val roleName = role.name.lowercase()
         return StagedPaymentInstallmentIds(
             paymentId = InstallmentPaymentId("payment-$label"),
             historyId = StagedPaymentHistoryId("history-$label"),
-            expenseIds = AssetPaidOrdinaryExpenseIds(
-                transactionId = TransactionId("tx-$roleName-$label"),
-                versionId = TransactionVersionId("version-$roleName-$label"),
-                postingSetId = PostingSetId("posting-set-$roleName-$label"),
-                expensePostingId = PostingId("posting-expense-$roleName-$label"),
-                paymentPostingId = PostingId("posting-asset-$roleName-$label"),
-            ),
+            expenseIds =
+                AssetPaidOrdinaryExpenseIds(
+                    transactionId = TransactionId("tx-$roleName-$label"),
+                    versionId = TransactionVersionId("version-$roleName-$label"),
+                    postingSetId = PostingSetId("posting-set-$roleName-$label"),
+                    expensePostingId = PostingId("posting-expense-$roleName-$label"),
+                    paymentPostingId = PostingId("posting-asset-$roleName-$label"),
+                ),
         )
     }
 }

@@ -53,52 +53,72 @@ data class AlipayBatchResult(
 )
 
 object AlipayDiagnostics {
-    fun unsupportedInput(inputRef: String): AlipayDiagnostic =
-        AlipayDiagnostic("INPUT_UNSUPPORTED", "fatal", "input", inputRef, null, null)
+    fun unsupportedInput(inputRef: String): AlipayDiagnostic = AlipayDiagnostic("INPUT_UNSUPPORTED", "fatal", "input", inputRef, null, null)
 
-    fun unsafeOrOverLimit(inputRef: String): AlipayDiagnostic =
-        AlipayDiagnostic("INPUT_UNSAFE_OR_OVER_LIMIT", "fatal", "input", inputRef, null, null)
+    fun unsafeOrOverLimit(inputRef: String): AlipayDiagnostic = AlipayDiagnostic("INPUT_UNSAFE_OR_OVER_LIMIT", "fatal", "input", inputRef, null, null)
 
-    fun decodeFailed(inputRef: String): AlipayDiagnostic =
-        AlipayDiagnostic("INPUT_DECODE_FAILED", "fatal", "input", inputRef, null, null)
+    fun decodeFailed(inputRef: String): AlipayDiagnostic = AlipayDiagnostic("INPUT_DECODE_FAILED", "fatal", "input", inputRef, null, null)
 
-    fun structureMismatchHeader(inputRef: String): AlipayDiagnostic =
-        AlipayDiagnostic("STRUCTURE_MISMATCH", "fatal", "structure", inputRef, null, null)
+    fun structureMismatchHeader(inputRef: String): AlipayDiagnostic = AlipayDiagnostic("STRUCTURE_MISMATCH", "fatal", "structure", inputRef, null, null)
 
-    fun structureMismatchRecord(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("STRUCTURE_MISMATCH", "fatal", "record", inputRef, ordinal, null)
+    fun structureMismatchRecord(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("STRUCTURE_MISMATCH", "fatal", "record", inputRef, ordinal, null)
 
-    fun unsupportedTxType(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", "unsupported", "record", inputRef, ordinal, null)
+    fun unsupportedTxType(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_UNSUPPORTED_TX_TYPE", "unsupported", "record", inputRef, ordinal, null)
 
-    fun refundUnsupported(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
+    fun refundUnsupported(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_REFUND_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
 
-    fun unknownToken(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_TOKEN", "unsupported", "record", inputRef, ordinal, null)
+    fun unknownToken(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_TOKEN", "unsupported", "record", inputRef, ordinal, null)
 
     /** P4-06 slice 1 (D-107 section 2.4): any non-whitelist payment-leg token. */
-    fun unknownPaymentLeg(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG", "unsupported", "record", inputRef, ordinal, null)
+    fun unknownPaymentLeg(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_UNKNOWN_PAYMENT_LEG", "unsupported", "record", inputRef, ordinal, null)
 
     /** P4-06 slice 1: slice-2 fail-closed asset+credit mixed leg with an 支出 direction. */
-    fun mixedPaymentUnsupported(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
+    fun mixedPaymentUnsupported(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_MIXED_PAYMENT_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
 
     /** P4-06 slice 1: defensive credit leg with an 收入 direction (no anchor). */
-    fun creditIncomeUnsupported(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
+    fun creditIncomeUnsupported(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("SPINE_ALIPAY_CREDIT_INCOME_UNSUPPORTED", "unsupported", "record", inputRef, ordinal, null)
 
-    fun fieldAmountInvalid(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("FIELD_AMOUNT_INVALID", "record_error", "field", inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_AMOUNT)
+    fun fieldAmountInvalid(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("FIELD_AMOUNT_INVALID", "record_error", "field", inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_AMOUNT)
 
-    fun fieldTimeInvalid(inputRef: String, ordinal: Int): AlipayDiagnostic =
-        AlipayDiagnostic("FIELD_TIME_INVALID", "record_error", "field", inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_OCCURRED_AT)
+    fun fieldTimeInvalid(
+        inputRef: String,
+        ordinal: Int,
+    ): AlipayDiagnostic = AlipayDiagnostic("FIELD_TIME_INVALID", "record_error", "field", inputRef, ordinal, AlipaySourceTokens.FIELD_ROLE_OCCURRED_AT)
 
-    fun requiredFactUnresolved(inputRef: String, ordinal: Int, fieldRole: String): AlipayDiagnostic =
-        AlipayDiagnostic("REQUIRED_FACT_UNRESOLVED", "incomplete", "field", inputRef, ordinal, fieldRole)
+    fun requiredFactUnresolved(
+        inputRef: String,
+        ordinal: Int,
+        fieldRole: String,
+    ): AlipayDiagnostic = AlipayDiagnostic("REQUIRED_FACT_UNRESOLVED", "incomplete", "field", inputRef, ordinal, fieldRole)
 
     /** Defensive registration (spec section 4): this batch's oracle never triggers it. */
-    fun requiredFactMissing(inputRef: String, ordinal: Int, fieldRole: String): AlipayDiagnostic =
-        AlipayDiagnostic("REQUIRED_FACT_MISSING", "incomplete", "field", inputRef, ordinal, fieldRole)
+    fun requiredFactMissing(
+        inputRef: String,
+        ordinal: Int,
+        fieldRole: String,
+    ): AlipayDiagnostic = AlipayDiagnostic("REQUIRED_FACT_MISSING", "incomplete", "field", inputRef, ordinal, fieldRole)
 }

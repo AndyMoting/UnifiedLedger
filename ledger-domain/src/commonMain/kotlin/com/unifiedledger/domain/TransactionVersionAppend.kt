@@ -23,11 +23,17 @@ import kotlin.time.Instant
  * (RG-12 posting_facts).
  */
 sealed interface TransactionVersionChange {
-    data class Note(val note: String) : TransactionVersionChange
+    data class Note(
+        val note: String,
+    ) : TransactionVersionChange
 
-    data class StatisticsAt(val statisticsAt: Instant) : TransactionVersionChange
+    data class StatisticsAt(
+        val statisticsAt: Instant,
+    ) : TransactionVersionChange
 
-    data class Postings(val postings: List<Posting>) : TransactionVersionChange
+    data class Postings(
+        val postings: List<Posting>,
+    ) : TransactionVersionChange
 }
 
 data class TransactionVersionAppendIds(
@@ -63,8 +69,9 @@ fun FormalTransaction.appendVersion(
         }
 
         is TransactionVersionChange.Postings -> {
-            val freshSetId = newPostingSetId
-                ?: return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
+            val freshSetId =
+                newPostingSetId
+                    ?: return DomainResult.Failure(DomainViolation.InvalidFormalTransaction)
             when (val created = PostingSet.create(freshSetId, change.postings)) {
                 is DomainResult.Failure -> return created
                 is DomainResult.Success -> {
@@ -75,20 +82,23 @@ fun FormalTransaction.appendVersion(
         }
     }
 
-    val replacementVersion = currentVersion.copy(
-        id = ids.versionId,
-        versionNumber = currentVersion.versionNumber + 1,
-        postingSetId = appendedPostingSetId,
-        times = when (change) {
-            is TransactionVersionChange.StatisticsAt ->
-                currentVersion.times.copy(statisticsAt = change.statisticsAt)
-            else -> currentVersion.times
-        },
-        note = when (change) {
-            is TransactionVersionChange.Note -> change.note
-            else -> currentVersion.note
-        },
-    )
+    val replacementVersion =
+        currentVersion.copy(
+            id = ids.versionId,
+            versionNumber = currentVersion.versionNumber + 1,
+            postingSetId = appendedPostingSetId,
+            times =
+                when (change) {
+                    is TransactionVersionChange.StatisticsAt ->
+                        currentVersion.times.copy(statisticsAt = change.statisticsAt)
+                    else -> currentVersion.times
+                },
+            note =
+                when (change) {
+                    is TransactionVersionChange.Note -> change.note
+                    else -> currentVersion.note
+                },
+        )
 
     return FormalTransaction.create(
         transaction = transaction.copy(currentVersionId = ids.versionId),

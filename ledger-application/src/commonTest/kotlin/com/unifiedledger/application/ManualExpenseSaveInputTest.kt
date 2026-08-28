@@ -70,12 +70,13 @@ class ManualExpenseSaveInputTest {
     fun multipleMissingFieldsReturnTheCompleteUnorderedFailureSetWithoutCallingDownstream() {
         val harness = fixture.harness()
 
-        val result = harness.execute(
-            fixture.input().copy(
-                amount = null,
-                categoryId = null,
-            ),
-        )
+        val result =
+            harness.execute(
+                fixture.input().copy(
+                    amount = null,
+                    categoryId = null,
+                ),
+            )
 
         assertEquals(
             ManualExpenseSaveResult.InvalidInput(
@@ -91,12 +92,13 @@ class ManualExpenseSaveInputTest {
 
     @Test
     fun completeInputDelegatesOnceWithTheExactIdentityAndSnapshot() {
-        val downstreamResult = ConfirmedManualExpenseResult.NoChange(
-            ConfirmedExpenseReceipt(
-                confirmationId = ConfirmationId("confirmation-rg01-existing"),
-                transactionId = TransactionId("tx-expense-rg01-existing"),
-            ),
-        )
+        val downstreamResult =
+            ConfirmedManualExpenseResult.NoChange(
+                ConfirmedExpenseReceipt(
+                    confirmationId = ConfirmationId("confirmation-rg01-existing"),
+                    transactionId = TransactionId("tx-expense-rg01-existing"),
+                ),
+            )
         val harness = fixture.harness(downstreamResult)
         val input = fixture.input()
         val confirmation: ExplicitManualSave = input.confirmation
@@ -131,9 +133,10 @@ class ManualExpenseSaveInputTest {
     @Test
     fun zeroAmountIsPresentAndDelegatesTheTypedDomainRejection() {
         val zero = Money.ofMinor(0L, fixture.cny)
-        val downstreamResult = ConfirmedManualExpenseResult.Rejected(
-            OrdinaryExpenseViolation.AmountMustBePositive,
-        )
+        val downstreamResult =
+            ConfirmedManualExpenseResult.Rejected(
+                OrdinaryExpenseViolation.AmountMustBePositive,
+            )
         val harness = fixture.harness(downstreamResult)
 
         val result = harness.execute(fixture.input().copy(amount = zero))
@@ -153,24 +156,26 @@ private class ManualExpenseSaveFixture {
     val categoryId = CategoryId("expense-category-breakfast")
     val paymentAccountId = AccountId("asset-bank-a")
 
-    fun input() = ManualExpenseSaveInput(
-        ledgerId = ledgerId,
-        requestId = RequestId("request-rg01-save"),
-        amount = amount,
-        categoryId = categoryId,
-        paymentAccountId = paymentAccountId,
-        occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
-        note = "",
-        confirmation = ExplicitManualSave,
-    )
+    fun input() =
+        ManualExpenseSaveInput(
+            ledgerId = ledgerId,
+            requestId = RequestId("request-rg01-save"),
+            amount = amount,
+            categoryId = categoryId,
+            paymentAccountId = paymentAccountId,
+            occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
+            note = "",
+            confirmation = ExplicitManualSave,
+        )
 
     fun harness(
-        downstreamResult: ConfirmedManualExpenseResult = ConfirmedManualExpenseResult.NoChange(
-            ConfirmedExpenseReceipt(
-                confirmationId = ConfirmationId("confirmation-unused"),
-                transactionId = TransactionId("tx-unused"),
+        downstreamResult: ConfirmedManualExpenseResult =
+            ConfirmedManualExpenseResult.NoChange(
+                ConfirmedExpenseReceipt(
+                    confirmationId = ConfirmationId("confirmation-unused"),
+                    transactionId = TransactionId("tx-unused"),
+                ),
             ),
-        ),
     ): ManualExpenseSaveHarness = ManualExpenseSaveHarness(downstreamResult)
 }
 
@@ -180,16 +185,17 @@ private class ManualExpenseSaveHarness(
     val commitPort = RecordingConfirmedManualExpenseCommitPort(downstreamResult)
     val idSource = FailOnCallConfirmedManualExpenseIdSource()
     val transactionFactory = FailOnCallConfirmedExpenseTransactionFactory()
-    private val useCase = ExecuteManualExpenseSave(
-        executeConfirmed = ExecuteConfirmedManualExpense(
-            commitPort = commitPort,
-            idSource = idSource,
-            createFormalTransaction = transactionFactory,
-        ),
-    )
+    private val useCase =
+        ExecuteManualExpenseSave(
+            executeConfirmed =
+                ExecuteConfirmedManualExpense(
+                    commitPort = commitPort,
+                    idSource = idSource,
+                    createFormalTransaction = transactionFactory,
+                ),
+        )
 
-    fun execute(input: ManualExpenseSaveInput): ManualExpenseSaveResult =
-        useCase.execute(input)
+    fun execute(input: ManualExpenseSaveInput): ManualExpenseSaveResult = useCase.execute(input)
 
     fun assertNoDownstreamCalls() {
         assertEquals(0, commitPort.invocationCount)

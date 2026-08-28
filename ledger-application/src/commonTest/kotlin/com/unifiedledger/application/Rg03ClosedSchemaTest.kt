@@ -9,24 +9,25 @@ class Rg03ClosedSchemaTest {
     @Test
     fun `all accepted oracle and opening branches are closed to unknown fields`() {
         val raw = validRg03Raw()
-        val mutations = listOf(
-            raw.replaceFirst("\"expected\":{\"accepted\":true,", "\"expected\":{\"accepted\":true,\"unexpected\":1,") to
-                "$.manual_create.expected.unexpected",
-            raw.replaceFirst("\"candidate\":{\"id\":\"candidate-id\",", "\"candidate\":{\"id\":\"candidate-id\",\"unexpected\":1,") to
-                "$.import_lifecycle.ordered_operations[0].expected.candidate.unexpected",
-            raw.replaceFirst("\"candidate\":{\"id\":\"incomplete-candidate\",", "\"candidate\":{\"id\":\"incomplete-candidate\",\"unexpected\":1,") to
-                "$.unknown_one_sided_debit.expected.candidate.unexpected",
-            raw.replaceFirst("\"expected\":{\"returned_candidate_id\":\"incomplete-candidate\",", "\"expected\":{\"returned_candidate_id\":\"incomplete-candidate\",\"unexpected\":1,") to
-                "$.unknown_one_sided_debit.retry.expected.unexpected",
-            raw.replaceFirst("\"expected\":{\"accepted\":false,\"field\":\"source_account_id\",\"reason\":\"required\",", "\"expected\":{\"accepted\":false,\"field\":\"source_account_id\",\"reason\":\"required\",\"unexpected\":1,") to
-                "$.invalid_manual_inputs[0].expected.unexpected",
-            raw.replaceFirst("\"idempotency\":{", "\"idempotency\":{\"unexpected\":1,") to
-                "$.idempotency.unexpected",
-            raw.replaceFirst("\"opening\":{\"transactions\":[]", "\"opening\":{\"unexpected\":1,\"transactions\":[]") to
-                "$.opening.unexpected",
-            raw.replaceFirst("\"out_of_scope\":{", "\"out_of_scope\":{\"unexpected\":1,") to
-                "$.out_of_scope.unexpected",
-        )
+        val mutations =
+            listOf(
+                raw.replaceFirst("\"expected\":{\"accepted\":true,", "\"expected\":{\"accepted\":true,\"unexpected\":1,") to
+                    "$.manual_create.expected.unexpected",
+                raw.replaceFirst("\"candidate\":{\"id\":\"candidate-id\",", "\"candidate\":{\"id\":\"candidate-id\",\"unexpected\":1,") to
+                    "$.import_lifecycle.ordered_operations[0].expected.candidate.unexpected",
+                raw.replaceFirst("\"candidate\":{\"id\":\"incomplete-candidate\",", "\"candidate\":{\"id\":\"incomplete-candidate\",\"unexpected\":1,") to
+                    "$.unknown_one_sided_debit.expected.candidate.unexpected",
+                raw.replaceFirst("\"expected\":{\"returned_candidate_id\":\"incomplete-candidate\",", "\"expected\":{\"returned_candidate_id\":\"incomplete-candidate\",\"unexpected\":1,") to
+                    "$.unknown_one_sided_debit.retry.expected.unexpected",
+                raw.replaceFirst("\"expected\":{\"accepted\":false,\"field\":\"source_account_id\",\"reason\":\"required\",", "\"expected\":{\"accepted\":false,\"field\":\"source_account_id\",\"reason\":\"required\",\"unexpected\":1,") to
+                    "$.invalid_manual_inputs[0].expected.unexpected",
+                raw.replaceFirst("\"idempotency\":{", "\"idempotency\":{\"unexpected\":1,") to
+                    "$.idempotency.unexpected",
+                raw.replaceFirst("\"opening\":{\"transactions\":[]", "\"opening\":{\"unexpected\":1,\"transactions\":[]") to
+                    "$.opening.unexpected",
+                raw.replaceFirst("\"out_of_scope\":{", "\"out_of_scope\":{\"unexpected\":1,") to
+                    "$.out_of_scope.unexpected",
+            )
 
         mutations.forEach { (candidate, path) ->
             assertNotEquals(raw, candidate, "mutation for $path must change the fixture")

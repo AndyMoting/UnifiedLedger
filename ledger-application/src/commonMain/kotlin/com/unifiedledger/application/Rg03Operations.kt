@@ -2,18 +2,26 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
-import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
-data class CandidateId(val value: String)
-data class SourceRecordId(val value: String)
-data class EvidenceId(val value: String)
+data class CandidateId(
+    val value: String,
+)
+
+data class SourceRecordId(
+    val value: String,
+)
+
+data class EvidenceId(
+    val value: String,
+)
 
 enum class SourceCompleteness { COMPLETE, MISSING_DESTINATION }
+
 enum class CandidateStatus { PENDING_CONFIRMATION, CONFIRMED }
 
 data class Rg03ManualTransferSnapshot(
@@ -62,7 +70,9 @@ sealed interface Rg03Command {
         val rawInput: Rg03DecodedInput,
     ) : Rg03Command
 
-    data class ImportSource(val snapshot: Rg03SourceSnapshot) : Rg03Command
+    data class ImportSource(
+        val snapshot: Rg03SourceSnapshot,
+    ) : Rg03Command
 
     data class ConfirmCandidate(
         val requestId: RequestId,
@@ -71,7 +81,9 @@ sealed interface Rg03Command {
         val ledgerId: LedgerId,
     ) : Rg03Command
 
-    data class ImportMirror(val snapshot: Rg03MirrorSnapshot) : Rg03Command
+    data class ImportMirror(
+        val snapshot: Rg03MirrorSnapshot,
+    ) : Rg03Command
 }
 
 data class Rg03PersistedTransferCandidate(
@@ -91,10 +103,15 @@ data class Rg03PersistedTransferCandidate(
 )
 
 fun interface Rg03CandidateRecoveryPort {
-    fun load(ledgerId: LedgerId, candidateId: CandidateId): Rg03PersistedTransferCandidate?
+    fun load(
+        ledgerId: LedgerId,
+        candidateId: CandidateId,
+    ): Rg03PersistedTransferCandidate?
 }
 
-data class Rg03MirrorScope(val candidateId: CandidateId)
+data class Rg03MirrorScope(
+    val candidateId: CandidateId,
+)
 
 data class Rg03MirrorTarget(
     val candidateId: CandidateId,
@@ -105,22 +122,36 @@ data class Rg03MirrorTarget(
 )
 
 sealed interface Rg03MirrorBindingResult {
-    data class Unique(val target: Rg03MirrorTarget) : Rg03MirrorBindingResult
+    data class Unique(
+        val target: Rg03MirrorTarget,
+    ) : Rg03MirrorBindingResult
+
     data object Missing : Rg03MirrorBindingResult
+
     data object Ambiguous : Rg03MirrorBindingResult
 }
 
 fun interface Rg03MirrorBindingPort {
-    fun resolve(ledgerId: LedgerId, scope: Rg03MirrorScope): Rg03MirrorBindingResult
+    fun resolve(
+        ledgerId: LedgerId,
+        scope: Rg03MirrorScope,
+    ): Rg03MirrorBindingResult
 }
 
 sealed interface Rg03PreparedOperation {
-    data class CreateManual(val snapshot: Rg03ManualTransferSnapshot) : Rg03PreparedOperation
-    data class StoreSource(val snapshot: Rg03SourceSnapshot) : Rg03PreparedOperation
+    data class CreateManual(
+        val snapshot: Rg03ManualTransferSnapshot,
+    ) : Rg03PreparedOperation
+
+    data class StoreSource(
+        val snapshot: Rg03SourceSnapshot,
+    ) : Rg03PreparedOperation
+
     data class ConfirmCandidate(
         val requestId: RequestId,
         val candidate: Rg03PersistedTransferCandidate,
     ) : Rg03PreparedOperation
+
     data class MergeMirror(
         val snapshot: Rg03MirrorSnapshot,
         val target: Rg03MirrorTarget?,
@@ -157,15 +188,25 @@ enum class ReturnedIdKind {
     EVIDENCE_LINK,
 }
 
-data class ReturnedId(val kind: ReturnedIdKind, val id: String)
+data class ReturnedId(
+    val kind: ReturnedIdKind,
+    val id: String,
+)
 
 sealed interface Rg03ExecutionResult {
-    data class Accepted(val returnedIds: List<ReturnedId>) : Rg03ExecutionResult
-    data class NoChange(val returnedIds: List<ReturnedId>) : Rg03ExecutionResult
+    data class Accepted(
+        val returnedIds: List<ReturnedId>,
+    ) : Rg03ExecutionResult
+
+    data class NoChange(
+        val returnedIds: List<ReturnedId>,
+    ) : Rg03ExecutionResult
+
     data class Rejected(
         val error: Rg03ExecutionError,
         val field: String? = null,
     ) : Rg03ExecutionResult
+
     data object RequestIdentityConflict : Rg03ExecutionResult
 }
 
@@ -179,12 +220,14 @@ class ExecuteRg03Operation(
     private val commitPort: Rg03PreparedOperationCommitPort,
 ) {
     private var currentLifecycleScope: Rg03LifecycleScope? = null
-    fun execute(command: Rg03Command): Rg03ExecutionResult = when (command) {
-        is Rg03Command.ManualTransfer -> startManual(command)
-        is Rg03Command.ImportSource -> startSource(command)
-        is Rg03Command.ConfirmCandidate -> confirm(command)
-        is Rg03Command.ImportMirror -> mergeMirror(command.snapshot)
-    }
+
+    fun execute(command: Rg03Command): Rg03ExecutionResult =
+        when (command) {
+            is Rg03Command.ManualTransfer -> startManual(command)
+            is Rg03Command.ImportSource -> startSource(command)
+            is Rg03Command.ConfirmCandidate -> confirm(command)
+            is Rg03Command.ImportMirror -> mergeMirror(command.snapshot)
+        }
 
     private fun startManual(command: Rg03Command.ManualTransfer): Rg03ExecutionResult {
         currentLifecycleScope = null
@@ -194,9 +237,10 @@ class ExecuteRg03Operation(
     private fun startSource(command: Rg03Command.ImportSource): Rg03ExecutionResult {
         currentLifecycleScope = null
         val result = commitPort.commit(Rg03PreparedOperation.StoreSource(command.snapshot))
-        currentLifecycleScope = result.singleReturnedCandidateId()?.let {
-            Rg03LifecycleScope(command.snapshot.ledgerId, it)
-        }
+        currentLifecycleScope =
+            result.singleReturnedCandidateId()?.let {
+                Rg03LifecycleScope(command.snapshot.ledgerId, it)
+            }
         return result
     }
 
@@ -205,8 +249,9 @@ class ExecuteRg03Operation(
         if (!command.confirmed) {
             return Rg03ExecutionResult.Rejected(Rg03ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED)
         }
-        val candidate = candidateRecovery.load(command.ledgerId, command.candidateId)
-            ?: return Rg03ExecutionResult.Rejected(Rg03ExecutionError.CANDIDATE_NOT_FOUND)
+        val candidate =
+            candidateRecovery.load(command.ledgerId, command.candidateId)
+                ?: return Rg03ExecutionResult.Rejected(Rg03ExecutionError.CANDIDATE_NOT_FOUND)
         if (candidate.ledgerId != command.ledgerId || candidate.candidateId != command.candidateId) {
             return Rg03ExecutionResult.Rejected(Rg03ExecutionError.CANDIDATE_NOT_FOUND)
         }
@@ -222,15 +267,19 @@ class ExecuteRg03Operation(
 
     private fun mergeMirror(snapshot: Rg03MirrorSnapshot): Rg03ExecutionResult {
         val scope = currentLifecycleScope?.takeIf { it.ledgerId == snapshot.ledgerId }
-        val target = when (val binding = scope?.let {
-            mirrorBinding.resolve(it.ledgerId, Rg03MirrorScope(it.candidateId))
-        }) {
-            is Rg03MirrorBindingResult.Unique -> binding.target
-            null,
-            Rg03MirrorBindingResult.Missing,
-            Rg03MirrorBindingResult.Ambiguous,
-            -> null
-        }
+        val target =
+            when (
+                val binding =
+                    scope?.let {
+                        mirrorBinding.resolve(it.ledgerId, Rg03MirrorScope(it.candidateId))
+                    }
+            ) {
+                is Rg03MirrorBindingResult.Unique -> binding.target
+                null,
+                Rg03MirrorBindingResult.Missing,
+                Rg03MirrorBindingResult.Ambiguous,
+                -> null
+            }
         if (
             target != null &&
             (target.destinationAccountId != snapshot.accountId || target.destinationCredit != snapshot.credit)
@@ -247,14 +296,16 @@ private data class Rg03LifecycleScope(
 )
 
 private fun Rg03ExecutionResult.singleReturnedCandidateId(): CandidateId? {
-    val returnedIds = when (this) {
-        is Rg03ExecutionResult.Accepted -> returnedIds
-        is Rg03ExecutionResult.NoChange -> returnedIds
-        is Rg03ExecutionResult.Rejected,
-        Rg03ExecutionResult.RequestIdentityConflict,
-        -> return null
-    }
-    return returnedIds.filter { it.kind == ReturnedIdKind.CANDIDATE }
+    val returnedIds =
+        when (this) {
+            is Rg03ExecutionResult.Accepted -> returnedIds
+            is Rg03ExecutionResult.NoChange -> returnedIds
+            is Rg03ExecutionResult.Rejected,
+            Rg03ExecutionResult.RequestIdentityConflict,
+            -> return null
+        }
+    return returnedIds
+        .filter { it.kind == ReturnedIdKind.CANDIDATE }
         .singleOrNull()
         ?.id
         ?.let(::CandidateId)

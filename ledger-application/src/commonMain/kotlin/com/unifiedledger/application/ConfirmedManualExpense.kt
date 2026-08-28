@@ -11,9 +11,13 @@ import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
-data class RequestId(val value: String)
+data class RequestId(
+    val value: String,
+)
 
-data class ConfirmationId(val value: String)
+data class ConfirmationId(
+    val value: String,
+)
 
 data object ExplicitManualSave
 
@@ -69,15 +73,21 @@ fun interface ConfirmedExpenseTransactionFactory {
 }
 
 sealed interface ConfirmedManualExpenseResult {
-    data class Created(val receipt: ConfirmedExpenseReceipt) : ConfirmedManualExpenseResult
+    data class Created(
+        val receipt: ConfirmedExpenseReceipt,
+    ) : ConfirmedManualExpenseResult
 
-    data class NoChange(val receipt: ConfirmedExpenseReceipt) : ConfirmedManualExpenseResult
+    data class NoChange(
+        val receipt: ConfirmedExpenseReceipt,
+    ) : ConfirmedManualExpenseResult
 
     data class RequestIdentityConflict(
         val identity: ManualExpenseRequestIdentity,
     ) : ConfirmedManualExpenseResult
 
-    data class Rejected(val violation: DomainViolation) : ConfirmedManualExpenseResult
+    data class Rejected(
+        val violation: DomainViolation,
+    ) : ConfirmedManualExpenseResult
 }
 
 /**
@@ -117,18 +127,20 @@ class ExecuteConfirmedManualExpense(
     private val createFormalTransaction: ConfirmedExpenseTransactionFactory,
 ) {
     fun execute(request: ExplicitlyConfirmedManualExpense): ConfirmedManualExpenseResult {
-        val identity = ManualExpenseRequestIdentity(
-            ledgerId = request.ledgerId,
-            requestId = request.requestId,
-        )
-        val snapshot = ManualExpenseRequestSnapshot(
-            ledgerId = request.ledgerId,
-            amount = request.amount,
-            categoryId = request.categoryId,
-            paymentAccountId = request.paymentAccountId,
-            occurredAt = request.occurredAt,
-            note = request.note,
-        )
+        val identity =
+            ManualExpenseRequestIdentity(
+                ledgerId = request.ledgerId,
+                requestId = request.requestId,
+            )
+        val snapshot =
+            ManualExpenseRequestSnapshot(
+                ledgerId = request.ledgerId,
+                amount = request.amount,
+                categoryId = request.categoryId,
+                paymentAccountId = request.paymentAccountId,
+                occurredAt = request.occurredAt,
+                note = request.note,
+            )
 
         return commitPort.commitOnce(
             identity = identity,

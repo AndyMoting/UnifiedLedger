@@ -22,16 +22,23 @@ class OrdinaryExpenseTest {
         assertEquals(1, version.versionNumber)
         assertEquals(fixture.expenseIds.postingSetId, version.postingSetId)
         assertEquals("", version.note)
-        assertNull(fixture.openingBalance().versions.single().note)
+        assertNull(
+            fixture
+                .openingBalance()
+                .versions
+                .single()
+                .note,
+        )
 
         val postingSet = formal.postingSets.single()
         assertEquals(version.postingSetId, postingSet.id)
         val postings = postingSet.postings
         assertEquals(2, postings.size)
         val postingsById = postings.associateBy { it.id }
-        val mappedExpenseAccountId = fixture.catalog.categories
-            .single { it.id == fixture.command.categoryId }
-            .postingAccountId
+        val mappedExpenseAccountId =
+            fixture.catalog.categories
+                .single { it.id == fixture.command.categoryId }
+                .postingAccountId
 
         assertEquals(
             mappedExpenseAccountId to fixture.amount,

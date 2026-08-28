@@ -102,14 +102,19 @@ private class RenameHarness(
 
     fun identity(categoryId: String) = CategoryRenameIdentity(LedgerId(ledgerId), CategoryId(categoryId))
 
-    fun seed(categoryId: String, version: Long, name: String) {
+    fun seed(
+        categoryId: String,
+        version: Long,
+        name: String,
+    ) {
         database.ledgerQueries.insertRg02CategoryNameHistory(ledgerId, categoryId, version, name, "CURRENT")
     }
 
     fun history(): List<List<Any?>> =
-        database.ledgerQueries.selectRg02CategoryNameHistory(ledgerId) { categoryId, versionNumber, name, status ->
-            listOf(categoryId, versionNumber, name, status)
-        }.executeAsList()
+        database.ledgerQueries
+            .selectRg02CategoryNameHistory(ledgerId) { categoryId, versionNumber, name, status ->
+                listOf(categoryId, versionNumber, name, status)
+            }.executeAsList()
 
     fun renameCallback(newName: String = "薪资"): (CategoryNameVersion?) -> DomainResult<CategoryRenameChange> =
         { current ->
@@ -118,17 +123,19 @@ private class RenameHarness(
                 current == null -> DomainResult.Failure(CategoryRenameViolation.CurrentNameVersionMissing)
                 current.status != CategoryNameVersionStatus.CURRENT ->
                     DomainResult.Failure(CategoryRenameViolation.CurrentNameVersionMissing)
-                else -> DomainResult.Success(
-                    CategoryRenameChange(
-                        superseded = current.copy(status = CategoryNameVersionStatus.SUPERSEDED),
-                        current = CategoryNameVersion(
-                            CategoryId(current.categoryId.value),
-                            current.version + 1,
-                            newName,
-                            CategoryNameVersionStatus.CURRENT,
+                else ->
+                    DomainResult.Success(
+                        CategoryRenameChange(
+                            superseded = current.copy(status = CategoryNameVersionStatus.SUPERSEDED),
+                            current =
+                                CategoryNameVersion(
+                                    CategoryId(current.categoryId.value),
+                                    current.version + 1,
+                                    newName,
+                                    CategoryNameVersionStatus.CURRENT,
+                                ),
                         ),
-                    ),
-                )
+                    )
             }
         }
 

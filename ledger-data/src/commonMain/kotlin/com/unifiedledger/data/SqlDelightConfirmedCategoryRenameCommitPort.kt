@@ -31,41 +31,44 @@ class SqlDelightConfirmedCategoryRenameCommitPort private constructor(
         identity: CategoryRenameIdentity,
         newName: String,
         applyRename: (CategoryNameVersion?) -> DomainResult<CategoryRenameChange>,
-    ): ConfirmedCategoryRenameResult = database.transactionWithResult {
-        val current = database.ledgerQueries.selectRg02CurrentCategoryNameVersion(
-            ledger_id = identity.ledgerId.value,
-            category_id = identity.categoryId.value,
-        ) { categoryId, versionNumber, name, status ->
-            CategoryNameVersion(
-                CategoryId(categoryId),
-                versionNumber,
-                name,
-                if (status == "CURRENT") CategoryNameVersionStatus.CURRENT else CategoryNameVersionStatus.SUPERSEDED,
-            )
-        }.executeAsOneOrNull()
-        when (val change = applyRename(current)) {
-            is DomainResult.Failure ->
-                ConfirmedCategoryRenameResult.Rejected(change.violation as CategoryRenameViolation)
+    ): ConfirmedCategoryRenameResult =
+        database.transactionWithResult {
+            val current =
+                database.ledgerQueries
+                    .selectRg02CurrentCategoryNameVersion(
+                        ledger_id = identity.ledgerId.value,
+                        category_id = identity.categoryId.value,
+                    ) { categoryId, versionNumber, name, status ->
+                        CategoryNameVersion(
+                            CategoryId(categoryId),
+                            versionNumber,
+                            name,
+                            if (status == "CURRENT") CategoryNameVersionStatus.CURRENT else CategoryNameVersionStatus.SUPERSEDED,
+                        )
+                    }.executeAsOneOrNull()
+            when (val change = applyRename(current)) {
+                is DomainResult.Failure ->
+                    ConfirmedCategoryRenameResult.Rejected(change.violation as CategoryRenameViolation)
 
-            is DomainResult.Success -> {
-                val accepted = change.value
-                val superseded = checkNotNull(accepted.superseded) { "rename must supersede a current version" }
-                database.ledgerQueries.updateRg02CategoryNameStatus(
-                    status = "SUPERSEDED",
-                    ledger_id = identity.ledgerId.value,
-                    category_id = superseded.categoryId.value,
-                    version_number = superseded.version,
-                )
-                check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
-                database.ledgerQueries.insertRg02CategoryNameHistory(
-                    ledger_id = identity.ledgerId.value,
-                    category_id = accepted.current.categoryId.value,
-                    version_number = accepted.current.version,
-                    name = accepted.current.name,
-                    status = "CURRENT",
-                )
-                ConfirmedCategoryRenameResult.Accepted(accepted)
+                is DomainResult.Success -> {
+                    val accepted = change.value
+                    val superseded = checkNotNull(accepted.superseded) { "rename must supersede a current version" }
+                    database.ledgerQueries.updateRg02CategoryNameStatus(
+                        status = "SUPERSEDED",
+                        ledger_id = identity.ledgerId.value,
+                        category_id = superseded.categoryId.value,
+                        version_number = superseded.version,
+                    )
+                    check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
+                    database.ledgerQueries.insertRg02CategoryNameHistory(
+                        ledger_id = identity.ledgerId.value,
+                        category_id = accepted.current.categoryId.value,
+                        version_number = accepted.current.version,
+                        name = accepted.current.name,
+                        status = "CURRENT",
+                    )
+                    ConfirmedCategoryRenameResult.Accepted(accepted)
+                }
             }
         }
-    }
 }

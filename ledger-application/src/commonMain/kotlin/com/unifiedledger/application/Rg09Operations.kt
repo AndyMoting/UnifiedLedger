@@ -3,41 +3,68 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BalanceAdjustmentCommand
 import com.unifiedledger.domain.BalanceAdjustmentIds
-import com.unifiedledger.domain.BalanceAdjustmentViolation
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.OwnAssetPrincipalTransferCommand
 import com.unifiedledger.domain.OwnAssetPrincipalTransferIds
-import com.unifiedledger.domain.FormalTransaction
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
-import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.PostingSetId
-import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.createBalanceAdjustment
 import com.unifiedledger.domain.createOwnAssetPrincipalTransfer
 import kotlin.time.Instant
 
-data class Rg09ObservationId(val value: String)
-data class Rg09CandidateId(val value: String)
-data class Rg09SourceRecordId(val value: String)
-data class Rg09EvidenceId(val value: String)
-data class Rg09EvidenceLinkId(val value: String)
-data class Rg09ConfirmationId(val value: String)
-data class Rg09AdjustmentId(val value: String)
-data class Rg09AllocationId(val value: String)
-data class Rg09AuditLinkId(val value: String)
+data class Rg09ObservationId(
+    val value: String,
+)
+
+data class Rg09CandidateId(
+    val value: String,
+)
+
+data class Rg09SourceRecordId(
+    val value: String,
+)
+
+data class Rg09EvidenceId(
+    val value: String,
+)
+
+data class Rg09EvidenceLinkId(
+    val value: String,
+)
+
+data class Rg09ConfirmationId(
+    val value: String,
+)
+
+data class Rg09AdjustmentId(
+    val value: String,
+)
+
+data class Rg09AllocationId(
+    val value: String,
+)
+
+data class Rg09AuditLinkId(
+    val value: String,
+)
 
 data class Rg09OperationIdentity(
     val ledgerId: LedgerId,
     val value: String,
 )
 
-enum class Rg09Action(val code: String) {
+enum class Rg09Action(
+    val code: String,
+) {
     PREVIEW_TARGET_BALANCE("preview_target_balance"),
     CONFIRM_BALANCE_ADJUSTMENT("confirm_balance_adjustment"),
     CONFIRM_REAL_TRANSFER("confirm_real_transfer"),
@@ -325,20 +352,54 @@ sealed interface Rg09Operation {
 }
 
 sealed interface Rg09ReturnedId {
-    data class Observation(val id: Rg09ObservationId) : Rg09ReturnedId
-    data class Candidate(val id: Rg09CandidateId) : Rg09ReturnedId
-    data class SourceRecord(val id: Rg09SourceRecordId) : Rg09ReturnedId
-    data class Evidence(val id: Rg09EvidenceId) : Rg09ReturnedId
-    data class EvidenceLink(val id: Rg09EvidenceLinkId) : Rg09ReturnedId
-    data class Confirmation(val id: Rg09ConfirmationId) : Rg09ReturnedId
-    data class Adjustment(val id: Rg09AdjustmentId) : Rg09ReturnedId
-    data class Allocation(val id: Rg09AllocationId) : Rg09ReturnedId
-    data class AuditLink(val id: Rg09AuditLinkId) : Rg09ReturnedId
-    data class Transaction(val id: TransactionId) : Rg09ReturnedId
-    data class Version(val id: TransactionVersionId) : Rg09ReturnedId
+    data class Observation(
+        val id: Rg09ObservationId,
+    ) : Rg09ReturnedId
+
+    data class Candidate(
+        val id: Rg09CandidateId,
+    ) : Rg09ReturnedId
+
+    data class SourceRecord(
+        val id: Rg09SourceRecordId,
+    ) : Rg09ReturnedId
+
+    data class Evidence(
+        val id: Rg09EvidenceId,
+    ) : Rg09ReturnedId
+
+    data class EvidenceLink(
+        val id: Rg09EvidenceLinkId,
+    ) : Rg09ReturnedId
+
+    data class Confirmation(
+        val id: Rg09ConfirmationId,
+    ) : Rg09ReturnedId
+
+    data class Adjustment(
+        val id: Rg09AdjustmentId,
+    ) : Rg09ReturnedId
+
+    data class Allocation(
+        val id: Rg09AllocationId,
+    ) : Rg09ReturnedId
+
+    data class AuditLink(
+        val id: Rg09AuditLinkId,
+    ) : Rg09ReturnedId
+
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg09ReturnedId
+
+    data class Version(
+        val id: TransactionVersionId,
+    ) : Rg09ReturnedId
 }
 
-enum class Rg09RejectionReason(val code: String) {
+enum class Rg09RejectionReason(
+    val code: String,
+) {
     EXPLICIT_CONFIRMATION_REQUIRED("explicit_confirmation_required"),
     EXACT_DECIMAL_STRING_REQUIRED("exact_decimal_string_required"),
     TIMEZONE_AWARE_TARGET_TIME_REQUIRED("timezone_aware_target_time_required"),
@@ -379,7 +440,9 @@ enum class Rg09RejectionReason(val code: String) {
     DOMAIN_REJECTED("domain_rejected"),
 }
 
-enum class Rg09FieldPath(val value: String) {
+enum class Rg09FieldPath(
+    val value: String,
+) {
     INPUT_ACCOUNT("$.input.account_id"),
     INPUT_TARGET_AMOUNT("$.input.target_amount"),
     INPUT_TARGET_TIME("$.input.target_observed_at"),
@@ -416,19 +479,29 @@ enum class Rg09FieldPath(val value: String) {
 }
 
 sealed interface Rg09ExecutionResult {
-    class Accepted(returnedIds: List<Rg09ReturnedId>) : Rg09ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg09ReturnedId>,
+    ) : Rg09ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg09ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg09ReturnedId>) : Rg09ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg09ReturnedId>,
+    ) : Rg09ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg09ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -634,9 +707,10 @@ class Rg09Runtime(
         adjustments += snapshot.adjustments.map { it.copy(history = it.history.toList()) }
         allocations += snapshot.allocations
         auditLinks += snapshot.auditLinks
-        val postingIds = snapshot.formalTransactions
-            .flatMap { it.formalTransaction.currentPostings() }
-            .mapTo(mutableSetOf()) { it.id.value }
+        val postingIds =
+            snapshot.formalTransactions
+                .flatMap { it.formalTransaction.currentPostings() }
+                .mapTo(mutableSetOf()) { it.id.value }
         postingReconciliation += snapshot.reconciliation.filterKeys { it in postingIds }
     }
 
@@ -670,41 +744,44 @@ class Rg09Runtime(
                 Rg09ExecutionResult.RequestIdentityConflict
             }
         }
-        val result = when (operation) {
-            is Rg09Operation.PreviewTargetBalance -> preview(operation)
-            is Rg09Operation.ConfirmBalanceAdjustment -> confirmAdjustment(operation)
-            is Rg09Operation.ConfirmRealTransfer -> confirmTransfer(operation)
-            is Rg09Operation.IngestImportedTransfer -> ingestImportedTransfer(operation)
-            is Rg09Operation.ConfirmImportedTransfer -> confirmTransfer(
-                Rg09Operation.ConfirmRealTransfer(operation.ledgerId, operation.input, operation.ids),
-                imported = true,
-            )
-            is Rg09Operation.IncompleteImportedTransferConfirmation -> rejectIncompleteImportedTransfer(operation)
-            is Rg09Operation.ConfirmExplanationAllocation -> confirmExplanation(operation)
-            is Rg09Operation.LinkRealPostingEvidence -> linkRealPostingEvidence(operation)
-            is Rg09Operation.InvalidInput -> rejectInvalidInput(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg09Operation.PreviewTargetBalance -> preview(operation)
+                is Rg09Operation.ConfirmBalanceAdjustment -> confirmAdjustment(operation)
+                is Rg09Operation.ConfirmRealTransfer -> confirmTransfer(operation)
+                is Rg09Operation.IngestImportedTransfer -> ingestImportedTransfer(operation)
+                is Rg09Operation.ConfirmImportedTransfer ->
+                    confirmTransfer(
+                        Rg09Operation.ConfirmRealTransfer(operation.ledgerId, operation.input, operation.ids),
+                        imported = true,
+                    )
+                is Rg09Operation.IncompleteImportedTransferConfirmation -> rejectIncompleteImportedTransfer(operation)
+                is Rg09Operation.ConfirmExplanationAllocation -> confirmExplanation(operation)
+                is Rg09Operation.LinkRealPostingEvidence -> linkRealPostingEvidence(operation)
+                is Rg09Operation.InvalidInput -> rejectInvalidInput(operation)
+            }
         if (result is Rg09ExecutionResult.Accepted || result is Rg09ExecutionResult.Rejected) {
             receipts[operation.identity] = Receipt(fingerprint, result)
         }
         return result
     }
 
-    fun snapshot(): Rg09Snapshot = Rg09Snapshot(
-        formalTransactions = formalTransactions.toList(),
-        observations = observations.toList(),
-        candidates = candidates.toList(),
-        sourceRecords = sourceRecords.toList(),
-        evidence = evidence.toList(),
-        evidenceLinks = evidenceLinks.toList(),
-        confirmations = confirmations.toList(),
-        adjustments = adjustments.map { it.copy(history = it.history.toList()) },
-        allocations = allocations.toList(),
-        auditLinks = auditLinks.toList(),
-        balances = replayBalances(null),
-        reports = reports(),
-        reconciliation = reconciliation() + postingReconciliation,
-    )
+    fun snapshot(): Rg09Snapshot =
+        Rg09Snapshot(
+            formalTransactions = formalTransactions.toList(),
+            observations = observations.toList(),
+            candidates = candidates.toList(),
+            sourceRecords = sourceRecords.toList(),
+            evidence = evidence.toList(),
+            evidenceLinks = evidenceLinks.toList(),
+            confirmations = confirmations.toList(),
+            adjustments = adjustments.map { it.copy(history = it.history.toList()) },
+            allocations = allocations.toList(),
+            auditLinks = auditLinks.toList(),
+            balances = replayBalances(null),
+            reports = reports(),
+            reconciliation = reconciliation() + postingReconciliation,
+        )
 
     fun operationFingerprint(operation: Rg09Operation): String = canonicalInput(operation)
 
@@ -719,8 +796,9 @@ class Rg09Runtime(
         if (input.explicitConfirmation) {
             return rejected(Rg09RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, Rg09FieldPath.INPUT_CONFIRMATION)
         }
-        val account = catalogAccount(input.accountId)
-            ?: return rejected(Rg09RejectionReason.UNKNOWN_ACCOUNT, Rg09FieldPath.INPUT_ACCOUNT)
+        val account =
+            catalogAccount(input.accountId)
+                ?: return rejected(Rg09RejectionReason.UNKNOWN_ACCOUNT, Rg09FieldPath.INPUT_ACCOUNT)
         if (!account.ownedByUser || !account.realAccount || account.kind.name != "ASSET") {
             return rejected(Rg09RejectionReason.OWNED_REAL_ASSET_REQUIRED, Rg09FieldPath.INPUT_ACCOUNT)
         }
@@ -731,48 +809,54 @@ class Rg09Runtime(
             return rejected(Rg09RejectionReason.LEDGER_TIMEZONE_REQUIRED, Rg09FieldPath.INPUT_TARGET_TIME)
         }
         val currentFingerprint = Rg09LedgerFingerprint.digest(formalTransactions, input.targetObservedAt)
-        val replayed = replayAmount(input.accountId, input.targetObservedAt)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_AMOUNT)
-        val deltaMinor = subtractExact(input.targetAmount.minorUnits, replayed.minorUnits)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_AMOUNT)
+        val replayed =
+            replayAmount(input.accountId, input.targetObservedAt)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_AMOUNT)
+        val deltaMinor =
+            subtractExact(input.targetAmount.minorUnits, replayed.minorUnits)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_AMOUNT)
         val candidateId = operation.ids.candidateId
         if (deltaMinor != 0L && candidateId == null) {
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_AMOUNT)
         }
-        val observation = Rg09Observation(
-            id = operation.ids.observationId,
-            sourceRecordId = operation.ids.sourceRecordId,
-            accountId = input.accountId,
-            targetAmount = input.targetAmount,
-            targetObservedAt = input.targetObservedAt,
-            savedAt = input.savedAt,
-            targetObservedAtText = input.targetObservedAtText,
-            savedAtText = input.savedAtText,
-        )
-        val source = Rg09SourceRecord(
-            id = operation.ids.sourceRecordId,
-            sourceType = "manual_balance_observation",
-            observedAt = input.targetObservedAt,
-            accountId = input.accountId,
-            amount = input.targetAmount,
-            immutablePayloadDigest = input.immutablePayloadDigest,
-            observedAtText = input.targetObservedAtText,
-        )
-        val evidenceItem = Rg09Evidence(
-            id = operation.ids.evidenceId,
-            sourceRecordId = operation.ids.sourceRecordId,
-            evidenceType = "target_balance_observation",
-            observedAt = input.targetObservedAt,
-            observedAtText = input.targetObservedAtText,
-        )
-        val evidenceLink = Rg09EvidenceLink(
-            id = operation.ids.evidenceLinkId,
-            sourceRecordId = operation.ids.sourceRecordId,
-            evidenceId = operation.ids.evidenceId,
-            role = "target_balance_observation",
-            targetId = operation.ids.observationId.value,
-            status = "recorded",
-        )
+        val observation =
+            Rg09Observation(
+                id = operation.ids.observationId,
+                sourceRecordId = operation.ids.sourceRecordId,
+                accountId = input.accountId,
+                targetAmount = input.targetAmount,
+                targetObservedAt = input.targetObservedAt,
+                savedAt = input.savedAt,
+                targetObservedAtText = input.targetObservedAtText,
+                savedAtText = input.savedAtText,
+            )
+        val source =
+            Rg09SourceRecord(
+                id = operation.ids.sourceRecordId,
+                sourceType = "manual_balance_observation",
+                observedAt = input.targetObservedAt,
+                accountId = input.accountId,
+                amount = input.targetAmount,
+                immutablePayloadDigest = input.immutablePayloadDigest,
+                observedAtText = input.targetObservedAtText,
+            )
+        val evidenceItem =
+            Rg09Evidence(
+                id = operation.ids.evidenceId,
+                sourceRecordId = operation.ids.sourceRecordId,
+                evidenceType = "target_balance_observation",
+                observedAt = input.targetObservedAt,
+                observedAtText = input.targetObservedAtText,
+            )
+        val evidenceLink =
+            Rg09EvidenceLink(
+                id = operation.ids.evidenceLinkId,
+                sourceRecordId = operation.ids.sourceRecordId,
+                evidenceId = operation.ids.evidenceId,
+                role = "target_balance_observation",
+                targetId = operation.ids.observationId.value,
+                status = "recorded",
+            )
         if (
             observations.any { it.id == operation.ids.observationId } ||
             sourceRecords.any { it.id == operation.ids.sourceRecordId } ||
@@ -797,19 +881,20 @@ class Rg09Runtime(
             )
         }
         val nonZeroCandidateId = checkNotNull(candidateId)
-        candidates += Rg09Candidate(
-            id = nonZeroCandidateId,
-            observationId = operation.ids.observationId,
-            accountId = input.accountId,
-            replayedAmount = replayed,
-            targetAmount = input.targetAmount,
-            delta = Money.ofMinor(deltaMinor, input.currency),
-            targetObservedAt = input.targetObservedAt,
-            ledgerFingerprint = currentFingerprint,
-            status = "pending_confirmation",
-            targetObservedAtText = input.targetObservedAtText,
-            sourceRecordId = operation.ids.sourceRecordId,
-        )
+        candidates +=
+            Rg09Candidate(
+                id = nonZeroCandidateId,
+                observationId = operation.ids.observationId,
+                accountId = input.accountId,
+                replayedAmount = replayed,
+                targetAmount = input.targetAmount,
+                delta = Money.ofMinor(deltaMinor, input.currency),
+                targetObservedAt = input.targetObservedAt,
+                ledgerFingerprint = currentFingerprint,
+                status = "pending_confirmation",
+                targetObservedAtText = input.targetObservedAtText,
+                sourceRecordId = operation.ids.sourceRecordId,
+            )
         return accepted(
             listOf(
                 Rg09ReturnedId.Observation(operation.ids.observationId),
@@ -826,60 +911,69 @@ class Rg09Runtime(
         if (!input.explicitConfirmation) {
             return rejected(Rg09RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, Rg09FieldPath.INPUT_CONFIRMATION)
         }
-        val candidate = candidates.firstOrNull { it.id == input.candidateId }
-            ?: return rejected(Rg09RejectionReason.CANDIDATE_NOT_FOUND, Rg09FieldPath.INPUT_CANDIDATE)
+        val candidate =
+            candidates.firstOrNull { it.id == input.candidateId }
+                ?: return rejected(Rg09RejectionReason.CANDIDATE_NOT_FOUND, Rg09FieldPath.INPUT_CANDIDATE)
         if (candidate.status != "pending_confirmation") {
             return rejected(Rg09RejectionReason.CANDIDATE_NOT_PENDING, Rg09FieldPath.INPUT_CANDIDATE)
         }
-        val replayed = replayAmount(candidate.accountId, candidate.targetObservedAt)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_FINGERPRINT)
-        val currentDelta = subtractExact(candidate.targetAmount.minorUnits, replayed.minorUnits)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_FINGERPRINT)
+        val replayed =
+            replayAmount(candidate.accountId, candidate.targetObservedAt)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_FINGERPRINT)
+        val currentDelta =
+            subtractExact(candidate.targetAmount.minorUnits, replayed.minorUnits)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_FINGERPRINT)
         val currentFingerprint = Rg09LedgerFingerprint.digest(formalTransactions, candidate.targetObservedAt)
         if (candidate.ledgerFingerprint != input.ledgerFingerprint || candidate.ledgerFingerprint != currentFingerprint || replayed != candidate.replayedAmount) {
             return Rg09ExecutionResult.Rejected(
                 reason = Rg09RejectionReason.LEDGER_CHANGED_SINCE_PREVIEW,
                 fieldPath = Rg09FieldPath.INPUT_FINGERPRINT,
-                diagnostics = Rg09StaleDiagnostics(
-                    previewLedgerFingerprint = candidate.ledgerFingerprint,
-                    currentLedgerFingerprint = currentFingerprint,
-                    recomputedReplayAmount = replayed,
-                    recomputedDelta = Money.ofMinor(currentDelta, candidate.targetAmount.currency),
-                ),
+                diagnostics =
+                    Rg09StaleDiagnostics(
+                        previewLedgerFingerprint = candidate.ledgerFingerprint,
+                        currentLedgerFingerprint = currentFingerprint,
+                        recomputedReplayAmount = replayed,
+                        recomputedDelta = Money.ofMinor(currentDelta, candidate.targetAmount.currency),
+                    ),
             )
         }
-        val observation = observations.firstOrNull { it.id == candidate.observationId }
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
-        val remaining = absMinor(candidate.delta)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
-        val result = createBalanceAdjustment(
-            catalog,
-            BalanceAdjustmentCommand(
-                ledgerId = operation.ledgerId,
-                targetAccountId = candidate.accountId,
-                adjustmentEquityAccountId = adjustmentEquityAccountId(),
-                delta = candidate.delta,
-                times = TransactionTimes.collapsed(candidate.targetObservedAt),
-            ),
-            BalanceAdjustmentIds(
-                transactionId = operation.ids.transactionId,
-                versionId = operation.ids.versionId,
-                postingSetId = operation.ids.postingSetId,
-                targetPostingId = operation.ids.targetPostingId,
-                equityPostingId = operation.ids.equityPostingId,
-            ),
-        )
-        val adjustment = when (result) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
-        }
-        val adjustmentRecord = Rg09FormalTransactionRecord(
-            adjustment.formalTransaction,
-            input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-            effectiveAtText = candidate.targetObservedAtText,
-            statisticsAtText = candidate.targetObservedAtText,
-        )
+        val observation =
+            observations.firstOrNull { it.id == candidate.observationId }
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
+        val remaining =
+            absMinor(candidate.delta)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
+        val result =
+            createBalanceAdjustment(
+                catalog,
+                BalanceAdjustmentCommand(
+                    ledgerId = operation.ledgerId,
+                    targetAccountId = candidate.accountId,
+                    adjustmentEquityAccountId = adjustmentEquityAccountId(),
+                    delta = candidate.delta,
+                    times = TransactionTimes.collapsed(candidate.targetObservedAt),
+                ),
+                BalanceAdjustmentIds(
+                    transactionId = operation.ids.transactionId,
+                    versionId = operation.ids.versionId,
+                    postingSetId = operation.ids.postingSetId,
+                    targetPostingId = operation.ids.targetPostingId,
+                    equityPostingId = operation.ids.equityPostingId,
+                ),
+            )
+        val adjustment =
+            when (result) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
+            }
+        val adjustmentRecord =
+            Rg09FormalTransactionRecord(
+                adjustment.formalTransaction,
+                input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+                effectiveAtText = candidate.targetObservedAtText,
+                statisticsAtText = candidate.targetObservedAtText,
+            )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
             adjustments.any { it.id == operation.ids.adjustmentId } ||
@@ -889,49 +983,53 @@ class Rg09Runtime(
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_CANDIDATE)
         }
         formalTransactions += adjustmentRecord
-        adjustments += Rg09Adjustment(
-            id = operation.ids.adjustmentId,
-            transactionId = operation.ids.transactionId,
-            observationId = observation.id,
-            targetAccountId = candidate.accountId,
-            equityAccountId = adjustmentEquityAccountId(),
-            currency = candidate.delta.currency,
-            targetObservedAt = candidate.targetObservedAt,
-            replayedAmountAtConfirmation = candidate.replayedAmount,
-            targetAmount = candidate.targetAmount,
-            originalDelta = candidate.delta,
-            explainedAmount = Money.ofMinor(0L, candidate.delta.currency),
-            remainingAmount = Money.ofMinor(remaining, candidate.delta.currency),
-            state = "open",
-            history = listOf(
-                Rg09AdjustmentHistory(
-                    id = operation.ids.historyId,
-                    state = "open",
-                    occurredAt = input.confirmedAt,
-                    allocationId = null,
-                    remainingAmount = Money.ofMinor(remaining, candidate.delta.currency),
-                    occurredAtText = input.confirmedAtText,
-                    createdAt = input.confirmedAt,
-                    createdAtText = input.confirmedAtText,
-                ),
-            ),
-            targetObservedAtText = candidate.targetObservedAtText,
-        )
-        candidates[candidates.indexOf(candidate)] = candidate.copy(
-            status = "confirmed",
-            adjustmentId = operation.ids.adjustmentId,
-            confirmationRequestId = input.requestId,
-        )
-        confirmations += Rg09Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "balance_adjustment_confirmation",
-            confirmedAt = input.confirmedAt,
-            targetId = operation.ids.adjustmentId.value,
-            confirmedAtText = input.confirmedAtText,
-            createdAt = input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-        )
+        adjustments +=
+            Rg09Adjustment(
+                id = operation.ids.adjustmentId,
+                transactionId = operation.ids.transactionId,
+                observationId = observation.id,
+                targetAccountId = candidate.accountId,
+                equityAccountId = adjustmentEquityAccountId(),
+                currency = candidate.delta.currency,
+                targetObservedAt = candidate.targetObservedAt,
+                replayedAmountAtConfirmation = candidate.replayedAmount,
+                targetAmount = candidate.targetAmount,
+                originalDelta = candidate.delta,
+                explainedAmount = Money.ofMinor(0L, candidate.delta.currency),
+                remainingAmount = Money.ofMinor(remaining, candidate.delta.currency),
+                state = "open",
+                history =
+                    listOf(
+                        Rg09AdjustmentHistory(
+                            id = operation.ids.historyId,
+                            state = "open",
+                            occurredAt = input.confirmedAt,
+                            allocationId = null,
+                            remainingAmount = Money.ofMinor(remaining, candidate.delta.currency),
+                            occurredAtText = input.confirmedAtText,
+                            createdAt = input.confirmedAt,
+                            createdAtText = input.confirmedAtText,
+                        ),
+                    ),
+                targetObservedAtText = candidate.targetObservedAtText,
+            )
+        candidates[candidates.indexOf(candidate)] =
+            candidate.copy(
+                status = "confirmed",
+                adjustmentId = operation.ids.adjustmentId,
+                confirmationRequestId = input.requestId,
+            )
+        confirmations +=
+            Rg09Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "balance_adjustment_confirmation",
+                confirmedAt = input.confirmedAt,
+                targetId = operation.ids.adjustmentId.value,
+                confirmedAtText = input.confirmedAtText,
+                createdAt = input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+            )
         return accepted(
             listOf(
                 Rg09ReturnedId.Confirmation(operation.ids.confirmationId),
@@ -957,8 +1055,12 @@ class Rg09Runtime(
         if (target == null || counter == null) {
             return rejected(Rg09RejectionReason.UNKNOWN_ACCOUNT, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
         }
-        if (!target.ownedByUser || !target.realAccount || target.kind.name != "ASSET" ||
-            !counter.ownedByUser || !counter.realAccount || counter.kind.name != "ASSET"
+        if (!target.ownedByUser ||
+            !target.realAccount ||
+            target.kind.name != "ASSET" ||
+            !counter.ownedByUser ||
+            !counter.realAccount ||
+            counter.kind.name != "ASSET"
         ) {
             return rejected(Rg09RejectionReason.OWNED_REAL_ASSET_REQUIRED, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
         }
@@ -972,40 +1074,43 @@ class Rg09Runtime(
         ) {
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_SOURCE)
         }
-        sourceRecords += Rg09SourceRecord(
-            id = operation.ids.sourceId,
-            sourceType = "imported_transfer_candidate",
-            observedAt = input.observedAt,
-            accountId = input.targetAccountId,
-            amount = input.amount,
-            counterAccountId = input.counterAccountId,
-            actualAt = input.actualOccurredAt,
-            immutablePayloadDigest = input.immutablePayloadDigest,
-            observedAtText = input.observedAtText,
-            actualAtText = input.actualOccurredAtText,
-        )
-        evidence += Rg09Evidence(
-            id = operation.ids.evidenceId,
-            sourceRecordId = operation.ids.sourceId,
-            evidenceType = "imported_real_transaction_candidate",
-            observedAt = input.observedAt,
-            observedAtText = input.observedAtText,
-        )
-        candidates += Rg09Candidate(
-            id = operation.ids.candidateId,
-            observationId = null,
-            accountId = input.targetAccountId,
-            replayedAmount = Money.ofMinor(0L, input.amount.currency),
-            targetAmount = input.amount,
-            delta = input.amount,
-            targetObservedAt = input.actualOccurredAt,
-            ledgerFingerprint = Rg09LedgerFingerprint.digest(formalTransactions, input.actualOccurredAt),
-            status = "pending_confirmation",
-            targetObservedAtText = input.actualOccurredAtText,
-            sourceRecordId = operation.ids.sourceId,
-            candidateType = "omitted_real_transaction_and_adjustment_explanation",
-            confidence = input.confidence,
-        )
+        sourceRecords +=
+            Rg09SourceRecord(
+                id = operation.ids.sourceId,
+                sourceType = "imported_transfer_candidate",
+                observedAt = input.observedAt,
+                accountId = input.targetAccountId,
+                amount = input.amount,
+                counterAccountId = input.counterAccountId,
+                actualAt = input.actualOccurredAt,
+                immutablePayloadDigest = input.immutablePayloadDigest,
+                observedAtText = input.observedAtText,
+                actualAtText = input.actualOccurredAtText,
+            )
+        evidence +=
+            Rg09Evidence(
+                id = operation.ids.evidenceId,
+                sourceRecordId = operation.ids.sourceId,
+                evidenceType = "imported_real_transaction_candidate",
+                observedAt = input.observedAt,
+                observedAtText = input.observedAtText,
+            )
+        candidates +=
+            Rg09Candidate(
+                id = operation.ids.candidateId,
+                observationId = null,
+                accountId = input.targetAccountId,
+                replayedAmount = Money.ofMinor(0L, input.amount.currency),
+                targetAmount = input.amount,
+                delta = input.amount,
+                targetObservedAt = input.actualOccurredAt,
+                ledgerFingerprint = Rg09LedgerFingerprint.digest(formalTransactions, input.actualOccurredAt),
+                status = "pending_confirmation",
+                targetObservedAtText = input.actualOccurredAtText,
+                sourceRecordId = operation.ids.sourceId,
+                candidateType = "omitted_real_transaction_and_adjustment_explanation",
+                confidence = input.confidence,
+            )
         return accepted(
             listOf(
                 Rg09ReturnedId.SourceRecord(operation.ids.sourceId),
@@ -1065,15 +1170,16 @@ class Rg09Runtime(
             return rejected(Rg09RejectionReason.EXPLICIT_LINK_CONFIRMATION_REQUIRED, Rg09FieldPath.INPUT_ALLOCATION_DIRECTION)
         }
         val matchingAdjustments = adjustments.filter { it.targetAccountId == input.targetAccountId }
-        val adjustment = matchingAdjustments.singleOrNull()
-            ?: return rejected(
-                if (matchingAdjustments.isEmpty()) {
-                    Rg09RejectionReason.ADJUSTMENT_NOT_FOUND
-                } else {
-                    Rg09RejectionReason.DOMAIN_REJECTED
-                },
-                Rg09FieldPath.INPUT_TARGET_ACCOUNT,
-            )
+        val adjustment =
+            matchingAdjustments.singleOrNull()
+                ?: return rejected(
+                    if (matchingAdjustments.isEmpty()) {
+                        Rg09RejectionReason.ADJUSTMENT_NOT_FOUND
+                    } else {
+                        Rg09RejectionReason.DOMAIN_REJECTED
+                    },
+                    Rg09FieldPath.INPUT_TARGET_ACCOUNT,
+                )
         if (input.actualOccurredAt > adjustment.targetObservedAt) {
             return rejected(Rg09RejectionReason.EXPLANATION_AFTER_TARGET_TIME, Rg09FieldPath.INPUT_ACTUAL_TIME)
         }
@@ -1087,55 +1193,61 @@ class Rg09Runtime(
         if (!isRg09ShanghaiTimestamp(input.actualOccurredAtText, input.actualOccurredAt)) {
             return rejected(Rg09RejectionReason.INVALID_TIMESTAMP_TEXT, Rg09FieldPath.INPUT_ACTUAL_TIME)
         }
-        val result = createOwnAssetPrincipalTransfer(
-            catalog,
-            OwnAssetPrincipalTransferCommand(
-                ledgerId = operation.ledgerId,
-                sourceAccountId = if (requiredDirection == "increase") input.counterAccountId else input.targetAccountId,
-                destinationAccountId = if (requiredDirection == "increase") input.targetAccountId else input.counterAccountId,
-                amount = input.amount,
-                times = TransactionTimes.collapsed(input.actualOccurredAt),
-            ),
-            OwnAssetPrincipalTransferIds(
-                transactionId = operation.ids.transactionId,
-                versionId = operation.ids.versionId,
-                postingSetId = operation.ids.postingSetId,
-                sourcePostingId = operation.ids.sourcePostingId,
-                destinationPostingId = operation.ids.destinationPostingId,
-            ),
-        )
-        val transfer = when (result) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
-        }
-        val transferRecord = Rg09FormalTransactionRecord(
-            formalTransaction = transfer.formalTransaction,
-            createdAt = input.confirmedAt,
-            sourceRecordId = input.sourceId ?: operation.ids.sourceRecordId,
-            createdAtText = input.confirmedAtText,
-            effectiveAtText = input.actualOccurredAtText,
-            statisticsAtText = input.actualOccurredAtText,
-        )
-        val importedSource = input.sourceId?.let { sourceId ->
-            sourceRecords.firstOrNull { it.id == sourceId }
-        }
+        val result =
+            createOwnAssetPrincipalTransfer(
+                catalog,
+                OwnAssetPrincipalTransferCommand(
+                    ledgerId = operation.ledgerId,
+                    sourceAccountId = if (requiredDirection == "increase") input.counterAccountId else input.targetAccountId,
+                    destinationAccountId = if (requiredDirection == "increase") input.targetAccountId else input.counterAccountId,
+                    amount = input.amount,
+                    times = TransactionTimes.collapsed(input.actualOccurredAt),
+                ),
+                OwnAssetPrincipalTransferIds(
+                    transactionId = operation.ids.transactionId,
+                    versionId = operation.ids.versionId,
+                    postingSetId = operation.ids.postingSetId,
+                    sourcePostingId = operation.ids.sourcePostingId,
+                    destinationPostingId = operation.ids.destinationPostingId,
+                ),
+            )
+        val transfer =
+            when (result) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
+            }
+        val transferRecord =
+            Rg09FormalTransactionRecord(
+                formalTransaction = transfer.formalTransaction,
+                createdAt = input.confirmedAt,
+                sourceRecordId = input.sourceId ?: operation.ids.sourceRecordId,
+                createdAtText = input.confirmedAtText,
+                effectiveAtText = input.actualOccurredAtText,
+                statisticsAtText = input.actualOccurredAtText,
+            )
+        val importedSource =
+            input.sourceId?.let { sourceId ->
+                sourceRecords.firstOrNull { it.id == sourceId }
+            }
         if (input.sourceId != null && importedSource == null) {
             return rejected(Rg09RejectionReason.SOURCE_NOT_FOUND, Rg09FieldPath.INPUT_SOURCE)
         }
-        if (importedSource != null && (
-            importedSource.sourceType != "imported_transfer_candidate" ||
-                importedSource.accountId != input.targetAccountId ||
-                importedSource.counterAccountId != input.counterAccountId ||
-                importedSource.amount != input.amount ||
-                importedSource.actualAt != input.actualOccurredAt
+        if (importedSource != null &&
+            (
+                importedSource.sourceType != "imported_transfer_candidate" ||
+                    importedSource.accountId != input.targetAccountId ||
+                    importedSource.counterAccountId != input.counterAccountId ||
+                    importedSource.amount != input.amount ||
+                    importedSource.actualAt != input.actualOccurredAt
             )
         ) {
             return rejected(Rg09RejectionReason.EXACT_TRANSACTION_REQUIRED, Rg09FieldPath.INPUT_SOURCE)
         }
-        val importedCandidate = candidates.firstOrNull { candidate ->
-            (input.sourceId != null && candidate.sourceRecordId == input.sourceId) ||
-                (input.candidateId != null && candidate.id == input.candidateId)
-        }
+        val importedCandidate =
+            candidates.firstOrNull { candidate ->
+                (input.sourceId != null && candidate.sourceRecordId == input.sourceId) ||
+                    (input.candidateId != null && candidate.id == input.candidateId)
+            }
         if (importedCandidate != null && importedCandidate.status != "pending_confirmation") {
             return rejected(Rg09RejectionReason.CANDIDATE_NOT_PENDING, Rg09FieldPath.INPUT_SOURCE)
         }
@@ -1152,29 +1264,31 @@ class Rg09Runtime(
             postingReconciliation[operation.ids.destinationPostingId.value] = "pending_evidence"
         }
         if (importedSource == null) {
-            sourceRecords += Rg09SourceRecord(
-                id = operation.ids.sourceRecordId,
-                sourceType = "manual_transaction_confirmation",
-                observedAt = input.discoveredAt,
-                accountId = input.targetAccountId,
-                amount = input.amount,
-                counterAccountId = input.counterAccountId,
-                actualAt = input.actualOccurredAt,
-                immutablePayloadDigest = input.immutablePayloadDigest,
-                observedAtText = input.discoveredAtText,
-                actualAtText = input.actualOccurredAtText,
-            )
+            sourceRecords +=
+                Rg09SourceRecord(
+                    id = operation.ids.sourceRecordId,
+                    sourceType = "manual_transaction_confirmation",
+                    observedAt = input.discoveredAt,
+                    accountId = input.targetAccountId,
+                    amount = input.amount,
+                    counterAccountId = input.counterAccountId,
+                    actualAt = input.actualOccurredAt,
+                    immutablePayloadDigest = input.immutablePayloadDigest,
+                    observedAtText = input.discoveredAtText,
+                    actualAtText = input.actualOccurredAtText,
+                )
         }
-        confirmations += Rg09Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "real_transfer_confirmation",
-            confirmedAt = input.confirmedAt,
-            targetId = operation.ids.transactionId.value,
-            confirmedAtText = input.confirmedAtText,
-            createdAt = input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-        )
+        confirmations +=
+            Rg09Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "real_transfer_confirmation",
+                confirmedAt = input.confirmedAt,
+                targetId = operation.ids.transactionId.value,
+                confirmedAtText = input.confirmedAtText,
+                createdAt = input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+            )
         return accepted(
             listOf(
                 Rg09ReturnedId.Confirmation(operation.ids.confirmationId),
@@ -1205,8 +1319,9 @@ class Rg09Runtime(
             return rejected(Rg09RejectionReason.ADJUSTMENT_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
         }
         val adjustment = adjustments[adjustmentIndex]
-        val transfer = formalTransactions.firstOrNull { it.formalTransaction.transaction.id == input.transactionId }
-            ?: return rejected(Rg09RejectionReason.REAL_TRANSACTION_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
+        val transfer =
+            formalTransactions.firstOrNull { it.formalTransaction.transaction.id == input.transactionId }
+                ?: return rejected(Rg09RejectionReason.REAL_TRANSACTION_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
         if (transfer.formalTransaction.transaction.kind != TransactionKind.ACCOUNT_TRANSFER) {
             return rejected(Rg09RejectionReason.REAL_TRANSFER_REQUIRED, Rg09FieldPath.INPUT_TRANSACTION)
         }
@@ -1227,15 +1342,18 @@ class Rg09Runtime(
         if (input.targetObservedAt != adjustment.targetObservedAt || input.actualOccurredAt > adjustment.targetObservedAt) {
             return rejected(Rg09RejectionReason.EXPLANATION_AFTER_TARGET_TIME, Rg09FieldPath.INPUT_ACTUAL_TIME)
         }
-        val targetPosting = transfer.formalTransaction.currentPostings().firstOrNull { it.accountId == input.targetAccountId }
-            ?: return rejected(Rg09RejectionReason.EXPLANATION_DIRECTION_MISMATCH, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
-        val targetDirection = when {
-            targetPosting.amount.minorUnits > 0L -> "increase"
-            targetPosting.amount.minorUnits < 0L -> "decrease"
-            else -> null
-        }
-        val targetTransactionMinor = absMinor(targetPosting.amount)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_AMOUNT)
+        val targetPosting =
+            transfer.formalTransaction.currentPostings().firstOrNull { it.accountId == input.targetAccountId }
+                ?: return rejected(Rg09RejectionReason.EXPLANATION_DIRECTION_MISMATCH, Rg09FieldPath.INPUT_TARGET_ACCOUNT)
+        val targetDirection =
+            when {
+                targetPosting.amount.minorUnits > 0L -> "increase"
+                targetPosting.amount.minorUnits < 0L -> "decrease"
+                else -> null
+            }
+        val targetTransactionMinor =
+            absMinor(targetPosting.amount)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_AMOUNT)
         val requiredDirection = if (adjustment.originalDelta.minorUnits > 0L) "increase" else "decrease"
         if (
             targetDirection != requiredDirection ||
@@ -1256,64 +1374,75 @@ class Rg09Runtime(
                 alreadyExplainedMinor = addExact(alreadyExplainedMinor, allocation.amount.minorUnits)
                     ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
             }
-        val remainingRealTransactionMinor = subtractExact(targetTransactionMinor, alreadyExplainedMinor)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
+        val remainingRealTransactionMinor =
+            subtractExact(targetTransactionMinor, alreadyExplainedMinor)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
         if (amount.minorUnits > remainingRealTransactionMinor) {
             return rejected(Rg09RejectionReason.EXPLANATION_EXCEEDS_REAL_TRANSACTION, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
         }
         if (amount.minorUnits > adjustment.remainingAmount.minorUnits) {
             return rejected(Rg09RejectionReason.ALLOCATION_EXCEEDS_REMAINING, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
         }
-        val sourceRecord = transfer.formalTransaction.transaction.id.value.let { transactionId ->
-            formalTransactions.firstOrNull {
-                it.formalTransaction.transaction.id.value == transactionId
-            }?.sourceRecordId?.let { sourceId -> sourceRecords.firstOrNull { it.id == sourceId } }
-        }
+        val sourceRecord =
+            transfer.formalTransaction.transaction.id.value.let { transactionId ->
+                formalTransactions
+                    .firstOrNull {
+                        it.formalTransaction.transaction.id.value == transactionId
+                    }?.sourceRecordId
+                    ?.let { sourceId -> sourceRecords.firstOrNull { it.id == sourceId } }
+            }
         val discoveredAt = input.discoveredAt ?: sourceRecord?.observedAt ?: input.confirmedAt
         val discoveredAtText = input.discoveredAtText ?: sourceRecord?.observedAtText ?: input.confirmedAtText
-        val explainedMinor = addExact(adjustment.explainedAmount.minorUnits, amount.minorUnits)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
-        val remainingMinor = subtractExact(adjustment.remainingAmount.minorUnits, amount.minorUnits)
-            ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
-        val state = when {
-            remainingMinor == 0L -> "fully_explained"
-            explainedMinor == 0L -> "open"
-            else -> "partially_explained"
-        }
-        val signedReversal = if (adjustment.originalDelta.minorUnits > 0L) {
-            negateExact(amount.minorUnits)
-        } else {
-            amount.minorUnits
-        } ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
-        val reversal = createBalanceAdjustment(
-            catalog,
-            BalanceAdjustmentCommand(
-                ledgerId = operation.ledgerId,
-                targetAccountId = adjustment.targetAccountId,
-                adjustmentEquityAccountId = adjustment.equityAccountId,
-                delta = Money.ofMinor(signedReversal, adjustment.currency),
-                times = TransactionTimes.collapsed(adjustment.targetObservedAt),
-                kind = TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
-            ),
-            BalanceAdjustmentIds(
-                transactionId = operation.ids.reversalTransactionId,
-                versionId = operation.ids.reversalVersionId,
-                postingSetId = operation.ids.reversalPostingSetId,
-                targetPostingId = operation.ids.reversalTargetPostingId,
-                equityPostingId = operation.ids.reversalEquityPostingId,
-            ),
-        )
-        val reversalTransaction = when (reversal) {
-            is DomainResult.Success -> reversal.value
-            is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
-        }
-        val reversalRecord = Rg09FormalTransactionRecord(
-            reversalTransaction.formalTransaction,
-            input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-            effectiveAtText = adjustment.targetObservedAtText,
-            statisticsAtText = adjustment.targetObservedAtText,
-        )
+        val explainedMinor =
+            addExact(adjustment.explainedAmount.minorUnits, amount.minorUnits)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
+        val remainingMinor =
+            subtractExact(adjustment.remainingAmount.minorUnits, amount.minorUnits)
+                ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
+        val state =
+            when {
+                remainingMinor == 0L -> "fully_explained"
+                explainedMinor == 0L -> "open"
+                else -> "partially_explained"
+            }
+        val signedReversal =
+            if (adjustment.originalDelta.minorUnits > 0L) {
+                negateExact(amount.minorUnits)
+            } else {
+                amount.minorUnits
+            } ?: return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
+        val reversal =
+            createBalanceAdjustment(
+                catalog,
+                BalanceAdjustmentCommand(
+                    ledgerId = operation.ledgerId,
+                    targetAccountId = adjustment.targetAccountId,
+                    adjustmentEquityAccountId = adjustment.equityAccountId,
+                    delta = Money.ofMinor(signedReversal, adjustment.currency),
+                    times = TransactionTimes.collapsed(adjustment.targetObservedAt),
+                    kind = TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
+                ),
+                BalanceAdjustmentIds(
+                    transactionId = operation.ids.reversalTransactionId,
+                    versionId = operation.ids.reversalVersionId,
+                    postingSetId = operation.ids.reversalPostingSetId,
+                    targetPostingId = operation.ids.reversalTargetPostingId,
+                    equityPostingId = operation.ids.reversalEquityPostingId,
+                ),
+            )
+        val reversalTransaction =
+            when (reversal) {
+                is DomainResult.Success -> reversal.value
+                is DomainResult.Failure -> return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
+            }
+        val reversalRecord =
+            Rg09FormalTransactionRecord(
+                reversalTransaction.formalTransaction,
+                input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+                effectiveAtText = adjustment.targetObservedAtText,
+                statisticsAtText = adjustment.targetObservedAtText,
+            )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
             allocations.any { it.id == operation.ids.allocationId } ||
@@ -1327,12 +1456,13 @@ class Rg09Runtime(
         ) {
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EXPLANATION_AMOUNT)
         }
-        val importedCandidateIndex = transfer.sourceRecordId?.let { sourceId ->
-            candidates.indexOfFirst { candidate ->
-                candidate.sourceRecordId == sourceId &&
-                    candidate.candidateType == "omitted_real_transaction_and_adjustment_explanation"
-            }
-        } ?: -1
+        val importedCandidateIndex =
+            transfer.sourceRecordId?.let { sourceId ->
+                candidates.indexOfFirst { candidate ->
+                    candidate.sourceRecordId == sourceId &&
+                        candidate.candidateType == "omitted_real_transaction_and_adjustment_explanation"
+                }
+            } ?: -1
         if (importedCandidateIndex >= 0 && candidates[importedCandidateIndex].status != "pending_confirmation") {
             return rejected(Rg09RejectionReason.CANDIDATE_NOT_PENDING, Rg09FieldPath.INPUT_TRANSACTION)
         }
@@ -1342,59 +1472,66 @@ class Rg09Runtime(
             }
         }
         formalTransactions += reversalRecord
-        val allocation = Rg09Allocation(
-            id = operation.ids.allocationId,
-            adjustmentId = adjustment.id,
-            targetAccountId = adjustment.targetAccountId,
-            amount = amount,
-            realTransactionId = input.transactionId,
-            reversalTransactionId = operation.ids.reversalTransactionId,
-            confirmedAt = input.confirmedAt,
-            discoveredAt = discoveredAt,
-            discoveredAtText = discoveredAtText,
-            confirmedAtText = input.confirmedAtText,
-            createdAt = input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-        )
-        allocations += allocation
-        adjustments[adjustmentIndex] = adjustment.copy(
-            explainedAmount = Money.ofMinor(explainedMinor, adjustment.currency),
-            remainingAmount = Money.ofMinor(remainingMinor, adjustment.currency),
-            state = state,
-            history = adjustment.history + Rg09AdjustmentHistory(
-                id = operation.ids.historyId,
-                state = state,
-                occurredAt = input.confirmedAt,
-                allocationId = operation.ids.allocationId,
-                remainingAmount = Money.ofMinor(remainingMinor, adjustment.currency),
-                occurredAtText = input.confirmedAtText,
+        val allocation =
+            Rg09Allocation(
+                id = operation.ids.allocationId,
+                adjustmentId = adjustment.id,
+                targetAccountId = adjustment.targetAccountId,
+                amount = amount,
+                realTransactionId = input.transactionId,
+                reversalTransactionId = operation.ids.reversalTransactionId,
+                confirmedAt = input.confirmedAt,
+                discoveredAt = discoveredAt,
+                discoveredAtText = discoveredAtText,
+                confirmedAtText = input.confirmedAtText,
                 createdAt = input.confirmedAt,
                 createdAtText = input.confirmedAtText,
-            ),
-        )
+            )
+        allocations += allocation
+        adjustments[adjustmentIndex] =
+            adjustment.copy(
+                explainedAmount = Money.ofMinor(explainedMinor, adjustment.currency),
+                remainingAmount = Money.ofMinor(remainingMinor, adjustment.currency),
+                state = state,
+                history =
+                    adjustment.history +
+                        Rg09AdjustmentHistory(
+                            id = operation.ids.historyId,
+                            state = state,
+                            occurredAt = input.confirmedAt,
+                            allocationId = operation.ids.allocationId,
+                            remainingAmount = Money.ofMinor(remainingMinor, adjustment.currency),
+                            occurredAtText = input.confirmedAtText,
+                            createdAt = input.confirmedAt,
+                            createdAtText = input.confirmedAtText,
+                        ),
+            )
         if (importedCandidateIndex >= 0) {
             val importedCandidate = candidates[importedCandidateIndex]
-            candidates[importedCandidateIndex] = importedCandidate.copy(
-                status = "confirmed",
-                adjustmentId = adjustment.id,
-                confirmationRequestId = input.requestId,
-            )
+            candidates[importedCandidateIndex] =
+                importedCandidate.copy(
+                    status = "confirmed",
+                    adjustmentId = adjustment.id,
+                    confirmationRequestId = input.requestId,
+                )
         }
-        confirmations += Rg09Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "explanation_allocation_confirmation",
-            confirmedAt = input.confirmedAt,
-            targetId = operation.ids.allocationId.value,
-            confirmedAtText = input.confirmedAtText,
-            createdAt = input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-        )
-        auditLinks += listOf(
-            Rg09AuditLink(operation.ids.adjustmentAuditLinkId, allocation.id, "adjustment_transaction", adjustment.transactionId.value, input.confirmedAt, input.confirmedAtText),
-            Rg09AuditLink(operation.ids.explanationAuditLinkId, allocation.id, "explanation_transaction", input.transactionId.value, input.confirmedAt, input.confirmedAtText),
-            Rg09AuditLink(operation.ids.reversalAuditLinkId, allocation.id, "allocation_reversal", operation.ids.reversalTransactionId.value, input.confirmedAt, input.confirmedAtText),
-        )
+        confirmations +=
+            Rg09Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "explanation_allocation_confirmation",
+                confirmedAt = input.confirmedAt,
+                targetId = operation.ids.allocationId.value,
+                confirmedAtText = input.confirmedAtText,
+                createdAt = input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+            )
+        auditLinks +=
+            listOf(
+                Rg09AuditLink(operation.ids.adjustmentAuditLinkId, allocation.id, "adjustment_transaction", adjustment.transactionId.value, input.confirmedAt, input.confirmedAtText),
+                Rg09AuditLink(operation.ids.explanationAuditLinkId, allocation.id, "explanation_transaction", input.transactionId.value, input.confirmedAt, input.confirmedAtText),
+                Rg09AuditLink(operation.ids.reversalAuditLinkId, allocation.id, "allocation_reversal", operation.ids.reversalTransactionId.value, input.confirmedAt, input.confirmedAtText),
+            )
         return accepted(
             listOf(
                 Rg09ReturnedId.Confirmation(operation.ids.confirmationId),
@@ -1416,13 +1553,16 @@ class Rg09Runtime(
         if (sourceRecords.any { it.id == input.sourceId } || evidence.any { it.id == input.evidenceId } || evidenceLinks.any { it.id == operation.ids.evidenceLinkId }) {
             return rejected(Rg09RejectionReason.DOMAIN_REJECTED, Rg09FieldPath.INPUT_EVIDENCE)
         }
-        val posting = formalTransactions.asSequence()
-            .flatMap { it.formalTransaction.currentPostings().asSequence() }
-            .firstOrNull { it.id == input.targetPostingId }
-            ?: return rejected(Rg09RejectionReason.POSTING_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_POSTING)
-        val postingTransaction = formalTransactions.firstOrNull { record ->
-            record.formalTransaction.currentPostings().any { it.id == input.targetPostingId }
-        } ?: return rejected(Rg09RejectionReason.POSTING_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_POSTING)
+        val posting =
+            formalTransactions
+                .asSequence()
+                .flatMap { it.formalTransaction.currentPostings().asSequence() }
+                .firstOrNull { it.id == input.targetPostingId }
+                ?: return rejected(Rg09RejectionReason.POSTING_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_POSTING)
+        val postingTransaction =
+            formalTransactions.firstOrNull { record ->
+                record.formalTransaction.currentPostings().any { it.id == input.targetPostingId }
+            } ?: return rejected(Rg09RejectionReason.POSTING_NOT_FOUND, Rg09FieldPath.INPUT_TARGET_POSTING)
         if (postingReconciliation[input.targetPostingId.value] == null) {
             return rejected(Rg09RejectionReason.POSTING_OWNERSHIP_REQUIRED, Rg09FieldPath.INPUT_TARGET_POSTING)
         }
@@ -1433,8 +1573,9 @@ class Rg09Runtime(
         if (input.postingSide != expectedSide) {
             return rejected(Rg09RejectionReason.POSTING_SIDE_MISMATCH, Rg09FieldPath.INPUT_POSTING_SIDE)
         }
-        val account = catalogAccount(posting.accountId)
-            ?: return rejected(Rg09RejectionReason.UNKNOWN_ACCOUNT, Rg09FieldPath.INPUT_ACCOUNT)
+        val account =
+            catalogAccount(posting.accountId)
+                ?: return rejected(Rg09RejectionReason.UNKNOWN_ACCOUNT, Rg09FieldPath.INPUT_ACCOUNT)
         if (!account.ownedByUser || !account.realAccount || account.kind.name != "ASSET") {
             return rejected(Rg09RejectionReason.OWNED_REAL_ASSET_REQUIRED, Rg09FieldPath.INPUT_ACCOUNT)
         }
@@ -1444,32 +1585,35 @@ class Rg09Runtime(
         if (currentEffectiveAt(postingTransaction.formalTransaction) != input.bookingAt) {
             return rejected(Rg09RejectionReason.REAL_TRANSACTION_TIME_MISMATCH, Rg09FieldPath.INPUT_ACTUAL_TIME)
         }
-        sourceRecords += Rg09SourceRecord(
-            id = input.sourceId,
-            sourceType = "account_statement",
-            observedAt = input.observedAt,
-            accountId = input.accountId,
-            amount = input.amount,
-            bookingAt = input.bookingAt,
-            immutablePayloadDigest = input.immutablePayloadDigest,
-            observedAtText = input.observedAtText,
-            bookingAtText = input.bookingAtText,
-        )
-        evidence += Rg09Evidence(
-            id = input.evidenceId,
-            sourceRecordId = input.sourceId,
-            evidenceType = "real_account_posting",
-            observedAt = input.observedAt,
-            observedAtText = input.observedAtText,
-        )
-        evidenceLinks += Rg09EvidenceLink(
-            id = operation.ids.evidenceLinkId,
-            sourceRecordId = input.sourceId,
-            evidenceId = input.evidenceId,
-            role = "real_account_posting",
-            targetId = input.targetPostingId.value,
-            status = "matched",
-        )
+        sourceRecords +=
+            Rg09SourceRecord(
+                id = input.sourceId,
+                sourceType = "account_statement",
+                observedAt = input.observedAt,
+                accountId = input.accountId,
+                amount = input.amount,
+                bookingAt = input.bookingAt,
+                immutablePayloadDigest = input.immutablePayloadDigest,
+                observedAtText = input.observedAtText,
+                bookingAtText = input.bookingAtText,
+            )
+        evidence +=
+            Rg09Evidence(
+                id = input.evidenceId,
+                sourceRecordId = input.sourceId,
+                evidenceType = "real_account_posting",
+                observedAt = input.observedAt,
+                observedAtText = input.observedAtText,
+            )
+        evidenceLinks +=
+            Rg09EvidenceLink(
+                id = operation.ids.evidenceLinkId,
+                sourceRecordId = input.sourceId,
+                evidenceId = input.evidenceId,
+                role = "real_account_posting",
+                targetId = input.targetPostingId.value,
+                status = "matched",
+            )
         postingReconciliation[input.targetPostingId.value] = "matched"
         return accepted(
             listOf(
@@ -1481,34 +1625,35 @@ class Rg09Runtime(
     }
 
     private fun rejectInvalidInput(operation: Rg09Operation.InvalidInput): Rg09ExecutionResult {
-        val (reason, fieldPath) = when (operation.input.predicate) {
-            Rg09InvalidPredicate.EXACT_DECIMAL ->
-                Rg09RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_AMOUNT
-            Rg09InvalidPredicate.TIMEZONE_AWARE ->
-                Rg09RejectionReason.TIMEZONE_AWARE_TARGET_TIME_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_TIME
-            Rg09InvalidPredicate.LEDGER_TIMEZONE ->
-                Rg09RejectionReason.LEDGER_TIMEZONE_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_TIME
-            Rg09InvalidPredicate.KNOWN_ACCOUNT ->
-                Rg09RejectionReason.UNKNOWN_ACCOUNT to Rg09FieldPath.ATTEMPTED_ACCOUNT
-            Rg09InvalidPredicate.OWNED_REAL_ASSET ->
-                Rg09RejectionReason.OWNED_REAL_ASSET_REQUIRED to Rg09FieldPath.ATTEMPTED_ACCOUNT
-            Rg09InvalidPredicate.CURRENCY_CNY ->
-                Rg09RejectionReason.SAME_CURRENCY_REQUIRED to Rg09FieldPath.ATTEMPTED_CURRENCY
-            Rg09InvalidPredicate.DEDICATED_EQUITY ->
-                Rg09RejectionReason.DEDICATED_ADJUSTMENT_EQUITY_REQUIRED to Rg09FieldPath.ATTEMPTED_EQUITY_ACCOUNT
-            Rg09InvalidPredicate.SAME_DIRECTION ->
-                Rg09RejectionReason.EXPLANATION_DIRECTION_MISMATCH to Rg09FieldPath.ATTEMPTED_DIRECTION
-            Rg09InvalidPredicate.SAME_TARGET_ACCOUNT ->
-                Rg09RejectionReason.SAME_TARGET_ACCOUNT_REQUIRED to Rg09FieldPath.ATTEMPTED_ACCOUNT
-            Rg09InvalidPredicate.BEFORE_TARGET ->
-                Rg09RejectionReason.EXPLANATION_AFTER_TARGET_TIME to Rg09FieldPath.ATTEMPTED_ACTUAL_TIME
-            Rg09InvalidPredicate.REMAINING_CAP ->
-                Rg09RejectionReason.ALLOCATION_EXCEEDS_REMAINING to Rg09FieldPath.ATTEMPTED_REQUESTED_AMOUNT
-            Rg09InvalidPredicate.EXPLICIT_LINK ->
-                Rg09RejectionReason.EXPLICIT_LINK_CONFIRMATION_REQUIRED to Rg09FieldPath.ATTEMPTED_CONFIRMATION
-            Rg09InvalidPredicate.IDEMPOTENCY_CONFLICT ->
-                Rg09RejectionReason.IDENTITY_CONFLICT to Rg09FieldPath.ATTEMPTED_REQUEST_ID
-        }
+        val (reason, fieldPath) =
+            when (operation.input.predicate) {
+                Rg09InvalidPredicate.EXACT_DECIMAL ->
+                    Rg09RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_AMOUNT
+                Rg09InvalidPredicate.TIMEZONE_AWARE ->
+                    Rg09RejectionReason.TIMEZONE_AWARE_TARGET_TIME_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_TIME
+                Rg09InvalidPredicate.LEDGER_TIMEZONE ->
+                    Rg09RejectionReason.LEDGER_TIMEZONE_REQUIRED to Rg09FieldPath.ATTEMPTED_TARGET_TIME
+                Rg09InvalidPredicate.KNOWN_ACCOUNT ->
+                    Rg09RejectionReason.UNKNOWN_ACCOUNT to Rg09FieldPath.ATTEMPTED_ACCOUNT
+                Rg09InvalidPredicate.OWNED_REAL_ASSET ->
+                    Rg09RejectionReason.OWNED_REAL_ASSET_REQUIRED to Rg09FieldPath.ATTEMPTED_ACCOUNT
+                Rg09InvalidPredicate.CURRENCY_CNY ->
+                    Rg09RejectionReason.SAME_CURRENCY_REQUIRED to Rg09FieldPath.ATTEMPTED_CURRENCY
+                Rg09InvalidPredicate.DEDICATED_EQUITY ->
+                    Rg09RejectionReason.DEDICATED_ADJUSTMENT_EQUITY_REQUIRED to Rg09FieldPath.ATTEMPTED_EQUITY_ACCOUNT
+                Rg09InvalidPredicate.SAME_DIRECTION ->
+                    Rg09RejectionReason.EXPLANATION_DIRECTION_MISMATCH to Rg09FieldPath.ATTEMPTED_DIRECTION
+                Rg09InvalidPredicate.SAME_TARGET_ACCOUNT ->
+                    Rg09RejectionReason.SAME_TARGET_ACCOUNT_REQUIRED to Rg09FieldPath.ATTEMPTED_ACCOUNT
+                Rg09InvalidPredicate.BEFORE_TARGET ->
+                    Rg09RejectionReason.EXPLANATION_AFTER_TARGET_TIME to Rg09FieldPath.ATTEMPTED_ACTUAL_TIME
+                Rg09InvalidPredicate.REMAINING_CAP ->
+                    Rg09RejectionReason.ALLOCATION_EXCEEDS_REMAINING to Rg09FieldPath.ATTEMPTED_REQUESTED_AMOUNT
+                Rg09InvalidPredicate.EXPLICIT_LINK ->
+                    Rg09RejectionReason.EXPLICIT_LINK_CONFIRMATION_REQUIRED to Rg09FieldPath.ATTEMPTED_CONFIRMATION
+                Rg09InvalidPredicate.IDEMPOTENCY_CONFLICT ->
+                    Rg09RejectionReason.IDENTITY_CONFLICT to Rg09FieldPath.ATTEMPTED_REQUEST_ID
+            }
         return rejected(reason, fieldPath)
     }
 
@@ -1518,14 +1663,18 @@ class Rg09Runtime(
         catalog.accounts.firstOrNull { it.systemRole == "balance_adjustments" }?.id
             ?: AccountId("equity-balance-adjustments")
 
-    private fun replayAmount(accountId: AccountId, asOf: Instant?): Money? {
+    private fun replayAmount(
+        accountId: AccountId,
+        asOf: Instant?,
+    ): Money? {
         val account = catalogAccount(accountId) ?: return null
         var total = 0L
         formalTransactions
             .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
             .filter { asOf == null || currentEffectiveAt(it.formalTransaction) <= asOf }
             .forEach { record ->
-                record.formalTransaction.currentPostings()
+                record.formalTransaction
+                    .currentPostings()
                     .filter { it.accountId == accountId }
                     .forEach { posting ->
                         if (posting.amount.currency != account.currency) return null
@@ -1539,7 +1688,8 @@ class Rg09Runtime(
         if (!catalogCompatible(record.formalTransaction) || formalIdCollision(record.formalTransaction)) {
             return false
         }
-        record.formalTransaction.currentPostings()
+        record.formalTransaction
+            .currentPostings()
             .groupBy { it.accountId }
             .forEach { (accountId, postings) ->
                 var total = replayAmount(accountId, null)?.minorUnits ?: return false
@@ -1553,8 +1703,13 @@ class Rg09Runtime(
         val cumulative = reports().getValue("cumulative")
         return when (record.formalTransaction.transaction.kind) {
             TransactionKind.BALANCE_ADJUSTMENT,
-            TransactionKind.BALANCE_ADJUSTMENT_REVERSAL -> {
-                val amount = record.formalTransaction.currentPostings().first().amount.minorUnits
+            TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
+            -> {
+                val amount =
+                    record.formalTransaction
+                        .currentPostings()
+                        .first()
+                        .amount.minorUnits
                 addExact(currentPeriod.balanceAdjustmentNetWorthChangeMinor, amount) != null &&
                     addExact(currentPeriod.netWorthChangeMinor, amount) != null &&
                     addExact(cumulative.balanceAdjustmentNetWorthChangeMinor, amount) != null &&
@@ -1569,342 +1724,374 @@ class Rg09Runtime(
         }
     }
 
-    private fun replayBalances(asOf: Instant?): Map<AccountId, Money> = buildMap {
-        catalog.accounts.forEach { account ->
-            var total = 0L
-            formalTransactions
-                .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
-                .filter { asOf == null || currentEffectiveAt(it.formalTransaction) <= asOf }
-                .forEach { record ->
-                    record.formalTransaction.currentPostings()
-                        .filter { it.accountId == account.id }
-                        .forEach { posting ->
-                            check(posting.amount.currency == account.currency) { "RG-09 posting currency mismatch" }
-                            total = addExact(total, posting.amount.minorUnits) ?: error("RG-09 balance overflow")
-                        }
-                }
-            put(account.id, Money.ofMinor(total, account.currency))
+    private fun replayBalances(asOf: Instant?): Map<AccountId, Money> =
+        buildMap {
+            catalog.accounts.forEach { account ->
+                var total = 0L
+                formalTransactions
+                    .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
+                    .filter { asOf == null || currentEffectiveAt(it.formalTransaction) <= asOf }
+                    .forEach { record ->
+                        record.formalTransaction
+                            .currentPostings()
+                            .filter { it.accountId == account.id }
+                            .forEach { posting ->
+                                check(posting.amount.currency == account.currency) { "RG-09 posting currency mismatch" }
+                                total = addExact(total, posting.amount.minorUnits) ?: error("RG-09 balance overflow")
+                            }
+                    }
+                put(account.id, Money.ofMinor(total, account.currency))
+            }
         }
-    }
 
     private fun reports(): Map<String, Rg09Report> {
         val periods = mutableMapOf<String, Rg09Report>()
         formalTransactions.forEach { record ->
             val period = currentEffectiveAt(record.formalTransaction).toString().substring(0, 7)
             val current = periods[period] ?: Rg09Report()
-            val next = when (record.formalTransaction.transaction.kind) {
-                TransactionKind.BALANCE_ADJUSTMENT,
-                TransactionKind.BALANCE_ADJUSTMENT_REVERSAL -> {
-                    val amount = record.formalTransaction.currentPostings().first().amount.minorUnits
-                    current.copy(
-                        balanceAdjustmentNetWorthChangeMinor = addExact(current.balanceAdjustmentNetWorthChangeMinor, amount)!!,
-                        netWorthChangeMinor = addExact(current.netWorthChangeMinor, amount)!!,
-                    )
+            val next =
+                when (record.formalTransaction.transaction.kind) {
+                    TransactionKind.BALANCE_ADJUSTMENT,
+                    TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
+                    -> {
+                        val amount =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first()
+                                .amount.minorUnits
+                        current.copy(
+                            balanceAdjustmentNetWorthChangeMinor = addExact(current.balanceAdjustmentNetWorthChangeMinor, amount)!!,
+                            netWorthChangeMinor = addExact(current.netWorthChangeMinor, amount)!!,
+                        )
+                    }
+                    TransactionKind.ACCOUNT_TRANSFER -> {
+                        val amount = record.formalTransaction.currentPostings().maxOf { it.amount.minorUnits }
+                        current.copy(internalTransferMinor = addExact(current.internalTransferMinor, amount)!!)
+                    }
+                    else -> null
                 }
-                TransactionKind.ACCOUNT_TRANSFER -> {
-                    val amount = record.formalTransaction.currentPostings().maxOf { it.amount.minorUnits }
-                    current.copy(internalTransferMinor = addExact(current.internalTransferMinor, amount)!!)
-                }
-                else -> null
-            }
             if (next != null) periods[period] = next
         }
-        val cumulative = periods.values.fold(Rg09Report()) { total, item ->
-            Rg09Report(
-                ordinaryIncomeMinor = addExact(total.ordinaryIncomeMinor, item.ordinaryIncomeMinor)!!,
-                ordinaryExpenseMinor = addExact(total.ordinaryExpenseMinor, item.ordinaryExpenseMinor)!!,
-                consumptionMinor = addExact(total.consumptionMinor, item.consumptionMinor)!!,
-                budgetEffectMinor = addExact(total.budgetEffectMinor, item.budgetEffectMinor)!!,
-                categoryEffectMinor = addExact(total.categoryEffectMinor, item.categoryEffectMinor)!!,
-                cashInflowMinor = addExact(total.cashInflowMinor, item.cashInflowMinor)!!,
-                cashOutflowMinor = addExact(total.cashOutflowMinor, item.cashOutflowMinor)!!,
-                internalTransferMinor = addExact(total.internalTransferMinor, item.internalTransferMinor)!!,
-                balanceAdjustmentNetWorthChangeMinor = addExact(total.balanceAdjustmentNetWorthChangeMinor, item.balanceAdjustmentNetWorthChangeMinor)!!,
-                netWorthChangeMinor = addExact(total.netWorthChangeMinor, item.netWorthChangeMinor)!!,
-            )
-        }
+        val cumulative =
+            periods.values.fold(Rg09Report()) { total, item ->
+                Rg09Report(
+                    ordinaryIncomeMinor = addExact(total.ordinaryIncomeMinor, item.ordinaryIncomeMinor)!!,
+                    ordinaryExpenseMinor = addExact(total.ordinaryExpenseMinor, item.ordinaryExpenseMinor)!!,
+                    consumptionMinor = addExact(total.consumptionMinor, item.consumptionMinor)!!,
+                    budgetEffectMinor = addExact(total.budgetEffectMinor, item.budgetEffectMinor)!!,
+                    categoryEffectMinor = addExact(total.categoryEffectMinor, item.categoryEffectMinor)!!,
+                    cashInflowMinor = addExact(total.cashInflowMinor, item.cashInflowMinor)!!,
+                    cashOutflowMinor = addExact(total.cashOutflowMinor, item.cashOutflowMinor)!!,
+                    internalTransferMinor = addExact(total.internalTransferMinor, item.internalTransferMinor)!!,
+                    balanceAdjustmentNetWorthChangeMinor = addExact(total.balanceAdjustmentNetWorthChangeMinor, item.balanceAdjustmentNetWorthChangeMinor)!!,
+                    netWorthChangeMinor = addExact(total.netWorthChangeMinor, item.netWorthChangeMinor)!!,
+                )
+            }
         return periods + ("cumulative" to cumulative)
     }
 
-    private fun reconciliation(): Map<String, String> = buildMap {
-        observations.forEach { observation ->
-            val candidate = candidates.firstOrNull { it.observationId == observation.id }
-            val adjustment = candidate?.adjustmentId?.let { id -> adjustments.firstOrNull { it.id == id } }
-            val replayed = replayAmount(observation.accountId, observation.targetObservedAt)
-            val remaining = when {
-                adjustment != null -> adjustment.remainingAmount.minorUnits
-                candidate != null && replayed != null -> absMinor(
-                    Money.ofMinor(
-                        subtractExact(candidate.targetAmount.minorUnits, replayed.minorUnits) ?: 0L,
-                        candidate.targetAmount.currency,
-                    ),
-                )
-                else -> 0L
-            } ?: error("RG-09 remaining adjustment overflow")
-            val hasUnallocatedRealTransfer = adjustment?.let { currentAdjustment ->
-                val requiredDirectionPositive = currentAdjustment.originalDelta.minorUnits > 0L
-                formalTransactions.any { record ->
-                    val transaction = record.formalTransaction.transaction
-                    transaction.kind == TransactionKind.ACCOUNT_TRANSFER &&
-                        currentEffectiveAt(record.formalTransaction) <= currentAdjustment.targetObservedAt &&
-                        allocations.none { it.realTransactionId == transaction.id } &&
-                        record.formalTransaction.currentPostings().any { posting ->
-                            posting.accountId == currentAdjustment.targetAccountId &&
-                                posting.amount.currency == currentAdjustment.currency &&
-                                posting.amount.minorUnits != 0L &&
-                                (posting.amount.minorUnits > 0L) == requiredDirectionPositive
+    private fun reconciliation(): Map<String, String> =
+        buildMap {
+            observations.forEach { observation ->
+                val candidate = candidates.firstOrNull { it.observationId == observation.id }
+                val adjustment = candidate?.adjustmentId?.let { id -> adjustments.firstOrNull { it.id == id } }
+                val replayed = replayAmount(observation.accountId, observation.targetObservedAt)
+                val remaining =
+                    when {
+                        adjustment != null -> adjustment.remainingAmount.minorUnits
+                        candidate != null && replayed != null ->
+                            absMinor(
+                                Money.ofMinor(
+                                    subtractExact(candidate.targetAmount.minorUnits, replayed.minorUnits) ?: 0L,
+                                    candidate.targetAmount.currency,
+                                ),
+                            )
+                        else -> 0L
+                    } ?: error("RG-09 remaining adjustment overflow")
+                val hasUnallocatedRealTransfer =
+                    adjustment?.let { currentAdjustment ->
+                        val requiredDirectionPositive = currentAdjustment.originalDelta.minorUnits > 0L
+                        formalTransactions.any { record ->
+                            val transaction = record.formalTransaction.transaction
+                            transaction.kind == TransactionKind.ACCOUNT_TRANSFER &&
+                                currentEffectiveAt(record.formalTransaction) <= currentAdjustment.targetObservedAt &&
+                                allocations.none { it.realTransactionId == transaction.id } &&
+                                record.formalTransaction.currentPostings().any { posting ->
+                                    posting.accountId == currentAdjustment.targetAccountId &&
+                                        posting.amount.currency == currentAdjustment.currency &&
+                                        posting.amount.minorUnits != 0L &&
+                                        (posting.amount.minorUnits > 0L) == requiredDirectionPositive
+                                }
                         }
-                }
-            } ?: false
-            val requiredPostingIds = adjustment?.let { currentAdjustment ->
-                allocations.asSequence()
-                    .filter { it.adjustmentId == currentAdjustment.id }
-                    .flatMap { allocation ->
-                        formalTransactions.asSequence()
-                            .filter { it.formalTransaction.transaction.id == allocation.realTransactionId }
-                            .flatMap { it.formalTransaction.currentPostings().asSequence() }
-                    }
-                    .mapTo(mutableSetOf()) { it.id.value }
-            } ?: emptySet()
-            val fullyReconciled = requiredPostingIds.isNotEmpty() &&
-                requiredPostingIds.all { postingReconciliation[it] == "matched" }
-            put(
-                observation.id.value,
-                when {
-                    candidate == null && replayed == observation.targetAmount -> "balance_agreement_no_adjustment"
-                    candidate?.status == "pending_confirmation" && replayed != candidate.replayedAmount -> "stale_preview"
-                    candidate?.status == "pending_confirmation" -> "difference_pending_confirmation"
-                    adjustment == null -> "difference_pending_confirmation"
-                    hasUnallocatedRealTransfer ->
-                        "difference_pending_explanation_confirmation"
-                    adjustment.remainingAmount.minorUnits != 0L -> "balanced_with_unexplained_adjustment"
-                    fullyReconciled -> "fully_reconciled"
-                    else -> "evidence_incomplete"
-                },
-            )
-            put("remaining_adjustment", formatMinor(remaining, observation.targetAmount.currency))
+                    } ?: false
+                val requiredPostingIds =
+                    adjustment?.let { currentAdjustment ->
+                        allocations
+                            .asSequence()
+                            .filter { it.adjustmentId == currentAdjustment.id }
+                            .flatMap { allocation ->
+                                formalTransactions
+                                    .asSequence()
+                                    .filter { it.formalTransaction.transaction.id == allocation.realTransactionId }
+                                    .flatMap { it.formalTransaction.currentPostings().asSequence() }
+                            }.mapTo(mutableSetOf()) { it.id.value }
+                    } ?: emptySet()
+                val fullyReconciled =
+                    requiredPostingIds.isNotEmpty() &&
+                        requiredPostingIds.all { postingReconciliation[it] == "matched" }
+                put(
+                    observation.id.value,
+                    when {
+                        candidate == null && replayed == observation.targetAmount -> "balance_agreement_no_adjustment"
+                        candidate?.status == "pending_confirmation" && replayed != candidate.replayedAmount -> "stale_preview"
+                        candidate?.status == "pending_confirmation" -> "difference_pending_confirmation"
+                        adjustment == null -> "difference_pending_confirmation"
+                        hasUnallocatedRealTransfer ->
+                            "difference_pending_explanation_confirmation"
+                        adjustment.remainingAmount.minorUnits != 0L -> "balanced_with_unexplained_adjustment"
+                        fullyReconciled -> "fully_reconciled"
+                        else -> "evidence_incomplete"
+                    },
+                )
+                put("remaining_adjustment", formatMinor(remaining, observation.targetAmount.currency))
+            }
+            put("full_reconciliation_requirement", "remaining_adjustment_zero_and_actual_postings_evidenced")
         }
-        put("full_reconciliation_requirement", "remaining_adjustment_zero_and_actual_postings_evidenced")
-    }
 
-    private fun currentEffectiveAt(formal: FormalTransaction): Instant = formal.versions.first { it.id == formal.transaction.currentVersionId }.times.effectiveAt
+    private fun currentEffectiveAt(formal: FormalTransaction): Instant =
+        formal.versions
+            .first { it.id == formal.transaction.currentVersionId }
+            .times.effectiveAt
 
-    private fun canonicalInput(operation: Rg09Operation): String = when (operation) {
-        is Rg09Operation.PreviewTargetBalance -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.accountId.value,
-            canonicalMoney(operation.input.targetAmount),
-            operation.input.targetObservedAt.toString(),
-            operation.input.savedAt.toString(),
-            operation.input.targetObservedAtText,
-            operation.input.savedAtText,
-            canonicalCurrency(operation.input.currency),
-            operation.input.explicitConfirmation.toString(),
-            operation.input.immutablePayloadDigest,
-            operation.input.ledgerFingerprint,
-            operation.ids.observationId.value,
-            operation.ids.sourceRecordId.value,
-            operation.ids.evidenceId.value,
-            operation.ids.evidenceLinkId.value,
-            operation.ids.candidateId?.value,
-        )
-        is Rg09Operation.ConfirmBalanceAdjustment -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.candidateId.value,
-            operation.input.ledgerFingerprint,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmedAt.toString(),
-            operation.input.confirmedAtText,
-            operation.ids.confirmationId.value,
-            operation.ids.adjustmentId.value,
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.targetPostingId.value,
-            operation.ids.equityPostingId.value,
-            operation.ids.historyId,
-        )
-        is Rg09Operation.ConfirmRealTransfer -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.targetAccountId.value,
-            operation.input.counterAccountId.value,
-            canonicalMoney(operation.input.amount),
-            operation.input.actualOccurredAt.toString(),
-            operation.input.discoveredAt.toString(),
-            operation.input.confirmedAt.toString(),
-            operation.input.immutablePayloadDigest,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsTargetAccount.toString(),
-            operation.input.confirmsCounterAccount.toString(),
-            operation.input.confirmsActualOccurredAt.toString(),
-            operation.input.confirmsCurrency.toString(),
-            operation.input.confirmsAmount.toString(),
-            operation.input.confirmsExplanationAllocation.toString(),
-            operation.input.actualOccurredAtText,
-            operation.input.discoveredAtText,
-            operation.input.confirmedAtText,
-            operation.input.sourceId?.value,
-            operation.input.candidateId?.value,
-            operation.ids.confirmationId.value,
-            operation.ids.sourceRecordId.value,
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.sourcePostingId.value,
-            operation.ids.destinationPostingId.value,
-        )
-        is Rg09Operation.IngestImportedTransfer -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.sourceId.value,
-            operation.input.evidenceId.value,
-            operation.input.candidateId.value,
-            operation.input.targetAccountId.value,
-            operation.input.counterAccountId.value,
-            canonicalMoney(operation.input.amount),
-            operation.input.actualOccurredAt.toString(),
-            operation.input.observedAt.toString(),
-            operation.input.immutablePayloadDigest,
-            operation.input.confidence,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.actualOccurredAtText,
-            operation.input.observedAtText,
-            operation.ids.sourceId.value,
-            operation.ids.evidenceId.value,
-            operation.ids.candidateId.value,
-        )
-        is Rg09Operation.ConfirmImportedTransfer -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.targetAccountId.value,
-            operation.input.counterAccountId.value,
-            operation.input.targetAccountDirection,
-            canonicalMoney(operation.input.amount),
-            operation.input.actualOccurredAt.toString(),
-            operation.input.discoveredAt.toString(),
-            operation.input.confirmedAt.toString(),
-            operation.input.immutablePayloadDigest,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsTargetAccount.toString(),
-            operation.input.confirmsCounterAccount.toString(),
-            operation.input.confirmsActualOccurredAt.toString(),
-            operation.input.confirmsCurrency.toString(),
-            operation.input.confirmsAmount.toString(),
-            operation.input.confirmsExplanationAllocation.toString(),
-            operation.input.actualOccurredAtText,
-            operation.input.discoveredAtText,
-            operation.input.confirmedAtText,
-            operation.input.sourceId?.value,
-            operation.input.candidateId?.value,
-            operation.ids.confirmationId.value,
-            operation.ids.sourceRecordId.value,
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.sourcePostingId.value,
-            operation.ids.destinationPostingId.value,
-        )
-        is Rg09Operation.IncompleteImportedTransferConfirmation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.candidateId.value,
-            operation.input.transactionId?.value,
-            operation.input.targetAccountId?.value,
-            operation.input.actualOccurredAt?.toString(),
-            operation.input.currency?.let(::canonicalCurrency),
-            operation.input.explanationAmount?.let(::canonicalMoney),
-            operation.input.explicitConfirmation.toString(),
-        )
-        is Rg09Operation.ConfirmExplanationAllocation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.adjustmentId.value,
-            operation.input.transactionId.value,
-            operation.input.targetAccountId.value,
-            operation.input.actualOccurredAt.toString(),
-            canonicalMoney(operation.input.realTransactionAmount),
-            operation.input.targetObservedAt.toString(),
-            canonicalMoney(operation.input.explanationAmount),
-            operation.input.confirmedAt.toString(),
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsTargetAccount.toString(),
-            operation.input.confirmsActualOccurredAt.toString(),
-            operation.input.confirmsRealTransactionAmount.toString(),
-            operation.input.confirmsCurrency.toString(),
-            operation.input.confirmsTargetObservedAt.toString(),
-            operation.input.confirmsAllocationDirection.toString(),
-            operation.input.confirmsExplanationAmount.toString(),
-            operation.input.actualOccurredAtText,
-            operation.input.targetObservedAtText,
-            operation.input.confirmedAtText,
-            operation.input.discoveredAt?.toString(),
-            operation.input.discoveredAtText,
-            operation.ids.confirmationId.value,
-            operation.ids.allocationId.value,
-            operation.ids.reversalTransactionId.value,
-            operation.ids.reversalVersionId.value,
-            operation.ids.reversalPostingSetId.value,
-            operation.ids.reversalTargetPostingId.value,
-            operation.ids.reversalEquityPostingId.value,
-            operation.ids.adjustmentAuditLinkId.value,
-            operation.ids.explanationAuditLinkId.value,
-            operation.ids.reversalAuditLinkId.value,
-            operation.ids.historyId,
-        )
-        is Rg09Operation.LinkRealPostingEvidence -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.sourceId.value,
-            operation.input.evidenceId.value,
-            operation.input.targetPostingId.value,
-            operation.input.accountId.value,
-            canonicalMoney(operation.input.amount),
-            operation.input.postingSide,
-            operation.input.observedAt.toString(),
-            operation.input.bookingAt.toString(),
-            operation.input.observedAtText,
-            operation.input.bookingAtText,
-            operation.input.immutablePayloadDigest,
-            operation.input.explicitConfirmation.toString(),
-            operation.ids.evidenceLinkId.value,
-        )
-        is Rg09Operation.InvalidInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.predicate.name,
-            operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
-                "$key=${value ?: "<null>"}"
-            },
-        )
-    }
+    private fun canonicalInput(operation: Rg09Operation): String =
+        when (operation) {
+            is Rg09Operation.PreviewTargetBalance ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.accountId.value,
+                    canonicalMoney(operation.input.targetAmount),
+                    operation.input.targetObservedAt.toString(),
+                    operation.input.savedAt.toString(),
+                    operation.input.targetObservedAtText,
+                    operation.input.savedAtText,
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.immutablePayloadDigest,
+                    operation.input.ledgerFingerprint,
+                    operation.ids.observationId.value,
+                    operation.ids.sourceRecordId.value,
+                    operation.ids.evidenceId.value,
+                    operation.ids.evidenceLinkId.value,
+                    operation.ids.candidateId?.value,
+                )
+            is Rg09Operation.ConfirmBalanceAdjustment ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.candidateId.value,
+                    operation.input.ledgerFingerprint,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmedAt.toString(),
+                    operation.input.confirmedAtText,
+                    operation.ids.confirmationId.value,
+                    operation.ids.adjustmentId.value,
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.targetPostingId.value,
+                    operation.ids.equityPostingId.value,
+                    operation.ids.historyId,
+                )
+            is Rg09Operation.ConfirmRealTransfer ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.targetAccountId.value,
+                    operation.input.counterAccountId.value,
+                    canonicalMoney(operation.input.amount),
+                    operation.input.actualOccurredAt.toString(),
+                    operation.input.discoveredAt.toString(),
+                    operation.input.confirmedAt.toString(),
+                    operation.input.immutablePayloadDigest,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsTargetAccount.toString(),
+                    operation.input.confirmsCounterAccount.toString(),
+                    operation.input.confirmsActualOccurredAt.toString(),
+                    operation.input.confirmsCurrency.toString(),
+                    operation.input.confirmsAmount.toString(),
+                    operation.input.confirmsExplanationAllocation.toString(),
+                    operation.input.actualOccurredAtText,
+                    operation.input.discoveredAtText,
+                    operation.input.confirmedAtText,
+                    operation.input.sourceId?.value,
+                    operation.input.candidateId?.value,
+                    operation.ids.confirmationId.value,
+                    operation.ids.sourceRecordId.value,
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.sourcePostingId.value,
+                    operation.ids.destinationPostingId.value,
+                )
+            is Rg09Operation.IngestImportedTransfer ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.sourceId.value,
+                    operation.input.evidenceId.value,
+                    operation.input.candidateId.value,
+                    operation.input.targetAccountId.value,
+                    operation.input.counterAccountId.value,
+                    canonicalMoney(operation.input.amount),
+                    operation.input.actualOccurredAt.toString(),
+                    operation.input.observedAt.toString(),
+                    operation.input.immutablePayloadDigest,
+                    operation.input.confidence,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.actualOccurredAtText,
+                    operation.input.observedAtText,
+                    operation.ids.sourceId.value,
+                    operation.ids.evidenceId.value,
+                    operation.ids.candidateId.value,
+                )
+            is Rg09Operation.ConfirmImportedTransfer ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.targetAccountId.value,
+                    operation.input.counterAccountId.value,
+                    operation.input.targetAccountDirection,
+                    canonicalMoney(operation.input.amount),
+                    operation.input.actualOccurredAt.toString(),
+                    operation.input.discoveredAt.toString(),
+                    operation.input.confirmedAt.toString(),
+                    operation.input.immutablePayloadDigest,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsTargetAccount.toString(),
+                    operation.input.confirmsCounterAccount.toString(),
+                    operation.input.confirmsActualOccurredAt.toString(),
+                    operation.input.confirmsCurrency.toString(),
+                    operation.input.confirmsAmount.toString(),
+                    operation.input.confirmsExplanationAllocation.toString(),
+                    operation.input.actualOccurredAtText,
+                    operation.input.discoveredAtText,
+                    operation.input.confirmedAtText,
+                    operation.input.sourceId?.value,
+                    operation.input.candidateId?.value,
+                    operation.ids.confirmationId.value,
+                    operation.ids.sourceRecordId.value,
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.sourcePostingId.value,
+                    operation.ids.destinationPostingId.value,
+                )
+            is Rg09Operation.IncompleteImportedTransferConfirmation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.candidateId.value,
+                    operation.input.transactionId?.value,
+                    operation.input.targetAccountId?.value,
+                    operation.input.actualOccurredAt?.toString(),
+                    operation.input.currency?.let(::canonicalCurrency),
+                    operation.input.explanationAmount?.let(::canonicalMoney),
+                    operation.input.explicitConfirmation.toString(),
+                )
+            is Rg09Operation.ConfirmExplanationAllocation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.adjustmentId.value,
+                    operation.input.transactionId.value,
+                    operation.input.targetAccountId.value,
+                    operation.input.actualOccurredAt.toString(),
+                    canonicalMoney(operation.input.realTransactionAmount),
+                    operation.input.targetObservedAt.toString(),
+                    canonicalMoney(operation.input.explanationAmount),
+                    operation.input.confirmedAt.toString(),
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsTargetAccount.toString(),
+                    operation.input.confirmsActualOccurredAt.toString(),
+                    operation.input.confirmsRealTransactionAmount.toString(),
+                    operation.input.confirmsCurrency.toString(),
+                    operation.input.confirmsTargetObservedAt.toString(),
+                    operation.input.confirmsAllocationDirection.toString(),
+                    operation.input.confirmsExplanationAmount.toString(),
+                    operation.input.actualOccurredAtText,
+                    operation.input.targetObservedAtText,
+                    operation.input.confirmedAtText,
+                    operation.input.discoveredAt?.toString(),
+                    operation.input.discoveredAtText,
+                    operation.ids.confirmationId.value,
+                    operation.ids.allocationId.value,
+                    operation.ids.reversalTransactionId.value,
+                    operation.ids.reversalVersionId.value,
+                    operation.ids.reversalPostingSetId.value,
+                    operation.ids.reversalTargetPostingId.value,
+                    operation.ids.reversalEquityPostingId.value,
+                    operation.ids.adjustmentAuditLinkId.value,
+                    operation.ids.explanationAuditLinkId.value,
+                    operation.ids.reversalAuditLinkId.value,
+                    operation.ids.historyId,
+                )
+            is Rg09Operation.LinkRealPostingEvidence ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.sourceId.value,
+                    operation.input.evidenceId.value,
+                    operation.input.targetPostingId.value,
+                    operation.input.accountId.value,
+                    canonicalMoney(operation.input.amount),
+                    operation.input.postingSide,
+                    operation.input.observedAt.toString(),
+                    operation.input.bookingAt.toString(),
+                    operation.input.observedAtText,
+                    operation.input.bookingAtText,
+                    operation.input.immutablePayloadDigest,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.ids.evidenceLinkId.value,
+                )
+            is Rg09Operation.InvalidInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.predicate.name,
+                    operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
+                        "$key=${value ?: "<null>"}"
+                    },
+                )
+        }
 
-    private fun canonicalMoney(money: Money): String =
-        "${money.minorUnits}:${canonicalCurrency(money.currency)}"
+    private fun canonicalMoney(money: Money): String = "${money.minorUnits}:${canonicalCurrency(money.currency)}"
 
-    private fun canonicalCurrency(currency: CurrencyUnit): String =
-        "${currency.code}:${currency.precision}"
+    private fun canonicalCurrency(currency: CurrencyUnit): String = "${currency.code}:${currency.precision}"
 
-    private fun canonicalFields(vararg values: String?): String = buildString {
-        values.forEach { value ->
-            if (value == null) {
-                append("N;")
-            } else {
-                append("V").append(value.length).append(':').append(value).append(';')
+    private fun canonicalFields(vararg values: String?): String =
+        buildString {
+            values.forEach { value ->
+                if (value == null) {
+                    append("N;")
+                } else {
+                    append("V")
+                        .append(value.length)
+                        .append(':')
+                        .append(value)
+                        .append(';')
+                }
             }
         }
-    }
 
     private fun catalogCompatible(formal: FormalTransaction): Boolean =
         formal.transaction.ledgerId == catalog.accounts.firstOrNull()?.ledgerId &&
@@ -1917,15 +2104,18 @@ class Rg09Runtime(
 
     private fun formalIdCollision(formal: FormalTransaction): Boolean {
         val transactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val versionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val postingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val postingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val versionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val postingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val postingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return formal.transaction.id in transactionIds ||
             formal.versions.any { it.id in versionIds } ||
             formal.postingSets.any { it.id in postingSetIds } ||
@@ -1934,25 +2124,32 @@ class Rg09Runtime(
 
     private fun accepted(ids: List<Rg09ReturnedId>) = Rg09ExecutionResult.Accepted(ids)
 
-    private fun rejected(reason: Rg09RejectionReason, fieldPath: Rg09FieldPath) =
-        Rg09ExecutionResult.Rejected(reason, fieldPath)
+    private fun rejected(
+        reason: Rg09RejectionReason,
+        fieldPath: Rg09FieldPath,
+    ) = Rg09ExecutionResult.Rejected(reason, fieldPath)
 }
 
-private fun absMinor(money: Money): Long? = when (money.minorUnits) {
-    Long.MIN_VALUE -> null
-    else -> kotlin.math.abs(money.minorUnits)
-}
+private fun absMinor(money: Money): Long? =
+    when (money.minorUnits) {
+        Long.MIN_VALUE -> null
+        else -> kotlin.math.abs(money.minorUnits)
+    }
 
-private fun formatMinor(minorUnits: Long, currency: CurrencyUnit): String {
+private fun formatMinor(
+    minorUnits: Long,
+    currency: CurrencyUnit,
+): String {
     val precision = currency.precision
     require(precision >= 0) { "RG-09 currency precision must not be negative" }
     if (precision == 0) return minorUnits.toString()
     val negative = minorUnits < 0L
-    val magnitude = if (minorUnits == Long.MIN_VALUE) {
-        "9223372036854775808"
-    } else {
-        kotlin.math.abs(minorUnits).toString()
-    }
+    val magnitude =
+        if (minorUnits == Long.MIN_VALUE) {
+            "9223372036854775808"
+        } else {
+            kotlin.math.abs(minorUnits).toString()
+        }
     val padded = magnitude.padStart(precision + 1, '0')
     val split = padded.length - precision
     return buildString {
@@ -1963,12 +2160,18 @@ private fun formatMinor(minorUnits: Long, currency: CurrencyUnit): String {
     }
 }
 
-private fun addExact(left: Long, right: Long): Long? {
+private fun addExact(
+    left: Long,
+    right: Long,
+): Long? {
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null
     return left + right
 }
 
-private fun subtractExact(left: Long, right: Long): Long? = addExact(left, negateExact(right) ?: return null)
+private fun subtractExact(
+    left: Long,
+    right: Long,
+): Long? = addExact(left, negateExact(right) ?: return null)
 
 private fun negateExact(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value

@@ -61,16 +61,17 @@ class ExecuteManualExpenseSave(
             return ManualExpenseSaveResult.InvalidInput(failures.toSet())
         }
 
-        val confirmed = ExplicitlyConfirmedManualExpense(
-            ledgerId = input.ledgerId,
-            requestId = input.requestId,
-            amount = checkNotNull(amount),
-            categoryId = checkNotNull(categoryId),
-            paymentAccountId = checkNotNull(paymentAccountId),
-            occurredAt = input.occurredAt,
-            note = input.note,
-            confirmation = input.confirmation,
-        )
+        val confirmed =
+            ExplicitlyConfirmedManualExpense(
+                ledgerId = input.ledgerId,
+                requestId = input.requestId,
+                amount = checkNotNull(amount),
+                categoryId = checkNotNull(categoryId),
+                paymentAccountId = checkNotNull(paymentAccountId),
+                occurredAt = input.occurredAt,
+                note = input.note,
+                confirmation = input.confirmation,
+            )
         return ManualExpenseSaveResult.Executed(executeConfirmed.execute(confirmed))
     }
 }

@@ -86,8 +86,9 @@ fun createLendingPosition(
         if ((expectedDirection && entry.amountMinor < 0L) || (!expectedDirection && entry.amountMinor > 0L)) {
             return DomainResult.Failure(LendingViolation.InvalidPositionHistoryDirection)
         }
-        val after = checkedAdd(running, entry.amountMinor)
-            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+        val after =
+            checkedAdd(running, entry.amountMinor)
+                ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
         if (after != entry.principalBalanceAfterMinor || after < 0L) {
             return DomainResult.Failure(LendingViolation.HistoryMustBeAppendOnly)
         }

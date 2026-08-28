@@ -41,7 +41,6 @@ import kotlin.time.Instant
  * [P408CorrectionCommitPort] transaction.
  */
 class P408CorrectionStoreTest {
-
     // ------------------------------------------------------------------ TP-01
 
     @Test
@@ -58,19 +57,20 @@ class P408CorrectionStoreTest {
 
             val before = financialSnapshot(driver)
             val correction = SqlDelightCorrectionStore(database, driver)
-            val accepted = assertIs<P408ReconciliationResult.Accepted>(
-                correction.correct(
-                    correctRequestForSuccessor(
-                        requestId = "correction-a",
-                        previousLinkId = "link-a",
-                        successorPostingId = "posting-a2",
-                        accountId = "account-bank-a",
-                        projectionId = "proj-evidence-a",
-                        successorLinkId = "link-b",
-                        reconciliationId = "reconciliation-posting-a2",
+            val accepted =
+                assertIs<P408ReconciliationResult.Accepted>(
+                    correction.correct(
+                        correctRequestForSuccessor(
+                            requestId = "correction-a",
+                            previousLinkId = "link-a",
+                            successorPostingId = "posting-a2",
+                            accountId = "account-bank-a",
+                            projectionId = "proj-evidence-a",
+                            successorLinkId = "link-b",
+                            reconciliationId = "reconciliation-posting-a2",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("link-b", accepted.receipt.linkId)
             assertEquals("reconciliation-posting-a2", accepted.receipt.reconciliationId)
             assertEquals(2L, accepted.receipt.historySequence)
@@ -127,17 +127,18 @@ class P408CorrectionStoreTest {
             seedReplacementVersion(driver, newOutAccountId = "account-bank-c")
 
             val correction = SqlDelightCorrectionStore(database, driver)
-            val reExpressResult = correction.correct(
-                correctRequestForSuccessor(
-                    requestId = "correction-reexpress",
-                    previousLinkId = "link-a",
-                    successorPostingId = "posting-a2",
-                    accountId = "account-bank-c",
-                    projectionId = "proj-evidence-a-2",
-                    successorLinkId = "link-b",
-                    reconciliationId = "reconciliation-posting-a2",
-                ),
-            )
+            val reExpressResult =
+                correction.correct(
+                    correctRequestForSuccessor(
+                        requestId = "correction-reexpress",
+                        previousLinkId = "link-a",
+                        successorPostingId = "posting-a2",
+                        accountId = "account-bank-c",
+                        projectionId = "proj-evidence-a-2",
+                        successorLinkId = "link-b",
+                        reconciliationId = "reconciliation-posting-a2",
+                    ),
+                )
             if (reExpressResult !is P408ReconciliationResult.Accepted) {
                 throw AssertionError("re-expression correction failed: $reExpressResult")
             }
@@ -147,9 +148,10 @@ class P408CorrectionStoreTest {
                 1L,
                 count(driver, "SELECT count(*) FROM evidence_projection WHERE projection_id='proj-evidence-a' AND superseded_by_projection_id='proj-evidence-a-2'"),
             )
-            val current = database.ledgerQueries
-                .selectP408EvidenceProjection("ledger-a", "evidence-a")
-                .executeAsOne()
+            val current =
+                database.ledgerQueries
+                    .selectP408EvidenceProjection("ledger-a", "evidence-a")
+                    .executeAsOne()
             assertEquals("proj-evidence-a-2", current.projection_id)
             assertEquals("account-bank-c", current.target_account_id)
             assertEquals("READY", current.state)
@@ -197,26 +199,28 @@ class P408CorrectionStoreTest {
             seedReplacementVersion(driver, newOutAccountId = "account-bank-a")
 
             val correction = SqlDelightCorrectionStore(database, driver)
-            val request = correctRequestForSuccessor(
-                requestId = "correction-replay",
-                previousLinkId = "link-a",
-                successorPostingId = "posting-a2",
-                accountId = "account-bank-a",
-                projectionId = "proj-evidence-a",
-                successorLinkId = "link-b",
-                reconciliationId = "reconciliation-posting-a2",
-            )
+            val request =
+                correctRequestForSuccessor(
+                    requestId = "correction-replay",
+                    previousLinkId = "link-a",
+                    successorPostingId = "posting-a2",
+                    accountId = "account-bank-a",
+                    projectionId = "proj-evidence-a",
+                    successorLinkId = "link-b",
+                    reconciliationId = "reconciliation-posting-a2",
+                )
             val accepted = assertIs<P408ReconciliationResult.Accepted>(correction.correct(request))
 
             val replay = assertIs<P408ReconciliationResult.NoChange>(correction.correct(request))
             assertEquals(accepted.receipt, replay.receipt)
 
             // Output-id retry: same content, different generated ids -> NoChange.
-            val outputIdsRetry = request.copy(
-                successorLinkId = "link-b-retry",
-                successorCreatedAt = "2026-08-10T16:00:00+08:00",
-                reconciliationId = "reconciliation-a2-retry",
-            )
+            val outputIdsRetry =
+                request.copy(
+                    successorLinkId = "link-b-retry",
+                    successorCreatedAt = "2026-08-10T16:00:00+08:00",
+                    reconciliationId = "reconciliation-a2-retry",
+                )
             val identityReplay = assertIs<P408ReconciliationResult.NoChange>(correction.correct(outputIdsRetry))
             assertEquals(accepted.receipt, identityReplay.receipt)
 
@@ -257,18 +261,19 @@ class P408CorrectionStoreTest {
                     ),
                 ),
             )
-            val changed = correctRequestForSuccessor(
-                requestId = "correction-conflict",
-                previousLinkId = "link-a",
-                successorPostingId = "posting-b2",
-                accountId = "account-platform-b",
-                direction = "in",
-                responsibility = P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                projectionId = "proj-evidence-a-2",
-                successorLinkId = "link-c",
-                reconciliationId = "reconciliation-posting-b2",
-                confirmedAt = "2026-08-10T15:00:00+08:00",
-            )
+            val changed =
+                correctRequestForSuccessor(
+                    requestId = "correction-conflict",
+                    previousLinkId = "link-a",
+                    successorPostingId = "posting-b2",
+                    accountId = "account-platform-b",
+                    direction = "in",
+                    responsibility = P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
+                    projectionId = "proj-evidence-a-2",
+                    successorLinkId = "link-c",
+                    reconciliationId = "reconciliation-posting-b2",
+                    confirmedAt = "2026-08-10T15:00:00+08:00",
+                )
             val rejected = assertIs<P408ReconciliationResult.Rejected>(correction.correct(changed))
             assertEquals("P408_CORRECTION_SNAPSHOT_MISMATCH", rejected.code)
             assertEquals(2L, count(driver, "SELECT count(*) FROM evidence_link"))
@@ -292,18 +297,19 @@ class P408CorrectionStoreTest {
             assertIs<P408ReconciliationResult.Accepted>(store.confirmLink(confirmRequest()))
 
             val correction = SqlDelightCorrectionStore(database, driver)
-            val accepted = assertIs<P408ReconciliationResult.Accepted>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "correction-missing",
-                        reason = P408CorrectionReason.CORRECTED,
-                        resultState = P408CorrectionResultState.MISSING,
-                        affectedPostingId = "posting-a",
-                        previousLinkId = "link-a",
-                        reconciliationId = "reconciliation-posting-a",
+            val accepted =
+                assertIs<P408ReconciliationResult.Accepted>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "correction-missing",
+                            reason = P408CorrectionReason.CORRECTED,
+                            resultState = P408CorrectionResultState.MISSING,
+                            affectedPostingId = "posting-a",
+                            previousLinkId = "link-a",
+                            reconciliationId = "reconciliation-posting-a",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(null, accepted.receipt.linkId)
             assertEquals(3L, accepted.receipt.historySequence)
 
@@ -378,44 +384,47 @@ class P408CorrectionStoreTest {
             val correction = SqlDelightCorrectionStore(database, driver)
 
             // (a) missing predecessor.
-            val ghost = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "correction-ghost",
-                        affectedPostingId = "posting-a",
-                        previousLinkId = "link-ghost",
-                        reconciliationId = "reconciliation-posting-a",
+            val ghost =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "correction-ghost",
+                            affectedPostingId = "posting-a",
+                            previousLinkId = "link-ghost",
+                            reconciliationId = "reconciliation-posting-a",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_INVALIDATE_LINK_NOT_ACTIVE", ghost.code)
 
             // (b) predecessor belongs to a different evidence.
-            val wrongEvidence = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "correction-wrong-evidence",
-                        evidenceId = "evidence-b",
-                        affectedPostingId = "posting-a",
-                        previousLinkId = "link-a",
-                        reconciliationId = "reconciliation-posting-a",
+            val wrongEvidence =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "correction-wrong-evidence",
+                            evidenceId = "evidence-b",
+                            affectedPostingId = "posting-a",
+                            previousLinkId = "link-a",
+                            reconciliationId = "reconciliation-posting-a",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_INVALIDATE_LINK_NOT_ACTIVE", wrongEvidence.code)
 
             // (c) affected posting not eligible (EXPENSE leg is not an
             // ACCOUNT_TRANSFER current posting).
-            val ineligible = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "correction-ineligible",
-                        affectedPostingId = "posting-expense",
-                        previousLinkId = "link-a",
-                        reconciliationId = "reconciliation-posting-expense",
+            val ineligible =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "correction-ineligible",
+                            affectedPostingId = "posting-expense",
+                            previousLinkId = "link-a",
+                            reconciliationId = "reconciliation-posting-expense",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_CORRECTION_AFFECTED_POSTING_MISMATCH", ineligible.code)
 
             // (d) successful invalidation, then a second invalidation of the same
@@ -430,16 +439,17 @@ class P408CorrectionStoreTest {
                     ),
                 ),
             )
-            val secondInvalidate = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "correction-second-invalidate",
-                        affectedPostingId = "posting-a",
-                        previousLinkId = "link-a",
-                        reconciliationId = "reconciliation-posting-a",
+            val secondInvalidate =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "correction-second-invalidate",
+                            affectedPostingId = "posting-a",
+                            previousLinkId = "link-a",
+                            reconciliationId = "reconciliation-posting-a",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_INVALIDATE_LINK_NOT_ACTIVE", secondInvalidate.code)
 
             // (e) half-seeded source returns the confirm-family UNRESOLVED outcome on
@@ -471,19 +481,20 @@ class P408CorrectionStoreTest {
                 "INSERT INTO evidence_link_history VALUES ('ledger-a','link-half',1,'active','confirmed','request-half-link','2026-08-10T13:00:00+08:00')",
                 0,
             )
-            val halfSeeded = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForSuccessor(
-                        requestId = "correction-half-seeded",
-                        previousLinkId = "link-half",
-                        successorPostingId = "posting-a",
-                        accountId = "account-bank-a",
-                        projectionId = "proj-evidence-a",
-                        successorLinkId = "link-half-succ",
-                        reconciliationId = "reconciliation-posting-a",
-                    ).copy(evidenceId = "evidence-half"),
-                ),
-            )
+            val halfSeeded =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForSuccessor(
+                            requestId = "correction-half-seeded",
+                            previousLinkId = "link-half",
+                            successorPostingId = "posting-a",
+                            accountId = "account-bank-a",
+                            projectionId = "proj-evidence-a",
+                            successorLinkId = "link-half-succ",
+                            reconciliationId = "reconciliation-posting-a",
+                        ).copy(evidenceId = "evidence-half"),
+                    ),
+                )
             assertEquals("P408_SOURCE_FACT_UNRESOLVED", halfSeeded.code)
 
             // Only the successful invalidation left its own rows; the confirm claim and the
@@ -499,7 +510,7 @@ class P408CorrectionStoreTest {
 
     // ------------------------------------------------------------------ TP-08
 
-@Test
+    @Test
     fun tp08InjectedFailuresRollBackEveryCorrectionOwnerAndRetryAccepts() {
         // Stage A - CORRECTION_AFTER_INVALIDATION: the successor-link insert is the
         // first write after the invalidation event. A pre-occupied link id makes that
@@ -512,19 +523,20 @@ class P408CorrectionStoreTest {
                     "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) VALUES ('ledger-a','link-b','evidence-a','posting-a2','tx-a','real_account_posting',2,'amount,currency,direction,account,occurred_at_window','candidate-collision','request-a','2026-08-10T13:00:00+08:00')",
                     0,
                 )
-                val stageA = assertIs<P408ReconciliationResult.Rejected>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-inject-link-collision",
-                            previousLinkId = "link-a",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-a",
-                            projectionId = "proj-evidence-a",
-                            successorLinkId = "link-b",
-                            reconciliationId = "reconciliation-posting-a2",
+                val stageA =
+                    assertIs<P408ReconciliationResult.Rejected>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-inject-link-collision",
+                                previousLinkId = "link-a",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-a",
+                                projectionId = "proj-evidence-a",
+                                successorLinkId = "link-b",
+                                reconciliationId = "reconciliation-posting-a2",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("P408_RECONCILIATION_CONSTRAINT_VIOLATION", stageA.code)
                 assertEquals(1L, count(scenario.driver, "SELECT count(*) FROM reconciliation_request"))
                 assertEquals(1L, count(scenario.driver, "SELECT count(*) FROM evidence_link_history WHERE link_id='link-a'"))
@@ -538,19 +550,20 @@ class P408CorrectionStoreTest {
         // triggers forbid in-place cleanup, so "corrected" = obstacle absent).
         newCorrectionScenario().let { scenario ->
             try {
-                val retryA = assertIs<P408ReconciliationResult.Accepted>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-inject-retry-a",
-                            previousLinkId = "link-a",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-a",
-                            projectionId = "proj-evidence-a",
-                            successorLinkId = "link-b-retry",
-                            reconciliationId = "reconciliation-posting-a2",
+                val retryA =
+                    assertIs<P408ReconciliationResult.Accepted>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-inject-retry-a",
+                                previousLinkId = "link-a",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-a",
+                                projectionId = "proj-evidence-a",
+                                successorLinkId = "link-b-retry",
+                                reconciliationId = "reconciliation-posting-a2",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("link-b-retry", retryA.receipt.linkId)
             } finally {
                 scenario.driver.close()
@@ -580,20 +593,21 @@ class P408CorrectionStoreTest {
                     "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) VALUES ('ledger-a','reconciliation-posting-a2',3,'CHECKED','link-b','request-a','2026-08-10T14:30:00+08:00')",
                     0,
                 )
-                val stageB = assertIs<P408ReconciliationResult.Rejected>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-inject-history-collision",
-                            previousLinkId = "link-b",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-a",
-                            projectionId = "proj-evidence-a",
-                            successorLinkId = "link-c",
-                            reconciliationId = "reconciliation-posting-a2",
-                            confirmedAt = "2026-08-10T15:00:00+08:00",
+                val stageB =
+                    assertIs<P408ReconciliationResult.Rejected>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-inject-history-collision",
+                                previousLinkId = "link-b",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-a",
+                                projectionId = "proj-evidence-a",
+                                successorLinkId = "link-c",
+                                reconciliationId = "reconciliation-posting-a2",
+                                confirmedAt = "2026-08-10T15:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("P408_RECONCILIATION_CONSTRAINT_VIOLATION", stageB.code)
                 assertEquals(0L, count(scenario.driver, "SELECT count(*) FROM evidence_link WHERE link_id='link-c'"))
                 assertEquals(1L, count(scenario.driver, "SELECT count(*) FROM reconciliation_correction_snapshot"))
@@ -621,20 +635,21 @@ class P408CorrectionStoreTest {
                         ),
                     ),
                 )
-                val retryB = assertIs<P408ReconciliationResult.Accepted>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-b-retry",
-                            previousLinkId = "link-b",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-a",
-                            projectionId = "proj-evidence-a",
-                            successorLinkId = "link-c",
-                            reconciliationId = "reconciliation-posting-a2",
-                            confirmedAt = "2026-08-10T15:00:00+08:00",
+                val retryB =
+                    assertIs<P408ReconciliationResult.Accepted>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-b-retry",
+                                previousLinkId = "link-b",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-a",
+                                projectionId = "proj-evidence-a",
+                                successorLinkId = "link-c",
+                                reconciliationId = "reconciliation-posting-a2",
+                                confirmedAt = "2026-08-10T15:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("link-c", retryB.receipt.linkId)
             } finally {
                 scenario.driver.close()
@@ -657,20 +672,21 @@ class P408CorrectionStoreTest {
                     "INSERT INTO evidence_projection(ledger_id, projection_id, evidence_id, source_id, source_hash, target_account_id, currency_code, currency_precision, raw_amount_minor, raw_currency_precision, normalized_amount_minor, direction_token, state, rejection_code, rule_id, rule_version, materialization_request_id, materialized_at) VALUES ('ledger-a','proj-evidence-a-2','evidence-b','source-b','hash-b','account-platform-b','CNY',2,1000,2,1000,'in','READY',NULL,'p408_evidence_projection_v1',1,'request-free-holder','2026-08-10T15:00:00+08:00')",
                     0,
                 )
-                val stageC = assertIs<P408ReconciliationResult.Rejected>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-inject-projection-collision",
-                            previousLinkId = "link-a",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-c",
-                            projectionId = "proj-evidence-a-2",
-                            successorLinkId = "link-b",
-                            reconciliationId = "reconciliation-posting-a2",
-                            confirmedAt = "2026-08-10T16:00:00+08:00",
+                val stageC =
+                    assertIs<P408ReconciliationResult.Rejected>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-inject-projection-collision",
+                                previousLinkId = "link-a",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-c",
+                                projectionId = "proj-evidence-a-2",
+                                successorLinkId = "link-b",
+                                reconciliationId = "reconciliation-posting-a2",
+                                confirmedAt = "2026-08-10T16:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("P408_CORRECTION_PROJECTION_CONFLICT", stageC.code)
                 assertEquals(
                     1L,
@@ -689,20 +705,21 @@ class P408CorrectionStoreTest {
                     "UPDATE posting SET account_id='account-bank-c' WHERE ledger_id='ledger-a' AND posting_id='posting-a2'",
                     0,
                 )
-                val retryC = assertIs<P408ReconciliationResult.Accepted>(
-                    scenario.correction.correct(
-                        correctRequestForSuccessor(
-                            requestId = "correction-c-retry",
-                            previousLinkId = "link-a",
-                            successorPostingId = "posting-a2",
-                            accountId = "account-bank-c",
-                            projectionId = "proj-evidence-a-2",
-                            successorLinkId = "link-b",
-                            reconciliationId = "reconciliation-posting-a2",
-                            confirmedAt = "2026-08-10T16:00:00+08:00",
+                val retryC =
+                    assertIs<P408ReconciliationResult.Accepted>(
+                        scenario.correction.correct(
+                            correctRequestForSuccessor(
+                                requestId = "correction-c-retry",
+                                previousLinkId = "link-a",
+                                successorPostingId = "posting-a2",
+                                accountId = "account-bank-c",
+                                projectionId = "proj-evidence-a-2",
+                                successorLinkId = "link-b",
+                                reconciliationId = "reconciliation-posting-a2",
+                                confirmedAt = "2026-08-10T16:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals("link-b", retryC.receipt.linkId)
                 assertEquals(2L, count(scenario.driver, "SELECT count(*) FROM evidence_projection"))
                 assertEquals(
@@ -966,15 +983,16 @@ class P408CorrectionStoreTest {
 
             // Supplementary material arrives: a fresh explicit confirmation re-proves
             // the same evidence against the same posting (no active link remains).
-            val reConfirmed = assertIs<P408ReconciliationResult.Accepted>(
-                store.confirmLink(
-                    confirmRequest(
-                        requestId = "request-reconfirm",
-                        linkId = "link-d",
-                        createdAt = "2026-08-12T13:00:00+08:00",
+            val reConfirmed =
+                assertIs<P408ReconciliationResult.Accepted>(
+                    store.confirmLink(
+                        confirmRequest(
+                            requestId = "request-reconfirm",
+                            linkId = "link-d",
+                            createdAt = "2026-08-12T13:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(4L, reConfirmed.receipt.historySequence)
             assertEquals(
                 listOf(1L to "PENDING", 2L to "CHECKED", 3L to "MISSING", 4L to "CHECKED"),
@@ -998,46 +1016,49 @@ class P408CorrectionStoreTest {
 
             // Standalone explicit materialization with an unmatchable target: the
             // source currency is CNY and the requested target USD -> REJECTED row.
-            val rejected = assertIs<P408MaterializeResult.Rejected>(
-                projections.materialize(
-                    P408MaterializationRequest(
-                        ledgerId = "ledger-a",
-                        requestId = "request-rejected-projection",
-                        evidenceId = "evidence-a",
-                        targetAccountId = "account-bank-a",
-                        targetCurrencyCode = "USD",
-                        targetCurrencyPrecision = 2,
-                        materializedAt = "2026-08-10T11:00:00+08:00",
+            val rejected =
+                assertIs<P408MaterializeResult.Rejected>(
+                    projections.materialize(
+                        P408MaterializationRequest(
+                            ledgerId = "ledger-a",
+                            requestId = "request-rejected-projection",
+                            evidenceId = "evidence-a",
+                            targetAccountId = "account-bank-a",
+                            targetCurrencyCode = "USD",
+                            targetCurrencyPrecision = 2,
+                            materializedAt = "2026-08-10T11:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_PROJECTION_CURRENCY_MISMATCH", rejected.code)
 
             // Re-expression through the correction authority: same raw facts with the
             // correct CNY target -> the REJECTED row is frozen superseded and a READY
             // current row takes over (spec §8 V-E-A / TP-13).
-            val ready = assertIs<EnsureReadyResult.Ready>(
-                projections.ensureCurrentForCorrection(
-                    P408MaterializationRequest(
-                        ledgerId = "ledger-a",
-                        requestId = "request-reexpress",
-                        evidenceId = "evidence-a",
-                        targetAccountId = "account-bank-a",
-                        targetCurrencyCode = "CNY",
-                        targetCurrencyPrecision = 2,
-                        materializedAt = "2026-08-10T11:30:00+08:00",
+            val ready =
+                assertIs<EnsureReadyResult.Ready>(
+                    projections.ensureCurrentForCorrection(
+                        P408MaterializationRequest(
+                            ledgerId = "ledger-a",
+                            requestId = "request-reexpress",
+                            evidenceId = "evidence-a",
+                            targetAccountId = "account-bank-a",
+                            targetCurrencyCode = "CNY",
+                            targetCurrencyPrecision = 2,
+                            materializedAt = "2026-08-10T11:30:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("proj-evidence-a-2", ready.projection.projectionId)
             assertEquals("READY", ready.projection.state.storageValue)
             assertEquals(
                 1L,
                 count(driver, "SELECT count(*) FROM evidence_projection WHERE projection_id='proj-evidence-a' AND state='REJECTED' AND superseded_by_projection_id='proj-evidence-a-2'"),
             )
-            val current = database.ledgerQueries
-                .selectP408EvidenceProjection("ledger-a", "evidence-a")
-                .executeAsOne()
+            val current =
+                database.ledgerQueries
+                    .selectP408EvidenceProjection("ledger-a", "evidence-a")
+                    .executeAsOne()
             assertEquals("READY", current.state)
             assertEquals("proj-evidence-a-2", current.projection_id)
         } finally {
@@ -1060,16 +1081,17 @@ class P408CorrectionStoreTest {
             // A correction request id that already belongs to a CONFIRM claim is a
             // changed retry inside the correction family -> typed, zero writes.
             val correction = SqlDelightCorrectionStore(database, driver)
-            val replayAsCorrection = assertIs<P408ReconciliationResult.Rejected>(
-                correction.correct(
-                    correctRequestForInvalidationOnly(
-                        requestId = "request-a",
-                        affectedPostingId = "posting-a",
-                        previousLinkId = "link-a",
-                        reconciliationId = "reconciliation-posting-a",
+            val replayAsCorrection =
+                assertIs<P408ReconciliationResult.Rejected>(
+                    correction.correct(
+                        correctRequestForInvalidationOnly(
+                            requestId = "request-a",
+                            affectedPostingId = "posting-a",
+                            previousLinkId = "link-a",
+                            reconciliationId = "reconciliation-posting-a",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("P408_CORRECTION_SNAPSHOT_MISMATCH", replayAsCorrection.code)
             // The confirm claim and its rows are untouched.
             assertEquals(1L, count(driver, "SELECT count(*) FROM reconciliation_request"))
@@ -1238,42 +1260,50 @@ class P408CorrectionStoreTest {
         val correction: SqlDelightCorrectionStore,
     )
 
-    private fun seedBase(driver: JdbcSqliteDriver, includeSecondPosting: Boolean = true) {
-        val statements = buildList {
-            add("INSERT INTO import_request VALUES ('ledger-a','import-a','intake')")
-            add("INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
-            add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')")
-            if (includeSecondPosting) {
-                add("INSERT INTO import_request VALUES ('ledger-a','import-b','intake')")
-                add("INSERT INTO import_source_record VALUES ('ledger-a','source-b','import-b','batch-b',0,'ordinary_flow_source','hash-b',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','in','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
-                add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-b','source-b','source_observation','2026-08-10T12:00:01+08:00')")
+    private fun seedBase(
+        driver: JdbcSqliteDriver,
+        includeSecondPosting: Boolean = true,
+    ) {
+        val statements =
+            buildList {
+                add("INSERT INTO import_request VALUES ('ledger-a','import-a','intake')")
+                add("INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
+                add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')")
+                if (includeSecondPosting) {
+                    add("INSERT INTO import_request VALUES ('ledger-a','import-b','intake')")
+                    add("INSERT INTO import_source_record VALUES ('ledger-a','source-b','import-b','batch-b',0,'ordinary_flow_source','hash-b',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','in','settled','SETTLED','legacy-settled-v1',1,'2026-08-10T12:00:00+08:00')")
+                    add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-b','source-b','source_observation','2026-08-10T12:00:01+08:00')")
+                }
+                add("INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)")
+                add("INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')")
+                add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
+                add("INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')")
+                add("INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)")
+                if (includeSecondPosting) {
+                    add("INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)")
+                }
+                add("INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-expense','ledger-a','EXPENSE',NULL)")
+                add("INSERT INTO posting_set VALUES ('posting-set-expense','ledger-a')")
+                add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-expense','tx-expense','ledger-a',1,'posting-set-expense','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
+                add("INSERT INTO ledger_transaction_current_version VALUES ('tx-expense','ledger-a','version-expense')")
+                add("INSERT INTO posting VALUES ('posting-expense','posting-set-expense','ledger-a',0,'expense-account',1000,'CNY',2)")
             }
-            add("INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-a','ledger-a','ACCOUNT_TRANSFER',NULL)")
-            add("INSERT INTO posting_set VALUES ('posting-set-a','ledger-a')")
-            add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a','tx-a','ledger-a',1,'posting-set-a','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
-            add("INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')")
-            add("INSERT INTO posting VALUES ('posting-a','posting-set-a','ledger-a',0,'account-bank-a',-1000,'CNY',2)")
-            if (includeSecondPosting) {
-                add("INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)")
-            }
-            add("INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-expense','ledger-a','EXPENSE',NULL)")
-            add("INSERT INTO posting_set VALUES ('posting-set-expense','ledger-a')")
-            add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-expense','tx-expense','ledger-a',1,'posting-set-expense','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
-            add("INSERT INTO ledger_transaction_current_version VALUES ('tx-expense','ledger-a','version-expense')")
-            add("INSERT INTO posting VALUES ('posting-expense','posting-set-expense','ledger-a',0,'expense-account',1000,'CNY',2)")
-        }
         statements.forEach { driver.execute(null, it, 0) }
     }
 
     /** Version 2 of tx-a: the corrected posting pair (amount/account may differ). */
-    private fun seedReplacementVersion(driver: JdbcSqliteDriver, newOutAccountId: String) {
-        val statements = listOf(
-            "INSERT INTO posting_set VALUES ('posting-set-a2','ledger-a')",
-            "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a2','tx-a','ledger-a',2,'posting-set-a2','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
-            "INSERT INTO posting VALUES ('posting-a2','posting-set-a2','ledger-a',0,'$newOutAccountId',-1000,'CNY',2)",
-            "INSERT INTO posting VALUES ('posting-b2','posting-set-a2','ledger-a',1,'account-platform-b',1000,'CNY',2)",
-            "UPDATE ledger_transaction_current_version SET current_version_id='version-a2' WHERE ledger_id='ledger-a' AND transaction_id='tx-a'",
-        )
+    private fun seedReplacementVersion(
+        driver: JdbcSqliteDriver,
+        newOutAccountId: String,
+    ) {
+        val statements =
+            listOf(
+                "INSERT INTO posting_set VALUES ('posting-set-a2','ledger-a')",
+                "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-a2','tx-a','ledger-a',2,'posting-set-a2','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                "INSERT INTO posting VALUES ('posting-a2','posting-set-a2','ledger-a',0,'$newOutAccountId',-1000,'CNY',2)",
+                "INSERT INTO posting VALUES ('posting-b2','posting-set-a2','ledger-a',1,'account-platform-b',1000,'CNY',2)",
+                "UPDATE ledger_transaction_current_version SET current_version_id='version-a2' WHERE ledger_id='ledger-a' AND transaction_id='tx-a'",
+            )
         statements.forEach { driver.execute(null, it, 0) }
     }
 
@@ -1330,21 +1360,22 @@ class P408CorrectionStoreTest {
         reason = P408CorrectionReason.POSTING_REPLACED,
         affectedPostingId = successorPostingId,
         resultState = P408CorrectionResultState.CHECKED,
-        successor = P408SuccessorLinkFacts(
-            postingId = successorPostingId,
-            transactionId = "tx-a",
-            amountMinor = 1000,
-            currencyCode = "CNY",
-            currencyPrecision = 2,
-            direction = direction,
-            accountId = accountId,
-            responsibility = responsibility,
-            candidateId = "candidate-transient-a2",
-            matchBasis = MATCH_BASIS,
-            windowDays = 2,
-            naturalDayDistance = 0,
-            sourceOccurredAt = "2026-08-10T12:00:00+08:00",
-        ),
+        successor =
+            P408SuccessorLinkFacts(
+                postingId = successorPostingId,
+                transactionId = "tx-a",
+                amountMinor = 1000,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                direction = direction,
+                accountId = accountId,
+                responsibility = responsibility,
+                candidateId = "candidate-transient-a2",
+                matchBasis = MATCH_BASIS,
+                windowDays = 2,
+                naturalDayDistance = 0,
+                sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+            ),
         projectionId = projectionId,
         projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
         projectionRuleVersion = 1,
@@ -1377,118 +1408,147 @@ class P408CorrectionStoreTest {
         reconciliationId = reconciliationId,
     )
 
-    private fun linkHistory(driver: JdbcSqliteDriver, linkId: String): List<Triple<String, String, Long>> =
+    private fun linkHistory(
+        driver: JdbcSqliteDriver,
+        linkId: String,
+    ): List<Triple<String, String, Long>> =
         selectRows(
             driver,
             "SELECT state, reason, sequence FROM evidence_link_history WHERE ledger_id='ledger-a' AND link_id='$linkId' ORDER BY sequence",
             longColumns = listOf(false, false, true),
         ).map { Triple(it[0] as String, it[1] as String, it[2] as Long) }
 
-    private fun activeLinksForEvidence(driver: JdbcSqliteDriver, evidenceId: String): List<String> =
+    private fun activeLinksForEvidence(
+        driver: JdbcSqliteDriver,
+        evidenceId: String,
+    ): List<String> =
         selectRows(
             driver,
             "SELECT link.link_id FROM evidence_link link JOIN evidence_link_history history ON history.ledger_id=link.ledger_id AND history.link_id=link.link_id WHERE link.ledger_id='ledger-a' AND link.evidence_id='$evidenceId' AND history.sequence=(SELECT max(h2.sequence) FROM evidence_link_history h2 WHERE h2.ledger_id=link.ledger_id AND h2.link_id=link.link_id) AND history.state='active' ORDER BY link.link_id",
             longColumns = listOf(false),
         ).map { it[0] as String }
 
-    private fun activeLinksForPostingResponsibility(driver: JdbcSqliteDriver, postingId: String): List<String> =
+    private fun activeLinksForPostingResponsibility(
+        driver: JdbcSqliteDriver,
+        postingId: String,
+    ): List<String> =
         selectRows(
             driver,
             "SELECT link.link_id FROM evidence_link link JOIN evidence_link_history history ON history.ledger_id=link.ledger_id AND history.link_id=link.link_id WHERE link.ledger_id='ledger-a' AND link.posting_id='$postingId' AND history.sequence=(SELECT max(h2.sequence) FROM evidence_link_history h2 WHERE h2.ledger_id=link.ledger_id AND h2.link_id=link.link_id) AND history.state='active' ORDER BY link.link_id",
             longColumns = listOf(false),
         ).map { it[0] as String }
 
-    private fun reconciliationStatus(driver: JdbcSqliteDriver, postingId: String): String? =
+    private fun reconciliationStatus(
+        driver: JdbcSqliteDriver,
+        postingId: String,
+    ): String? =
         selectRows(
             driver,
             "SELECT status FROM posting_reconciliation WHERE ledger_id='ledger-a' AND posting_id='$postingId'",
             longColumns = listOf(false),
         ).firstOrNull()?.get(0) as String?
 
-    private fun reconciliationHistory(driver: JdbcSqliteDriver, reconciliationId: String): List<Pair<Long, String>> =
+    private fun reconciliationHistory(
+        driver: JdbcSqliteDriver,
+        reconciliationId: String,
+    ): List<Pair<Long, String>> =
         selectRows(
             driver,
             "SELECT sequence, status FROM posting_reconciliation_history WHERE ledger_id='ledger-a' AND reconciliation_id='$reconciliationId' ORDER BY sequence",
             longColumns = listOf(true, false),
         ).map { it[0] as Long to it[1] as String }
 
-    private fun temporalEvidence(): P408TemporalEvidence = P408TemporalEvidence(
-        rawText = "2026-08-10T12:00:00+08:00",
-        kind = "offset_datetime",
-        offsetPresent = true,
-        components = P408TemporalComponents(2026, 8, 10, 12, 0, 0),
-        instant = Instant.parse("2026-08-10T04:00:00Z"),
-    )
+    private fun temporalEvidence(): P408TemporalEvidence =
+        P408TemporalEvidence(
+            rawText = "2026-08-10T12:00:00+08:00",
+            kind = "offset_datetime",
+            offsetPresent = true,
+            components = P408TemporalComponents(2026, 8, 10, 12, 0, 0),
+            instant = Instant.parse("2026-08-10T04:00:00Z"),
+        )
 
     /** Matcher input assembled from the READY projection authority (TP-16). */
-    private fun evidenceFactsForMatcher(): P408EvidenceFacts = P408EvidenceFacts(
-        ledgerId = "ledger-a",
-        evidenceId = "evidence-a",
-        raw = P408RawEvidenceFacts(
-            sourceId = "source-a",
-            contentHash = "hash-a",
-            amountMinor = 1000,
+    private fun evidenceFactsForMatcher(): P408EvidenceFacts =
+        P408EvidenceFacts(
+            ledgerId = "ledger-a",
+            evidenceId = "evidence-a",
+            raw =
+                P408RawEvidenceFacts(
+                    sourceId = "source-a",
+                    contentHash = "hash-a",
+                    amountMinor = 1000,
+                    currencyCode = "CNY",
+                    currencyPrecision = 2,
+                    directionToken = "out",
+                ),
+            normalized =
+                P408NormalizedProjectionFacts(
+                    projectionId = "proj-evidence-a",
+                    targetAccountId = "account-bank-a",
+                    currencyCode = "CNY",
+                    currencyPrecision = 2,
+                    normalizedAmountMinor = 1000,
+                    directionToken = "out",
+                    ruleId = P408EvidenceProjectionPort.RULE_ID,
+                    ruleVersion = 1,
+                ),
+            occurredAt = temporalEvidence(),
+        )
+
+    private fun postingFactsForMatcher(
+        postingId: String,
+        accountId: String,
+    ): P408PostingFacts =
+        P408PostingFacts(
+            ledgerId = "ledger-a",
+            postingId = postingId,
+            transactionId = "tx-a",
+            transactionLedgerId = "ledger-a",
+            amountMinor = -1000,
             currencyCode = "CNY",
             currencyPrecision = 2,
-            directionToken = "out",
-        ),
-        normalized = P408NormalizedProjectionFacts(
-            projectionId = "proj-evidence-a",
-            targetAccountId = "account-bank-a",
-            currencyCode = "CNY",
-            currencyPrecision = 2,
-            normalizedAmountMinor = 1000,
-            directionToken = "out",
-            ruleId = P408EvidenceProjectionPort.RULE_ID,
-            ruleVersion = 1,
-        ),
-        occurredAt = temporalEvidence(),
-    )
+            direction = "out",
+            accountId = accountId,
+            occurredAt = temporalEvidence(),
+            eligibleRealAccount = true,
+            current = true,
+        )
 
-    private fun postingFactsForMatcher(postingId: String, accountId: String): P408PostingFacts = P408PostingFacts(
-        ledgerId = "ledger-a",
-        postingId = postingId,
-        transactionId = "tx-a",
-        transactionLedgerId = "ledger-a",
-        amountMinor = -1000,
-        currencyCode = "CNY",
-        currencyPrecision = 2,
-        direction = "out",
-        accountId = accountId,
-        occurredAt = temporalEvidence(),
-        eligibleRealAccount = true,
-        current = true,
-    )
-
-    private fun sqliteProps(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun sqliteProps(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
     private fun financialSnapshot(driver: JdbcSqliteDriver): FinancialSnapshot {
-        val rows = selectRows(
-            driver,
-            "SELECT transaction_id, ledger_id, kind FROM ledger_transaction ORDER BY transaction_id",
-            longColumns = listOf(false, false, false),
-        ) + selectRows(
-            driver,
-            "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id FROM transaction_version ORDER BY version_id",
-            longColumns = listOf(false, false, false, true, false),
-        ) + selectRows(
-            driver,
-            "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting ORDER BY posting_id",
-            longColumns = listOf(false, false, false, true, false, true, false, true),
-        )
-        val versions = selectRows(
-            driver,
-            "SELECT transaction_id, version_number FROM transaction_version ORDER BY transaction_id, version_number",
-            longColumns = listOf(false, true),
-        )
-        val balances = selectRows(
-            driver,
-            "SELECT p.account_id, SUM(p.amount_minor) AS balance FROM posting p JOIN transaction_version v ON v.ledger_id=p.ledger_id AND v.posting_set_id=p.posting_set_id JOIN ledger_transaction_current_version cv ON cv.ledger_id=v.ledger_id AND cv.transaction_id=v.transaction_id AND cv.current_version_id=v.version_id GROUP BY p.account_id ORDER BY p.account_id",
-            longColumns = listOf(false, true),
-        ).associate { it[0] as String to it[1] as Long }
+        val rows =
+            selectRows(
+                driver,
+                "SELECT transaction_id, ledger_id, kind FROM ledger_transaction ORDER BY transaction_id",
+                longColumns = listOf(false, false, false),
+            ) +
+                selectRows(
+                    driver,
+                    "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id FROM transaction_version ORDER BY version_id",
+                    longColumns = listOf(false, false, false, true, false),
+                ) +
+                selectRows(
+                    driver,
+                    "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting ORDER BY posting_id",
+                    longColumns = listOf(false, false, false, true, false, true, false, true),
+                )
+        val versions =
+            selectRows(
+                driver,
+                "SELECT transaction_id, version_number FROM transaction_version ORDER BY transaction_id, version_number",
+                longColumns = listOf(false, true),
+            )
+        val balances =
+            selectRows(
+                driver,
+                "SELECT p.account_id, SUM(p.amount_minor) AS balance FROM posting p JOIN transaction_version v ON v.ledger_id=p.ledger_id AND v.posting_set_id=p.posting_set_id JOIN ledger_transaction_current_version cv ON cv.ledger_id=v.ledger_id AND cv.transaction_id=v.transaction_id AND cv.current_version_id=v.version_id GROUP BY p.account_id ORDER BY p.account_id",
+                longColumns = listOf(false, true),
+            ).associate { it[0] as String to it[1] as Long }
         return FinancialSnapshot(rows, versions, balances)
     }
 
@@ -1504,30 +1564,40 @@ class P408CorrectionStoreTest {
         driver: JdbcSqliteDriver,
         sql: String,
         longColumns: List<Boolean>,
-    ): List<List<Any?>> = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
-                }
-            }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
 
-    private fun count(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!)
-        },
-        0,
-    ).value
+    private fun count(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getLong(0)!!)
+                },
+                0,
+            ).value
 
     private companion object {
         val MATCH_BASIS = setOf("amount", "currency", "direction", "account", "occurred_at_window")

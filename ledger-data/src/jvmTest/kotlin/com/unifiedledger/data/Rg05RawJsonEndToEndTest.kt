@@ -1,18 +1,46 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.*
+import com.unifiedledger.application.ExecuteRg05Operation
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.Rg05AdaptResult
+import com.unifiedledger.application.Rg05ExecutionError
+import com.unifiedledger.application.Rg05ExecutionResult
+import com.unifiedledger.application.Rg05Field
+import com.unifiedledger.application.Rg05ItemInput
+import com.unifiedledger.application.Rg05ManualInput
+import com.unifiedledger.application.Rg05PreparedIds
+import com.unifiedledger.application.Rg05PreparedOperation
+import com.unifiedledger.application.Rg05RawJsonCase
+import com.unifiedledger.application.Rg05RawJsonDecodeResult
+import com.unifiedledger.application.adaptRg05Manual
+import com.unifiedledger.application.decodeRg05RawJson
+import com.unifiedledger.application.rg05AllocationFailureRequestId
+import com.unifiedledger.application.rg05InvalidManualRequestId
 import com.unifiedledger.data.db.LedgerDatabase
-import com.unifiedledger.domain.*
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.test.*
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.MergedPaymentExpenseIds
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVersionId
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.fail
 
 class Rg05RawJsonEndToEndTest {
     @Test
@@ -60,17 +88,19 @@ class Rg05RawJsonEndToEndTest {
         val raw = Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))
         assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(raw))
 
-        val movedFundingPosting = raw.replaceFirst(
-            "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"asset-bank-a\"",
-            "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"expense-account-daily\"",
-        )
+        val movedFundingPosting =
+            raw.replaceFirst(
+                "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"asset-bank-a\"",
+                "\"id\": \"posting-asset-rg05-manual\", \"account_id\": \"expense-account-daily\"",
+            )
         assertNotEquals(raw, movedFundingPosting)
         assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(movedFundingPosting))
 
-        val crossedConsumption = raw.replaceFirst(
-            "\"expense_posting_id\": \"posting-expense-a-rg05-manual\"",
-            "\"expense_posting_id\": \"posting-expense-b-rg05-manual\"",
-        )
+        val crossedConsumption =
+            raw.replaceFirst(
+                "\"expense_posting_id\": \"posting-expense-a-rg05-manual\"",
+                "\"expense_posting_id\": \"posting-expense-b-rg05-manual\"",
+            )
         assertNotEquals(raw, crossedConsumption)
         assertIs<Rg05RawJsonDecodeResult.Invalid>(decodeRg05RawJson(crossedConsumption))
     }
@@ -85,14 +115,20 @@ class Rg05RawJsonEndToEndTest {
         val case = rg05DecodedCase()
         val bankSourceId = assertIs<Rg05PreparedOperation.Ingest>(case.importOperations[0]).snapshot.bankFact.sourceId
         val fixture = rg05FixtureRoot()
-        val derived = fixture["invalid_manual_inputs"]!!.jsonArray.map { rg05InvalidManualRequestId(it.jsonObject.text("id")) } +
-            fixture["allocation_failures"]!!.jsonArray.map { rg05AllocationFailureRequestId(bankSourceId, it.jsonObject.text("id")) }
+        val derived =
+            fixture["invalid_manual_inputs"]!!.jsonArray.map { rg05InvalidManualRequestId(it.jsonObject.text("id")) } +
+                fixture["allocation_failures"]!!.jsonArray.map { rg05AllocationFailureRequestId(bankSourceId, it.jsonObject.text("id")) }
         assertEquals(17, derived.size)
 
         val root = Json.parseToJsonElement(Files.readString(rg05RepositoryFile("docs/migrations/golden-v2/rg-05-expected.json"))).jsonObject
-        val frozen = root["operations"]!!.jsonArray.mapNotNull {
-            it.jsonObject["attempted_input"]?.jsonObject?.get("request_id")?.jsonPrimitive?.content
-        }
+        val frozen =
+            root["operations"]!!.jsonArray.mapNotNull {
+                it.jsonObject["attempted_input"]
+                    ?.jsonObject
+                    ?.get("request_id")
+                    ?.jsonPrimitive
+                    ?.content
+            }
         assertEquals(frozen.toSet(), derived.toSet())
     }
 
@@ -109,10 +145,11 @@ class Rg05RawJsonEndToEndTest {
         mapOf(
             "unknown account kind" to Pair("\"kind\": \"asset\"", "\"kind\": \"assets\""),
             "unknown category kind" to Pair("\"kind\": \"expense\"", "\"kind\": \"expenses\""),
-            "evidence link naming no allocation" to Pair(
-                "\"item_allocation_id\": \"allocation-rg05-imported-a\"",
-                "\"item_allocation_id\": \"allocation-rg05-imported-absent\"",
-            ),
+            "evidence link naming no allocation" to
+                Pair(
+                    "\"item_allocation_id\": \"allocation-rg05-imported-a\"",
+                    "\"item_allocation_id\": \"allocation-rg05-imported-absent\"",
+                ),
         ).forEach { (label, mutation) ->
             val mutated = raw.replaceFirst(mutation.first, mutation.second)
             assertNotEquals(raw, mutated, "mutation had no effect: $label")
@@ -197,8 +234,11 @@ class Rg05RawJsonEndToEndTest {
             val database = LedgerDatabase(driver)
             val executor = rg05Executor(database, driver, case.catalog)
             val observed = mutableListOf<Rg05Observation>()
-            fun run(action: String, operation: Rg05PreparedOperation) =
-                database.observing(observed, action, case) { executor.execute(operation) }
+
+            fun run(
+                action: String,
+                operation: Rg05PreparedOperation,
+            ) = database.observing(observed, action, case) { executor.execute(operation) }
 
             val ingested = assertIs<Rg05ExecutionResult.IngestAccepted>(run("ingest_merged_payment_facts", ingest))
             assertEquals("candidate-rg05-imported", ingested.candidateId)
@@ -309,31 +349,36 @@ class Rg05RawJsonEndToEndTest {
         val before = entitySnapshot()
         val result = block()
         val after = entitySnapshot()
-        val added = CONTRACT_CATEGORIES.associateWith { category ->
-            (after.getValue(category) - before.getValue(category).toSet()).sorted()
-        }
-        sink += Rg05Observation(
-            operationClass = when {
-                result is Rg05ExecutionResult.Rejected -> "rejection"
-                actionType == "merge_item_receipt_evidence" -> "reconciliation"
-                else -> "creation"
-            },
-            actionType = actionType,
-            status = when (result) {
-                is Rg05ExecutionResult.Rejected -> "rejected"
-                is Rg05ExecutionResult.NoChange, is Rg05ExecutionResult.IngestNoChange, is Rg05ExecutionResult.ReceiptNoChange -> "no_change"
-                Rg05ExecutionResult.RequestIdentityConflict -> fail("unexpected request identity conflict for $actionType")
-                else -> "accepted"
-            },
-            reasonCode = when (result) {
-                is Rg05ExecutionResult.Rejected -> result.error.name.lowercase()
-                is Rg05ExecutionResult.NoChange, is Rg05ExecutionResult.IngestNoChange, is Rg05ExecutionResult.ReceiptNoChange -> "idempotent_replay"
-                else -> null
-            },
-            fieldPath = (result as? Rg05ExecutionResult.Rejected)?.let { "$.attempted_input.${it.field}" },
-            added = added,
-            returnedIds = returnedIds(result, case),
-        )
+        val added =
+            CONTRACT_CATEGORIES.associateWith { category ->
+                (after.getValue(category) - before.getValue(category).toSet()).sorted()
+            }
+        sink +=
+            Rg05Observation(
+                operationClass =
+                    when {
+                        result is Rg05ExecutionResult.Rejected -> "rejection"
+                        actionType == "merge_item_receipt_evidence" -> "reconciliation"
+                        else -> "creation"
+                    },
+                actionType = actionType,
+                status =
+                    when (result) {
+                        is Rg05ExecutionResult.Rejected -> "rejected"
+                        is Rg05ExecutionResult.NoChange, is Rg05ExecutionResult.IngestNoChange, is Rg05ExecutionResult.ReceiptNoChange -> "no_change"
+                        Rg05ExecutionResult.RequestIdentityConflict -> fail("unexpected request identity conflict for $actionType")
+                        else -> "accepted"
+                    },
+                reasonCode =
+                    when (result) {
+                        is Rg05ExecutionResult.Rejected -> result.error.name.lowercase()
+                        is Rg05ExecutionResult.NoChange, is Rg05ExecutionResult.IngestNoChange, is Rg05ExecutionResult.ReceiptNoChange -> "idempotent_replay"
+                        else -> null
+                    },
+                fieldPath = (result as? Rg05ExecutionResult.Rejected)?.let { "$.attempted_input.${it.field}" },
+                added = added,
+                returnedIds = returnedIds(result, case),
+            )
         return result
     }
 
@@ -361,17 +406,26 @@ class Rg05RawJsonEndToEndTest {
      * come back on the result; consumption, allocation and evidence-link identities are owned by the
      * prepared operation, so both sources are projected together.
      */
-    private fun returnedIds(result: Rg05ExecutionResult, case: Rg05RawJsonCase): List<Pair<String, String>> = when (result) {
-        is Rg05ExecutionResult.Accepted -> formalReturnedIds(result.confirmationId, result.transactionId, result.relationId, case)
-        is Rg05ExecutionResult.NoChange -> formalReturnedIds(result.confirmationId, result.transactionId, result.relationId, case)
-        is Rg05ExecutionResult.IngestAccepted -> result.sourceIds.map { "source" to it } + result.evidenceIds.map { "evidence" to it } + listOf("candidate" to result.candidateId)
-        is Rg05ExecutionResult.IngestNoChange -> result.sourceIds.map { "source" to it } + result.evidenceIds.map { "evidence" to it } + listOf("candidate" to result.candidateId)
-        is Rg05ExecutionResult.ReceiptAccepted -> listOf("source" to result.sourceId, "evidence" to result.evidenceId, "evidence_link" to result.evidenceLinkId)
-        is Rg05ExecutionResult.ReceiptNoChange -> listOf("source" to result.sourceId, "evidence" to result.evidenceId, "evidence_link" to result.evidenceLinkId)
-        is Rg05ExecutionResult.Rejected, Rg05ExecutionResult.RequestIdentityConflict -> emptyList()
-    }.canonical()
+    private fun returnedIds(
+        result: Rg05ExecutionResult,
+        case: Rg05RawJsonCase,
+    ): List<Pair<String, String>> =
+        when (result) {
+            is Rg05ExecutionResult.Accepted -> formalReturnedIds(result.confirmationId, result.transactionId, result.relationId, case)
+            is Rg05ExecutionResult.NoChange -> formalReturnedIds(result.confirmationId, result.transactionId, result.relationId, case)
+            is Rg05ExecutionResult.IngestAccepted -> result.sourceIds.map { "source" to it } + result.evidenceIds.map { "evidence" to it } + listOf("candidate" to result.candidateId)
+            is Rg05ExecutionResult.IngestNoChange -> result.sourceIds.map { "source" to it } + result.evidenceIds.map { "evidence" to it } + listOf("candidate" to result.candidateId)
+            is Rg05ExecutionResult.ReceiptAccepted -> listOf("source" to result.sourceId, "evidence" to result.evidenceId, "evidence_link" to result.evidenceLinkId)
+            is Rg05ExecutionResult.ReceiptNoChange -> listOf("source" to result.sourceId, "evidence" to result.evidenceId, "evidence_link" to result.evidenceLinkId)
+            is Rg05ExecutionResult.Rejected, Rg05ExecutionResult.RequestIdentityConflict -> emptyList()
+        }.canonical()
 
-    private fun formalReturnedIds(confirmationId: String, transactionId: TransactionId, relationId: String, case: Rg05RawJsonCase): List<Pair<String, String>> {
+    private fun formalReturnedIds(
+        confirmationId: String,
+        transactionId: TransactionId,
+        relationId: String,
+        case: Rg05RawJsonCase,
+    ): List<Pair<String, String>> {
         val confirm = case.importOperations.filterIsInstance<Rg05PreparedOperation.Confirm>().single()
         val imported = relationId == confirm.relationId
         val consumptions = if (imported) confirm.consumptionIds else requireNotNull(case.manualIds).consumptionIds
@@ -391,7 +445,13 @@ class Rg05RawJsonEndToEndTest {
             val operation = element.jsonObject
             val outcome = operation["outcome"]!!.jsonObject
             val changes = operation["deltas"]!!.jsonObject["entity_changes"]!!.jsonObject
-            fun addedIds(category: String) = changes[category]!!.jsonObject["added_ids"]!!.jsonArray.map { it.jsonPrimitive.content }.sorted()
+
+            fun addedIds(category: String) =
+                changes[category]!!
+                    .jsonObject["added_ids"]!!
+                    .jsonArray
+                    .map { it.jsonPrimitive.content }
+                    .sorted()
             // Categories the RG-05 runtime never writes must stay empty, so that comparing only the
             // modelled categories cannot hide an unexpected entity.
             UNMODELLED_CATEGORIES.forEach { assertEquals(emptyList(), addedIds(it), "$it must stay empty in RG-05") }
@@ -402,10 +462,13 @@ class Rg05RawJsonEndToEndTest {
                 reasonCode = outcome["reason_code"]?.jsonPrimitive?.content,
                 fieldPath = outcome["field_path"]?.jsonPrimitive?.content,
                 added = CONTRACT_CATEGORIES.associateWith { addedIds(it) },
-                returnedIds = operation["returned_ids"]!!.jsonArray.map {
-                    val entry = it.jsonObject
-                    entry.text("kind") to entry.text("id")
-                }.canonical(),
+                returnedIds =
+                    operation["returned_ids"]!!
+                        .jsonArray
+                        .map {
+                            val entry = it.jsonObject
+                            entry.text("kind") to entry.text("id")
+                        }.canonical(),
             )
         }
     }
@@ -436,52 +499,72 @@ class Rg05RawJsonEndToEndTest {
         )
     }
 
-    private fun invalidManualPreparedIds(index: Int) = Rg05PreparedIds(
-        MergedPaymentExpenseIds(
-            TransactionId("tx-rg05-invalid-$index"),
-            TransactionVersionId("version-rg05-invalid-$index"),
-            PostingSetId("posting-set-rg05-invalid-$index"),
-            listOf(PostingId("posting-expense-a-rg05-invalid-$index"), PostingId("posting-expense-b-rg05-invalid-$index")),
-            PostingId("posting-asset-rg05-invalid-$index"),
-        ),
-        "association-group-rg05-invalid-$index",
-        "confirmation-rg05-invalid-$index",
-        "reconciliation-rg05-invalid-$index",
-    )
-
-    private fun reallocated(confirm: Rg05PreparedOperation.Confirm, requestId: String, first: Long, second: Long, currency: CurrencyUnit) =
-        confirm.copy(
-            snapshot = confirm.snapshot.copy(
-                requestId = RequestId(requestId),
-                allocations = confirm.snapshot.allocations.mapIndexed { index, allocation ->
-                    allocation.copy(amount = Money.ofMinor(if (index == 0) first else second, currency))
-                },
+    private fun invalidManualPreparedIds(index: Int) =
+        Rg05PreparedIds(
+            MergedPaymentExpenseIds(
+                TransactionId("tx-rg05-invalid-$index"),
+                TransactionVersionId("version-rg05-invalid-$index"),
+                PostingSetId("posting-set-rg05-invalid-$index"),
+                listOf(PostingId("posting-expense-a-rg05-invalid-$index"), PostingId("posting-expense-b-rg05-invalid-$index")),
+                PostingId("posting-asset-rg05-invalid-$index"),
             ),
+            "association-group-rg05-invalid-$index",
+            "confirmation-rg05-invalid-$index",
+            "reconciliation-rg05-invalid-$index",
         )
 
-    private fun rg05Executor(database: LedgerDatabase, driver: JdbcSqliteDriver, catalog: LedgerCatalog) =
-        ExecuteRg05Operation(SqlDelightRg05Store(database, driver, catalog, FALLBACK_IDENTITY))
+    private fun reallocated(
+        confirm: Rg05PreparedOperation.Confirm,
+        requestId: String,
+        first: Long,
+        second: Long,
+        currency: CurrencyUnit,
+    ) = confirm.copy(
+        snapshot =
+            confirm.snapshot.copy(
+                requestId = RequestId(requestId),
+                allocations =
+                    confirm.snapshot.allocations.mapIndexed { index, allocation ->
+                        allocation.copy(amount = Money.ofMinor(if (index == 0) first else second, currency))
+                    },
+            ),
+    )
 
-    private fun rg05DecodedCase(): Rg05RawJsonCase =
-        assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(Files.readString(rg05RepositoryFile("golden/rules/rg-05.json")))).value
+    private fun rg05Executor(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        catalog: LedgerCatalog,
+    ) = ExecuteRg05Operation(SqlDelightRg05Store(database, driver, catalog, FALLBACK_IDENTITY))
 
-    private fun rg05FixtureRoot(): JsonObject =
-        Json.parseToJsonElement(Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))).jsonObject
+    private fun rg05DecodedCase(): Rg05RawJsonCase = assertIs<Rg05RawJsonDecodeResult.Success>(decodeRg05RawJson(Files.readString(rg05RepositoryFile("golden/rules/rg-05.json")))).value
+
+    private fun rg05FixtureRoot(): JsonObject = Json.parseToJsonElement(Files.readString(rg05RepositoryFile("golden/rules/rg-05.json"))).jsonObject
 
     private fun JsonObject.text(name: String) = this[name]!!.jsonPrimitive.content
 
     private companion object {
         const val INVALID_PAYMENT_AT = "2026-04-10T18:30:00+08:00"
         const val INVALID_OBSERVED_AT = "2026-04-08T10:00:00+08:00"
-        val CONTRACT_CATEGORIES = listOf(
-            "transactions", "transaction_versions", "posting_sets", "postings", "sources", "candidates",
-            "confirmations", "evidence", "evidence_links", "relations", "domain_entities", "posting_reconciliations",
-        )
+        val CONTRACT_CATEGORIES =
+            listOf(
+                "transactions",
+                "transaction_versions",
+                "posting_sets",
+                "postings",
+                "sources",
+                "candidates",
+                "confirmations",
+                "evidence",
+                "evidence_links",
+                "relations",
+                "domain_entities",
+                "posting_reconciliations",
+            )
         val UNMODELLED_CATEGORIES = listOf("catalog_accounts", "catalog_categories", "audit_links")
-        val FALLBACK_IDENTITY = object : Rg05IdentitySource {
-            override fun manual(requestId: RequestId) =
-                Rg05ManualCommitIds("confirmation-${requestId.value}", "reconciliation-${requestId.value}")
-        }
+        val FALLBACK_IDENTITY =
+            object : Rg05IdentitySource {
+                override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation-${requestId.value}", "reconciliation-${requestId.value}")
+            }
     }
 }
 

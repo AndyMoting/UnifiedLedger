@@ -70,14 +70,15 @@ class Rg04IdentityTest {
         )
     }
 
-    private fun contractIdentities() = mapOf(
-        "import root" to importRoot,
-        "import confirmation" to rg04MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
-        "candidate confirmed status" to rg04MigrationId(importRoot, "candidate_status", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
-        "asset posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-asset-rg04-imported"),
-        "liability posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-liability-rg04-imported"),
-        "candidate pending status" to rg04MigrationId(importRoot, "candidate_status", PENDING_STATUS_LOCATOR, CANDIDATE),
-        "missing funding leg root" to missingLegRoot,
-        "missing funding leg candidate status" to rg04MigrationId(missingLegRoot, "candidate_status", MISSING_LEG_STATUS_LOCATOR, MISSING_LEG_CANDIDATE),
-    )
+    private fun contractIdentities() =
+        mapOf(
+            "import root" to importRoot,
+            "import confirmation" to rg04MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
+            "candidate confirmed status" to rg04MigrationId(importRoot, "candidate_status", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
+            "asset posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-asset-rg04-imported"),
+            "liability posting reconciliation" to rg04MigrationId(importRoot, "posting_reconciliation", RECONCILIATION_LOCATOR, "posting-liability-rg04-imported"),
+            "candidate pending status" to rg04MigrationId(importRoot, "candidate_status", PENDING_STATUS_LOCATOR, CANDIDATE),
+            "missing funding leg root" to missingLegRoot,
+            "missing funding leg candidate status" to rg04MigrationId(missingLegRoot, "candidate_status", MISSING_LEG_STATUS_LOCATOR, MISSING_LEG_CANDIDATE),
+        )
 }

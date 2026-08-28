@@ -31,9 +31,13 @@ data class CategoryRenameIdentity(
 )
 
 sealed interface ConfirmedCategoryRenameResult {
-    data class Accepted(val change: CategoryRenameChange) : ConfirmedCategoryRenameResult
+    data class Accepted(
+        val change: CategoryRenameChange,
+    ) : ConfirmedCategoryRenameResult
 
-    data class Rejected(val violation: CategoryRenameViolation) : ConfirmedCategoryRenameResult
+    data class Rejected(
+        val violation: CategoryRenameViolation,
+    ) : ConfirmedCategoryRenameResult
 }
 
 fun interface ConfirmedCategoryRenameCommitPort {

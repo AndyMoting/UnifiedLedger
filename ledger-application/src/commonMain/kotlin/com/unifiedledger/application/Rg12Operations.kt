@@ -45,10 +45,10 @@ import com.unifiedledger.domain.createPostingReplacement
 import com.unifiedledger.domain.createReconciliationMatch
 import com.unifiedledger.domain.deriveReconciliationSummary
 import com.unifiedledger.domain.invalidateReconciliationMatch
-import com.unifiedledger.domain.replacementPostingReconciliationStatus
-import com.unifiedledger.domain.validatePostingFactsCorrection
 import com.unifiedledger.domain.parseExactDecimal
 import com.unifiedledger.domain.pow10Exact
+import com.unifiedledger.domain.replacementPostingReconciliationStatus
+import com.unifiedledger.domain.validatePostingFactsCorrection
 import kotlin.time.Instant
 
 /**
@@ -83,7 +83,9 @@ data class Rg12OperationIdentity(
  * [Rg12Runtime.commit] (the frozen `root-correction-replay` is the same input as the accepted
  * `root-correction-correct`).
  */
-enum class Rg12Action(val code: String) {
+enum class Rg12Action(
+    val code: String,
+) {
     CORRECT_TRANSACTION_VERSION("correct_transaction_version"),
 }
 
@@ -216,14 +218,37 @@ sealed interface Rg12Operation {
 }
 
 sealed interface Rg12ReturnedId {
-    data class Transaction(val id: TransactionId) : Rg12ReturnedId
-    data class Version(val id: TransactionVersionId) : Rg12ReturnedId
-    data class PostingSet(val id: PostingSetId) : Rg12ReturnedId
-    data class Posting(val id: PostingId) : Rg12ReturnedId
-    data class Replacement(val id: String) : Rg12ReturnedId
-    data class Confirmation(val id: String) : Rg12ReturnedId
-    data class Match(val id: String) : Rg12ReturnedId
-    data class Request(val id: String) : Rg12ReturnedId
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg12ReturnedId
+
+    data class Version(
+        val id: TransactionVersionId,
+    ) : Rg12ReturnedId
+
+    data class PostingSet(
+        val id: PostingSetId,
+    ) : Rg12ReturnedId
+
+    data class Posting(
+        val id: PostingId,
+    ) : Rg12ReturnedId
+
+    data class Replacement(
+        val id: String,
+    ) : Rg12ReturnedId
+
+    data class Confirmation(
+        val id: String,
+    ) : Rg12ReturnedId
+
+    data class Match(
+        val id: String,
+    ) : Rg12ReturnedId
+
+    data class Request(
+        val id: String,
+    ) : Rg12ReturnedId
 }
 
 /**
@@ -231,7 +256,9 @@ sealed interface Rg12ReturnedId {
  * `operation-reject-*` reason codes of `_posting_facts_correction_failure`; the last two are
  * application-level guards that no frozen fixture triggers.
  */
-enum class Rg12RejectionReason(val code: String) {
+enum class Rg12RejectionReason(
+    val code: String,
+) {
     COMPLETE_REPLACEMENT_POSTINGS_REQUIRED("complete_replacement_postings_required"),
     REPLACEMENT_POSTINGS_MUST_BALANCE("replacement_postings_must_balance"),
     DUPLICATE_SOURCE_POSTING_ID("duplicate_source_posting_id"),
@@ -258,7 +285,9 @@ enum class Rg12RejectionReason(val code: String) {
  * carries (data class) plus named application-level constants. Rejection paths always use the
  * `$.attempted_input.*` form.
  */
-data class Rg12FieldPath(val value: String) {
+data class Rg12FieldPath(
+    val value: String,
+) {
     companion object {
         val INPUT_CORRECTION_KIND = Rg12FieldPath("$.input.correction_kind")
         val INPUT_REPLACEMENT_POSTINGS = Rg12FieldPath("$.input.replacement_postings")
@@ -271,19 +300,29 @@ data class Rg12FieldPath(val value: String) {
 }
 
 sealed interface Rg12ExecutionResult {
-    class Accepted(returnedIds: List<Rg12ReturnedId>) : Rg12ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg12ReturnedId>,
+    ) : Rg12ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg12ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg12ReturnedId>) : Rg12ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg12ReturnedId>,
+    ) : Rg12ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg12ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -463,31 +502,33 @@ class Rg12Runtime(
                 Rg12ExecutionResult.RequestIdentityConflict
             }
         }
-        val result = when (operation) {
-            is Rg12Operation.CorrectTransactionVersion -> correctTransactionVersion(operation)
-            is Rg12Operation.RetryIdempotentInput -> replayRetry(operation)
-            is Rg12Operation.InvalidInput -> rejectInvalidInput(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg12Operation.CorrectTransactionVersion -> correctTransactionVersion(operation)
+                is Rg12Operation.RetryIdempotentInput -> replayRetry(operation)
+                is Rg12Operation.InvalidInput -> rejectInvalidInput(operation)
+            }
         if (result is Rg12ExecutionResult.Accepted || result is Rg12ExecutionResult.Rejected) {
             receipts[operation.identity] = Receipt(fingerprint, result)
         }
         return result
     }
 
-    fun snapshot(): Rg12Snapshot = Rg12Snapshot(
-        formalTransactions = formalTransactions.toList(),
-        postingSemantics = postingSemantics.toMap(),
-        reconciliationMatches = matches.toList(),
-        postingReconciliations = postingReconciliations.toList(),
-        postingReplacements = postingReplacements.toList(),
-        confirmations = confirmations.toList(),
-        consumptionRecords = consumptionRecords.toList(),
-        domainEntities = domainEntities(),
-        reconciliationSummary = reconciliationSummary(),
-        balances = replayBalances(),
-        reports = reports(),
-        reportPeriods = reportPeriods,
-    )
+    fun snapshot(): Rg12Snapshot =
+        Rg12Snapshot(
+            formalTransactions = formalTransactions.toList(),
+            postingSemantics = postingSemantics.toMap(),
+            reconciliationMatches = matches.toList(),
+            postingReconciliations = postingReconciliations.toList(),
+            postingReplacements = postingReplacements.toList(),
+            confirmations = confirmations.toList(),
+            consumptionRecords = consumptionRecords.toList(),
+            domainEntities = domainEntities(),
+            reconciliationSummary = reconciliationSummary(),
+            balances = replayBalances(),
+            reports = reports(),
+            reportPeriods = reportPeriods,
+        )
 
     fun operationFingerprint(operation: Rg12Operation): String = canonicalInput(operation)
 
@@ -507,18 +548,20 @@ class Rg12Runtime(
 
         // Frozen first-failure order of the domain chain (`_posting_facts_correction_failure`).
         when (
-            val validation = validatePostingFactsCorrection(
-                attempt = PostingFactsCorrectionAttempt(
-                    transaction = record?.formalTransaction,
-                    replacementPostings = input.replacementPostings,
-                    explicitConfirmation = input.explicitConfirmation,
-                    historyMutation = input.historyMutation,
-                ),
-                accounts = accountsById(),
-                oldFactsByPosting = oldFactsByPosting,
-                reconciliationsByPosting = reconciliationsByPosting,
-                rejectChangedMatchedAsset = input.rejectChangedMatchedAsset,
-            )
+            val validation =
+                validatePostingFactsCorrection(
+                    attempt =
+                        PostingFactsCorrectionAttempt(
+                            transaction = record?.formalTransaction,
+                            replacementPostings = input.replacementPostings,
+                            explicitConfirmation = input.explicitConfirmation,
+                            historyMutation = input.historyMutation,
+                        ),
+                    accounts = accountsById(),
+                    oldFactsByPosting = oldFactsByPosting,
+                    reconciliationsByPosting = reconciliationsByPosting,
+                    rejectChangedMatchedAsset = input.rejectChangedMatchedAsset,
+                )
         ) {
             is DomainResult.Success -> Unit
             is DomainResult.Failure -> return violationRejected(validation.violation)
@@ -526,8 +569,9 @@ class Rg12Runtime(
         // The domain chain rejected an unknown transaction with
         // `complete_replacement_postings_required`, so this guard is unreachable on accepted
         // paths; it only satisfies the nullability of the lookup above.
-        val correctedRecord = record
-            ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+        val correctedRecord =
+            record
+                ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
 
         if (!idsAligned(input.replacementPostings.size, ids)) {
             return rejected(Rg12RejectionReason.INVALID_RG12_INPUT, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
@@ -536,9 +580,10 @@ class Rg12Runtime(
         // Accepted-path input guard of the golden validator (v2.py lines 7338-7345): every
         // `category_id` must reference an active category owned by the replacement account.
         input.replacementPostings.forEachIndexed { itemIndex, item ->
-            val category = item.facts.categoryId?.let { categoryId ->
-                catalog.categories.firstOrNull { candidate -> candidate.id == categoryId }
-            }
+            val category =
+                item.facts.categoryId?.let { categoryId ->
+                    catalog.categories.firstOrNull { candidate -> candidate.id == categoryId }
+                }
             val account = catalogAccount(item.facts.accountId)
             if (
                 item.facts.categoryId != null &&
@@ -552,11 +597,13 @@ class Rg12Runtime(
         }
 
         // Build the replacement postings; the domain chain guaranteed exact decimal texts.
-        val newPostings = input.replacementPostings.mapIndexed { itemIndex, item ->
-            val minor = parseExactDecimal(item.facts.amountText, item.facts.currency.precision)
-                ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-            Posting(ids.postingIds[itemIndex], item.facts.accountId, Money.ofMinor(minor, item.facts.currency))
-        }
+        val newPostings =
+            input.replacementPostings.mapIndexed { itemIndex, item ->
+                val minor =
+                    parseExactDecimal(item.facts.amountText, item.facts.currency.precision)
+                        ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                Posting(ids.postingIds[itemIndex], item.facts.accountId, Money.ofMinor(minor, item.facts.currency))
+            }
 
         // Accepted-path shape guard of the golden validator (`_validate_mixed_expense_postings`):
         // the correction must preserve an expense with exactly two mixed-payment funding roles.
@@ -564,29 +611,34 @@ class Rg12Runtime(
             return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS)
         }
 
-        val appended = when (
-            val result = correctedRecord.formalTransaction.appendVersion(
-                change = TransactionVersionChange.Postings(newPostings),
-                ids = TransactionVersionAppendIds(versionId = ids.versionId),
-                newPostingSetId = ids.postingSetId,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
+        val appended =
+            when (
+                val result =
+                    correctedRecord.formalTransaction.appendVersion(
+                        change = TransactionVersionChange.Postings(newPostings),
+                        ids = TransactionVersionAppendIds(versionId = ids.versionId),
+                        newPostingSetId = ids.postingSetId,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
         val appendedVersion = appended.versions.single { it.id == appended.transaction.currentVersionId }
-        val currentVersion = correctedRecord.formalTransaction.versions
-            .single { it.id == correctedRecord.formalTransaction.transaction.currentVersionId }
-        val confirmation = when (
-            val result = createExplicitOperationConfirmation(
-                id = ids.confirmationId,
-                operationId = ids.operationId,
-                createdAt = input.correctedAt,
-            )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation)
-        }
+        val currentVersion =
+            correctedRecord.formalTransaction.versions
+                .single { it.id == correctedRecord.formalTransaction.transaction.currentVersionId }
+        val confirmation =
+            when (
+                val result =
+                    createExplicitOperationConfirmation(
+                        id = ids.confirmationId,
+                        operationId = ids.operationId,
+                        createdAt = input.correctedAt,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation)
+            }
 
         // Per-item lineage: effect, predecessor invalidation, successor match, reconciliation
         // fact and replacement link, in the frozen accepted-path order.
@@ -597,148 +649,172 @@ class Rg12Runtime(
         var newConsumption: Rg12ConsumptionRecord? = null
         input.replacementPostings.forEachIndexed { itemIndex, item ->
             val oldPosting = oldPostings.first { it.id == item.sourcePostingId }
-            val oldAccount = catalogAccount(oldPosting.accountId)
-                ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+            val oldAccount =
+                catalogAccount(oldPosting.accountId)
+                    ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
             val oldFacts = oldFactsByPosting.getValue(oldPosting.id)
             val oldReconciliation = reconciliationsByPosting[oldPosting.id]
             val isReal = oldAccount.ownedByUser && oldAccount.realAccount
             val eligibleReal = isReal && oldReconciliation != null
-            val effect = when {
-                !eligibleReal -> ReconciliationEffect.NOT_APPLICABLE
-                oldFacts.sameAs(item.facts) -> ReconciliationEffect.PRESERVED
-                else -> ReconciliationEffect.INVALIDATED
-            }
+            val effect =
+                when {
+                    !eligibleReal -> ReconciliationEffect.NOT_APPLICABLE
+                    oldFacts.sameAs(item.facts) -> ReconciliationEffect.PRESERVED
+                    else -> ReconciliationEffect.INVALIDATED
+                }
             val newPosting = newPostings[itemIndex]
             if (eligibleReal) {
-                val oldMatch = matches.firstOrNull { it.postingId == oldPosting.id && it.currentStatus == ReconciliationMatchStatus.MATCHED }
-                    ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-                val reconciliationFactId = ids.reconciliationFactIds[itemIndex]
-                    ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                val oldMatch =
+                    matches.firstOrNull { it.postingId == oldPosting.id && it.currentStatus == ReconciliationMatchStatus.MATCHED }
+                        ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                val reconciliationFactId =
+                    ids.reconciliationFactIds[itemIndex]
+                        ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
                 if (effect == ReconciliationEffect.INVALIDATED) {
-                    val invalidated = when (
-                        val result = invalidateReconciliationMatch(
-                            oldMatch,
-                            ids.invalidationEntryIds[itemIndex],
-                            input.correctedAt,
-                        )
-                    ) {
-                        is DomainResult.Success -> result.value
-                        is DomainResult.Failure -> return domainRejected(result.violation)
-                    }
+                    val invalidated =
+                        when (
+                            val result =
+                                invalidateReconciliationMatch(
+                                    oldMatch,
+                                    ids.invalidationEntryIds[itemIndex],
+                                    input.correctedAt,
+                                )
+                        ) {
+                            is DomainResult.Success -> result.value
+                            is DomainResult.Failure -> return domainRejected(result.violation)
+                        }
                     updatedMatches[oldMatch.id] = invalidated
                     val newMatchId = ids.newMatchIds[itemIndex]
                     if (newMatchId != null) {
                         // Symmetric changed-matched-asset lineage (accepted path,
                         // `reject_changed_asset=False`): the fresh inherited match is created
                         // and immediately invalidated, exactly like the changed_asset_case.
-                        val newMatchEntryId = ids.newMatchEntryIds[itemIndex]
-                            ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-                        val newMatchInvalidationEntryId = ids.newMatchInvalidationEntryIds[itemIndex]
-                            ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-                        val inheritedMatch = when (
-                            val result = createReconciliationMatch(
-                                id = newMatchId,
-                                postingId = newPosting.id,
-                                evidenceId = oldMatch.evidenceId,
-                                statusHistory = listOf(
-                                    ReconciliationMatchStatusEntry(
-                                        id = newMatchEntryId,
-                                        sequence = 1,
-                                        status = ReconciliationMatchStatus.MATCHED,
-                                        at = lastMatchedAt(oldMatch),
-                                        reason = ReconciliationMatchReason.EXACT_EVIDENCE,
-                                    ),
-                                ),
-                            )
-                        ) {
-                            is DomainResult.Success -> result.value
-                            is DomainResult.Failure -> return domainRejected(result.violation)
-                        }
-                        val invalidatedNewMatch = when (
-                            val result = invalidateReconciliationMatch(
-                                inheritedMatch,
-                                newMatchInvalidationEntryId,
-                                input.correctedAt,
-                            )
-                        ) {
-                            is DomainResult.Success -> result.value
-                            is DomainResult.Failure -> return domainRejected(result.violation)
-                        }
+                        val newMatchEntryId =
+                            ids.newMatchEntryIds[itemIndex]
+                                ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                        val newMatchInvalidationEntryId =
+                            ids.newMatchInvalidationEntryIds[itemIndex]
+                                ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                        val inheritedMatch =
+                            when (
+                                val result =
+                                    createReconciliationMatch(
+                                        id = newMatchId,
+                                        postingId = newPosting.id,
+                                        evidenceId = oldMatch.evidenceId,
+                                        statusHistory =
+                                            listOf(
+                                                ReconciliationMatchStatusEntry(
+                                                    id = newMatchEntryId,
+                                                    sequence = 1,
+                                                    status = ReconciliationMatchStatus.MATCHED,
+                                                    at = lastMatchedAt(oldMatch),
+                                                    reason = ReconciliationMatchReason.EXACT_EVIDENCE,
+                                                ),
+                                            ),
+                                    )
+                            ) {
+                                is DomainResult.Success -> result.value
+                                is DomainResult.Failure -> return domainRejected(result.violation)
+                            }
+                        val invalidatedNewMatch =
+                            when (
+                                val result =
+                                    invalidateReconciliationMatch(
+                                        inheritedMatch,
+                                        newMatchInvalidationEntryId,
+                                        input.correctedAt,
+                                    )
+                            ) {
+                                is DomainResult.Success -> result.value
+                                is DomainResult.Failure -> return domainRejected(result.violation)
+                            }
                         newMatches += invalidatedNewMatch
                     }
                 } else {
-                    val newMatchId = ids.newMatchIds[itemIndex]
-                        ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-                    val newMatchEntryId = ids.newMatchEntryIds[itemIndex]
-                        ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-                    val inheritedMatch = when (
-                        val result = createReconciliationMatch(
-                            id = newMatchId,
-                            postingId = newPosting.id,
-                            evidenceId = oldMatch.evidenceId,
-                            statusHistory = listOf(
-                                ReconciliationMatchStatusEntry(
-                                    id = newMatchEntryId,
-                                    sequence = 1,
-                                    status = ReconciliationMatchStatus.MATCHED,
-                                    at = lastMatchedAt(oldMatch),
-                                    reason = ReconciliationMatchReason.EXACT_EVIDENCE,
-                                ),
-                            ),
-                        )
+                    val newMatchId =
+                        ids.newMatchIds[itemIndex]
+                            ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                    val newMatchEntryId =
+                        ids.newMatchEntryIds[itemIndex]
+                            ?: return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                    val inheritedMatch =
+                        when (
+                            val result =
+                                createReconciliationMatch(
+                                    id = newMatchId,
+                                    postingId = newPosting.id,
+                                    evidenceId = oldMatch.evidenceId,
+                                    statusHistory =
+                                        listOf(
+                                            ReconciliationMatchStatusEntry(
+                                                id = newMatchEntryId,
+                                                sequence = 1,
+                                                status = ReconciliationMatchStatus.MATCHED,
+                                                at = lastMatchedAt(oldMatch),
+                                                reason = ReconciliationMatchReason.EXACT_EVIDENCE,
+                                            ),
+                                        ),
+                                )
+                        ) {
+                            is DomainResult.Success -> result.value
+                            is DomainResult.Failure -> return domainRejected(result.violation)
+                        }
+                    newMatches += inheritedMatch
+                }
+                val fact =
+                    when (
+                        val result =
+                            createPostingReconciliation(
+                                id = reconciliationFactId,
+                                postingId = newPosting.id,
+                                status = replacementPostingReconciliationStatus(effect)!!,
+                            )
                     ) {
                         is DomainResult.Success -> result.value
                         is DomainResult.Failure -> return domainRejected(result.violation)
                     }
-                    newMatches += inheritedMatch
-                }
-                val fact = when (
-                    val result = createPostingReconciliation(
-                        id = reconciliationFactId,
-                        postingId = newPosting.id,
-                        status = replacementPostingReconciliationStatus(effect)!!,
-                    )
-                ) {
-                    is DomainResult.Success -> result.value
-                    is DomainResult.Failure -> return domainRejected(result.violation)
-                }
                 newFacts += fact
             } else {
                 if (ids.newMatchIds[itemIndex] != null || ids.reconciliationFactIds[itemIndex] != null) {
                     return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
                 }
             }
-            val link = when (
-                val result = createPostingReplacement(
-                    id = ids.replacementLinkIds[itemIndex],
-                    fromPostingId = oldPosting.id,
-                    toPostingId = newPosting.id,
-                    fromVersion = currentVersion,
-                    toVersion = appendedVersion,
-                    fromFacts = oldFacts,
-                    toFacts = item.facts,
-                    fromAccount = oldAccount,
-                    activeMatchesByPosting = activeMatches(updatedMatches, newMatches),
-                    reconciliationEffect = effect,
-                )
-            ) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> return domainRejected(result.violation)
-            }
+            val link =
+                when (
+                    val result =
+                        createPostingReplacement(
+                            id = ids.replacementLinkIds[itemIndex],
+                            fromPostingId = oldPosting.id,
+                            toPostingId = newPosting.id,
+                            fromVersion = currentVersion,
+                            toVersion = appendedVersion,
+                            fromFacts = oldFacts,
+                            toFacts = item.facts,
+                            fromAccount = oldAccount,
+                            activeMatchesByPosting = activeMatches(updatedMatches, newMatches),
+                            reconciliationEffect = effect,
+                        )
+                ) {
+                    is DomainResult.Success -> result.value
+                    is DomainResult.Failure -> return domainRejected(result.violation)
+                }
             newLinks += link
             if (item.facts.role == ROLE_EXPENSE) {
                 if (newConsumption != null || ids.consumptionRecordId == null) {
                     return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
                 }
-                newConsumption = Rg12ConsumptionRecord(
-                    id = ids.consumptionRecordId!!,
-                    expensePostingId = newPosting.id,
-                    categoryId = item.facts.categoryId,
-                    amountText = item.facts.amountText,
-                    currency = item.facts.currency,
-                    statisticsAtText = correctedRecord.statisticsAtText
-                        ?: statisticsAtTextOf(correctedRecord.formalTransaction),
-                )
+                newConsumption =
+                    Rg12ConsumptionRecord(
+                        id = ids.consumptionRecordId!!,
+                        expensePostingId = newPosting.id,
+                        categoryId = item.facts.categoryId,
+                        amountText = item.facts.amountText,
+                        currency = item.facts.currency,
+                        statisticsAtText =
+                            correctedRecord.statisticsAtText
+                                ?: statisticsAtTextOf(correctedRecord.formalTransaction),
+                    )
             }
         }
         if (newConsumption == null) {
@@ -760,19 +836,21 @@ class Rg12Runtime(
             return rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
         }
 
-        formalTransactions[index] = correctedRecord.copy(
-            formalTransaction = appended,
-            versionCreatedAtTexts = correctedRecord.versionCreatedAtTexts + (ids.versionId to input.correctedAtText),
-            versionConfirmationIds = correctedRecord.versionConfirmationIds + (ids.versionId to ids.confirmationId),
-        )
+        formalTransactions[index] =
+            correctedRecord.copy(
+                formalTransaction = appended,
+                versionCreatedAtTexts = correctedRecord.versionCreatedAtTexts + (ids.versionId to input.correctedAtText),
+                versionConfirmationIds = correctedRecord.versionConfirmationIds + (ids.versionId to ids.confirmationId),
+            )
         confirmations += confirmation
         newPostings.forEachIndexed { itemIndex, posting ->
             val account = catalogAccount(posting.accountId)
-            postingSemantics[posting.id.value] = Rg12PostingSemantic(
-                role = input.replacementPostings[itemIndex].facts.role,
-                reconciliationEligible = account?.let { it.ownedByUser && it.realAccount } ?: false,
-                categoryId = input.replacementPostings[itemIndex].facts.categoryId,
-            )
+            postingSemantics[posting.id.value] =
+                Rg12PostingSemantic(
+                    role = input.replacementPostings[itemIndex].facts.role,
+                    reconciliationEligible = account?.let { it.ownedByUser && it.realAccount } ?: false,
+                    categoryId = input.replacementPostings[itemIndex].facts.categoryId,
+                )
         }
         updatedMatches.values.forEach { updated ->
             val matchIndex = matches.indexOfFirst { it.id == updated.id }
@@ -788,8 +866,9 @@ class Rg12Runtime(
     // ------------------------------------------------------------------ retry / invalid
 
     private fun replayRetry(operation: Rg12Operation.RetryIdempotentInput): Rg12ExecutionResult {
-        val receipt = receipts[operation.identity]
-            ?: return Rg12ExecutionResult.RequestIdentityConflict
+        val receipt =
+            receipts[operation.identity]
+                ?: return Rg12ExecutionResult.RequestIdentityConflict
         return when (val result = receipt.result) {
             is Rg12ExecutionResult.Accepted -> Rg12ExecutionResult.NoChange(result.returnedIds)
             else -> result
@@ -803,115 +882,123 @@ class Rg12Runtime(
      * base path of the frozen field (`$.attempted_input.replacement_postings`, ...).
      */
     private fun rejectInvalidInput(operation: Rg12Operation.InvalidInput): Rg12ExecutionResult {
-        val (reason, fieldPath) = when (operation.input.predicate) {
-            Rg12InvalidPredicate.COMPLETE_REPLACEMENT_POSTINGS ->
-                Rg12RejectionReason.COMPLETE_REPLACEMENT_POSTINGS_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.REPLACEMENT_POSTINGS_BALANCE ->
-                Rg12RejectionReason.REPLACEMENT_POSTINGS_MUST_BALANCE to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.DUPLICATE_SOURCE_POSTING_ID ->
-                Rg12RejectionReason.DUPLICATE_SOURCE_POSTING_ID to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.KNOWN_ACCOUNT ->
-                Rg12RejectionReason.KNOWN_ACCOUNT_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.OWNED_ACCOUNT ->
-                Rg12RejectionReason.OWNED_ACCOUNT_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.ACCOUNT_CURRENCY_MISMATCH ->
-                Rg12RejectionReason.ACCOUNT_CURRENCY_MISMATCH to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.MATCHED_UNAFFECTED_POSTING_PRESERVED ->
-                Rg12RejectionReason.MATCHED_UNAFFECTED_POSTING_MUST_BE_PRESERVED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.EXPLICIT_CONFIRMATION ->
-                Rg12RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED to Rg12FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
-            Rg12InvalidPredicate.EXACT_DECIMAL_STRING ->
-                Rg12RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
-            Rg12InvalidPredicate.HISTORICAL_FACTS_IMMUTABLE ->
-                Rg12RejectionReason.HISTORICAL_FACTS_IMMUTABLE to Rg12FieldPath.ATTEMPTED_HISTORY_MUTATION
-        }
+        val (reason, fieldPath) =
+            when (operation.input.predicate) {
+                Rg12InvalidPredicate.COMPLETE_REPLACEMENT_POSTINGS ->
+                    Rg12RejectionReason.COMPLETE_REPLACEMENT_POSTINGS_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.REPLACEMENT_POSTINGS_BALANCE ->
+                    Rg12RejectionReason.REPLACEMENT_POSTINGS_MUST_BALANCE to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.DUPLICATE_SOURCE_POSTING_ID ->
+                    Rg12RejectionReason.DUPLICATE_SOURCE_POSTING_ID to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.KNOWN_ACCOUNT ->
+                    Rg12RejectionReason.KNOWN_ACCOUNT_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.OWNED_ACCOUNT ->
+                    Rg12RejectionReason.OWNED_ACCOUNT_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.ACCOUNT_CURRENCY_MISMATCH ->
+                    Rg12RejectionReason.ACCOUNT_CURRENCY_MISMATCH to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.MATCHED_UNAFFECTED_POSTING_PRESERVED ->
+                    Rg12RejectionReason.MATCHED_UNAFFECTED_POSTING_MUST_BE_PRESERVED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.EXPLICIT_CONFIRMATION ->
+                    Rg12RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED to Rg12FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
+                Rg12InvalidPredicate.EXACT_DECIMAL_STRING ->
+                    Rg12RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg12FieldPath.ATTEMPTED_REPLACEMENT_POSTINGS
+                Rg12InvalidPredicate.HISTORICAL_FACTS_IMMUTABLE ->
+                    Rg12RejectionReason.HISTORICAL_FACTS_IMMUTABLE to Rg12FieldPath.ATTEMPTED_HISTORY_MUTATION
+            }
         return rejected(reason, fieldPath)
     }
 
     // ------------------------------------------------------------------ derived state
 
-    private fun domainEntities(): List<Rg12DomainEntity> = buildList {
-        consumptionRecords.forEach { record ->
-            val payload = buildMap {
-                put("expense_posting_id", record.expensePostingId.value)
-                record.categoryId?.let { put("category_id", it.value) }
-                put("amount", record.amountText)
-                put("currency", record.currency.code)
-                put("statistics_at", record.statisticsAtText)
+    private fun domainEntities(): List<Rg12DomainEntity> =
+        buildList {
+            consumptionRecords.forEach { record ->
+                val payload =
+                    buildMap {
+                        put("expense_posting_id", record.expensePostingId.value)
+                        record.categoryId?.let { put("category_id", it.value) }
+                        put("amount", record.amountText)
+                        put("currency", record.currency.code)
+                        put("statistics_at", record.statisticsAtText)
+                    }
+                add(Rg12DomainEntity(record.id, DOMAIN_ENTITY_CONSUMPTION_RECORD, payload))
             }
-            add(Rg12DomainEntity(record.id, DOMAIN_ENTITY_CONSUMPTION_RECORD, payload))
-        }
-        matches.forEach { match ->
-            add(
-                Rg12DomainEntity(
-                    match.id,
-                    DOMAIN_ENTITY_RECONCILIATION_MATCH,
-                    mapOf(
-                        "posting_id" to match.postingId.value,
-                        "evidence_id" to match.evidenceId,
-                        "status_history" to renderStatusHistory(match.statusHistory),
+            matches.forEach { match ->
+                add(
+                    Rg12DomainEntity(
+                        match.id,
+                        DOMAIN_ENTITY_RECONCILIATION_MATCH,
+                        mapOf(
+                            "posting_id" to match.postingId.value,
+                            "evidence_id" to match.evidenceId,
+                            "status_history" to renderStatusHistory(match.statusHistory),
+                        ),
                     ),
-                ),
-            )
-        }
-    }
-
-    private fun reconciliationSummary(): Map<TransactionId, ReconciliationSummary> = buildMap {
-        formalTransactions.forEach { record ->
-            val statuses = record.formalTransaction.currentPostings()
-                .filter { postingSemantics[it.id.value]?.reconciliationEligible == true }
-                .map { posting ->
-                    postingReconciliations.firstOrNull { it.postingId == posting.id }?.status
-                        ?: PostingReconciliationStatus.PENDING
-                }
-            if (statuses.isNotEmpty()) {
-                put(record.formalTransaction.transaction.id, deriveReconciliationSummary(statuses))
+                )
             }
         }
-    }
+
+    private fun reconciliationSummary(): Map<TransactionId, ReconciliationSummary> =
+        buildMap {
+            formalTransactions.forEach { record ->
+                val statuses =
+                    record.formalTransaction
+                        .currentPostings()
+                        .filter { postingSemantics[it.id.value]?.reconciliationEligible == true }
+                        .map { posting ->
+                            postingReconciliations.firstOrNull { it.postingId == posting.id }?.status
+                                ?: PostingReconciliationStatus.PENDING
+                        }
+                if (statuses.isNotEmpty()) {
+                    put(record.formalTransaction.transaction.id, deriveReconciliationSummary(statuses))
+                }
+            }
+        }
 
     private fun reports(): Map<String, Rg12Report> {
         val periods = linkedMapOf<String, Rg12Report>()
         reportPeriods.forEach { period -> periods.putIfAbsent(period, Rg12Report()) }
         formalTransactions.forEach { record ->
-            val report = when (record.formalTransaction.transaction.kind) {
-                TransactionKind.EXPENSE -> {
-                    val postings = record.formalTransaction.currentPostings()
-                    var expense = 0L
-                    var assetFunding = 0L
-                    postings.forEach { posting ->
-                        when (postingSemantics[posting.id.value]?.role) {
-                            ROLE_EXPENSE -> expense = checkedAdd(expense, posting.amount.minorUnits) ?: return@forEach
-                            ROLE_MIXED_EXPENSE_ASSET_FUNDING ->
-                                assetFunding = checkedAdd(assetFunding, posting.amount.minorUnits) ?: return@forEach
-                        }
-                    }
-                    val cashOutflow = if (assetFunding != 0L) {
-                        checkedNegate(assetFunding) ?: return@forEach
-                    } else {
-                        var fallback = 0L
+            val report =
+                when (record.formalTransaction.transaction.kind) {
+                    TransactionKind.EXPENSE -> {
+                        val postings = record.formalTransaction.currentPostings()
+                        var expense = 0L
+                        var assetFunding = 0L
                         postings.forEach { posting ->
-                            val account = catalogAccount(posting.accountId)
-                            if (
-                                account != null &&
-                                account.realAccount &&
-                                account.kind == AccountKind.ASSET &&
-                                posting.amount.minorUnits < 0L
-                            ) {
-                                fallback = checkedAdd(fallback, checkedNegate(posting.amount.minorUnits) ?: return@forEach) ?: return@forEach
+                            when (postingSemantics[posting.id.value]?.role) {
+                                ROLE_EXPENSE -> expense = checkedAdd(expense, posting.amount.minorUnits) ?: return@forEach
+                                ROLE_MIXED_EXPENSE_ASSET_FUNDING ->
+                                    assetFunding = checkedAdd(assetFunding, posting.amount.minorUnits) ?: return@forEach
                             }
                         }
-                        fallback
+                        val cashOutflow =
+                            if (assetFunding != 0L) {
+                                checkedNegate(assetFunding) ?: return@forEach
+                            } else {
+                                var fallback = 0L
+                                postings.forEach { posting ->
+                                    val account = catalogAccount(posting.accountId)
+                                    if (
+                                        account != null &&
+                                        account.realAccount &&
+                                        account.kind == AccountKind.ASSET &&
+                                        posting.amount.minorUnits < 0L
+                                    ) {
+                                        fallback = checkedAdd(fallback, checkedNegate(posting.amount.minorUnits) ?: return@forEach) ?: return@forEach
+                                    }
+                                }
+                                fallback
+                            }
+                        Rg12Report(
+                            cashOutflowMinor = cashOutflow,
+                            consumptionMinor = expense,
+                            categoryConsumptionMinor = expense,
+                            netWorthChangeMinor = checkedNegate(expense) ?: return@forEach,
+                        )
                     }
-                    Rg12Report(
-                        cashOutflowMinor = cashOutflow,
-                        consumptionMinor = expense,
-                        categoryConsumptionMinor = expense,
-                        netWorthChangeMinor = checkedNegate(expense) ?: return@forEach,
-                    )
+                    else -> Rg12Report()
                 }
-                else -> Rg12Report()
-            }
             val period = (record.statisticsAtText ?: statisticsAtTextOf(record.formalTransaction)).substring(0, 10)
             val current = periods[period] ?: Rg12Report()
             periods[period] = mergeReports(current, report)
@@ -919,12 +1006,16 @@ class Rg12Runtime(
         return periods
     }
 
-    private fun mergeReports(left: Rg12Report, right: Rg12Report): Rg12Report = Rg12Report(
-        cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
-        consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
-        categoryConsumptionMinor = checkedAdd(left.categoryConsumptionMinor, right.categoryConsumptionMinor)!!,
-        netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
-    )
+    private fun mergeReports(
+        left: Rg12Report,
+        right: Rg12Report,
+    ): Rg12Report =
+        Rg12Report(
+            cashOutflowMinor = checkedAdd(left.cashOutflowMinor, right.cashOutflowMinor)!!,
+            consumptionMinor = checkedAdd(left.consumptionMinor, right.consumptionMinor)!!,
+            categoryConsumptionMinor = checkedAdd(left.categoryConsumptionMinor, right.categoryConsumptionMinor)!!,
+            netWorthChangeMinor = checkedAdd(left.netWorthChangeMinor, right.netWorthChangeMinor)!!,
+        )
 
     // ------------------------------------------------------------------ helpers
 
@@ -948,24 +1039,27 @@ class Rg12Runtime(
     private fun activeMatches(
         updatedMatches: Map<String, ReconciliationMatch>,
         newMatches: List<ReconciliationMatch>,
-    ): Map<PostingId, ReconciliationMatch> = buildMap {
-        matches.forEach { match ->
-            val current = updatedMatches[match.id] ?: match
-            if (current.currentStatus == ReconciliationMatchStatus.MATCHED) {
-                put(current.postingId, current)
+    ): Map<PostingId, ReconciliationMatch> =
+        buildMap {
+            matches.forEach { match ->
+                val current = updatedMatches[match.id] ?: match
+                if (current.currentStatus == ReconciliationMatchStatus.MATCHED) {
+                    put(current.postingId, current)
+                }
+            }
+            newMatches.forEach { match ->
+                if (match.currentStatus == ReconciliationMatchStatus.MATCHED) {
+                    put(match.postingId, match)
+                }
             }
         }
-        newMatches.forEach { match ->
-            if (match.currentStatus == ReconciliationMatchStatus.MATCHED) {
-                put(match.postingId, match)
-            }
-        }
-    }
 
-    private fun lastMatchedAt(match: ReconciliationMatch): Instant =
-        match.statusHistory.last { it.status == ReconciliationMatchStatus.MATCHED }.at
+    private fun lastMatchedAt(match: ReconciliationMatch): Instant = match.statusHistory.last { it.status == ReconciliationMatchStatus.MATCHED }.at
 
-    private fun idsAligned(replacementCount: Int, ids: Rg12CorrectIds): Boolean =
+    private fun idsAligned(
+        replacementCount: Int,
+        ids: Rg12CorrectIds,
+    ): Boolean =
         ids.postingIds.size == replacementCount &&
             ids.replacementLinkIds.size == replacementCount &&
             ids.invalidationEntryIds.size == replacementCount &&
@@ -981,7 +1075,10 @@ class Rg12Runtime(
      * category, and two owned real funding legs (asset / liability) without category. The
      * per-currency balance itself is enforced by [PostingSet.create] through `appendVersion`.
      */
-    private fun mixedExpenseShapeValid(replacements: List<ReplacementPostingInput>, newPostings: List<Posting>): Boolean {
+    private fun mixedExpenseShapeValid(
+        replacements: List<ReplacementPostingInput>,
+        newPostings: List<Posting>,
+    ): Boolean {
         if (replacements.size != 3) return false
         val roles = replacements.map { it.facts.role }.toSet()
         if (roles != setOf(ROLE_EXPENSE, ROLE_MIXED_EXPENSE_ASSET_FUNDING, ROLE_MIXED_EXPENSE_CREDIT_FUNDING)) return false
@@ -1002,10 +1099,11 @@ class Rg12Runtime(
         ) {
             return false
         }
-        val fundingRoles = listOf(
-            ROLE_MIXED_EXPENSE_ASSET_FUNDING to AccountKind.ASSET,
-            ROLE_MIXED_EXPENSE_CREDIT_FUNDING to AccountKind.LIABILITY,
-        )
+        val fundingRoles =
+            listOf(
+                ROLE_MIXED_EXPENSE_ASSET_FUNDING to AccountKind.ASSET,
+                ROLE_MIXED_EXPENSE_CREDIT_FUNDING to AccountKind.LIABILITY,
+            )
         for ((role, kind) in fundingRoles) {
             val item = byRole.getValue(role)
             if (item.facts.categoryId != null) return false
@@ -1027,127 +1125,149 @@ class Rg12Runtime(
      * be judged as collisions. Only ids the append newly introduces are checked against the
      * whole collection (same semantics as Rg11Operations.kt).
      */
-    private fun appendedIdCollision(appended: FormalTransaction, baseline: FormalTransaction): Boolean {
+    private fun appendedIdCollision(
+        appended: FormalTransaction,
+        baseline: FormalTransaction,
+    ): Boolean {
         val baselineVersionIds = baseline.versions.mapTo(mutableSetOf()) { it.id }
         val baselinePostingSetIds = baseline.postingSets.mapTo(mutableSetOf()) { it.id }
-        val baselinePostingIds = baseline.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
-            postingSet.postings.map { it.id }
-        }
-        val newTransactionIds = if (appended.transaction.id == baseline.transaction.id) {
-            emptySet()
-        } else {
-            setOf(appended.transaction.id)
-        }
-        val newVersionIds = appended.versions.mapTo(mutableSetOf()) { it.id }
-            .apply { removeAll(baselineVersionIds) }
-        val newPostingSetIds = appended.postingSets.mapTo(mutableSetOf()) { it.id }
-            .apply { removeAll(baselinePostingSetIds) }
-        val newPostingIds = appended.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
-            postingSet.postings.map { it.id }
-        }.apply { removeAll(baselinePostingIds) }
+        val baselinePostingIds =
+            baseline.postingSets.flatMapTo(mutableSetOf()) { postingSet ->
+                postingSet.postings.map { it.id }
+            }
+        val newTransactionIds =
+            if (appended.transaction.id == baseline.transaction.id) {
+                emptySet()
+            } else {
+                setOf(appended.transaction.id)
+            }
+        val newVersionIds =
+            appended.versions
+                .mapTo(mutableSetOf()) { it.id }
+                .apply { removeAll(baselineVersionIds) }
+        val newPostingSetIds =
+            appended.postingSets
+                .mapTo(mutableSetOf()) { it.id }
+                .apply { removeAll(baselinePostingSetIds) }
+        val newPostingIds =
+            appended.postingSets
+                .flatMapTo(mutableSetOf()) { postingSet ->
+                    postingSet.postings.map { it.id }
+                }.apply { removeAll(baselinePostingIds) }
         val existingTransactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val existingVersionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val existingPostingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val existingPostingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val existingVersionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val existingPostingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val existingPostingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return newTransactionIds.any { it in existingTransactionIds } ||
             newVersionIds.any { it in existingVersionIds } ||
             newPostingSetIds.any { it in existingPostingSetIds } ||
             newPostingIds.any { it in existingPostingIds }
     }
 
-    private fun replayBalances(): Map<AccountId, Money> = buildMap {
-        catalog.accounts.forEach { account ->
-            var total = 0L
-            formalTransactions
-                .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
-                .forEach { record ->
-                    record.formalTransaction.currentPostings()
-                        .filter { it.accountId == account.id }
-                        .forEach { posting ->
-                            check(posting.amount.currency == account.currency) { "RG-12 posting currency mismatch" }
-                            total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-12 balance overflow")
-                        }
-                }
-            put(account.id, Money.ofMinor(total, account.currency))
+    private fun replayBalances(): Map<AccountId, Money> =
+        buildMap {
+            catalog.accounts.forEach { account ->
+                var total = 0L
+                formalTransactions
+                    .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
+                    .forEach { record ->
+                        record.formalTransaction
+                            .currentPostings()
+                            .filter { it.accountId == account.id }
+                            .forEach { posting ->
+                                check(posting.amount.currency == account.currency) { "RG-12 posting currency mismatch" }
+                                total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-12 balance overflow")
+                            }
+                    }
+                put(account.id, Money.ofMinor(total, account.currency))
+            }
         }
-    }
 
     private fun statisticsAtTextOf(formal: FormalTransaction): String =
         formal.versions
             .first { it.id == formal.transaction.currentVersionId }
-            .times.statisticsAt.toString()
+            .times.statisticsAt
+            .toString()
 
     private fun accountsById(): Map<AccountId, Account> = catalog.accounts.associateBy { it.id }
 
     private fun catalogAccount(id: AccountId): Account? = catalog.accounts.firstOrNull { it.id == id }
 
-    private fun violationRejected(violation: DomainViolation): Rg12ExecutionResult = when (violation) {
-        is CorrectTransactionVersionViolation -> {
-            val reason = violation.reasonCode?.let { Rg12RejectionReason.byCode(it) }
-            if (reason != null) {
-                rejected(reason, Rg12FieldPath(violation.fieldPath))
-            } else {
-                rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+    private fun violationRejected(violation: DomainViolation): Rg12ExecutionResult =
+        when (violation) {
+            is CorrectTransactionVersionViolation -> {
+                val reason = violation.reasonCode?.let { Rg12RejectionReason.byCode(it) }
+                if (reason != null) {
+                    rejected(reason, Rg12FieldPath(violation.fieldPath))
+                } else {
+                    rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+                }
             }
+            is ReconciliationMatchViolation,
+            is PostingReplacementViolation,
+            is PostingReconciliationViolation,
+            is ExplicitOperationConfirmationViolation,
+            -> rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
+            else -> rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
         }
-        is ReconciliationMatchViolation,
-        is PostingReplacementViolation,
-        is PostingReconciliationViolation,
-        is ExplicitOperationConfirmationViolation,
-        -> rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-        else -> rejected(Rg12RejectionReason.DOMAIN_REJECTED, Rg12FieldPath.ATTEMPTED_REQUEST_ID)
-    }
 
-    private fun domainRejected(violation: DomainViolation): Rg12ExecutionResult =
-        violationRejected(violation)
+    private fun domainRejected(violation: DomainViolation): Rg12ExecutionResult = violationRejected(violation)
 
     // ------------------------------------------------------------------ fingerprints
 
-    private fun canonicalInput(operation: Rg12Operation): String = when (operation) {
-        is Rg12Operation.CorrectTransactionVersion -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.transactionId.value,
-            operation.input.correctionKind,
-            operation.input.correctedAt.toString(),
-            operation.input.correctedAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.rejectChangedMatchedAsset.toString(),
-            canonicalHistoryMutation(operation.input.historyMutation),
-            operation.input.replacementPostings.joinToString("|") { item -> canonicalReplacement(item) },
-            canonicalCorrectIds(operation.ids),
-        )
-        is Rg12Operation.RetryIdempotentInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.inputId,
-        )
-        is Rg12Operation.InvalidInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.predicate.name,
-            operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
-                "$key=${value ?: "<null>"}"
-            },
-        )
-    }
+    private fun canonicalInput(operation: Rg12Operation): String =
+        when (operation) {
+            is Rg12Operation.CorrectTransactionVersion ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.transactionId.value,
+                    operation.input.correctionKind,
+                    operation.input.correctedAt.toString(),
+                    operation.input.correctedAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.rejectChangedMatchedAsset.toString(),
+                    canonicalHistoryMutation(operation.input.historyMutation),
+                    operation.input.replacementPostings.joinToString("|") { item -> canonicalReplacement(item) },
+                    canonicalCorrectIds(operation.ids),
+                )
+            is Rg12Operation.RetryIdempotentInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.inputId,
+                )
+            is Rg12Operation.InvalidInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.predicate.name,
+                    operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
+                        "$key=${value ?: "<null>"}"
+                    },
+                )
+        }
 
-    private fun canonicalReplacement(item: ReplacementPostingInput): String = canonicalFields(
-        item.sourcePostingId.value,
-        item.facts.accountId.value,
-        item.facts.amountText,
-        canonicalCurrency(item.facts.currency),
-        item.facts.role,
-        item.facts.categoryId?.value,
-    )
+    private fun canonicalReplacement(item: ReplacementPostingInput): String =
+        canonicalFields(
+            item.sourcePostingId.value,
+            item.facts.accountId.value,
+            item.facts.amountText,
+            canonicalCurrency(item.facts.currency),
+            item.facts.role,
+            item.facts.categoryId?.value,
+        )
 
     private fun canonicalHistoryMutation(mutation: HistoryMutationInput?): String =
         if (mutation == null) {
@@ -1161,48 +1281,56 @@ class Rg12Runtime(
             )
         }
 
-    private fun canonicalCorrectIds(ids: Rg12CorrectIds): String = canonicalFields(
-        ids.versionId.value,
-        ids.postingSetId.value,
-        ids.postingIds.joinToString("|") { it.value },
-        ids.replacementLinkIds.joinToString("|"),
-        ids.confirmationId,
-        ids.operationId,
-        ids.invalidationEntryIds.joinToString("|"),
-        ids.newMatchIds.joinToString("|") { it ?: "<null>" },
-        ids.newMatchEntryIds.joinToString("|") { it ?: "<null>" },
-        ids.newMatchInvalidationEntryIds.joinToString("|") { it ?: "<null>" },
-        ids.reconciliationFactIds.joinToString("|") { it ?: "<null>" },
-        ids.consumptionRecordId,
-    )
+    private fun canonicalCorrectIds(ids: Rg12CorrectIds): String =
+        canonicalFields(
+            ids.versionId.value,
+            ids.postingSetId.value,
+            ids.postingIds.joinToString("|") { it.value },
+            ids.replacementLinkIds.joinToString("|"),
+            ids.confirmationId,
+            ids.operationId,
+            ids.invalidationEntryIds.joinToString("|"),
+            ids.newMatchIds.joinToString("|") { it ?: "<null>" },
+            ids.newMatchEntryIds.joinToString("|") { it ?: "<null>" },
+            ids.newMatchInvalidationEntryIds.joinToString("|") { it ?: "<null>" },
+            ids.reconciliationFactIds.joinToString("|") { it ?: "<null>" },
+            ids.consumptionRecordId,
+        )
 
-    private fun canonicalCurrency(currency: CurrencyUnit): String =
-        "${currency.code}:${currency.precision}"
+    private fun canonicalCurrency(currency: CurrencyUnit): String = "${currency.code}:${currency.precision}"
 
-    private fun canonicalFields(vararg values: String?): String = buildString {
-        values.forEach { value ->
-            if (value == null) {
-                append("N;")
-            } else {
-                append("V").append(value.length).append(':').append(value).append(';')
+    private fun canonicalFields(vararg values: String?): String =
+        buildString {
+            values.forEach { value ->
+                if (value == null) {
+                    append("N;")
+                } else {
+                    append("V")
+                        .append(value.length)
+                        .append(':')
+                        .append(value)
+                        .append(';')
+                }
             }
         }
-    }
 
     private fun renderStatusHistory(entries: List<ReconciliationMatchStatusEntry>): String =
         entries.joinToString(",", "[", "]") { entry ->
             """{"id": "${entry.id}", "sequence": ${entry.sequence}, "status": "${statusJsonName(entry.status)}", "at": "${localDateTimeText(entry.at, utcOffsetSeconds)}", "reason": "${entry.reason.jsonName}"}"""
         }
 
-    private fun statusJsonName(status: ReconciliationMatchStatus): String = when (status) {
-        ReconciliationMatchStatus.MATCHED -> "matched"
-        ReconciliationMatchStatus.INVALIDATED -> "invalidated"
-    }
+    private fun statusJsonName(status: ReconciliationMatchStatus): String =
+        when (status) {
+            ReconciliationMatchStatus.MATCHED -> "matched"
+            ReconciliationMatchStatus.INVALIDATED -> "invalidated"
+        }
 
     private fun accepted(ids: List<Rg12ReturnedId>) = Rg12ExecutionResult.Accepted(ids)
 
-    private fun rejected(reason: Rg12RejectionReason, fieldPath: Rg12FieldPath) =
-        Rg12ExecutionResult.Rejected(reason, fieldPath)
+    private fun rejected(
+        reason: Rg12RejectionReason,
+        fieldPath: Rg12FieldPath,
+    ) = Rg12ExecutionResult.Rejected(reason, fieldPath)
 
     private companion object {
         const val CORRECTION_KIND_POSTING_FACTS = "posting_facts"
@@ -1217,7 +1345,10 @@ class Rg12Runtime(
     }
 }
 
-private fun checkedAdd(left: Long, right: Long): Long? {
+private fun checkedAdd(
+    left: Long,
+    right: Long,
+): Long? {
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null
     return left + right
@@ -1230,7 +1361,10 @@ private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) nul
  * -> `-70.00`), the reverse of [parseExactDecimal]. Mirrors the golden `_amount` rendering so
  * old posting facts compare byte-identically with the frozen amount texts.
  */
-private fun minorToExactText(minor: Long, precision: Int): String {
+private fun minorToExactText(
+    minor: Long,
+    precision: Int,
+): String {
     val negative = minor < 0L
     val magnitude = if (negative) checkedNegate(minor) ?: error("RG-12 minor overflow") else minor
     val scale = pow10Exact(precision) ?: error("RG-12 precision overflow")
@@ -1256,7 +1390,10 @@ private const val SECONDS_PER_DAY = 86_400L
  * timestamps by one day for evening instants of the case timezone (same helper as
  * Rg11Operations.kt).
  */
-private fun localDateTimeText(instant: Instant, utcOffsetSeconds: Int): String {
+private fun localDateTimeText(
+    instant: Instant,
+    utcOffsetSeconds: Int,
+): String {
     val localSeconds = instant.epochSeconds + utcOffsetSeconds
     val days = localSeconds.floorDiv(SECONDS_PER_DAY)
     val secondsOfDay = localSeconds - days * SECONDS_PER_DAY
@@ -1279,7 +1416,10 @@ private fun localDateTimeText(instant: Instant, utcOffsetSeconds: Int): String {
     }
 }
 
-private fun padded(value: Long, width: Int): String = value.toString().padStart(width, '0')
+private fun padded(
+    value: Long,
+    width: Int,
+): String = value.toString().padStart(width, '0')
 
 /** Fixed-offset civil-from-days (Howard Hinnant's public-domain algorithm), same arithmetic as
  * the domain's `PeriodicAllocation.kt` local calendar so both layers agree on case dates. */

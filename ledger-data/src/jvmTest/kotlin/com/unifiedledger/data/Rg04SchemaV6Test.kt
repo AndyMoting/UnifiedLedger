@@ -1,7 +1,7 @@
 package com.unifiedledger.data
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
 import java.nio.file.Path
@@ -181,9 +181,10 @@ class Rg04SchemaV6Test {
             driver.execute(null, "INSERT INTO rg04_mixed_composition_component VALUES ('ledger-a', '$relationId', $index, $values, 'CNY', 2)", 0)
         }
 
-        val failure = assertFailsWith<SQLException> {
-            driver.execute(null, "INSERT INTO rg04_operation_receipt VALUES ('ledger-a', '$requestId', '$confirmationId', '$transactionId', 'ACCEPTED')", 0)
-        }
+        val failure =
+            assertFailsWith<SQLException> {
+                driver.execute(null, "INSERT INTO rg04_operation_receipt VALUES ('ledger-a', '$requestId', '$confirmationId', '$transactionId', 'ACCEPTED')", 0)
+            }
         assertContains(failure.message.orEmpty(), expectedMessage)
     }
 
@@ -359,30 +360,42 @@ class Rg04SchemaV6Test {
         ).forEach { driver.execute(null, it, 0) }
     }
 
-    private fun assertSqlRejected(driver: JdbcSqliteDriver, sql: String, message: String) {
+    private fun assertSqlRejected(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        message: String,
+    ) {
         val failure = assertFailsWith<SQLException> { driver.execute(null, sql, 0) }
         assertContains(failure.message.orEmpty(), message)
     }
 
-    private fun assertAcceptedMutationRejected(driver: JdbcSqliteDriver, sql: String) {
+    private fun assertAcceptedMutationRejected(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ) {
         assertSqlRejected(driver, sql, "accepted RG04")
         assertNoAcceptedAggregateViolation(driver)
     }
 
     private fun assertNoAcceptedAggregateViolation(driver: JdbcSqliteDriver) {
-        val count = driver.executeQuery(
-            identifier = null,
-            sql = "SELECT count(*) FROM rg04_accepted_aggregate_violation",
-            mapper = { cursor ->
-                check(cursor.next().value)
-                QueryResult.Value(requireNotNull(cursor.getLong(0)))
-            },
-            parameters = 0,
-        ).value
+        val count =
+            driver
+                .executeQuery(
+                    identifier = null,
+                    sql = "SELECT count(*) FROM rg04_accepted_aggregate_violation",
+                    mapper = { cursor ->
+                        check(cursor.next().value)
+                        QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    },
+                    parameters = 0,
+                ).value
         assertEquals(0L, count)
     }
 
-    private fun withMigratedSchema(prefix: String, block: (JdbcSqliteDriver) -> Unit) {
+    private fun withMigratedSchema(
+        prefix: String,
+        block: (JdbcSqliteDriver) -> Unit,
+    ) {
         val path = Files.createTempFile(prefix, ".db")
         try {
             Files.copy(repoFile("ledger-data/src/commonMain/sqldelight/databases/1.db"), path, java.nio.file.StandardCopyOption.REPLACE_EXISTING)

@@ -12,26 +12,48 @@ import com.unifiedledger.domain.StagedPaymentHistoryId
 import com.unifiedledger.domain.StagedPaymentInstallmentIds
 import com.unifiedledger.domain.StagedPaymentLifecycleId
 import com.unifiedledger.domain.StagedPaymentRelationId
-import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.StagedPaymentResult
+import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.StagedPaymentSourceTime
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
-data class Rg06SourceId(val value: String)
-data class Rg06EvidenceId(val value: String)
-data class Rg06CandidateId(val value: String)
-data class Rg06CandidateStatusId(val value: String)
-data class Rg06EvidenceLinkId(val value: String)
-data class Rg06ConfirmationId(val value: String)
-data class Rg06ReconciliationId(val value: String)
+data class Rg06SourceId(
+    val value: String,
+)
+
+data class Rg06EvidenceId(
+    val value: String,
+)
+
+data class Rg06CandidateId(
+    val value: String,
+)
+
+data class Rg06CandidateStatusId(
+    val value: String,
+)
+
+data class Rg06EvidenceLinkId(
+    val value: String,
+)
+
+data class Rg06ConfirmationId(
+    val value: String,
+)
+
+data class Rg06ReconciliationId(
+    val value: String,
+)
 
 data class Rg06OperationIdentity(
     val ledgerId: LedgerId,
     val value: String,
 )
 
-enum class Rg06Action(val code: String) {
+enum class Rg06Action(
+    val code: String,
+) {
     CREATE_STAGED_PAYMENT("create_staged_payment"),
     RECORD_STAGED_PAYMENT_INSTALLMENT("record_staged_payment_installment"),
     CHANGE_STAGED_PAYMENT_FULFILLMENT("change_staged_payment_fulfillment"),
@@ -123,8 +145,13 @@ enum class Rg06TypedValueFailure {
 }
 
 sealed interface Rg06TypedValueResult<out T> {
-    data class Success<T>(val value: T) : Rg06TypedValueResult<T>
-    data class Failure(val reason: Rg06TypedValueFailure) : Rg06TypedValueResult<Nothing>
+    data class Success<T>(
+        val value: T,
+    ) : Rg06TypedValueResult<T>
+
+    data class Failure(
+        val reason: Rg06TypedValueFailure,
+    ) : Rg06TypedValueResult<Nothing>
 }
 
 sealed interface Rg06EvidenceTime {
@@ -138,12 +165,17 @@ class Rg06ObservedAt private constructor(
     override val value: StagedPaymentSourceTime,
 ) : Rg06EvidenceTime {
     override fun equals(other: Any?) = other is Rg06ObservedAt && value == other.value
+
     override fun hashCode() = value.hashCode()
+
     override fun toString() = "Rg06ObservedAt(value=$value)"
 
     companion object {
-        fun create(instant: Instant, text: String, expectedOffsetText: String): Rg06TypedValueResult<Rg06ObservedAt> =
-            createEvidenceTime(instant, text, expectedOffsetText, ::Rg06ObservedAt)
+        fun create(
+            instant: Instant,
+            text: String,
+            expectedOffsetText: String,
+        ): Rg06TypedValueResult<Rg06ObservedAt> = createEvidenceTime(instant, text, expectedOffsetText, ::Rg06ObservedAt)
     }
 }
 
@@ -152,12 +184,17 @@ class Rg06SourcePaymentAt private constructor(
     override val value: StagedPaymentSourceTime,
 ) : Rg06EvidenceTime {
     override fun equals(other: Any?) = other is Rg06SourcePaymentAt && value == other.value
+
     override fun hashCode() = value.hashCode()
+
     override fun toString() = "Rg06SourcePaymentAt(value=$value)"
 
     companion object {
-        fun create(instant: Instant, text: String, expectedOffsetText: String): Rg06TypedValueResult<Rg06SourcePaymentAt> =
-            createEvidenceTime(instant, text, expectedOffsetText, ::Rg06SourcePaymentAt)
+        fun create(
+            instant: Instant,
+            text: String,
+            expectedOffsetText: String,
+        ): Rg06TypedValueResult<Rg06SourcePaymentAt> = createEvidenceTime(instant, text, expectedOffsetText, ::Rg06SourcePaymentAt)
     }
 }
 
@@ -166,12 +203,13 @@ private fun <T> createEvidenceTime(
     text: String,
     expectedOffsetText: String,
     create: (StagedPaymentSourceTime) -> T,
-): Rg06TypedValueResult<T> = when (
-    val result = StagedPaymentSourceTime.create(instant, text, expectedOffsetText)
-) {
-    is StagedPaymentResult.Success -> Rg06TypedValueResult.Success(create(result.value))
-    is StagedPaymentResult.Failure -> Rg06TypedValueResult.Failure(Rg06TypedValueFailure.INVALID_TIME)
-}
+): Rg06TypedValueResult<T> =
+    when (
+        val result = StagedPaymentSourceTime.create(instant, text, expectedOffsetText)
+    ) {
+        is StagedPaymentResult.Success -> Rg06TypedValueResult.Success(create(result.value))
+        is StagedPaymentResult.Failure -> Rg06TypedValueResult.Failure(Rg06TypedValueFailure.INVALID_TIME)
+    }
 
 /** A pre-staged, immutable manual bank observation resolved by source/evidence identity. */
 data class Rg06ManualBankObservation(
@@ -188,10 +226,10 @@ class Rg06ImmutableBankFactPayload private constructor(
     val amount: Money,
     val observedTime: Rg06EvidenceTime,
 ) {
-    override fun equals(other: Any?) =
-        other is Rg06ImmutableBankFactPayload && amount == other.amount && observedTime == other.observedTime
+    override fun equals(other: Any?) = other is Rg06ImmutableBankFactPayload && amount == other.amount && observedTime == other.observedTime
 
     override fun hashCode() = 31 * amount.hashCode() + observedTime.hashCode()
+
     override fun toString() = "Rg06ImmutableBankFactPayload(amount=$amount, observedTime=$observedTime)"
 
     companion object {
@@ -224,12 +262,15 @@ class Rg06StagedPaymentBankSource private constructor(
     val mirrorOfSourceId: Rg06SourceId?,
 ) {
     override fun equals(other: Any?) =
-        other is Rg06StagedPaymentBankSource && ledgerId == other.ledgerId && id == other.id &&
-            payload == other.payload && mirrorOfSourceId == other.mirrorOfSourceId
+        other is Rg06StagedPaymentBankSource &&
+            ledgerId == other.ledgerId &&
+            id == other.id &&
+            payload == other.payload &&
+            mirrorOfSourceId == other.mirrorOfSourceId
 
     override fun hashCode() = arrayOf(ledgerId, id, payload, mirrorOfSourceId).contentHashCode()
-    override fun toString() =
-        "Rg06StagedPaymentBankSource(ledgerId=$ledgerId, id=$id, payload=$payload, mirrorOfSourceId=$mirrorOfSourceId)"
+
+    override fun toString() = "Rg06StagedPaymentBankSource(ledgerId=$ledgerId, id=$id, payload=$payload, mirrorOfSourceId=$mirrorOfSourceId)"
 
     companion object {
         fun manual(
@@ -237,28 +278,32 @@ class Rg06StagedPaymentBankSource private constructor(
             id: Rg06SourceId,
             amount: Money,
             observedTime: Rg06EvidenceTime,
-        ): Rg06TypedValueResult<Rg06StagedPaymentBankSource> = when (
-            val payload = Rg06ImmutableBankFactPayload.manual(amount, observedTime)
-        ) {
-            is Rg06TypedValueResult.Success -> Rg06TypedValueResult.Success(
-                Rg06StagedPaymentBankSource(ledgerId, id, payload.value, null),
-            )
-            is Rg06TypedValueResult.Failure -> payload
-        }
+        ): Rg06TypedValueResult<Rg06StagedPaymentBankSource> =
+            when (
+                val payload = Rg06ImmutableBankFactPayload.manual(amount, observedTime)
+            ) {
+                is Rg06TypedValueResult.Success ->
+                    Rg06TypedValueResult.Success(
+                        Rg06StagedPaymentBankSource(ledgerId, id, payload.value, null),
+                    )
+                is Rg06TypedValueResult.Failure -> payload
+            }
 
         fun importedOriginal(
             ledgerId: LedgerId,
             id: Rg06SourceId,
             amount: Money,
             observedTime: Rg06EvidenceTime,
-        ): Rg06TypedValueResult<Rg06StagedPaymentBankSource> = when (
-            val payload = Rg06ImmutableBankFactPayload.imported(amount, observedTime)
-        ) {
-            is Rg06TypedValueResult.Success -> Rg06TypedValueResult.Success(
-                Rg06StagedPaymentBankSource(ledgerId, id, payload.value, null),
-            )
-            is Rg06TypedValueResult.Failure -> payload
-        }
+        ): Rg06TypedValueResult<Rg06StagedPaymentBankSource> =
+            when (
+                val payload = Rg06ImmutableBankFactPayload.imported(amount, observedTime)
+            ) {
+                is Rg06TypedValueResult.Success ->
+                    Rg06TypedValueResult.Success(
+                        Rg06StagedPaymentBankSource(ledgerId, id, payload.value, null),
+                    )
+                is Rg06TypedValueResult.Failure -> payload
+            }
 
         fun mirror(
             ledgerId: LedgerId,
@@ -271,9 +316,10 @@ class Rg06StagedPaymentBankSource private constructor(
                 return Rg06TypedValueResult.Failure(Rg06TypedValueFailure.INVALID_MIRROR_SOURCE_ID)
             }
             return when (val payload = Rg06ImmutableBankFactPayload.imported(amount, observedTime)) {
-                is Rg06TypedValueResult.Success -> Rg06TypedValueResult.Success(
-                    Rg06StagedPaymentBankSource(ledgerId, id, payload.value, originalSourceId),
-                )
+                is Rg06TypedValueResult.Success ->
+                    Rg06TypedValueResult.Success(
+                        Rg06StagedPaymentBankSource(ledgerId, id, payload.value, originalSourceId),
+                    )
                 is Rg06TypedValueResult.Failure -> payload
             }
         }
@@ -315,14 +361,24 @@ class Rg06BoundStagedPaymentEvidence private constructor(
 ) : Rg06StagedPaymentEvidence {
     override fun equals(other: Any?): Boolean =
         other is Rg06BoundStagedPaymentEvidence &&
-            ledgerId == other.ledgerId && id == other.id && sourceId == other.sourceId &&
-            observedTime == other.observedTime && paymentId == other.paymentId &&
+            ledgerId == other.ledgerId &&
+            id == other.id &&
+            sourceId == other.sourceId &&
+            observedTime == other.observedTime &&
+            paymentId == other.paymentId &&
             mirrorOfEvidenceId == other.mirrorOfEvidenceId &&
             mergedIntoEvidenceLinkId == other.mergedIntoEvidenceLinkId
 
-    override fun hashCode() = arrayOf(
-        ledgerId, id, sourceId, observedTime, paymentId, mirrorOfEvidenceId, mergedIntoEvidenceLinkId,
-    ).contentHashCode()
+    override fun hashCode() =
+        arrayOf(
+            ledgerId,
+            id,
+            sourceId,
+            observedTime,
+            paymentId,
+            mirrorOfEvidenceId,
+            mergedIntoEvidenceLinkId,
+        ).contentHashCode()
 
     companion object {
         fun manual(
@@ -332,7 +388,13 @@ class Rg06BoundStagedPaymentEvidence private constructor(
             observedAt: Rg06ObservedAt,
             paymentId: InstallmentPaymentId,
         ) = Rg06BoundStagedPaymentEvidence(
-            ledgerId, id, sourceId, observedAt, paymentId, null, null,
+            ledgerId,
+            id,
+            sourceId,
+            observedAt,
+            paymentId,
+            null,
+            null,
         )
 
         fun imported(
@@ -342,7 +404,13 @@ class Rg06BoundStagedPaymentEvidence private constructor(
             sourcePaymentAt: Rg06SourcePaymentAt,
             paymentId: InstallmentPaymentId,
         ) = Rg06BoundStagedPaymentEvidence(
-            ledgerId, id, sourceId, sourcePaymentAt, paymentId, null, null,
+            ledgerId,
+            id,
+            sourceId,
+            sourcePaymentAt,
+            paymentId,
+            null,
+            null,
         )
 
         fun mirror(
@@ -369,8 +437,13 @@ class Rg06BoundStagedPaymentEvidence private constructor(
             }
             return Rg06TypedValueResult.Success(
                 Rg06BoundStagedPaymentEvidence(
-                    ledgerId, id, sourceId, sourcePaymentAt, paymentId,
-                    mirrorOfEvidenceId, mergedIntoEvidenceLinkId,
+                    ledgerId,
+                    id,
+                    sourceId,
+                    sourcePaymentAt,
+                    paymentId,
+                    mirrorOfEvidenceId,
+                    mergedIntoEvidenceLinkId,
                 ),
             )
         }
@@ -378,11 +451,16 @@ class Rg06BoundStagedPaymentEvidence private constructor(
 }
 
 sealed interface Rg06CandidateRoleFact {
-    data class Known(val role: StagedPaymentRole) : Rg06CandidateRoleFact
+    data class Known(
+        val role: StagedPaymentRole,
+    ) : Rg06CandidateRoleFact
+
     data object ExplicitAmbiguous : Rg06CandidateRoleFact
 }
 
-enum class Rg06CandidateConfidence(val exactText: String) {
+enum class Rg06CandidateConfidence(
+    val exactText: String,
+) {
     CERTAIN("1.00"),
     AMBIGUOUS("0.50"),
 }
@@ -395,12 +473,13 @@ enum class Rg06ConfirmationRequirement {
 }
 
 val RG06_CONFIRMATION_REQUIREMENTS: List<Rg06ConfirmationRequirement>
-    get() = listOf(
-        Rg06ConfirmationRequirement.RELATION_ID,
-        Rg06ConfirmationRequirement.PAYMENT_ROLE,
-        Rg06ConfirmationRequirement.CATEGORY_ID,
-        Rg06ConfirmationRequirement.FUNDING_ACCOUNT_ID,
-    )
+    get() =
+        listOf(
+            Rg06ConfirmationRequirement.RELATION_ID,
+            Rg06ConfirmationRequirement.PAYMENT_ROLE,
+            Rg06ConfirmationRequirement.CATEGORY_ID,
+            Rg06ConfirmationRequirement.FUNDING_ACCOUNT_ID,
+        )
 
 class Rg06StagedPaymentCandidatePayload private constructor(
     val roleFact: Rg06CandidateRoleFact,
@@ -408,10 +487,11 @@ class Rg06StagedPaymentCandidatePayload private constructor(
     val sourcePaymentAt: Rg06SourcePaymentAt,
     val evidenceId: Rg06EvidenceId,
 ) {
-    val confidence: Rg06CandidateConfidence = when (roleFact) {
-        is Rg06CandidateRoleFact.Known -> Rg06CandidateConfidence.CERTAIN
-        Rg06CandidateRoleFact.ExplicitAmbiguous -> Rg06CandidateConfidence.AMBIGUOUS
-    }
+    val confidence: Rg06CandidateConfidence =
+        when (roleFact) {
+            is Rg06CandidateRoleFact.Known -> Rg06CandidateConfidence.CERTAIN
+            Rg06CandidateRoleFact.ExplicitAmbiguous -> Rg06CandidateConfidence.AMBIGUOUS
+        }
     val ruleVersion: Int = 1
     private val requirementSnapshot = RG06_CONFIRMATION_REQUIREMENTS.toList()
     val confirmationRequirements: List<Rg06ConfirmationRequirement>
@@ -426,11 +506,9 @@ class Rg06StagedPaymentCandidatePayload private constructor(
             ruleVersion == other.ruleVersion &&
             requirementSnapshot == other.requirementSnapshot
 
-    override fun hashCode(): Int =
-        arrayOf(roleFact, amount, sourcePaymentAt, evidenceId, ruleVersion, requirementSnapshot).contentHashCode()
+    override fun hashCode(): Int = arrayOf(roleFact, amount, sourcePaymentAt, evidenceId, ruleVersion, requirementSnapshot).contentHashCode()
 
-    override fun toString(): String =
-        "Rg06StagedPaymentCandidatePayload(roleFact=$roleFact, amount=$amount, sourcePaymentAt=$sourcePaymentAt, evidenceId=$evidenceId, ruleVersion=$ruleVersion, confirmationRequirements=$requirementSnapshot)"
+    override fun toString(): String = "Rg06StagedPaymentCandidatePayload(roleFact=$roleFact, amount=$amount, sourcePaymentAt=$sourcePaymentAt, evidenceId=$evidenceId, ruleVersion=$ruleVersion, confirmationRequirements=$requirementSnapshot)"
 
     companion object {
         fun known(
@@ -438,15 +516,13 @@ class Rg06StagedPaymentCandidatePayload private constructor(
             signedAmount: Money,
             sourcePaymentAt: Rg06SourcePaymentAt,
             evidenceId: Rg06EvidenceId,
-        ): Rg06TypedValueResult<Rg06StagedPaymentCandidatePayload> =
-            create(Rg06CandidateRoleFact.Known(role), signedAmount, sourcePaymentAt, evidenceId)
+        ): Rg06TypedValueResult<Rg06StagedPaymentCandidatePayload> = create(Rg06CandidateRoleFact.Known(role), signedAmount, sourcePaymentAt, evidenceId)
 
         fun ambiguous(
             signedAmount: Money,
             sourcePaymentAt: Rg06SourcePaymentAt,
             evidenceId: Rg06EvidenceId,
-        ): Rg06TypedValueResult<Rg06StagedPaymentCandidatePayload> =
-            create(Rg06CandidateRoleFact.ExplicitAmbiguous, signedAmount, sourcePaymentAt, evidenceId)
+        ): Rg06TypedValueResult<Rg06StagedPaymentCandidatePayload> = create(Rg06CandidateRoleFact.ExplicitAmbiguous, signedAmount, sourcePaymentAt, evidenceId)
 
         private fun create(
             roleFact: Rg06CandidateRoleFact,
@@ -512,14 +588,16 @@ class Rg06StagedPaymentCandidate private constructor(
 
     override fun equals(other: Any?): Boolean =
         other is Rg06StagedPaymentCandidate &&
-            ledgerId == other.ledgerId && id == other.id && sourceId == other.sourceId &&
-            confidence == other.confidence && payload == other.payload && statusSnapshot == other.statusSnapshot
+            ledgerId == other.ledgerId &&
+            id == other.id &&
+            sourceId == other.sourceId &&
+            confidence == other.confidence &&
+            payload == other.payload &&
+            statusSnapshot == other.statusSnapshot
 
-    override fun hashCode(): Int =
-        arrayOf(ledgerId, id, sourceId, confidence, payload, statusSnapshot).contentHashCode()
+    override fun hashCode(): Int = arrayOf(ledgerId, id, sourceId, confidence, payload, statusSnapshot).contentHashCode()
 
-    override fun toString(): String =
-        "Rg06StagedPaymentCandidate(ledgerId=$ledgerId, id=$id, sourceId=$sourceId, confidence=$confidence, payload=$payload, statusHistory=$statusSnapshot)"
+    override fun toString(): String = "Rg06StagedPaymentCandidate(ledgerId=$ledgerId, id=$id, sourceId=$sourceId, confidence=$confidence, payload=$payload, statusHistory=$statusSnapshot)"
 
     companion object {
         fun pending(
@@ -528,14 +606,15 @@ class Rg06StagedPaymentCandidate private constructor(
             sourceId: Rg06SourceId,
             payload: Rg06StagedPaymentCandidatePayload,
             pendingStatusId: Rg06CandidateStatusId,
-        ): Rg06StagedPaymentCandidate = Rg06StagedPaymentCandidate(
-            ledgerId,
-            id,
-            sourceId,
-            payload.confidence,
-            payload,
-            listOf(Rg06CandidateStatusEntry(pendingStatusId, 1, Rg06CandidateStatus.PENDING_CONFIRMATION)),
-        )
+        ): Rg06StagedPaymentCandidate =
+            Rg06StagedPaymentCandidate(
+                ledgerId,
+                id,
+                sourceId,
+                payload.confidence,
+                payload,
+                listOf(Rg06CandidateStatusEntry(pendingStatusId, 1, Rg06CandidateStatus.PENDING_CONFIRMATION)),
+            )
     }
 }
 
@@ -636,18 +715,46 @@ sealed interface Rg06Operation {
 }
 
 sealed interface Rg06ReturnedId {
-    data class Relation(val id: StagedPaymentRelationId) : Rg06ReturnedId
-    data class Lifecycle(val id: StagedPaymentLifecycleId) : Rg06ReturnedId
-    data class Payment(val id: InstallmentPaymentId) : Rg06ReturnedId
-    data class Transaction(val id: TransactionId) : Rg06ReturnedId
-    data class Source(val id: Rg06SourceId) : Rg06ReturnedId
-    data class Evidence(val id: Rg06EvidenceId) : Rg06ReturnedId
-    data class Candidate(val id: Rg06CandidateId) : Rg06ReturnedId
-    data class Confirmation(val id: Rg06ConfirmationId) : Rg06ReturnedId
-    data class EvidenceLink(val id: Rg06EvidenceLinkId) : Rg06ReturnedId
+    data class Relation(
+        val id: StagedPaymentRelationId,
+    ) : Rg06ReturnedId
+
+    data class Lifecycle(
+        val id: StagedPaymentLifecycleId,
+    ) : Rg06ReturnedId
+
+    data class Payment(
+        val id: InstallmentPaymentId,
+    ) : Rg06ReturnedId
+
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg06ReturnedId
+
+    data class Source(
+        val id: Rg06SourceId,
+    ) : Rg06ReturnedId
+
+    data class Evidence(
+        val id: Rg06EvidenceId,
+    ) : Rg06ReturnedId
+
+    data class Candidate(
+        val id: Rg06CandidateId,
+    ) : Rg06ReturnedId
+
+    data class Confirmation(
+        val id: Rg06ConfirmationId,
+    ) : Rg06ReturnedId
+
+    data class EvidenceLink(
+        val id: Rg06EvidenceLinkId,
+    ) : Rg06ReturnedId
 }
 
-enum class Rg06RejectionReason(val code: String) {
+enum class Rg06RejectionReason(
+    val code: String,
+) {
     MUST_BE_POSITIVE("must_be_positive"),
     SECONDARY_CATEGORY_REQUIRED("secondary_category_required"),
     CATEGORY_INACTIVE("category_inactive"),
@@ -678,7 +785,9 @@ enum class Rg06RejectionReason(val code: String) {
     DOMAIN_REJECTED("domain_rejected"),
 }
 
-enum class Rg06FieldPath(val value: String) {
+enum class Rg06FieldPath(
+    val value: String,
+) {
     ATTEMPTED_TOTAL_AMOUNT("$.attempted_input.total_amount"),
     ATTEMPTED_PAYMENT_AMOUNT("$.attempted_input.payment_amount"),
     ATTEMPTED_CURRENCY("$.attempted_input.currency"),
@@ -701,19 +810,29 @@ enum class Rg06FieldPath(val value: String) {
 }
 
 sealed interface Rg06ExecutionResult {
-    class Accepted(returnedIds: List<Rg06ReturnedId>) : Rg06ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg06ReturnedId>,
+    ) : Rg06ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg06ReturnedId> get() = snapshot.toMutableList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode() = snapshot.hashCode()
+
         override fun toString() = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg06ReturnedId>) : Rg06ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg06ReturnedId>,
+    ) : Rg06ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg06ReturnedId> get() = snapshot.toMutableList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode() = snapshot.hashCode()
+
         override fun toString() = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -771,22 +890,31 @@ fun interface Rg06CommitPort {
     fun commit(operation: Rg06Operation): Rg06ExecutionResult
 }
 
-class ExecuteRg06Operation(private val port: Rg06CommitPort) {
-    fun execute(operation: Rg06Operation): Rg06ExecutionResult = when (operation) {
-        is Rg06Operation.ConfirmStagedPaymentCompletion -> if (!operation.input.confirmed) {
-            Rg06ExecutionResult.Rejected(
-                Rg06RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED,
-                Rg06FieldPath.INPUT_CONFIRMED,
-            )
-        } else port.commit(operation)
+class ExecuteRg06Operation(
+    private val port: Rg06CommitPort,
+) {
+    fun execute(operation: Rg06Operation): Rg06ExecutionResult =
+        when (operation) {
+            is Rg06Operation.ConfirmStagedPaymentCompletion ->
+                if (!operation.input.confirmed) {
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED,
+                        Rg06FieldPath.INPUT_CONFIRMED,
+                    )
+                } else {
+                    port.commit(operation)
+                }
 
-        is Rg06Operation.ConfirmStagedPaymentCandidate -> if (!operation.input.exactBindingConfirmed) {
-            Rg06ExecutionResult.Rejected(
-                Rg06RejectionReason.EXACT_BINDING_CONFIRMATION_REQUIRED,
-                Rg06FieldPath.INPUT_EXACT_BINDING_CONFIRMED,
-            )
-        } else port.commit(operation)
+            is Rg06Operation.ConfirmStagedPaymentCandidate ->
+                if (!operation.input.exactBindingConfirmed) {
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EXACT_BINDING_CONFIRMATION_REQUIRED,
+                        Rg06FieldPath.INPUT_EXACT_BINDING_CONFIRMED,
+                    )
+                } else {
+                    port.commit(operation)
+                }
 
-        else -> port.commit(operation)
-    }
+            else -> port.commit(operation)
+        }
 }

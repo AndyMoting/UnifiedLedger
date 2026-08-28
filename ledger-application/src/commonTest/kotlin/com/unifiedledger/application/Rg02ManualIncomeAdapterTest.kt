@@ -8,17 +8,19 @@ import kotlin.test.assertIs
 import kotlin.time.Instant
 
 class Rg02ManualIncomeAdapterTest {
-    private val context = Rg02ManualIncomeContext(
-        ledgerId = LedgerId("ledger-a"),
-        currency = CurrencyUnit("CNY", 2),
-        caseTimeZone = "Asia/Shanghai",
-    )
+    private val context =
+        Rg02ManualIncomeContext(
+            ledgerId = LedgerId("ledger-a"),
+            currency = CurrencyUnit("CNY", 2),
+            caseTimeZone = "Asia/Shanghai",
+        )
 
     @Test
     fun `strict decoded input becomes exact typed save input`() {
-        val parsed = assertIs<Rg02ManualIncomeAdaptResult.Success>(
-            adaptRg02ManualIncomeInput(context, input()),
-        ).value
+        val parsed =
+            assertIs<Rg02ManualIncomeAdaptResult.Success>(
+                adaptRg02ManualIncomeInput(context, input()),
+            ).value
 
         assertEquals(300_000L, parsed.saveInput.amount?.minorUnits)
         assertEquals(context.currency, parsed.saveInput.amount?.currency)
@@ -32,16 +34,17 @@ class Rg02ManualIncomeAdapterTest {
 
     @Test
     fun `currency mismatch malformed decimal excess precision and overflow are typed errors`() {
-        val cases = listOf(
-            input().copy(currency = Rg02JsonField.Value("USD")) to
-                Rg02ManualIncomeContractError("$.input.currency", Rg02ManualIncomeContractErrorReason.CURRENCY_MISMATCH),
-            input().copy(amount = Rg02JsonField.Value("three")) to
-                Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
-            input().copy(amount = Rg02JsonField.Value("1.001")) to
-                Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
-            input().copy(amount = Rg02JsonField.Value("92233720368547758.08")) to
-                Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
-        )
+        val cases =
+            listOf(
+                input().copy(currency = Rg02JsonField.Value("USD")) to
+                    Rg02ManualIncomeContractError("$.input.currency", Rg02ManualIncomeContractErrorReason.CURRENCY_MISMATCH),
+                input().copy(amount = Rg02JsonField.Value("three")) to
+                    Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
+                input().copy(amount = Rg02JsonField.Value("1.001")) to
+                    Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
+                input().copy(amount = Rg02JsonField.Value("92233720368547758.08")) to
+                    Rg02ManualIncomeContractError("$.input.amount", Rg02ManualIncomeContractErrorReason.INVALID_DECIMAL),
+            )
 
         cases.forEach { (candidate, expected) ->
             assertEquals(
@@ -55,12 +58,14 @@ class Rg02ManualIncomeAdapterTest {
 
     @Test
     fun `exact parser supports long boundaries while preserving domain validation values`() {
-        val maximum = assertIs<Rg02ManualIncomeAdaptResult.Success>(
-            adaptRg02ManualIncomeInput(context, input(amount = "92233720368547758.07")),
-        ).value
-        val minimum = assertIs<Rg02ManualIncomeAdaptResult.Success>(
-            adaptRg02ManualIncomeInput(context, input(amount = "-92233720368547758.08")),
-        ).value
+        val maximum =
+            assertIs<Rg02ManualIncomeAdaptResult.Success>(
+                adaptRg02ManualIncomeInput(context, input(amount = "92233720368547758.07")),
+            ).value
+        val minimum =
+            assertIs<Rg02ManualIncomeAdaptResult.Success>(
+                adaptRg02ManualIncomeInput(context, input(amount = "-92233720368547758.08")),
+            ).value
 
         assertEquals(Long.MAX_VALUE, maximum.saveInput.amount?.minorUnits)
         assertEquals(Long.MIN_VALUE, minimum.saveInput.amount?.minorUnits)
@@ -68,44 +73,49 @@ class Rg02ManualIncomeAdapterTest {
 
     @Test
     fun `malformed timestamps offsets and unsupported timezone are typed errors`() {
-        val malformed = assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
-            adaptRg02ManualIncomeInput(
-                context,
-                input(occurredAt = "2026-01-16T09:00:00"),
-            ),
-        ).error
+        val malformed =
+            assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
+                adaptRg02ManualIncomeInput(
+                    context,
+                    input(occurredAt = "2026-01-16T09:00:00"),
+                ),
+            ).error
         assertEquals(Rg02ManualIncomeContractErrorReason.INVALID_TIMESTAMP, malformed.reason)
 
-        val offset = assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
-            adaptRg02ManualIncomeInput(
-                context,
-                input(occurredAt = "2026-01-16T08:00:00+07:00"),
-            ),
-        ).error
+        val offset =
+            assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
+                adaptRg02ManualIncomeInput(
+                    context,
+                    input(occurredAt = "2026-01-16T08:00:00+07:00"),
+                ),
+            ).error
         assertEquals(Rg02ManualIncomeContractErrorReason.TIMEZONE_OFFSET_MISMATCH, offset.reason)
 
-        val timezone = assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
-            adaptRg02ManualIncomeInput(
-                context.copy(caseTimeZone = "Etc/UTC", validNumericOffset = "+00:00"),
-                input(occurredAt = "2026-01-16T01:00:00Z"),
-            ),
-        ).error
+        val timezone =
+            assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
+                adaptRg02ManualIncomeInput(
+                    context.copy(caseTimeZone = "Etc/UTC", validNumericOffset = "+00:00"),
+                    input(occurredAt = "2026-01-16T01:00:00Z"),
+                ),
+            ).error
         assertEquals(Rg02ManualIncomeContractErrorReason.UNSUPPORTED_TIMEZONE, timezone.reason)
     }
 
     @Test
     fun `ledger request category and account ids are validated without throwing`() {
-        val cases = listOf(
-            Triple(context.copy(ledgerId = LedgerId("")), input(), "$.case.ledger_id"),
-            Triple(context, input().copy(requestId = Rg02JsonField.Value("")), "$.input.request_id"),
-            Triple(context, input().copy(categoryId = Rg02JsonField.Value("bad\u0001id")), "$.input.category_id"),
-            Triple(context, input().copy(receivingAccountId = Rg02JsonField.Value("")), "$.input.receiving_account_id"),
-        )
+        val cases =
+            listOf(
+                Triple(context.copy(ledgerId = LedgerId("")), input(), "$.case.ledger_id"),
+                Triple(context, input().copy(requestId = Rg02JsonField.Value("")), "$.input.request_id"),
+                Triple(context, input().copy(categoryId = Rg02JsonField.Value("bad\u0001id")), "$.input.category_id"),
+                Triple(context, input().copy(receivingAccountId = Rg02JsonField.Value("")), "$.input.receiving_account_id"),
+            )
 
         cases.forEach { (candidateContext, candidateInput, path) ->
-            val error = assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
-                adaptRg02ManualIncomeInput(candidateContext, candidateInput),
-            ).error
+            val error =
+                assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
+                    adaptRg02ManualIncomeInput(candidateContext, candidateInput),
+                ).error
             assertEquals(path, error.fieldPath)
             assertEquals(Rg02ManualIncomeContractErrorReason.INVALID_ID, error.reason)
         }
@@ -118,9 +128,10 @@ class Rg02ManualIncomeAdapterTest {
             Rg02JsonField.Null to Rg02ManualIncomeContractErrorReason.NULL_NOT_ALLOWED,
             Rg02JsonField.Value(false) to Rg02ManualIncomeContractErrorReason.EXPLICIT_CONFIRMATION_REQUIRED,
         ).forEach { (confirmation, reason) ->
-            val error = assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
-                adaptRg02ManualIncomeInput(context, input().copy(explicitConfirmation = confirmation)),
-            ).error
+            val error =
+                assertIs<Rg02ManualIncomeAdaptResult.InvalidContract>(
+                    adaptRg02ManualIncomeInput(context, input().copy(explicitConfirmation = confirmation)),
+                ).error
             assertEquals("$.input.explicit_confirmation", error.fieldPath)
             assertEquals(reason, error.reason)
         }
@@ -128,16 +139,17 @@ class Rg02ManualIncomeAdapterTest {
 
     @Test
     fun `sparse nullable business fields remain typed for application validation`() {
-        val parsed = assertIs<Rg02ManualIncomeAdaptResult.Success>(
-            adaptRg02ManualIncomeInput(
-                context,
-                input().copy(
-                    amount = Rg02JsonField.Null,
-                    categoryId = Rg02JsonField.Omitted,
-                    receivingAccountId = Rg02JsonField.Null,
+        val parsed =
+            assertIs<Rg02ManualIncomeAdaptResult.Success>(
+                adaptRg02ManualIncomeInput(
+                    context,
+                    input().copy(
+                        amount = Rg02JsonField.Null,
+                        categoryId = Rg02JsonField.Omitted,
+                        receivingAccountId = Rg02JsonField.Null,
+                    ),
                 ),
-            ),
-        ).value
+            ).value
 
         assertEquals(null, parsed.saveInput.amount)
         assertEquals(null, parsed.saveInput.categoryId)

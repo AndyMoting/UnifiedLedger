@@ -9,6 +9,8 @@ import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.StoredValueActivationBalancePostingRole
 import com.unifiedledger.domain.StoredValueExpiryLossPostingRole
 import com.unifiedledger.domain.StoredValueLot
@@ -22,33 +24,62 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.PostingSetId
-import com.unifiedledger.domain.PostingId
-import com.unifiedledger.domain.createStoredValueRecharge
-import com.unifiedledger.domain.createStoredValueSpend
-import com.unifiedledger.domain.createStoredValueExpiryLoss
 import com.unifiedledger.domain.createStoredValueActivationBalance
+import com.unifiedledger.domain.createStoredValueExpiryLoss
+import com.unifiedledger.domain.createStoredValueRecharge
 import com.unifiedledger.domain.createStoredValueReconstruction
+import com.unifiedledger.domain.createStoredValueSpend
 import com.unifiedledger.domain.defaultLotOrder
 import kotlin.time.Instant
 
-data class Rg10CandidateId(val value: String)
-data class Rg10SourceRecordId(val value: String)
-data class Rg10EvidenceId(val value: String)
-data class Rg10EvidenceLinkId(val value: String)
-data class Rg10ConfirmationId(val value: String)
-data class Rg10AllocationId(val value: String)
-data class Rg10ConsumptionId(val value: String)
-data class Rg10ActivationAdjustmentId(val value: String)
-data class Rg10ReconstructionId(val value: String)
-data class Rg10AuditLinkId(val value: String)
+data class Rg10CandidateId(
+    val value: String,
+)
+
+data class Rg10SourceRecordId(
+    val value: String,
+)
+
+data class Rg10EvidenceId(
+    val value: String,
+)
+
+data class Rg10EvidenceLinkId(
+    val value: String,
+)
+
+data class Rg10ConfirmationId(
+    val value: String,
+)
+
+data class Rg10AllocationId(
+    val value: String,
+)
+
+data class Rg10ConsumptionId(
+    val value: String,
+)
+
+data class Rg10ActivationAdjustmentId(
+    val value: String,
+)
+
+data class Rg10ReconstructionId(
+    val value: String,
+)
+
+data class Rg10AuditLinkId(
+    val value: String,
+)
 
 data class Rg10OperationIdentity(
     val ledgerId: LedgerId,
     val value: String,
 )
 
-enum class Rg10Action(val code: String) {
+enum class Rg10Action(
+    val code: String,
+) {
     CONFIRM_STORED_VALUE_RECHARGE("confirm_stored_value_recharge"),
     CONFIRM_STORED_VALUE_SPEND("confirm_stored_value_spend"),
     INGEST_STORED_VALUE_RECHARGE_CANDIDATE("ingest_stored_value_recharge_candidate"),
@@ -460,19 +491,50 @@ sealed interface Rg10Operation {
 }
 
 sealed interface Rg10ReturnedId {
-    data class Transaction(val id: TransactionId) : Rg10ReturnedId
-    data class Version(val id: TransactionVersionId) : Rg10ReturnedId
-    data class Lot(val id: StoredValueLotId) : Rg10ReturnedId
-    data class Confirmation(val id: Rg10ConfirmationId) : Rg10ReturnedId
-    data class Candidate(val id: Rg10CandidateId) : Rg10ReturnedId
-    data class EvidenceLink(val id: Rg10EvidenceLinkId) : Rg10ReturnedId
-    data class Allocation(val id: Rg10AllocationId) : Rg10ReturnedId
-    data class Consumption(val id: Rg10ConsumptionId) : Rg10ReturnedId
-    data class Adjustment(val id: Rg10ActivationAdjustmentId) : Rg10ReturnedId
-    data class Request(val id: String) : Rg10ReturnedId
+    data class Transaction(
+        val id: TransactionId,
+    ) : Rg10ReturnedId
+
+    data class Version(
+        val id: TransactionVersionId,
+    ) : Rg10ReturnedId
+
+    data class Lot(
+        val id: StoredValueLotId,
+    ) : Rg10ReturnedId
+
+    data class Confirmation(
+        val id: Rg10ConfirmationId,
+    ) : Rg10ReturnedId
+
+    data class Candidate(
+        val id: Rg10CandidateId,
+    ) : Rg10ReturnedId
+
+    data class EvidenceLink(
+        val id: Rg10EvidenceLinkId,
+    ) : Rg10ReturnedId
+
+    data class Allocation(
+        val id: Rg10AllocationId,
+    ) : Rg10ReturnedId
+
+    data class Consumption(
+        val id: Rg10ConsumptionId,
+    ) : Rg10ReturnedId
+
+    data class Adjustment(
+        val id: Rg10ActivationAdjustmentId,
+    ) : Rg10ReturnedId
+
+    data class Request(
+        val id: String,
+    ) : Rg10ReturnedId
 }
 
-enum class Rg10RejectionReason(val code: String) {
+enum class Rg10RejectionReason(
+    val code: String,
+) {
     EXACT_DECIMAL_STRING_REQUIRED("exact_decimal_string_required"),
     MUST_BE_POSITIVE("must_be_positive"),
     CREDITED_AMOUNT_MUST_BE_POSITIVE("credited_amount_must_be_positive"),
@@ -498,7 +560,9 @@ enum class Rg10RejectionReason(val code: String) {
     DOMAIN_REJECTED("domain_rejected"),
 }
 
-enum class Rg10FieldPath(val value: String) {
+enum class Rg10FieldPath(
+    val value: String,
+) {
     INPUT_REQUEST_ID("$.input.request_id"),
     INPUT_MODEL("$.input.model"),
     INPUT_PAYMENT_ACCOUNT("$.input.payment_account_id"),
@@ -531,19 +595,29 @@ enum class Rg10FieldPath(val value: String) {
 }
 
 sealed interface Rg10ExecutionResult {
-    class Accepted(returnedIds: List<Rg10ReturnedId>) : Rg10ExecutionResult {
+    class Accepted(
+        returnedIds: List<Rg10ReturnedId>,
+    ) : Rg10ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg10ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is Accepted && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "Accepted(returnedIds=$snapshot)"
     }
 
-    class NoChange(returnedIds: List<Rg10ReturnedId>) : Rg10ExecutionResult {
+    class NoChange(
+        returnedIds: List<Rg10ReturnedId>,
+    ) : Rg10ExecutionResult {
         private val snapshot = returnedIds.toList()
         val returnedIds: List<Rg10ReturnedId> get() = snapshot.toList()
+
         override fun equals(other: Any?) = other is NoChange && snapshot == other.snapshot
+
         override fun hashCode(): Int = snapshot.hashCode()
+
         override fun toString(): String = "NoChange(returnedIds=$snapshot)"
     }
 
@@ -781,46 +855,48 @@ class Rg10Runtime(
                 Rg10ExecutionResult.RequestIdentityConflict
             }
         }
-        val result = when (operation) {
-            is Rg10Operation.ConfirmStoredValueRecharge -> confirmRecharge(operation)
-            is Rg10Operation.ConfirmStoredValueSpend -> confirmSpend(operation)
-            is Rg10Operation.IngestStoredValueRechargeCandidate -> ingestRechargeCandidate(operation)
-            is Rg10Operation.IngestStoredValueSpendCandidate -> ingestSpendCandidate(operation)
-            is Rg10Operation.ConfirmImportedStoredValueRecharge -> rejectIncompleteImportedRecharge(operation)
-            is Rg10Operation.ConfirmImportedStoredValueSpend -> rejectIncompleteImportedSpend(operation)
-            is Rg10Operation.RecordExpiryReminder -> recordExpiryReminder(operation)
-            is Rg10Operation.ConfirmStoredValueExpiryLoss -> confirmExpiryLoss(operation)
-            is Rg10Operation.ReconcileMerchantCredit -> reconcileMerchantCredit(operation)
-            is Rg10Operation.ReconcileBankPayment -> reconcileBankPayment(operation)
-            is Rg10Operation.ApplyMerchantLotAllocation -> applyMerchantLotAllocation(operation)
-            is Rg10Operation.ConfirmStoredValueActivationBalance -> confirmActivationBalance(operation)
-            is Rg10Operation.RenameStoredValueLabels -> renameStoredValueLabels(operation)
-            is Rg10Operation.InvalidInput -> rejectInvalidInput(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg10Operation.ConfirmStoredValueRecharge -> confirmRecharge(operation)
+                is Rg10Operation.ConfirmStoredValueSpend -> confirmSpend(operation)
+                is Rg10Operation.IngestStoredValueRechargeCandidate -> ingestRechargeCandidate(operation)
+                is Rg10Operation.IngestStoredValueSpendCandidate -> ingestSpendCandidate(operation)
+                is Rg10Operation.ConfirmImportedStoredValueRecharge -> rejectIncompleteImportedRecharge(operation)
+                is Rg10Operation.ConfirmImportedStoredValueSpend -> rejectIncompleteImportedSpend(operation)
+                is Rg10Operation.RecordExpiryReminder -> recordExpiryReminder(operation)
+                is Rg10Operation.ConfirmStoredValueExpiryLoss -> confirmExpiryLoss(operation)
+                is Rg10Operation.ReconcileMerchantCredit -> reconcileMerchantCredit(operation)
+                is Rg10Operation.ReconcileBankPayment -> reconcileBankPayment(operation)
+                is Rg10Operation.ApplyMerchantLotAllocation -> applyMerchantLotAllocation(operation)
+                is Rg10Operation.ConfirmStoredValueActivationBalance -> confirmActivationBalance(operation)
+                is Rg10Operation.RenameStoredValueLabels -> renameStoredValueLabels(operation)
+                is Rg10Operation.InvalidInput -> rejectInvalidInput(operation)
+            }
         if (result is Rg10ExecutionResult.Accepted || result is Rg10ExecutionResult.Rejected) {
             receipts[operation.identity] = Receipt(fingerprint, result)
         }
         return result
     }
 
-    fun snapshot(): Rg10Snapshot = Rg10Snapshot(
-        formalTransactions = formalTransactions.toList(),
-        lots = lots.map { it.copy(history = it.history.toList()) },
-        consumptions = consumptions.toList(),
-        allocations = allocations.toList(),
-        adjustments = adjustments.map { it.copy(history = it.history.toList()) },
-        reconstructions = reconstructions.map { it.copy(history = it.history.toList()) },
-        candidates = candidates.toList(),
-        confirmations = confirmations.toList(),
-        sourceRecords = sourceRecords.toList(),
-        evidence = evidence.toList(),
-        evidenceLinks = evidenceLinks.toList(),
-        auditLinks = auditLinks.toList(),
-        postingSemantics = postingSemantics.toMap(),
-        balances = replayBalances(),
-        reports = reports(),
-        reconciliation = postingReconciliation.toMap(),
-    )
+    fun snapshot(): Rg10Snapshot =
+        Rg10Snapshot(
+            formalTransactions = formalTransactions.toList(),
+            lots = lots.map { it.copy(history = it.history.toList()) },
+            consumptions = consumptions.toList(),
+            allocations = allocations.toList(),
+            adjustments = adjustments.map { it.copy(history = it.history.toList()) },
+            reconstructions = reconstructions.map { it.copy(history = it.history.toList()) },
+            candidates = candidates.toList(),
+            confirmations = confirmations.toList(),
+            sourceRecords = sourceRecords.toList(),
+            evidence = evidence.toList(),
+            evidenceLinks = evidenceLinks.toList(),
+            auditLinks = auditLinks.toList(),
+            postingSemantics = postingSemantics.toMap(),
+            balances = replayBalances(),
+            reports = reports(),
+            reconciliation = postingReconciliation.toMap(),
+        )
 
     fun operationFingerprint(operation: Rg10Operation): String = canonicalInput(operation)
 
@@ -853,8 +929,9 @@ class Rg10Runtime(
         if (input.bonusAmount.minorUnits < 0L) {
             return rejected(Rg10RejectionReason.BONUS_AMOUNT_MUST_BE_ZERO_OR_POSITIVE, Rg10FieldPath.INPUT_BONUS_AMOUNT)
         }
-        val composed = checkedAdd(input.paidAmount.minorUnits, input.bonusAmount.minorUnits)
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_CREDITED_AMOUNT)
+        val composed =
+            checkedAdd(input.paidAmount.minorUnits, input.bonusAmount.minorUnits)
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_CREDITED_AMOUNT)
         if (input.creditedAmount.minorUnits < input.paidAmount.minorUnits) {
             return rejected(Rg10RejectionReason.CREDITED_MUST_EQUAL_PAID_PLUS_BONUS, Rg10FieldPath.INPUT_CREDITED_AMOUNT)
         }
@@ -869,55 +946,62 @@ class Rg10Runtime(
         ) {
             return rejected(Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED, Rg10FieldPath.INPUT_CURRENCY)
         }
-        val stored = catalogAccount(input.storedValueAccountId)
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
-        val payment = catalogAccount(input.paymentAccountId)
-            ?: return rejected(Rg10RejectionReason.UNKNOWN_PAYMENT_ACCOUNT, Rg10FieldPath.INPUT_PAYMENT_ACCOUNT)
+        val stored =
+            catalogAccount(input.storedValueAccountId)
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
+        val payment =
+            catalogAccount(input.paymentAccountId)
+                ?: return rejected(Rg10RejectionReason.UNKNOWN_PAYMENT_ACCOUNT, Rg10FieldPath.INPUT_PAYMENT_ACCOUNT)
         if (payment.kind != AccountKind.ASSET || !payment.ownedByUser || !payment.realAccount) {
             return rejected(Rg10RejectionReason.OWNED_PAYMENT_ASSET_REQUIRED, Rg10FieldPath.INPUT_PAYMENT_ACCOUNT)
         }
         storedAccountGuard(stored)?.let { return it }
-        val bonusIncome = catalog.accounts.firstOrNull { it.systemRole == "stored_value_bonus_right_income" }
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_PAID_AMOUNT)
+        val bonusIncome =
+            catalog.accounts.firstOrNull { it.systemRole == "stored_value_bonus_right_income" }
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_PAID_AMOUNT)
         if (bonusIncome.currency != input.currency) {
             return rejected(Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED, Rg10FieldPath.INPUT_CURRENCY)
         }
-        val recharge = when (
-            val result = createStoredValueRecharge(
-                catalog,
-                com.unifiedledger.domain.StoredValueRechargeCommand(
-                    ledgerId = operation.ledgerId,
-                    storedValueAccountId = input.storedValueAccountId,
-                    paymentAccountId = input.paymentAccountId,
-                    paidAmount = input.paidAmount,
-                    creditedAmount = input.creditedAmount,
-                    bonusAmount = input.bonusAmount,
-                    times = TransactionTimes(
-                        occurredAt = input.occurredAt,
-                        statisticsAt = input.occurredAt,
-                        effectiveAt = input.occurredAt,
-                    ),
-                ),
-                com.unifiedledger.domain.StoredValueRechargeIds(
-                    transactionId = operation.ids.transactionId,
-                    versionId = operation.ids.versionId,
-                    postingSetId = operation.ids.postingSetId,
-                    storedValuePostingId = operation.ids.storedValuePostingId,
-                    paymentPostingId = operation.ids.paymentPostingId,
-                    bonusIncomePostingId = operation.ids.bonusIncomePostingId,
-                ),
+        val recharge =
+            when (
+                val result =
+                    createStoredValueRecharge(
+                        catalog,
+                        com.unifiedledger.domain.StoredValueRechargeCommand(
+                            ledgerId = operation.ledgerId,
+                            storedValueAccountId = input.storedValueAccountId,
+                            paymentAccountId = input.paymentAccountId,
+                            paidAmount = input.paidAmount,
+                            creditedAmount = input.creditedAmount,
+                            bonusAmount = input.bonusAmount,
+                            times =
+                                TransactionTimes(
+                                    occurredAt = input.occurredAt,
+                                    statisticsAt = input.occurredAt,
+                                    effectiveAt = input.occurredAt,
+                                ),
+                        ),
+                        com.unifiedledger.domain.StoredValueRechargeIds(
+                            transactionId = operation.ids.transactionId,
+                            versionId = operation.ids.versionId,
+                            postingSetId = operation.ids.postingSetId,
+                            storedValuePostingId = operation.ids.storedValuePostingId,
+                            paymentPostingId = operation.ids.paymentPostingId,
+                            bonusIncomePostingId = operation.ids.bonusIncomePostingId,
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_PAID_AMOUNT)
+            }
+        val record =
+            Rg10FormalTransactionRecord(
+                recharge.formalTransaction,
+                input.createdAt,
+                createdAtText = input.createdAtText,
+                effectiveAtText = input.occurredAtText,
+                statisticsAtText = input.occurredAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_PAID_AMOUNT)
-        }
-        val record = Rg10FormalTransactionRecord(
-            recharge.formalTransaction,
-            input.createdAt,
-            createdAtText = input.createdAtText,
-            effectiveAtText = input.occurredAtText,
-            statisticsAtText = input.occurredAtText,
-        )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
             lots.any { it.id == operation.ids.lotId } ||
@@ -936,121 +1020,133 @@ class Rg10Runtime(
         val bankObservedAtText = input.occurredAtText
         val merchantObservedAtText = input.merchantCreditObservedAtText ?: input.occurredAtText
         formalTransactions += record
-        lots += StoredValueLot(
-            id = operation.ids.lotId,
-            rechargeTransactionId = operation.ids.transactionId,
-            loadedAt = input.occurredAt,
-            expiresAt = input.expiresAt,
-            faceValue = input.creditedAmount,
-            remainingFaceValue = input.creditedAmount,
-            paidAmount = input.paidAmount,
-            bonusAmount = input.bonusAmount,
-            remainingPaidAmount = input.paidAmount,
-            remainingBonusAmount = input.bonusAmount,
-            compositionStatus = "known",
-            history = listOf(
-                StoredValueLotHistory(
-                    id = operation.ids.lotHistoryId,
-                    event = "loaded",
-                    transactionId = operation.ids.transactionId,
-                    amount = input.creditedAmount,
-                    remainingFaceValue = input.creditedAmount,
-                    occurredAt = input.occurredAt,
-                    createdAt = input.createdAt,
-                    occurredAtText = input.occurredAtText,
-                    createdAtText = input.createdAtText,
-                ),
-            ),
-            merchantId = input.merchantId,
-            loadedAtText = input.occurredAtText,
-            expiresAtText = input.expiresAtText,
-        )
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.bankSourceId,
-            sourceType = "bank_payment",
-            observedAt = Instant.parse(bankObservedAtText),
-            observedAtText = bankObservedAtText,
-            accountId = input.paymentAccountId,
-            amount = input.paidAmount,
-            immutablePayloadDigest = "sha256:rg10-bank-payment",
-        )
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.merchantSourceId,
-            sourceType = "merchant_stored_value_credit",
-            observedAt = Instant.parse(merchantObservedAtText),
-            observedAtText = merchantObservedAtText,
-            accountId = input.storedValueAccountId,
-            amount = input.creditedAmount,
-            lotId = operation.ids.lotId,
-            immutablePayloadDigest = "sha256:rg10-merchant-credit",
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.bankEvidenceId,
-            sourceId = operation.ids.bankSourceId,
-            evidenceType = "bank_payment",
-            observedAt = Instant.parse(bankObservedAtText),
-            observedAtText = bankObservedAtText,
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.merchantEvidenceId,
-            sourceId = operation.ids.merchantSourceId,
-            evidenceType = "merchant_credit_and_lot",
-            observedAt = Instant.parse(merchantObservedAtText),
-            observedAtText = merchantObservedAtText,
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.bankLinkId,
-            sourceId = operation.ids.bankSourceId,
-            evidenceId = operation.ids.bankEvidenceId,
-            role = "bank_payment_posting",
-            targetKind = "POSTING",
-            targetId = operation.ids.paymentPostingId.value,
-            status = "pending",
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.merchantPostingLinkId,
-            sourceId = operation.ids.merchantSourceId,
-            evidenceId = operation.ids.merchantEvidenceId,
-            role = "stored_value_asset_posting",
-            targetKind = "POSTING",
-            targetId = operation.ids.storedValuePostingId.value,
-            status = "pending",
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.merchantLotLinkId,
-            sourceId = operation.ids.merchantSourceId,
-            evidenceId = operation.ids.merchantEvidenceId,
-            role = "stored_value_lot_fact",
-            targetKind = "DOMAIN_ENTITY",
-            targetId = operation.ids.lotId.value,
-            status = "pending",
-            lotId = operation.ids.lotId,
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.bonusLinkId,
-            sourceId = operation.ids.merchantSourceId,
-            evidenceId = operation.ids.merchantEvidenceId,
-            role = "stored_value_bonus_component",
-            targetKind = "DOMAIN_ENTITY",
-            targetId = operation.ids.lotId.value,
-            status = "pending",
-            lotId = operation.ids.lotId,
-        )
-        confirmations += Rg10Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "stored_value_recharge_confirmation",
-            transactionId = operation.ids.transactionId,
-            confirmedAt = input.createdAt,
-            confirmedAtText = input.createdAtText,
-            explicitConfirmation = true,
-        )
+        lots +=
+            StoredValueLot(
+                id = operation.ids.lotId,
+                rechargeTransactionId = operation.ids.transactionId,
+                loadedAt = input.occurredAt,
+                expiresAt = input.expiresAt,
+                faceValue = input.creditedAmount,
+                remainingFaceValue = input.creditedAmount,
+                paidAmount = input.paidAmount,
+                bonusAmount = input.bonusAmount,
+                remainingPaidAmount = input.paidAmount,
+                remainingBonusAmount = input.bonusAmount,
+                compositionStatus = "known",
+                history =
+                    listOf(
+                        StoredValueLotHistory(
+                            id = operation.ids.lotHistoryId,
+                            event = "loaded",
+                            transactionId = operation.ids.transactionId,
+                            amount = input.creditedAmount,
+                            remainingFaceValue = input.creditedAmount,
+                            occurredAt = input.occurredAt,
+                            createdAt = input.createdAt,
+                            occurredAtText = input.occurredAtText,
+                            createdAtText = input.createdAtText,
+                        ),
+                    ),
+                merchantId = input.merchantId,
+                loadedAtText = input.occurredAtText,
+                expiresAtText = input.expiresAtText,
+            )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.bankSourceId,
+                sourceType = "bank_payment",
+                observedAt = Instant.parse(bankObservedAtText),
+                observedAtText = bankObservedAtText,
+                accountId = input.paymentAccountId,
+                amount = input.paidAmount,
+                immutablePayloadDigest = "sha256:rg10-bank-payment",
+            )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.merchantSourceId,
+                sourceType = "merchant_stored_value_credit",
+                observedAt = Instant.parse(merchantObservedAtText),
+                observedAtText = merchantObservedAtText,
+                accountId = input.storedValueAccountId,
+                amount = input.creditedAmount,
+                lotId = operation.ids.lotId,
+                immutablePayloadDigest = "sha256:rg10-merchant-credit",
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.bankEvidenceId,
+                sourceId = operation.ids.bankSourceId,
+                evidenceType = "bank_payment",
+                observedAt = Instant.parse(bankObservedAtText),
+                observedAtText = bankObservedAtText,
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.merchantEvidenceId,
+                sourceId = operation.ids.merchantSourceId,
+                evidenceType = "merchant_credit_and_lot",
+                observedAt = Instant.parse(merchantObservedAtText),
+                observedAtText = merchantObservedAtText,
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.bankLinkId,
+                sourceId = operation.ids.bankSourceId,
+                evidenceId = operation.ids.bankEvidenceId,
+                role = "bank_payment_posting",
+                targetKind = "POSTING",
+                targetId = operation.ids.paymentPostingId.value,
+                status = "pending",
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.merchantPostingLinkId,
+                sourceId = operation.ids.merchantSourceId,
+                evidenceId = operation.ids.merchantEvidenceId,
+                role = "stored_value_asset_posting",
+                targetKind = "POSTING",
+                targetId = operation.ids.storedValuePostingId.value,
+                status = "pending",
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.merchantLotLinkId,
+                sourceId = operation.ids.merchantSourceId,
+                evidenceId = operation.ids.merchantEvidenceId,
+                role = "stored_value_lot_fact",
+                targetKind = "DOMAIN_ENTITY",
+                targetId = operation.ids.lotId.value,
+                status = "pending",
+                lotId = operation.ids.lotId,
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.bonusLinkId,
+                sourceId = operation.ids.merchantSourceId,
+                evidenceId = operation.ids.merchantEvidenceId,
+                role = "stored_value_bonus_component",
+                targetKind = "DOMAIN_ENTITY",
+                targetId = operation.ids.lotId.value,
+                status = "pending",
+                lotId = operation.ids.lotId,
+            )
+        confirmations +=
+            Rg10Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "stored_value_recharge_confirmation",
+                transactionId = operation.ids.transactionId,
+                confirmedAt = input.createdAt,
+                confirmedAtText = input.createdAtText,
+                explicitConfirmation = true,
+            )
         recharge.postings.forEach { typed ->
-            val role = when (typed.role) {
-                StoredValueRechargePostingRole.STORED_VALUE_CREDIT -> "STORED_VALUE_ASSET"
-                StoredValueRechargePostingRole.PAYMENT_OUT -> "PAYMENT_OUT"
-                StoredValueRechargePostingRole.BONUS_INCOME -> "BONUS_INCOME"
-            }
+            val role =
+                when (typed.role) {
+                    StoredValueRechargePostingRole.STORED_VALUE_CREDIT -> "STORED_VALUE_ASSET"
+                    StoredValueRechargePostingRole.PAYMENT_OUT -> "PAYMENT_OUT"
+                    StoredValueRechargePostingRole.BONUS_INCOME -> "BONUS_INCOME"
+                }
             val eligible = typed.role != StoredValueRechargePostingRole.BONUS_INCOME
             postingSemantics[typed.posting.id.value] = Rg10PostingSemantic(role, eligible)
             if (eligible) {
@@ -1090,8 +1186,9 @@ class Rg10Runtime(
         if (input.currency.code != "CNY" || input.amount.currency != input.currency) {
             return rejected(Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED, Rg10FieldPath.INPUT_CURRENCY)
         }
-        val category = catalog.categories.firstOrNull { it.id == input.categoryId }
-            ?: return rejected(Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED, Rg10FieldPath.INPUT_CATEGORY)
+        val category =
+            catalog.categories.firstOrNull { it.id == input.categoryId }
+                ?: return rejected(Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED, Rg10FieldPath.INPUT_CATEGORY)
         val categoryPostingAccountId = category.postingAccountId
         if (!category.active || category.parentId == null || categoryPostingAccountId == null) {
             return rejected(Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED, Rg10FieldPath.INPUT_CATEGORY)
@@ -1100,50 +1197,56 @@ class Rg10Runtime(
         if (expenseAccount == null || expenseAccount.kind != AccountKind.EXPENSE) {
             return rejected(Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED, Rg10FieldPath.INPUT_CATEGORY)
         }
-        val stored = catalogAccount(input.storedValueAccountId)
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
+        val stored =
+            catalogAccount(input.storedValueAccountId)
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
         storedAccountGuard(stored)?.let { return it }
-        val consumptionPlan = if (input.merchantAllocationProvided) {
-            merchantConsumptionPlan(input.allocations, input.amount)
-        } else {
-            defaultConsumptionPlan(input.amount)
-        }
+        val consumptionPlan =
+            if (input.merchantAllocationProvided) {
+                merchantConsumptionPlan(input.allocations, input.amount)
+            } else {
+                defaultConsumptionPlan(input.amount)
+            }
         if (consumptionPlan == null) {
             return rejected(Rg10RejectionReason.INSUFFICIENT_EFFECTIVE_STORED_BALANCE, Rg10FieldPath.INPUT_AMOUNT)
         }
-        val spend = when (
-            val result = createStoredValueSpend(
-                catalog,
-                com.unifiedledger.domain.StoredValueSpendCommand(
-                    ledgerId = operation.ledgerId,
-                    storedValueAccountId = input.storedValueAccountId,
-                    categoryId = input.categoryId,
-                    amount = input.amount,
-                    times = TransactionTimes(
-                        occurredAt = input.occurredAt,
-                        statisticsAt = input.occurredAt,
-                        effectiveAt = input.occurredAt,
-                    ),
-                ),
-                com.unifiedledger.domain.StoredValueSpendIds(
-                    transactionId = operation.ids.transactionId,
-                    versionId = operation.ids.versionId,
-                    postingSetId = operation.ids.postingSetId,
-                    expensePostingId = operation.ids.expensePostingId,
-                    storedValuePostingId = operation.ids.storedValuePostingId,
-                ),
+        val spend =
+            when (
+                val result =
+                    createStoredValueSpend(
+                        catalog,
+                        com.unifiedledger.domain.StoredValueSpendCommand(
+                            ledgerId = operation.ledgerId,
+                            storedValueAccountId = input.storedValueAccountId,
+                            categoryId = input.categoryId,
+                            amount = input.amount,
+                            times =
+                                TransactionTimes(
+                                    occurredAt = input.occurredAt,
+                                    statisticsAt = input.occurredAt,
+                                    effectiveAt = input.occurredAt,
+                                ),
+                        ),
+                        com.unifiedledger.domain.StoredValueSpendIds(
+                            transactionId = operation.ids.transactionId,
+                            versionId = operation.ids.versionId,
+                            postingSetId = operation.ids.postingSetId,
+                            expensePostingId = operation.ids.expensePostingId,
+                            storedValuePostingId = operation.ids.storedValuePostingId,
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_AMOUNT)
+            }
+        val record =
+            Rg10FormalTransactionRecord(
+                spend.formalTransaction,
+                input.createdAt,
+                createdAtText = input.createdAtText,
+                effectiveAtText = input.occurredAtText,
+                statisticsAtText = input.occurredAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_AMOUNT)
-        }
-        val record = Rg10FormalTransactionRecord(
-            spend.formalTransaction,
-            input.createdAt,
-            createdAtText = input.createdAtText,
-            effectiveAtText = input.occurredAtText,
-            statisticsAtText = input.occurredAtText,
-        )
         val consumptionIds = operation.ids.consumptions
         // The commit ids must match the derived plan before any formal effect: a rejected
         // path keeps zero formal transactions (class contract above).
@@ -1162,49 +1265,57 @@ class Rg10Runtime(
             val lotIndex = lots.indexOfFirst { it.id == lot.id }
             check(lotIndex >= 0) { "RG-10 spend plan references an unknown lot" }
             val current = lots[lotIndex]
-            val remaining = checkedSubtract(current.remainingFaceValue.minorUnits, amount.minorUnits)
-                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
-            val historyId = operation.ids.lotHistoryIds.getOrNull(index)
-                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
-            lots[lotIndex] = current.copy(
-                remainingFaceValue = Money.ofMinor(remaining, amount.currency),
-                remainingPaidAmount = null,
-                remainingBonusAmount = null,
-                compositionStatus = if (input.merchantAllocationProvided) current.compositionStatus else "unknown_after_unallocated_consumption",
-                history = current.history + StoredValueLotHistory(
-                    id = historyId,
-                    event = "spent",
-                    transactionId = operation.ids.transactionId,
-                    amount = Money.ofMinor(checkedNegate(amount.minorUnits) ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT), amount.currency),
+            val remaining =
+                checkedSubtract(current.remainingFaceValue.minorUnits, amount.minorUnits)
+                    ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
+            val historyId =
+                operation.ids.lotHistoryIds.getOrNull(index)
+                    ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
+            lots[lotIndex] =
+                current.copy(
                     remainingFaceValue = Money.ofMinor(remaining, amount.currency),
-                    occurredAt = input.occurredAt,
-                    createdAt = input.createdAt,
-                    occurredAtText = input.occurredAtText,
-                    createdAtText = input.createdAtText,
-                    compositionStatus = "unknown",
-                ),
-            )
-            consumptions += Rg10LotConsumption(
-                id = consumptionIds[index],
-                lotId = lot.id,
-                amount = amount,
-                paidBonusComposition = "unknown",
-            )
+                    remainingPaidAmount = null,
+                    remainingBonusAmount = null,
+                    compositionStatus = if (input.merchantAllocationProvided) current.compositionStatus else "unknown_after_unallocated_consumption",
+                    history =
+                        current.history +
+                            StoredValueLotHistory(
+                                id = historyId,
+                                event = "spent",
+                                transactionId = operation.ids.transactionId,
+                                amount = Money.ofMinor(checkedNegate(amount.minorUnits) ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT), amount.currency),
+                                remainingFaceValue = Money.ofMinor(remaining, amount.currency),
+                                occurredAt = input.occurredAt,
+                                createdAt = input.createdAt,
+                                occurredAtText = input.occurredAtText,
+                                createdAtText = input.createdAtText,
+                                compositionStatus = "unknown",
+                            ),
+                )
+            consumptions +=
+                Rg10LotConsumption(
+                    id = consumptionIds[index],
+                    lotId = lot.id,
+                    amount = amount,
+                    paidBonusComposition = "unknown",
+                )
         }
-        confirmations += Rg10Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "stored_value_spend_confirmation",
-            transactionId = operation.ids.transactionId,
-            confirmedAt = input.createdAt,
-            confirmedAtText = input.createdAtText,
-            explicitConfirmation = true,
-        )
+        confirmations +=
+            Rg10Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "stored_value_spend_confirmation",
+                transactionId = operation.ids.transactionId,
+                confirmedAt = input.createdAt,
+                confirmedAtText = input.createdAtText,
+                explicitConfirmation = true,
+            )
         spend.postings.forEach { typed ->
-            val role = when (typed.role) {
-                StoredValueSpendPostingRole.EXPENSE_OUT -> "EXPENSE_OUT"
-                StoredValueSpendPostingRole.STORED_VALUE_DEBIT -> "STORED_VALUE_DEBIT"
-            }
+            val role =
+                when (typed.role) {
+                    StoredValueSpendPostingRole.EXPENSE_OUT -> "EXPENSE_OUT"
+                    StoredValueSpendPostingRole.STORED_VALUE_DEBIT -> "STORED_VALUE_DEBIT"
+                }
             val eligible = typed.role == StoredValueSpendPostingRole.STORED_VALUE_DEBIT
             postingSemantics[typed.posting.id.value] = Rg10PostingSemantic(role, eligible)
             if (eligible) {
@@ -1251,41 +1362,46 @@ class Rg10Runtime(
         if (input.amount.minorUnits > lot.remainingFaceValue.minorUnits) {
             return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
         }
-        val stored = catalogAccount(storedAccountIdForLot(lot))
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_LOT)
+        val stored =
+            catalogAccount(storedAccountIdForLot(lot))
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_LOT)
         storedAccountGuard(stored)?.let { return it }
-        val loss = when (
-            val result = createStoredValueExpiryLoss(
-                catalog,
-                com.unifiedledger.domain.StoredValueExpiryLossCommand(
-                    ledgerId = operation.ledgerId,
-                    storedValueAccountId = stored.id,
-                    confirmedExpiredAmount = input.amount,
-                    times = TransactionTimes(
-                        occurredAt = input.occurredAt,
-                        statisticsAt = input.occurredAt,
-                        effectiveAt = input.occurredAt,
-                    ),
-                ),
-                com.unifiedledger.domain.StoredValueExpiryLossIds(
-                    transactionId = operation.ids.transactionId,
-                    versionId = operation.ids.versionId,
-                    postingSetId = operation.ids.postingSetId,
-                    expiryLossPostingId = operation.ids.expiryLossPostingId,
-                    storedValuePostingId = operation.ids.storedValuePostingId,
-                ),
+        val loss =
+            when (
+                val result =
+                    createStoredValueExpiryLoss(
+                        catalog,
+                        com.unifiedledger.domain.StoredValueExpiryLossCommand(
+                            ledgerId = operation.ledgerId,
+                            storedValueAccountId = stored.id,
+                            confirmedExpiredAmount = input.amount,
+                            times =
+                                TransactionTimes(
+                                    occurredAt = input.occurredAt,
+                                    statisticsAt = input.occurredAt,
+                                    effectiveAt = input.occurredAt,
+                                ),
+                        ),
+                        com.unifiedledger.domain.StoredValueExpiryLossIds(
+                            transactionId = operation.ids.transactionId,
+                            versionId = operation.ids.versionId,
+                            postingSetId = operation.ids.postingSetId,
+                            expiryLossPostingId = operation.ids.expiryLossPostingId,
+                            storedValuePostingId = operation.ids.storedValuePostingId,
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_AMOUNT)
+            }
+        val record =
+            Rg10FormalTransactionRecord(
+                loss.formalTransaction,
+                input.confirmedAt,
+                createdAtText = input.confirmedAtText,
+                effectiveAtText = input.occurredAtText,
+                statisticsAtText = input.occurredAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_AMOUNT)
-        }
-        val record = Rg10FormalTransactionRecord(
-            loss.formalTransaction,
-            input.confirmedAt,
-            createdAtText = input.confirmedAtText,
-            effectiveAtText = input.occurredAtText,
-            statisticsAtText = input.occurredAtText,
-        )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
             sourceRecords.any { it.id == operation.ids.sourceId } ||
@@ -1296,63 +1412,72 @@ class Rg10Runtime(
             return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
         }
         formalTransactions += record
-        val remaining = checkedSubtract(lot.remainingFaceValue.minorUnits, input.amount.minorUnits)
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
-        lots[lotIndex] = lot.copy(
-            remainingFaceValue = Money.ofMinor(remaining, input.amount.currency),
-            history = lot.history + StoredValueLotHistory(
-                id = operation.ids.lotHistoryId,
-                event = "expired",
-                transactionId = operation.ids.transactionId,
-                amount = Money.ofMinor(checkedNegate(input.amount.minorUnits) ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT), input.amount.currency),
+        val remaining =
+            checkedSubtract(lot.remainingFaceValue.minorUnits, input.amount.minorUnits)
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT)
+        lots[lotIndex] =
+            lot.copy(
                 remainingFaceValue = Money.ofMinor(remaining, input.amount.currency),
-                occurredAt = input.occurredAt,
-                createdAt = input.confirmedAt,
-                occurredAtText = input.occurredAtText,
-                createdAtText = input.confirmedAtText,
-            ),
-        )
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.sourceId,
-            sourceType = "user_expiry_confirmation",
-            observedAt = input.confirmedAt,
-            observedAtText = input.confirmedAtText,
-            lotId = input.lotId,
-            amount = input.amount,
-            immutablePayloadDigest = "sha256:rg10-expiry",
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.evidenceId,
-            sourceId = operation.ids.sourceId,
-            evidenceType = "confirmed_actual_expiry",
-            observedAt = input.confirmedAt,
-            observedAtText = input.confirmedAtText,
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.linkId,
-            sourceId = operation.ids.sourceId,
-            evidenceId = operation.ids.evidenceId,
-            role = "stored_value_expiry_confirmation",
-            targetKind = "TRANSACTION",
-            targetId = operation.ids.transactionId.value,
-            status = "pending",
-            lotId = input.lotId,
-        )
-        confirmations += Rg10Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "stored_value_expiry_confirmation",
-            transactionId = operation.ids.transactionId,
-            confirmedAt = input.confirmedAt,
-            confirmedAtText = input.confirmedAtText,
-            explicitConfirmation = true,
-            confirmsActualExpiry = true,
-        )
+                history =
+                    lot.history +
+                        StoredValueLotHistory(
+                            id = operation.ids.lotHistoryId,
+                            event = "expired",
+                            transactionId = operation.ids.transactionId,
+                            amount = Money.ofMinor(checkedNegate(input.amount.minorUnits) ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_AMOUNT), input.amount.currency),
+                            remainingFaceValue = Money.ofMinor(remaining, input.amount.currency),
+                            occurredAt = input.occurredAt,
+                            createdAt = input.confirmedAt,
+                            occurredAtText = input.occurredAtText,
+                            createdAtText = input.confirmedAtText,
+                        ),
+            )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.sourceId,
+                sourceType = "user_expiry_confirmation",
+                observedAt = input.confirmedAt,
+                observedAtText = input.confirmedAtText,
+                lotId = input.lotId,
+                amount = input.amount,
+                immutablePayloadDigest = "sha256:rg10-expiry",
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.evidenceId,
+                sourceId = operation.ids.sourceId,
+                evidenceType = "confirmed_actual_expiry",
+                observedAt = input.confirmedAt,
+                observedAtText = input.confirmedAtText,
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.linkId,
+                sourceId = operation.ids.sourceId,
+                evidenceId = operation.ids.evidenceId,
+                role = "stored_value_expiry_confirmation",
+                targetKind = "TRANSACTION",
+                targetId = operation.ids.transactionId.value,
+                status = "pending",
+                lotId = input.lotId,
+            )
+        confirmations +=
+            Rg10Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "stored_value_expiry_confirmation",
+                transactionId = operation.ids.transactionId,
+                confirmedAt = input.confirmedAt,
+                confirmedAtText = input.confirmedAtText,
+                explicitConfirmation = true,
+                confirmsActualExpiry = true,
+            )
         loss.postings.forEach { typed ->
-            val role = when (typed.role) {
-                StoredValueExpiryLossPostingRole.EXPIRY_LOSS -> "EXPIRY_LOSS"
-                StoredValueExpiryLossPostingRole.STORED_VALUE_DEBIT -> "STORED_VALUE_DEBIT"
-            }
+            val role =
+                when (typed.role) {
+                    StoredValueExpiryLossPostingRole.EXPIRY_LOSS -> "EXPIRY_LOSS"
+                    StoredValueExpiryLossPostingRole.STORED_VALUE_DEBIT -> "STORED_VALUE_DEBIT"
+                }
             val eligible = typed.role == StoredValueExpiryLossPostingRole.STORED_VALUE_DEBIT
             postingSemantics[typed.posting.id.value] = Rg10PostingSemantic(role, eligible)
             if (eligible) {
@@ -1390,33 +1515,36 @@ class Rg10Runtime(
         ) {
             return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_SOURCE)
         }
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.sourceId,
-            sourceType = "imported_stored_value_recharge",
-            observedAt = input.occurredAt,
-            observedAtText = input.occurredAtText,
-            amount = input.creditedAmount,
-            immutablePayloadDigest = "sha256:rg10-import-recharge",
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.evidenceId,
-            sourceId = operation.ids.sourceId,
-            evidenceType = "imported_recharge_candidate",
-            observedAt = input.occurredAt,
-            observedAtText = input.occurredAtText,
-        )
-        candidates += Rg10Candidate(
-            id = operation.ids.candidateId,
-            requestId = input.requestId,
-            candidateType = "stored_value_recharge",
-            status = "pending_confirmation",
-            currency = input.currency,
-            paidAmount = input.paidAmount,
-            creditedAmount = input.creditedAmount,
-            bonusAmount = input.bonusAmount,
-            occurredAt = input.occurredAt,
-            occurredAtText = input.occurredAtText,
-        )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.sourceId,
+                sourceType = "imported_stored_value_recharge",
+                observedAt = input.occurredAt,
+                observedAtText = input.occurredAtText,
+                amount = input.creditedAmount,
+                immutablePayloadDigest = "sha256:rg10-import-recharge",
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.evidenceId,
+                sourceId = operation.ids.sourceId,
+                evidenceType = "imported_recharge_candidate",
+                observedAt = input.occurredAt,
+                observedAtText = input.occurredAtText,
+            )
+        candidates +=
+            Rg10Candidate(
+                id = operation.ids.candidateId,
+                requestId = input.requestId,
+                candidateType = "stored_value_recharge",
+                status = "pending_confirmation",
+                currency = input.currency,
+                paidAmount = input.paidAmount,
+                creditedAmount = input.creditedAmount,
+                bonusAmount = input.bonusAmount,
+                occurredAt = input.occurredAt,
+                occurredAtText = input.occurredAtText,
+            )
         return accepted(
             listOf(
                 Rg10ReturnedId.Candidate(operation.ids.candidateId),
@@ -1442,31 +1570,34 @@ class Rg10Runtime(
         ) {
             return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_SOURCE)
         }
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.sourceId,
-            sourceType = "imported_stored_value_spend",
-            observedAt = input.occurredAt,
-            observedAtText = input.occurredAtText,
-            amount = input.amount,
-            immutablePayloadDigest = "sha256:rg10-import-spend",
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.evidenceId,
-            sourceId = operation.ids.sourceId,
-            evidenceType = "imported_spend_candidate",
-            observedAt = input.occurredAt,
-            observedAtText = input.occurredAtText,
-        )
-        candidates += Rg10Candidate(
-            id = operation.ids.candidateId,
-            requestId = input.requestId,
-            candidateType = "stored_value_spend",
-            status = "pending_confirmation",
-            currency = input.currency,
-            amount = input.amount,
-            occurredAt = input.occurredAt,
-            occurredAtText = input.occurredAtText,
-        )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.sourceId,
+                sourceType = "imported_stored_value_spend",
+                observedAt = input.occurredAt,
+                observedAtText = input.occurredAtText,
+                amount = input.amount,
+                immutablePayloadDigest = "sha256:rg10-import-spend",
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.evidenceId,
+                sourceId = operation.ids.sourceId,
+                evidenceType = "imported_spend_candidate",
+                observedAt = input.occurredAt,
+                observedAtText = input.occurredAtText,
+            )
+        candidates +=
+            Rg10Candidate(
+                id = operation.ids.candidateId,
+                requestId = input.requestId,
+                candidateType = "stored_value_spend",
+                status = "pending_confirmation",
+                currency = input.currency,
+                amount = input.amount,
+                occurredAt = input.occurredAt,
+                occurredAtText = input.occurredAtText,
+            )
         return accepted(
             listOf(
                 Rg10ReturnedId.Candidate(operation.ids.candidateId),
@@ -1538,26 +1669,32 @@ class Rg10Runtime(
         if (!input.explicitConfirmation) {
             return rejected(Rg10RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, Rg10FieldPath.INPUT_CONFIRMATION)
         }
-        val source = sourceRecords.firstOrNull { it.id == input.sourceId }
-            ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_SOURCE)
-        val evidenceItem = evidence.firstOrNull { it.id == input.evidenceId && it.sourceId == input.sourceId }
-            ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_EVIDENCE)
-        val posting = formalTransactions.asSequence()
-            .flatMap { it.formalTransaction.currentPostings().asSequence() }
-            .firstOrNull { it.id == input.targetPostingId }
-            ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_TARGET_POSTING)
-        val semantic = postingSemantics[input.targetPostingId.value]
-            ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_TARGET_POSTING)
+        val source =
+            sourceRecords.firstOrNull { it.id == input.sourceId }
+                ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_SOURCE)
+        val evidenceItem =
+            evidence.firstOrNull { it.id == input.evidenceId && it.sourceId == input.sourceId }
+                ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_EVIDENCE)
+        val posting =
+            formalTransactions
+                .asSequence()
+                .flatMap { it.formalTransaction.currentPostings().asSequence() }
+                .firstOrNull { it.id == input.targetPostingId }
+                ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_TARGET_POSTING)
+        val semantic =
+            postingSemantics[input.targetPostingId.value]
+                ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_TARGET_POSTING)
         if (semantic.role !in eligibleSemanticRoles) {
             return rejected(Rg10RejectionReason.EVIDENCE_ROLE_TARGET_MISMATCH, Rg10FieldPath.INPUT_TARGET_POSTING)
         }
-        val link = evidenceLinks.firstOrNull {
-            it.sourceId == input.sourceId &&
-                it.evidenceId == input.evidenceId &&
-                it.role == expectedRole &&
-                it.targetKind == "POSTING" &&
-                it.targetId == input.targetPostingId.value
-        } ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_EVIDENCE)
+        val link =
+            evidenceLinks.firstOrNull {
+                it.sourceId == input.sourceId &&
+                    it.evidenceId == input.evidenceId &&
+                    it.role == expectedRole &&
+                    it.targetKind == "POSTING" &&
+                    it.targetId == input.targetPostingId.value
+            } ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_EVIDENCE)
         if (link.status != "pending") {
             return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_EVIDENCE)
         }
@@ -1578,8 +1715,9 @@ class Rg10Runtime(
         if (!input.merchantAllocationProvided) {
             return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_MERCHANT_EVIDENCE)
         }
-        val evidenceItem = evidence.firstOrNull { it.id == input.merchantEvidenceId }
-            ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_MERCHANT_EVIDENCE)
+        val evidenceItem =
+            evidence.firstOrNull { it.id == input.merchantEvidenceId }
+                ?: return rejected(Rg10RejectionReason.INVALID_RG10_INPUT, Rg10FieldPath.INPUT_MERCHANT_EVIDENCE)
         val plan = merchantConsumptionPlan(input.allocations, input.amount)
         if (plan == null) {
             return rejected(Rg10RejectionReason.LOT_ALLOCATION_EXCEEDS_REMAINING_FACE_VALUE, Rg10FieldPath.ATTEMPTED_AMOUNT)
@@ -1599,30 +1737,33 @@ class Rg10Runtime(
             val lotIndex = lots.indexOfFirst { it.id == lot.id }
             check(lotIndex >= 0) { "RG-10 merchant allocation references an unknown lot" }
             val current = lots[lotIndex]
-            val remaining = checkedSubtract(current.remainingFaceValue.minorUnits, amount.minorUnits)
-                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_MERCHANT_EVIDENCE)
+            val remaining =
+                checkedSubtract(current.remainingFaceValue.minorUnits, amount.minorUnits)
+                    ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_MERCHANT_EVIDENCE)
             lots[lotIndex] = current.copy(remainingFaceValue = Money.ofMinor(remaining, amount.currency))
         }
         val sourceId = evidenceItem.sourceId
-        allocations += Rg10MerchantAllocation(
-            id = operation.ids.allocationId,
-            requestId = input.requestId,
-            sourceId = sourceId,
-            evidenceId = evidenceItem.id,
-            lotId = plan.single().first.id,
-            consumptionId = operation.ids.consumptionId,
-            amount = input.amount,
-            allocationSource = "merchant_evidence",
-        )
-        consumptions += Rg10LotConsumption(
-            id = operation.ids.consumptionId,
-            allocationId = operation.ids.allocationId,
-            sourceId = sourceId,
-            evidenceId = evidenceItem.id,
-            lotId = plan.single().first.id,
-            amount = input.amount,
-            paidBonusComposition = "unknown",
-        )
+        allocations +=
+            Rg10MerchantAllocation(
+                id = operation.ids.allocationId,
+                requestId = input.requestId,
+                sourceId = sourceId,
+                evidenceId = evidenceItem.id,
+                lotId = plan.single().first.id,
+                consumptionId = operation.ids.consumptionId,
+                amount = input.amount,
+                allocationSource = "merchant_evidence",
+            )
+        consumptions +=
+            Rg10LotConsumption(
+                id = operation.ids.consumptionId,
+                allocationId = operation.ids.allocationId,
+                sourceId = sourceId,
+                evidenceId = evidenceItem.id,
+                lotId = plan.single().first.id,
+                amount = input.amount,
+                paidBonusComposition = "unknown",
+            )
         return accepted(
             listOf(
                 Rg10ReturnedId.Allocation(operation.ids.allocationId),
@@ -1645,41 +1786,46 @@ class Rg10Runtime(
         if (input.currency.code != "CNY" || input.existingBalance.currency != input.currency) {
             return rejected(Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED, Rg10FieldPath.INPUT_CURRENCY)
         }
-        val stored = catalogAccount(input.storedValueAccountId)
-            ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
+        val stored =
+            catalogAccount(input.storedValueAccountId)
+                ?: return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
         storedAccountGuard(stored)?.let { return it }
-        val activation = when (
-            val result = createStoredValueActivationBalance(
-                catalog,
-                com.unifiedledger.domain.StoredValueActivationBalanceCommand(
-                    ledgerId = operation.ledgerId,
-                    storedValueAccountId = input.storedValueAccountId,
-                    existingBalance = input.existingBalance,
-                    times = TransactionTimes(
-                        occurredAt = input.activationAt,
-                        statisticsAt = input.activationAt,
-                        effectiveAt = input.activationAt,
-                    ),
-                ),
-                com.unifiedledger.domain.StoredValueActivationBalanceIds(
-                    transactionId = operation.ids.transactionId,
-                    versionId = operation.ids.versionId,
-                    postingSetId = operation.ids.postingSetId,
-                    storedValuePostingId = operation.ids.storedValuePostingId,
-                    adjustmentEquityPostingId = operation.ids.equityPostingId,
-                ),
+        val activation =
+            when (
+                val result =
+                    createStoredValueActivationBalance(
+                        catalog,
+                        com.unifiedledger.domain.StoredValueActivationBalanceCommand(
+                            ledgerId = operation.ledgerId,
+                            storedValueAccountId = input.storedValueAccountId,
+                            existingBalance = input.existingBalance,
+                            times =
+                                TransactionTimes(
+                                    occurredAt = input.activationAt,
+                                    statisticsAt = input.activationAt,
+                                    effectiveAt = input.activationAt,
+                                ),
+                        ),
+                        com.unifiedledger.domain.StoredValueActivationBalanceIds(
+                            transactionId = operation.ids.transactionId,
+                            versionId = operation.ids.versionId,
+                            postingSetId = operation.ids.postingSetId,
+                            storedValuePostingId = operation.ids.storedValuePostingId,
+                            adjustmentEquityPostingId = operation.ids.equityPostingId,
+                        ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
+            }
+        val record =
+            Rg10FormalTransactionRecord(
+                activation.formalTransaction,
+                input.createdAt,
+                createdAtText = input.createdAtText,
+                effectiveAtText = input.activationAtText,
+                statisticsAtText = input.activationAtText,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> return domainRejected(result.violation, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
-        }
-        val record = Rg10FormalTransactionRecord(
-            activation.formalTransaction,
-            input.createdAt,
-            createdAtText = input.createdAtText,
-            effectiveAtText = input.activationAtText,
-            statisticsAtText = input.activationAtText,
-        )
         if (
             confirmations.any { it.id == operation.ids.confirmationId } ||
             adjustments.any { it.id == operation.ids.adjustmentId } ||
@@ -1693,84 +1839,93 @@ class Rg10Runtime(
             return rejected(Rg10RejectionReason.DOMAIN_REJECTED, Rg10FieldPath.INPUT_STORED_VALUE_ACCOUNT)
         }
         formalTransactions += record
-        adjustments += Rg10ActivationAdjustment(
-            id = operation.ids.adjustmentId,
-            transactionId = operation.ids.transactionId,
-            activationAt = input.activationAt,
-            activationAtText = input.activationAtText,
-            existingBalance = input.existingBalance,
-            compositionStatus = "unknown",
-            replacementStatus = "active_until_replaced",
-            history = listOf(
-                Rg10ActivationAdjustmentHistory(
-                    id = operation.ids.adjustmentHistoryId,
-                    event = "created",
-                    transactionId = operation.ids.transactionId,
-                    occurredAt = input.activationAt,
-                    occurredAtText = input.activationAtText,
-                    createdAt = input.createdAt,
-                    createdAtText = input.createdAtText,
-                ),
-            ),
-        )
-        reconstructions += createStoredValueReconstruction(
-            id = operation.ids.reconstructionId.value,
-            replacementGroupId = operation.ids.replacementGroupId,
-            adjustmentTransactionId = operation.ids.transactionId,
-            reconstructedTransactionIds = emptyList(),
-            createdAt = input.createdAt,
-            createdAtText = input.createdAtText,
-        )
-        sourceRecords += Rg10SourceRecord(
-            id = operation.ids.sourceId,
-            sourceType = "user_confirmed_merchant_balance",
-            observedAt = input.activationAt,
-            observedAtText = input.activationAtText,
-            accountId = input.storedValueAccountId,
-            amount = input.existingBalance,
-            immutablePayloadDigest = "sha256:rg10-activation-balance",
-        )
-        evidence += Rg10Evidence(
-            id = operation.ids.evidenceId,
-            sourceId = operation.ids.sourceId,
-            evidenceType = "confirmed_activation_balance",
-            observedAt = input.activationAt,
-            observedAtText = input.activationAtText,
-        )
-        evidenceLinks += Rg10EvidenceLink(
-            id = operation.ids.linkId,
-            sourceId = operation.ids.sourceId,
-            evidenceId = operation.ids.evidenceId,
-            role = "stored_value_activation_balance_fact",
-            targetKind = "DOMAIN_ENTITY",
-            targetId = operation.ids.adjustmentId.value,
-            status = "pending",
-        )
-        confirmations += Rg10Confirmation(
-            id = operation.ids.confirmationId,
-            requestId = input.requestId,
-            role = "stored_value_activation_balance_confirmation",
-            transactionId = operation.ids.transactionId,
-            sourceId = operation.ids.sourceId,
-            evidenceId = operation.ids.evidenceId,
-            auditLinkId = operation.ids.auditLinkId,
-            confirmedAt = input.createdAt,
-            confirmedAtText = input.createdAtText,
-            explicitConfirmation = true,
-        )
-        auditLinks += Rg10AuditLink(
-            id = operation.ids.auditLinkId,
-            role = "explicit_confirmation_provenance",
-            sourceId = operation.ids.sourceId,
-            evidenceId = operation.ids.evidenceId,
-            confirmationId = operation.ids.confirmationId,
-            transactionId = operation.ids.transactionId,
-        )
+        adjustments +=
+            Rg10ActivationAdjustment(
+                id = operation.ids.adjustmentId,
+                transactionId = operation.ids.transactionId,
+                activationAt = input.activationAt,
+                activationAtText = input.activationAtText,
+                existingBalance = input.existingBalance,
+                compositionStatus = "unknown",
+                replacementStatus = "active_until_replaced",
+                history =
+                    listOf(
+                        Rg10ActivationAdjustmentHistory(
+                            id = operation.ids.adjustmentHistoryId,
+                            event = "created",
+                            transactionId = operation.ids.transactionId,
+                            occurredAt = input.activationAt,
+                            occurredAtText = input.activationAtText,
+                            createdAt = input.createdAt,
+                            createdAtText = input.createdAtText,
+                        ),
+                    ),
+            )
+        reconstructions +=
+            createStoredValueReconstruction(
+                id = operation.ids.reconstructionId.value,
+                replacementGroupId = operation.ids.replacementGroupId,
+                adjustmentTransactionId = operation.ids.transactionId,
+                reconstructedTransactionIds = emptyList(),
+                createdAt = input.createdAt,
+                createdAtText = input.createdAtText,
+            )
+        sourceRecords +=
+            Rg10SourceRecord(
+                id = operation.ids.sourceId,
+                sourceType = "user_confirmed_merchant_balance",
+                observedAt = input.activationAt,
+                observedAtText = input.activationAtText,
+                accountId = input.storedValueAccountId,
+                amount = input.existingBalance,
+                immutablePayloadDigest = "sha256:rg10-activation-balance",
+            )
+        evidence +=
+            Rg10Evidence(
+                id = operation.ids.evidenceId,
+                sourceId = operation.ids.sourceId,
+                evidenceType = "confirmed_activation_balance",
+                observedAt = input.activationAt,
+                observedAtText = input.activationAtText,
+            )
+        evidenceLinks +=
+            Rg10EvidenceLink(
+                id = operation.ids.linkId,
+                sourceId = operation.ids.sourceId,
+                evidenceId = operation.ids.evidenceId,
+                role = "stored_value_activation_balance_fact",
+                targetKind = "DOMAIN_ENTITY",
+                targetId = operation.ids.adjustmentId.value,
+                status = "pending",
+            )
+        confirmations +=
+            Rg10Confirmation(
+                id = operation.ids.confirmationId,
+                requestId = input.requestId,
+                role = "stored_value_activation_balance_confirmation",
+                transactionId = operation.ids.transactionId,
+                sourceId = operation.ids.sourceId,
+                evidenceId = operation.ids.evidenceId,
+                auditLinkId = operation.ids.auditLinkId,
+                confirmedAt = input.createdAt,
+                confirmedAtText = input.createdAtText,
+                explicitConfirmation = true,
+            )
+        auditLinks +=
+            Rg10AuditLink(
+                id = operation.ids.auditLinkId,
+                role = "explicit_confirmation_provenance",
+                sourceId = operation.ids.sourceId,
+                evidenceId = operation.ids.evidenceId,
+                confirmationId = operation.ids.confirmationId,
+                transactionId = operation.ids.transactionId,
+            )
         activation.postings.forEach { typed ->
-            val role = when (typed.role) {
-                StoredValueActivationBalancePostingRole.STORED_VALUE_CREDIT -> "STORED_VALUE_ASSET"
-                StoredValueActivationBalancePostingRole.PRE_ACTIVATION_ADJUSTMENT_EQUITY -> "PRE_ACTIVATION_ADJUSTMENT_EQUITY"
-            }
+            val role =
+                when (typed.role) {
+                    StoredValueActivationBalancePostingRole.STORED_VALUE_CREDIT -> "STORED_VALUE_ASSET"
+                    StoredValueActivationBalancePostingRole.PRE_ACTIVATION_ADJUSTMENT_EQUITY -> "PRE_ACTIVATION_ADJUSTMENT_EQUITY"
+                }
             val eligible = typed.role == StoredValueActivationBalancePostingRole.STORED_VALUE_CREDIT
             postingSemantics[typed.posting.id.value] = Rg10PostingSemantic(role, eligible)
             if (eligible) {
@@ -1798,50 +1953,51 @@ class Rg10Runtime(
     }
 
     private fun rejectInvalidInput(operation: Rg10Operation.InvalidInput): Rg10ExecutionResult {
-        val (reason, fieldPath) = when (operation.input.predicate) {
-            Rg10InvalidPredicate.EXACT_DECIMAL_PAID ->
-                Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_PAID_AMOUNT
-            Rg10InvalidPredicate.EXACT_DECIMAL_CREDITED ->
-                Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
-            Rg10InvalidPredicate.EXACT_DECIMAL_BONUS ->
-                Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_BONUS_AMOUNT
-            Rg10InvalidPredicate.PAID_POSITIVE ->
-                Rg10RejectionReason.MUST_BE_POSITIVE to Rg10FieldPath.ATTEMPTED_PAID_AMOUNT
-            Rg10InvalidPredicate.CREDITED_POSITIVE ->
-                Rg10RejectionReason.CREDITED_AMOUNT_MUST_BE_POSITIVE to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
-            Rg10InvalidPredicate.BONUS_NON_NEGATIVE ->
-                Rg10RejectionReason.BONUS_AMOUNT_MUST_BE_ZERO_OR_POSITIVE to Rg10FieldPath.ATTEMPTED_BONUS_AMOUNT
-            Rg10InvalidPredicate.CREDITED_EQUALS_PAID_PLUS_BONUS ->
-                Rg10RejectionReason.CREDITED_MUST_EQUAL_PAID_PLUS_BONUS to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
-            Rg10InvalidPredicate.COMPONENT_SUM_MATCH ->
-                Rg10RejectionReason.COMPONENT_SUM_MISMATCH to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
-            Rg10InvalidPredicate.STORED_ACCOUNT_ENABLED ->
-                Rg10RejectionReason.STORED_VALUE_ACCOUNT_NOT_ENABLED to Rg10FieldPath.ATTEMPTED_STORED_VALUE_ACCOUNT
-            Rg10InvalidPredicate.STORED_MODEL_ISOLATION ->
-                Rg10RejectionReason.STORED_VALUE_MODELS_MUST_NOT_OVERLAP to Rg10FieldPath.ATTEMPTED_MODEL
-            Rg10InvalidPredicate.EFFECTIVE_BALANCE_CAP ->
-                Rg10RejectionReason.INSUFFICIENT_EFFECTIVE_STORED_BALANCE to Rg10FieldPath.ATTEMPTED_AMOUNT
-            Rg10InvalidPredicate.LOT_ALLOCATION_CAP ->
-                Rg10RejectionReason.LOT_ALLOCATION_EXCEEDS_REMAINING_FACE_VALUE to Rg10FieldPath.ATTEMPTED_AMOUNT
-            Rg10InvalidPredicate.EXPIRY_EXPLICIT_CONFIRMATION ->
-                Rg10RejectionReason.ACTUAL_EXPIRY_REQUIRES_EXPLICIT_CONFIRMATION to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
-            Rg10InvalidPredicate.COMPOSITION_EVIDENCED ->
-                Rg10RejectionReason.PAID_BONUS_COMPOSITION_MUST_BE_EVIDENCED to Rg10FieldPath.ATTEMPTED_COMPOSITION
-            Rg10InvalidPredicate.ACTIVE_SECONDARY_CATEGORY ->
-                Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED to Rg10FieldPath.ATTEMPTED_CATEGORY
-            Rg10InvalidPredicate.KNOWN_PAYMENT_ACCOUNT ->
-                Rg10RejectionReason.UNKNOWN_PAYMENT_ACCOUNT to Rg10FieldPath.ATTEMPTED_PAYMENT_ACCOUNT
-            Rg10InvalidPredicate.OWNED_PAYMENT_ASSET ->
-                Rg10RejectionReason.OWNED_PAYMENT_ASSET_REQUIRED to Rg10FieldPath.ATTEMPTED_PAYMENT_ACCOUNT
-            Rg10InvalidPredicate.ENABLED_STORED_VALUE_ASSET ->
-                Rg10RejectionReason.ENABLED_RESTRICTED_STORED_VALUE_ASSET_REQUIRED to Rg10FieldPath.ATTEMPTED_STORED_VALUE_ACCOUNT
-            Rg10InvalidPredicate.SAME_CNY_CURRENCY ->
-                Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED to Rg10FieldPath.ATTEMPTED_CURRENCY
-            Rg10InvalidPredicate.IMPORT_RECHARGE_CONFIRMATION ->
-                Rg10RejectionReason.BANK_PAYMENT_MODEL_AND_ALL_RECHARGE_FACTS_REQUIRED to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
-            Rg10InvalidPredicate.IMPORT_SPEND_CONFIRMATION ->
-                Rg10RejectionReason.SPEND_CATEGORY_AND_BEHAVIOR_CONFIRMATION_REQUIRED to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
-        }
+        val (reason, fieldPath) =
+            when (operation.input.predicate) {
+                Rg10InvalidPredicate.EXACT_DECIMAL_PAID ->
+                    Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_PAID_AMOUNT
+                Rg10InvalidPredicate.EXACT_DECIMAL_CREDITED ->
+                    Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
+                Rg10InvalidPredicate.EXACT_DECIMAL_BONUS ->
+                    Rg10RejectionReason.EXACT_DECIMAL_STRING_REQUIRED to Rg10FieldPath.ATTEMPTED_BONUS_AMOUNT
+                Rg10InvalidPredicate.PAID_POSITIVE ->
+                    Rg10RejectionReason.MUST_BE_POSITIVE to Rg10FieldPath.ATTEMPTED_PAID_AMOUNT
+                Rg10InvalidPredicate.CREDITED_POSITIVE ->
+                    Rg10RejectionReason.CREDITED_AMOUNT_MUST_BE_POSITIVE to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
+                Rg10InvalidPredicate.BONUS_NON_NEGATIVE ->
+                    Rg10RejectionReason.BONUS_AMOUNT_MUST_BE_ZERO_OR_POSITIVE to Rg10FieldPath.ATTEMPTED_BONUS_AMOUNT
+                Rg10InvalidPredicate.CREDITED_EQUALS_PAID_PLUS_BONUS ->
+                    Rg10RejectionReason.CREDITED_MUST_EQUAL_PAID_PLUS_BONUS to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
+                Rg10InvalidPredicate.COMPONENT_SUM_MATCH ->
+                    Rg10RejectionReason.COMPONENT_SUM_MISMATCH to Rg10FieldPath.ATTEMPTED_CREDITED_AMOUNT
+                Rg10InvalidPredicate.STORED_ACCOUNT_ENABLED ->
+                    Rg10RejectionReason.STORED_VALUE_ACCOUNT_NOT_ENABLED to Rg10FieldPath.ATTEMPTED_STORED_VALUE_ACCOUNT
+                Rg10InvalidPredicate.STORED_MODEL_ISOLATION ->
+                    Rg10RejectionReason.STORED_VALUE_MODELS_MUST_NOT_OVERLAP to Rg10FieldPath.ATTEMPTED_MODEL
+                Rg10InvalidPredicate.EFFECTIVE_BALANCE_CAP ->
+                    Rg10RejectionReason.INSUFFICIENT_EFFECTIVE_STORED_BALANCE to Rg10FieldPath.ATTEMPTED_AMOUNT
+                Rg10InvalidPredicate.LOT_ALLOCATION_CAP ->
+                    Rg10RejectionReason.LOT_ALLOCATION_EXCEEDS_REMAINING_FACE_VALUE to Rg10FieldPath.ATTEMPTED_AMOUNT
+                Rg10InvalidPredicate.EXPIRY_EXPLICIT_CONFIRMATION ->
+                    Rg10RejectionReason.ACTUAL_EXPIRY_REQUIRES_EXPLICIT_CONFIRMATION to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
+                Rg10InvalidPredicate.COMPOSITION_EVIDENCED ->
+                    Rg10RejectionReason.PAID_BONUS_COMPOSITION_MUST_BE_EVIDENCED to Rg10FieldPath.ATTEMPTED_COMPOSITION
+                Rg10InvalidPredicate.ACTIVE_SECONDARY_CATEGORY ->
+                    Rg10RejectionReason.ACTIVE_SECONDARY_CATEGORY_REQUIRED to Rg10FieldPath.ATTEMPTED_CATEGORY
+                Rg10InvalidPredicate.KNOWN_PAYMENT_ACCOUNT ->
+                    Rg10RejectionReason.UNKNOWN_PAYMENT_ACCOUNT to Rg10FieldPath.ATTEMPTED_PAYMENT_ACCOUNT
+                Rg10InvalidPredicate.OWNED_PAYMENT_ASSET ->
+                    Rg10RejectionReason.OWNED_PAYMENT_ASSET_REQUIRED to Rg10FieldPath.ATTEMPTED_PAYMENT_ACCOUNT
+                Rg10InvalidPredicate.ENABLED_STORED_VALUE_ASSET ->
+                    Rg10RejectionReason.ENABLED_RESTRICTED_STORED_VALUE_ASSET_REQUIRED to Rg10FieldPath.ATTEMPTED_STORED_VALUE_ACCOUNT
+                Rg10InvalidPredicate.SAME_CNY_CURRENCY ->
+                    Rg10RejectionReason.SAME_CNY_CURRENCY_REQUIRED to Rg10FieldPath.ATTEMPTED_CURRENCY
+                Rg10InvalidPredicate.IMPORT_RECHARGE_CONFIRMATION ->
+                    Rg10RejectionReason.BANK_PAYMENT_MODEL_AND_ALL_RECHARGE_FACTS_REQUIRED to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
+                Rg10InvalidPredicate.IMPORT_SPEND_CONFIRMATION ->
+                    Rg10RejectionReason.SPEND_CATEGORY_AND_BEHAVIOR_CONFIRMATION_REQUIRED to Rg10FieldPath.ATTEMPTED_EXPLICIT_CONFIRMATION
+            }
         return rejected(reason, fieldPath)
     }
 
@@ -1857,11 +2013,14 @@ class Rg10Runtime(
     }
 
     private fun storedAccountIdForLot(lot: StoredValueLot): AccountId {
-        val recharge = formalTransactions.firstOrNull {
-            it.formalTransaction.transaction.id == lot.rechargeTransactionId
-        } ?: error("RG-10 lot has no recharge transaction")
-        val storedPosting = recharge.formalTransaction.currentPostings()
-            .first { it.accountId.let { accountId -> postingSemantics[it.id.value]?.role == "STORED_VALUE_ASSET" } }
+        val recharge =
+            formalTransactions.firstOrNull {
+                it.formalTransaction.transaction.id == lot.rechargeTransactionId
+            } ?: error("RG-10 lot has no recharge transaction")
+        val storedPosting =
+            recharge.formalTransaction
+                .currentPostings()
+                .first { it.accountId.let { accountId -> postingSemantics[it.id.value]?.role == "STORED_VALUE_ASSET" } }
         return storedPosting.accountId
     }
 
@@ -1902,8 +2061,8 @@ class Rg10Runtime(
     private fun domainRejected(
         violation: com.unifiedledger.domain.DomainViolation,
         fieldPath: Rg10FieldPath,
-    ): Rg10ExecutionResult {
-        return when (violation) {
+    ): Rg10ExecutionResult =
+        when (violation) {
             is StoredValueViolation.PaidAmountMustBePositive ->
                 rejected(Rg10RejectionReason.MUST_BE_POSITIVE, Rg10FieldPath.INPUT_PAID_AMOUNT)
             is StoredValueViolation.CreditedAmountMustBePositive ->
@@ -1926,79 +2085,91 @@ class Rg10Runtime(
                 rejected(Rg10RejectionReason.MUST_BE_POSITIVE, Rg10FieldPath.INPUT_AMOUNT)
             else -> rejected(Rg10RejectionReason.DOMAIN_REJECTED, fieldPath)
         }
-    }
 
     private fun catalogAccount(id: AccountId) = catalog.accounts.firstOrNull { it.id == id }
 
-    private fun replayBalances(): Map<AccountId, Money> = buildMap {
-        catalog.accounts.forEach { account ->
-            var total = 0L
-            formalTransactions
-                .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
-                .forEach { record ->
-                    record.formalTransaction.currentPostings()
-                        .filter { it.accountId == account.id }
-                        .forEach { posting ->
-                            check(posting.amount.currency == account.currency) { "RG-10 posting currency mismatch" }
-                            total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-10 balance overflow")
-                        }
-                }
-            put(account.id, Money.ofMinor(total, account.currency))
+    private fun replayBalances(): Map<AccountId, Money> =
+        buildMap {
+            catalog.accounts.forEach { account ->
+                var total = 0L
+                formalTransactions
+                    .filter { it.formalTransaction.transaction.ledgerId == account.ledgerId }
+                    .forEach { record ->
+                        record.formalTransaction
+                            .currentPostings()
+                            .filter { it.accountId == account.id }
+                            .forEach { posting ->
+                                check(posting.amount.currency == account.currency) { "RG-10 posting currency mismatch" }
+                                total = checkedAdd(total, posting.amount.minorUnits) ?: error("RG-10 balance overflow")
+                            }
+                    }
+                put(account.id, Money.ofMinor(total, account.currency))
+            }
         }
-    }
 
     private fun reports(): Map<String, Rg10Report> {
         var cumulative = Rg10Report()
         formalTransactions.forEach { record ->
-            val report = when (record.formalTransaction.transaction.kind) {
-                TransactionKind.STORED_VALUE_RECHARGE -> {
-                    val postings = record.formalTransaction.currentPostings()
-                    val paid = postings.first { postingSemantics[it.id.value]?.role == "PAYMENT_OUT" }.amount.minorUnits
-                    val bonus = postings.first { postingSemantics[it.id.value]?.role == "BONUS_INCOME" }.amount.minorUnits
-                    Rg10Report(
-                        specialNonCashBonusIncomeMinor = -bonus,
-                        cashOutflowMinor = -paid,
-                        netWorthChangeMinor = -bonus,
-                    )
+            val report =
+                when (record.formalTransaction.transaction.kind) {
+                    TransactionKind.STORED_VALUE_RECHARGE -> {
+                        val postings = record.formalTransaction.currentPostings()
+                        val paid = postings.first { postingSemantics[it.id.value]?.role == "PAYMENT_OUT" }.amount.minorUnits
+                        val bonus = postings.first { postingSemantics[it.id.value]?.role == "BONUS_INCOME" }.amount.minorUnits
+                        Rg10Report(
+                            specialNonCashBonusIncomeMinor = -bonus,
+                            cashOutflowMinor = -paid,
+                            netWorthChangeMinor = -bonus,
+                        )
+                    }
+                    TransactionKind.STORED_VALUE_SPEND -> {
+                        val amount =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "EXPENSE_OUT" }
+                                .amount.minorUnits
+                        Rg10Report(
+                            ordinaryExpenseMinor = amount,
+                            consumptionMinor = amount,
+                            categoryEffectMinor = amount,
+                            netWorthChangeMinor = -amount,
+                        )
+                    }
+                    TransactionKind.STORED_VALUE_EXPIRY_LOSS -> {
+                        val amount =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "EXPIRY_LOSS" }
+                                .amount.minorUnits
+                        Rg10Report(
+                            expiryLossMinor = amount,
+                            netWorthChangeMinor = -amount,
+                        )
+                    }
+                    TransactionKind.STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT -> {
+                        val amount =
+                            record.formalTransaction
+                                .currentPostings()
+                                .first { postingSemantics[it.id.value]?.role == "STORED_VALUE_ASSET" }
+                                .amount.minorUnits
+                        Rg10Report(netWorthChangeMinor = amount)
+                    }
+                    else -> null
                 }
-                TransactionKind.STORED_VALUE_SPEND -> {
-                    val amount = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "EXPENSE_OUT" }.amount.minorUnits
-                    Rg10Report(
-                        ordinaryExpenseMinor = amount,
-                        consumptionMinor = amount,
-                        categoryEffectMinor = amount,
-                        netWorthChangeMinor = -amount,
-                    )
-                }
-                TransactionKind.STORED_VALUE_EXPIRY_LOSS -> {
-                    val amount = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "EXPIRY_LOSS" }.amount.minorUnits
-                    Rg10Report(
-                        expiryLossMinor = amount,
-                        netWorthChangeMinor = -amount,
-                    )
-                }
-                TransactionKind.STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT -> {
-                    val amount = record.formalTransaction.currentPostings()
-                        .first { postingSemantics[it.id.value]?.role == "STORED_VALUE_ASSET" }.amount.minorUnits
-                    Rg10Report(netWorthChangeMinor = amount)
-                }
-                else -> null
-            }
             if (report != null) {
-                cumulative = Rg10Report(
-                    ordinaryIncomeMinor = checkedAdd(cumulative.ordinaryIncomeMinor, report.ordinaryIncomeMinor)!!,
-                    specialNonCashBonusIncomeMinor = checkedAdd(cumulative.specialNonCashBonusIncomeMinor, report.specialNonCashBonusIncomeMinor)!!,
-                    ordinaryExpenseMinor = checkedAdd(cumulative.ordinaryExpenseMinor, report.ordinaryExpenseMinor)!!,
-                    expiryLossMinor = checkedAdd(cumulative.expiryLossMinor, report.expiryLossMinor)!!,
-                    consumptionMinor = checkedAdd(cumulative.consumptionMinor, report.consumptionMinor)!!,
-                    budgetEffectMinor = checkedAdd(cumulative.budgetEffectMinor, report.budgetEffectMinor)!!,
-                    categoryEffectMinor = checkedAdd(cumulative.categoryEffectMinor, report.categoryEffectMinor)!!,
-                    cashInflowMinor = checkedAdd(cumulative.cashInflowMinor, report.cashInflowMinor)!!,
-                    cashOutflowMinor = checkedAdd(cumulative.cashOutflowMinor, report.cashOutflowMinor)!!,
-                    netWorthChangeMinor = checkedAdd(cumulative.netWorthChangeMinor, report.netWorthChangeMinor)!!,
-                )
+                cumulative =
+                    Rg10Report(
+                        ordinaryIncomeMinor = checkedAdd(cumulative.ordinaryIncomeMinor, report.ordinaryIncomeMinor)!!,
+                        specialNonCashBonusIncomeMinor = checkedAdd(cumulative.specialNonCashBonusIncomeMinor, report.specialNonCashBonusIncomeMinor)!!,
+                        ordinaryExpenseMinor = checkedAdd(cumulative.ordinaryExpenseMinor, report.ordinaryExpenseMinor)!!,
+                        expiryLossMinor = checkedAdd(cumulative.expiryLossMinor, report.expiryLossMinor)!!,
+                        consumptionMinor = checkedAdd(cumulative.consumptionMinor, report.consumptionMinor)!!,
+                        budgetEffectMinor = checkedAdd(cumulative.budgetEffectMinor, report.budgetEffectMinor)!!,
+                        categoryEffectMinor = checkedAdd(cumulative.categoryEffectMinor, report.categoryEffectMinor)!!,
+                        cashInflowMinor = checkedAdd(cumulative.cashInflowMinor, report.cashInflowMinor)!!,
+                        cashOutflowMinor = checkedAdd(cumulative.cashOutflowMinor, report.cashOutflowMinor)!!,
+                        netWorthChangeMinor = checkedAdd(cumulative.netWorthChangeMinor, report.netWorthChangeMinor)!!,
+                    )
             }
         }
         return mapOf("cumulative" to cumulative)
@@ -2009,7 +2180,8 @@ class Rg10Runtime(
             return false
         }
         val currentBalances = replayBalances()
-        record.formalTransaction.currentPostings()
+        record.formalTransaction
+            .currentPostings()
             .groupBy { it.accountId }
             .forEach { (accountId, postings) ->
                 var total = currentBalances[accountId]?.minorUnits ?: return false
@@ -2031,15 +2203,18 @@ class Rg10Runtime(
 
     private fun formalIdCollision(formal: FormalTransaction): Boolean {
         val transactionIds = formalTransactions.mapTo(mutableSetOf()) { it.formalTransaction.transaction.id }
-        val versionIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.versions.map { it.id }
-        }
-        val postingSetIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.map { it.id }
-        }
-        val postingIds = formalTransactions.flatMapTo(mutableSetOf()) { record ->
-            record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val versionIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.versions.map { it.id }
+            }
+        val postingSetIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.map { it.id }
+            }
+        val postingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { record ->
+                record.formalTransaction.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         return formal.transaction.id in transactionIds ||
             formal.versions.any { it.id in versionIds } ||
             formal.postingSets.any { it.id in postingSetIds } ||
@@ -2047,288 +2222,316 @@ class Rg10Runtime(
     }
 
     private fun currentEffectiveAt(formal: FormalTransaction): Instant =
-        formal.versions.first { it.id == formal.transaction.currentVersionId }.times.effectiveAt
+        formal.versions
+            .first { it.id == formal.transaction.currentVersionId }
+            .times.effectiveAt
 
-    private fun canonicalInput(operation: Rg10Operation): String = when (operation) {
-        is Rg10Operation.ConfirmStoredValueRecharge -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.model,
-            operation.input.paymentAccountId.value,
-            operation.input.storedValueAccountId.value,
-            canonicalMoney(operation.input.paidAmount),
-            canonicalMoney(operation.input.creditedAmount),
-            canonicalMoney(operation.input.bonusAmount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.createdAt.toString(),
-            operation.input.createdAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsModel.toString(),
-            operation.input.confirmsPaymentAccount.toString(),
-            operation.input.confirmsStoredValueAccount.toString(),
-            operation.input.confirmsPaidAmount.toString(),
-            operation.input.confirmsCreditedAmount.toString(),
-            operation.input.confirmsBonusAmount.toString(),
-            operation.input.confirmsActualTime.toString(),
-            operation.input.confirmsLotFacts.toString(),
-            operation.input.expiresAt.toString(),
-            operation.input.expiresAtText,
-            operation.input.merchantId,
-            operation.input.merchantCreditObservedAtText,
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.storedValuePostingId.value,
-            operation.ids.paymentPostingId.value,
-            operation.ids.bonusIncomePostingId.value,
-            operation.ids.lotId.value,
-            operation.ids.lotHistoryId,
-            operation.ids.confirmationId.value,
-            operation.ids.bankSourceId.value,
-            operation.ids.merchantSourceId.value,
-            operation.ids.bankEvidenceId.value,
-            operation.ids.merchantEvidenceId.value,
-            operation.ids.bankLinkId.value,
-            operation.ids.merchantPostingLinkId.value,
-            operation.ids.merchantLotLinkId.value,
-            operation.ids.bonusLinkId.value,
-        )
-        is Rg10Operation.ConfirmStoredValueSpend -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.model,
-            operation.input.behavior,
-            operation.input.storedValueAccountId.value,
-            operation.input.categoryId.value,
-            canonicalMoney(operation.input.amount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.createdAt.toString(),
-            operation.input.createdAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsModel.toString(),
-            operation.input.confirmsBehavior.toString(),
-            operation.input.confirmsStoredValueAccount.toString(),
-            operation.input.confirmsAmount.toString(),
-            operation.input.confirmsActualTime.toString(),
-            operation.input.confirmsCategory.toString(),
-            operation.input.merchantAllocationProvided.toString(),
-            operation.input.confirmsLotAllocation.toString(),
-            operation.input.allocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.expensePostingId.value,
-            operation.ids.storedValuePostingId.value,
-            operation.ids.confirmationId.value,
-            operation.ids.consumptions.joinToString("|") { it.value },
-            operation.ids.lotHistoryIds.joinToString("|"),
-        )
-        is Rg10Operation.IngestStoredValueRechargeCandidate -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.model,
-            operation.input.paymentAccountId.value,
-            operation.input.storedValueAccountId.value,
-            canonicalMoney(operation.input.paidAmount),
-            canonicalMoney(operation.input.creditedAmount),
-            canonicalMoney(operation.input.bonusAmount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.lotId?.value,
-            operation.input.allFactsComplete.toString(),
-            operation.input.explicitConfirmation.toString(),
-            operation.ids.candidateId.value,
-            operation.ids.sourceId.value,
-            operation.ids.evidenceId.value,
-        )
-        is Rg10Operation.IngestStoredValueSpendCandidate -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.model,
-            operation.input.behavior,
-            operation.input.storedValueAccountId.value,
-            operation.input.categoryId.value,
-            canonicalMoney(operation.input.amount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.lotAllocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
-            operation.input.allFactsComplete.toString(),
-            operation.input.explicitConfirmation.toString(),
-            operation.ids.candidateId.value,
-            operation.ids.sourceId.value,
-            operation.ids.evidenceId.value,
-        )
-        is Rg10Operation.ConfirmImportedStoredValueRecharge -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.merchantCreditAmount?.let(::canonicalMoney),
-            operation.input.merchantSourceId?.value,
-            operation.input.bankPaymentConfirmed?.toString(),
-            operation.input.modelConfirmed?.toString(),
-            operation.input.explicitConfirmation?.toString(),
-        )
-        is Rg10Operation.ConfirmImportedStoredValueSpend -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.storedValueAccountId?.value,
-            operation.input.amount?.let(::canonicalMoney),
-            operation.input.actualTime?.toString(),
-            operation.input.actualTimeText,
-            operation.input.categoryConfirmed?.toString(),
-            operation.input.lotAllocationConfirmed?.toString(),
-            operation.input.explicitConfirmation?.toString(),
-        )
-        is Rg10Operation.RecordExpiryReminder -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.lotId.value,
-            operation.input.reminderStatus,
-            operation.input.explicitConfirmation.toString(),
-        )
-        is Rg10Operation.ConfirmStoredValueExpiryLoss -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.lotId.value,
-            canonicalMoney(operation.input.amount),
-            canonicalCurrency(operation.input.currency),
-            operation.input.occurredAt.toString(),
-            operation.input.occurredAtText,
-            operation.input.confirmedAt.toString(),
-            operation.input.confirmedAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.confirmsActualExpiry.toString(),
-            operation.input.confirmsLot.toString(),
-            operation.input.confirmsAmount.toString(),
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.expiryLossPostingId.value,
-            operation.ids.storedValuePostingId.value,
-            operation.ids.confirmationId.value,
-            operation.ids.sourceId.value,
-            operation.ids.evidenceId.value,
-            operation.ids.linkId.value,
-            operation.ids.lotHistoryId,
-        )
-        is Rg10Operation.ReconcileMerchantCredit -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.sourceId.value,
-            operation.input.evidenceId.value,
-            operation.input.role,
-            operation.input.targetPostingId.value,
-            operation.input.explicitConfirmation.toString(),
-        )
-        is Rg10Operation.ReconcileBankPayment -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.sourceId.value,
-            operation.input.evidenceId.value,
-            operation.input.role,
-            operation.input.targetPostingId.value,
-            operation.input.explicitConfirmation.toString(),
-        )
-        is Rg10Operation.ApplyMerchantLotAllocation -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            canonicalMoney(operation.input.amount),
-            operation.input.merchantAllocationProvided.toString(),
-            operation.input.merchantEvidenceId.value,
-            operation.input.allocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
-            operation.input.explicitConfirmation.toString(),
-            operation.ids.allocationId.value,
-            operation.ids.consumptionId.value,
-        )
-        is Rg10Operation.ConfirmStoredValueActivationBalance -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.storedValueAccountId.value,
-            canonicalMoney(operation.input.existingBalance),
-            canonicalCurrency(operation.input.currency),
-            operation.input.activationAt.toString(),
-            operation.input.activationAtText,
-            operation.input.createdAt.toString(),
-            operation.input.createdAtText,
-            operation.input.explicitConfirmation.toString(),
-            operation.input.compositionConfirmed.toString(),
-            operation.ids.transactionId.value,
-            operation.ids.versionId.value,
-            operation.ids.postingSetId.value,
-            operation.ids.storedValuePostingId.value,
-            operation.ids.equityPostingId.value,
-            operation.ids.confirmationId.value,
-            operation.ids.adjustmentId.value,
-            operation.ids.adjustmentHistoryId,
-            operation.ids.reconstructionId.value,
-            operation.ids.replacementGroupId,
-            operation.ids.sourceId.value,
-            operation.ids.evidenceId.value,
-            operation.ids.linkId.value,
-            operation.ids.auditLinkId.value,
-        )
-        is Rg10Operation.RenameStoredValueLabels -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.accountId.value,
-            operation.input.newAccountName,
-            operation.input.lotId.value,
-            operation.input.newLotLabel,
-        )
-        is Rg10Operation.InvalidInput -> canonicalFields(
-            operation.ledgerId.value,
-            operation.action.code,
-            operation.input.requestId.value,
-            operation.input.predicate.name,
-            operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
-                "$key=${value ?: "<null>"}"
-            },
-        )
-    }
+    private fun canonicalInput(operation: Rg10Operation): String =
+        when (operation) {
+            is Rg10Operation.ConfirmStoredValueRecharge ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.model,
+                    operation.input.paymentAccountId.value,
+                    operation.input.storedValueAccountId.value,
+                    canonicalMoney(operation.input.paidAmount),
+                    canonicalMoney(operation.input.creditedAmount),
+                    canonicalMoney(operation.input.bonusAmount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.createdAt.toString(),
+                    operation.input.createdAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsModel.toString(),
+                    operation.input.confirmsPaymentAccount.toString(),
+                    operation.input.confirmsStoredValueAccount.toString(),
+                    operation.input.confirmsPaidAmount.toString(),
+                    operation.input.confirmsCreditedAmount.toString(),
+                    operation.input.confirmsBonusAmount.toString(),
+                    operation.input.confirmsActualTime.toString(),
+                    operation.input.confirmsLotFacts.toString(),
+                    operation.input.expiresAt.toString(),
+                    operation.input.expiresAtText,
+                    operation.input.merchantId,
+                    operation.input.merchantCreditObservedAtText,
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.storedValuePostingId.value,
+                    operation.ids.paymentPostingId.value,
+                    operation.ids.bonusIncomePostingId.value,
+                    operation.ids.lotId.value,
+                    operation.ids.lotHistoryId,
+                    operation.ids.confirmationId.value,
+                    operation.ids.bankSourceId.value,
+                    operation.ids.merchantSourceId.value,
+                    operation.ids.bankEvidenceId.value,
+                    operation.ids.merchantEvidenceId.value,
+                    operation.ids.bankLinkId.value,
+                    operation.ids.merchantPostingLinkId.value,
+                    operation.ids.merchantLotLinkId.value,
+                    operation.ids.bonusLinkId.value,
+                )
+            is Rg10Operation.ConfirmStoredValueSpend ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.model,
+                    operation.input.behavior,
+                    operation.input.storedValueAccountId.value,
+                    operation.input.categoryId.value,
+                    canonicalMoney(operation.input.amount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.createdAt.toString(),
+                    operation.input.createdAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsModel.toString(),
+                    operation.input.confirmsBehavior.toString(),
+                    operation.input.confirmsStoredValueAccount.toString(),
+                    operation.input.confirmsAmount.toString(),
+                    operation.input.confirmsActualTime.toString(),
+                    operation.input.confirmsCategory.toString(),
+                    operation.input.merchantAllocationProvided.toString(),
+                    operation.input.confirmsLotAllocation.toString(),
+                    operation.input.allocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.expensePostingId.value,
+                    operation.ids.storedValuePostingId.value,
+                    operation.ids.confirmationId.value,
+                    operation.ids.consumptions.joinToString("|") { it.value },
+                    operation.ids.lotHistoryIds.joinToString("|"),
+                )
+            is Rg10Operation.IngestStoredValueRechargeCandidate ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.model,
+                    operation.input.paymentAccountId.value,
+                    operation.input.storedValueAccountId.value,
+                    canonicalMoney(operation.input.paidAmount),
+                    canonicalMoney(operation.input.creditedAmount),
+                    canonicalMoney(operation.input.bonusAmount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.lotId?.value,
+                    operation.input.allFactsComplete.toString(),
+                    operation.input.explicitConfirmation.toString(),
+                    operation.ids.candidateId.value,
+                    operation.ids.sourceId.value,
+                    operation.ids.evidenceId.value,
+                )
+            is Rg10Operation.IngestStoredValueSpendCandidate ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.model,
+                    operation.input.behavior,
+                    operation.input.storedValueAccountId.value,
+                    operation.input.categoryId.value,
+                    canonicalMoney(operation.input.amount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.lotAllocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
+                    operation.input.allFactsComplete.toString(),
+                    operation.input.explicitConfirmation.toString(),
+                    operation.ids.candidateId.value,
+                    operation.ids.sourceId.value,
+                    operation.ids.evidenceId.value,
+                )
+            is Rg10Operation.ConfirmImportedStoredValueRecharge ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.merchantCreditAmount?.let(::canonicalMoney),
+                    operation.input.merchantSourceId?.value,
+                    operation.input.bankPaymentConfirmed?.toString(),
+                    operation.input.modelConfirmed?.toString(),
+                    operation.input.explicitConfirmation?.toString(),
+                )
+            is Rg10Operation.ConfirmImportedStoredValueSpend ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.storedValueAccountId?.value,
+                    operation.input.amount?.let(::canonicalMoney),
+                    operation.input.actualTime?.toString(),
+                    operation.input.actualTimeText,
+                    operation.input.categoryConfirmed?.toString(),
+                    operation.input.lotAllocationConfirmed?.toString(),
+                    operation.input.explicitConfirmation?.toString(),
+                )
+            is Rg10Operation.RecordExpiryReminder ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.lotId.value,
+                    operation.input.reminderStatus,
+                    operation.input.explicitConfirmation.toString(),
+                )
+            is Rg10Operation.ConfirmStoredValueExpiryLoss ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.lotId.value,
+                    canonicalMoney(operation.input.amount),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.occurredAt.toString(),
+                    operation.input.occurredAtText,
+                    operation.input.confirmedAt.toString(),
+                    operation.input.confirmedAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.confirmsActualExpiry.toString(),
+                    operation.input.confirmsLot.toString(),
+                    operation.input.confirmsAmount.toString(),
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.expiryLossPostingId.value,
+                    operation.ids.storedValuePostingId.value,
+                    operation.ids.confirmationId.value,
+                    operation.ids.sourceId.value,
+                    operation.ids.evidenceId.value,
+                    operation.ids.linkId.value,
+                    operation.ids.lotHistoryId,
+                )
+            is Rg10Operation.ReconcileMerchantCredit ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.sourceId.value,
+                    operation.input.evidenceId.value,
+                    operation.input.role,
+                    operation.input.targetPostingId.value,
+                    operation.input.explicitConfirmation.toString(),
+                )
+            is Rg10Operation.ReconcileBankPayment ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.sourceId.value,
+                    operation.input.evidenceId.value,
+                    operation.input.role,
+                    operation.input.targetPostingId.value,
+                    operation.input.explicitConfirmation.toString(),
+                )
+            is Rg10Operation.ApplyMerchantLotAllocation ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    canonicalMoney(operation.input.amount),
+                    operation.input.merchantAllocationProvided.toString(),
+                    operation.input.merchantEvidenceId.value,
+                    operation.input.allocations.joinToString("|") { "${it.lotId.value}=${canonicalMoney(it.amount)}" },
+                    operation.input.explicitConfirmation.toString(),
+                    operation.ids.allocationId.value,
+                    operation.ids.consumptionId.value,
+                )
+            is Rg10Operation.ConfirmStoredValueActivationBalance ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.storedValueAccountId.value,
+                    canonicalMoney(operation.input.existingBalance),
+                    canonicalCurrency(operation.input.currency),
+                    operation.input.activationAt.toString(),
+                    operation.input.activationAtText,
+                    operation.input.createdAt.toString(),
+                    operation.input.createdAtText,
+                    operation.input.explicitConfirmation.toString(),
+                    operation.input.compositionConfirmed.toString(),
+                    operation.ids.transactionId.value,
+                    operation.ids.versionId.value,
+                    operation.ids.postingSetId.value,
+                    operation.ids.storedValuePostingId.value,
+                    operation.ids.equityPostingId.value,
+                    operation.ids.confirmationId.value,
+                    operation.ids.adjustmentId.value,
+                    operation.ids.adjustmentHistoryId,
+                    operation.ids.reconstructionId.value,
+                    operation.ids.replacementGroupId,
+                    operation.ids.sourceId.value,
+                    operation.ids.evidenceId.value,
+                    operation.ids.linkId.value,
+                    operation.ids.auditLinkId.value,
+                )
+            is Rg10Operation.RenameStoredValueLabels ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.accountId.value,
+                    operation.input.newAccountName,
+                    operation.input.lotId.value,
+                    operation.input.newLotLabel,
+                )
+            is Rg10Operation.InvalidInput ->
+                canonicalFields(
+                    operation.ledgerId.value,
+                    operation.action.code,
+                    operation.input.requestId.value,
+                    operation.input.predicate.name,
+                    operation.input.attemptedInput.entries.sortedBy { it.key }.joinToString("|") { (key, value) ->
+                        "$key=${value ?: "<null>"}"
+                    },
+                )
+        }
 
-    private fun canonicalMoney(money: Money): String =
-        "${money.minorUnits}:${canonicalCurrency(money.currency)}"
+    private fun canonicalMoney(money: Money): String = "${money.minorUnits}:${canonicalCurrency(money.currency)}"
 
-    private fun canonicalCurrency(currency: CurrencyUnit): String =
-        "${currency.code}:${currency.precision}"
+    private fun canonicalCurrency(currency: CurrencyUnit): String = "${currency.code}:${currency.precision}"
 
-    private fun canonicalFields(vararg values: String?): String = buildString {
-        values.forEach { value ->
-            if (value == null) {
-                append("N;")
-            } else {
-                append("V").append(value.length).append(':').append(value).append(';')
+    private fun canonicalFields(vararg values: String?): String =
+        buildString {
+            values.forEach { value ->
+                if (value == null) {
+                    append("N;")
+                } else {
+                    append("V")
+                        .append(value.length)
+                        .append(':')
+                        .append(value)
+                        .append(';')
+                }
             }
         }
-    }
 
     private fun accepted(ids: List<Rg10ReturnedId>) = Rg10ExecutionResult.Accepted(ids)
 
-    private fun rejected(reason: Rg10RejectionReason, fieldPath: Rg10FieldPath) =
-        Rg10ExecutionResult.Rejected(reason, fieldPath)
+    private fun rejected(
+        reason: Rg10RejectionReason,
+        fieldPath: Rg10FieldPath,
+    ) = Rg10ExecutionResult.Rejected(reason, fieldPath)
 }
 
-private fun checkedAdd(left: Long, right: Long): Long? {
+private fun checkedAdd(
+    left: Long,
+    right: Long,
+): Long? {
     if (right > 0L && left > Long.MAX_VALUE - right) return null
     if (right < 0L && left < Long.MIN_VALUE - right) return null
     return left + right
 }
 
-private fun checkedSubtract(left: Long, right: Long): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
+private fun checkedSubtract(
+    left: Long,
+    right: Long,
+): Long? = checkedAdd(left, checkedNegate(right) ?: return null)
 
 private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value

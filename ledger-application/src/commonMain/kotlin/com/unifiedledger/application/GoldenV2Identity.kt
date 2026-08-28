@@ -9,19 +9,28 @@ package com.unifiedledger.application
  * the two sides have to agree or migrated expected output and runtime output name different
  * entities for the same fact. Per-scenario copies of this logic are exactly how that agreement was
  * broken before, so scenarios pass their own case id in rather than owning their own generator.
+ *
+ * Must equal `_UUID_NAMESPACE` in `tools/python/golden_cases/v2.py`.
  */
 
-/** Must equal `_UUID_NAMESPACE` in `tools/python/golden_cases/v2.py`. */
-private val goldenV2UuidNamespace = "cfad3f84edb15838ae53aae49684cf1a".chunked(2)
-    .map { it.toInt(16).toByte() }
-    .toByteArray()
+private val goldenV2UuidNamespace =
+    "cfad3f84edb15838ae53aae49684cf1a"
+        .chunked(2)
+        .map { it.toInt(16).toByte() }
+        .toByteArray()
 
 /** Mirrors `_MIGRATION_SOURCE_LOCATOR_PATTERN`: a normalized source path of `$`, `.key` and `[*]`. */
 private val goldenV2SourceLocatorPattern = Regex("^\\$(?:\\.[^.\\[\\]/\\x00-\\x1f\\x7f]+|\\[\\*])*$")
 
-class GoldenV2IdentityException(message: String) : IllegalArgumentException(message)
+class GoldenV2IdentityException(
+    message: String,
+) : IllegalArgumentException(message)
 
-fun goldenV2RootId(caseId: String, sourceLocator: String, occurrenceDiscriminator: String): String {
+fun goldenV2RootId(
+    caseId: String,
+    sourceLocator: String,
+    occurrenceDiscriminator: String,
+): String {
     validateGoldenV2Component("case_id", caseId)
     return goldenV2UuidV5("$caseId\n@root\nroot\n${goldenV2SemanticKey(sourceLocator, occurrenceDiscriminator)}")
 }
@@ -39,7 +48,10 @@ fun goldenV2MigrationId(
     return goldenV2UuidV5("$caseId\n$rootId\n$entityKind\n${goldenV2SemanticKey(sourceLocator, occurrenceDiscriminator)}")
 }
 
-private fun goldenV2SemanticKey(sourceLocator: String, occurrenceDiscriminator: String): String {
+private fun goldenV2SemanticKey(
+    sourceLocator: String,
+    occurrenceDiscriminator: String,
+): String {
     if (!goldenV2SourceLocatorPattern.matches(sourceLocator)) {
         throw GoldenV2IdentityException("source locator must be a normalized source locator using $, .key and [*]")
     }
@@ -47,7 +59,10 @@ private fun goldenV2SemanticKey(sourceLocator: String, occurrenceDiscriminator: 
     return "$sourceLocator\noccurrence=$occurrenceDiscriminator"
 }
 
-private fun validateGoldenV2Component(name: String, value: String) {
+private fun validateGoldenV2Component(
+    name: String,
+    value: String,
+) {
     if (value.isEmpty()) throw GoldenV2IdentityException("$name must be non-empty")
     if (value.any { it.code < 32 || it.code == 127 }) {
         throw GoldenV2IdentityException("$name must not contain control characters")
@@ -95,10 +110,22 @@ private fun goldenV2Sha1(input: ByteArray): ByteArray {
             val f: Int
             val k: Int
             when (index) {
-                in 0..19 -> { f = (b and c) or (b.inv() and d); k = 0x5A827999 }
-                in 20..39 -> { f = b xor c xor d; k = 0x6ED9EBA1 }
-                in 40..59 -> { f = (b and c) or (b and d) or (c and d); k = 0x8F1BBCDC.toInt() }
-                else -> { f = b xor c xor d; k = 0xCA62C1D6.toInt() }
+                in 0..19 -> {
+                    f = (b and c) or (b.inv() and d)
+                    k = 0x5A827999
+                }
+                in 20..39 -> {
+                    f = b xor c xor d
+                    k = 0x6ED9EBA1
+                }
+                in 40..59 -> {
+                    f = (b and c) or (b and d) or (c and d)
+                    k = 0x8F1BBCDC.toInt()
+                }
+                else -> {
+                    f = b xor c xor d
+                    k = 0xCA62C1D6.toInt()
+                }
             }
             val next = goldenV2RotateLeft(a, 5) + f + e + k + words[index]
             e = d
@@ -113,9 +140,13 @@ private fun goldenV2Sha1(input: ByteArray): ByteArray {
         h3 += d
         h4 += e
     }
-    return listOf(h0, h1, h2, h3, h4).flatMap { word ->
-        listOf((word ushr 24).toByte(), (word ushr 16).toByte(), (word ushr 8).toByte(), word.toByte())
-    }.toByteArray()
+    return listOf(h0, h1, h2, h3, h4)
+        .flatMap { word ->
+            listOf((word ushr 24).toByte(), (word ushr 16).toByte(), (word ushr 8).toByte(), word.toByte())
+        }.toByteArray()
 }
 
-private fun goldenV2RotateLeft(value: Int, bits: Int): Int = (value shl bits) or (value ushr (32 - bits))
+private fun goldenV2RotateLeft(
+    value: Int,
+    bits: Int,
+): Int = (value shl bits) or (value ushr (32 - bits))

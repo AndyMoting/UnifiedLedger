@@ -50,21 +50,23 @@ fun renameCategoryName(
     if (newName.isBlank()) {
         return DomainResult.Failure(CategoryRenameViolation.EmptyName)
     }
-    val previous = current ?: return DomainResult.Failure(
-        CategoryRenameViolation.CurrentNameVersionMissing,
-    )
+    val previous =
+        current ?: return DomainResult.Failure(
+            CategoryRenameViolation.CurrentNameVersionMissing,
+        )
     if (previous.categoryId != categoryId || previous.status != CategoryNameVersionStatus.CURRENT) {
         return DomainResult.Failure(CategoryRenameViolation.CurrentNameVersionMissing)
     }
     return DomainResult.Success(
         CategoryRenameChange(
             superseded = previous.copy(status = CategoryNameVersionStatus.SUPERSEDED),
-            current = CategoryNameVersion(
-                categoryId = categoryId,
-                version = previous.version + 1,
-                name = newName,
-                status = CategoryNameVersionStatus.CURRENT,
-            ),
+            current =
+                CategoryNameVersion(
+                    categoryId = categoryId,
+                    version = previous.version + 1,
+                    name = newName,
+                    status = CategoryNameVersionStatus.CURRENT,
+                ),
         ),
     )
 }

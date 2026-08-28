@@ -1,22 +1,27 @@
 package com.unifiedledger.application
 
 /** The two approved evidence responsibilities; channel/source names are not duties. */
-enum class P408EvidenceResponsibility(val storageValue: String) {
+enum class P408EvidenceResponsibility(
+    val storageValue: String,
+) {
     REAL_ACCOUNT_POSTING("real_account_posting"),
     DESTINATION_ASSET_POSTING("destination_asset_posting"),
 }
 
 /** Product reconciliation statuses mapped from storage tokens to approved labels. */
-enum class P408ReconciliationStatus(val storageValue: String, val label: String) {
+enum class P408ReconciliationStatus(
+    val storageValue: String,
+    val label: String,
+) {
     PENDING("PENDING", "待对账"),
     PARTIAL("PARTIAL", "部分匹配"),
     DIFFERENCE("DIFFERENCE", "有差异"),
     MISSING("MISSING", "待补资料"),
-    CHECKED("CHECKED", "已核对");
+    CHECKED("CHECKED", "已核对"),
+    ;
 
     companion object {
-        fun fromStorage(value: String): P408ReconciliationStatus =
-            values().first { it.storageValue == value }
+        fun fromStorage(value: String): P408ReconciliationStatus = values().first { it.storageValue == value }
     }
 }
 
@@ -61,8 +66,14 @@ data class P408ConfirmLinkRequest(
         // versions are never interconverted or cross-explained.
         require(basisVersion == 1 || basisVersion == 2)
         if (basisVersion == 1) {
-            require(projectionId == null && projectionRuleId == null && projectionRuleVersion == null &&
-                normalizedAmountMinor == null && rawAmountMinor == null && rawCurrencyPrecision == null)
+            require(
+                projectionId == null &&
+                    projectionRuleId == null &&
+                    projectionRuleVersion == null &&
+                    normalizedAmountMinor == null &&
+                    rawAmountMinor == null &&
+                    rawCurrencyPrecision == null,
+            )
         } else {
             require(!projectionId.isNullOrBlank() && !projectionRuleId.isNullOrBlank())
             require(projectionRuleVersion != null && projectionRuleVersion >= 1)
@@ -78,37 +89,38 @@ data class P408ConfirmLinkRequest(
     }
 
     /** Stable UTF-8 identity; set-valued basis tokens are sorted and deduplicated. */
-    fun fingerprint(): String = buildString {
-        if (basisVersion == 2) append("p408-confirm-v2|") else append("p408-confirm-v1|")
-        append("ledger=").append(ledgerId).append('|')
-        append("evidence=").append(evidenceId).append('|')
-        append("candidate=").append(candidateId).append('|')
-        append("posting=").append(postingId).append('|')
-        append("transaction=").append(transactionId).append('|')
-        append("amount_minor=").append(amountMinor).append('|')
-        append("currency=").append(currencyCode).append('|')
-        append("precision=").append(currencyPrecision).append('|')
-        append("direction=").append(direction).append('|')
-        append("account=").append(accountId).append('|')
-        append("responsibility=").append(responsibility.storageValue).append('|')
-        append("basis_version=").append(basisVersion).append('|')
-        append("basis=").append(matchBasis.toSortedSet().joinToString(",")).append('|')
-        append("window_days=").append(windowDays).append('|')
-        append("natural_day_distance=").append(naturalDayDistance).append('|')
-        append("source_occurred_at=").append(sourceOccurredAt).append('|')
-        append("confirmed_at=").append(confirmedAt)
-        if (basisVersion == 2) {
-            // Four added groups: raw pair, normalized value, projection identity,
-            // rule/version. The v2 prefix plus these groups keep the two
-            // fingerprint spaces disjoint by construction.
-            append("|projection_id=").append(projectionId)
-            append("|projection_rule_id=").append(projectionRuleId)
-            append("|projection_rule_version=").append(projectionRuleVersion)
-            append("|normalized_amount_minor=").append(normalizedAmountMinor)
-            append("|raw_amount_minor=").append(rawAmountMinor)
-            append("|raw_currency_precision=").append(rawCurrencyPrecision)
+    fun fingerprint(): String =
+        buildString {
+            if (basisVersion == 2) append("p408-confirm-v2|") else append("p408-confirm-v1|")
+            append("ledger=").append(ledgerId).append('|')
+            append("evidence=").append(evidenceId).append('|')
+            append("candidate=").append(candidateId).append('|')
+            append("posting=").append(postingId).append('|')
+            append("transaction=").append(transactionId).append('|')
+            append("amount_minor=").append(amountMinor).append('|')
+            append("currency=").append(currencyCode).append('|')
+            append("precision=").append(currencyPrecision).append('|')
+            append("direction=").append(direction).append('|')
+            append("account=").append(accountId).append('|')
+            append("responsibility=").append(responsibility.storageValue).append('|')
+            append("basis_version=").append(basisVersion).append('|')
+            append("basis=").append(matchBasis.toSortedSet().joinToString(",")).append('|')
+            append("window_days=").append(windowDays).append('|')
+            append("natural_day_distance=").append(naturalDayDistance).append('|')
+            append("source_occurred_at=").append(sourceOccurredAt).append('|')
+            append("confirmed_at=").append(confirmedAt)
+            if (basisVersion == 2) {
+                // Four added groups: raw pair, normalized value, projection identity,
+                // rule/version. The v2 prefix plus these groups keep the two
+                // fingerprint spaces disjoint by construction.
+                append("|projection_id=").append(projectionId)
+                append("|projection_rule_id=").append(projectionRuleId)
+                append("|projection_rule_version=").append(projectionRuleVersion)
+                append("|normalized_amount_minor=").append(normalizedAmountMinor)
+                append("|raw_amount_minor=").append(rawAmountMinor)
+                append("|raw_currency_precision=").append(rawCurrencyPrecision)
+            }
         }
-    }
 }
 
 data class P408ReconciliationReceipt(
@@ -120,9 +132,17 @@ data class P408ReconciliationReceipt(
 )
 
 sealed interface P408ReconciliationResult {
-    data class Accepted(val receipt: P408ReconciliationReceipt) : P408ReconciliationResult
-    data class NoChange(val receipt: P408ReconciliationReceipt) : P408ReconciliationResult
-    data class Rejected(val code: String) : P408ReconciliationResult
+    data class Accepted(
+        val receipt: P408ReconciliationReceipt,
+    ) : P408ReconciliationResult
+
+    data class NoChange(
+        val receipt: P408ReconciliationReceipt,
+    ) : P408ReconciliationResult
+
+    data class Rejected(
+        val code: String,
+    ) : P408ReconciliationResult
 }
 
 interface P408ReconciliationCommitPort {
@@ -141,10 +161,11 @@ interface P408ReconciliationReadPort {
     fun readReconciliationReport(ledgerId: String): List<P408ReconciliationReportRow>
 }
 
-internal val REQUIRED_MATCH_BASIS = setOf(
-    "amount",
-    "currency",
-    "direction",
-    "account",
-    "occurred_at_window",
-)
+internal val REQUIRED_MATCH_BASIS =
+    setOf(
+        "amount",
+        "currency",
+        "direction",
+        "account",
+        "occurred_at_window",
+    )

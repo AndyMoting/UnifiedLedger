@@ -86,8 +86,9 @@ fun validatePostingFactsCorrection(
     rejectChangedMatchedAsset: Boolean = true,
 ): DomainResult<Unit> {
     // 1. unknown transaction (validator: transaction lookup failure -> complete_replacement_postings_required).
-    val transaction = attempt.transaction
-        ?: return DomainResult.Failure(CorrectTransactionVersionViolation.CompleteReplacementPostingsRequired())
+    val transaction =
+        attempt.transaction
+            ?: return DomainResult.Failure(CorrectTransactionVersionViolation.CompleteReplacementPostingsRequired())
     val oldPostingIds = transaction.currentPostings().map { it.id }
 
     // 1. replacement count must equal the old current posting count.
@@ -115,8 +116,9 @@ fun validatePostingFactsCorrection(
 
     // 4. per item account checks: known, owned (or expense pseudo-account), currency match.
     attempt.replacementPostings.forEachIndexed { index, item ->
-        val account = accounts[item.facts.accountId]
-            ?: return DomainResult.Failure(CorrectTransactionVersionViolation.KnownAccountRequired(index))
+        val account =
+            accounts[item.facts.accountId]
+                ?: return DomainResult.Failure(CorrectTransactionVersionViolation.KnownAccountRequired(index))
         val ownedOrExpensePseudoAccount =
             account.ownedByUser || (account.kind == AccountKind.EXPENSE && !account.realAccount)
         if (!ownedOrExpensePseudoAccount) {
@@ -130,10 +132,12 @@ fun validatePostingFactsCorrection(
     // 5. matched asset legs must be preserved unless the accepted path opts into symmetric lineage.
     if (rejectChangedMatchedAsset) {
         attempt.replacementPostings.forEachIndexed { index, item ->
-            val oldFacts = oldFactsByPosting[item.sourcePostingId]
-                ?: return DomainResult.Failure(CorrectTransactionVersionViolation.IncompleteOldPostingFacts)
-            val oldAccount = accounts[oldFacts.accountId]
-                ?: return DomainResult.Failure(CorrectTransactionVersionViolation.IncompleteOldPostingFacts)
+            val oldFacts =
+                oldFactsByPosting[item.sourcePostingId]
+                    ?: return DomainResult.Failure(CorrectTransactionVersionViolation.IncompleteOldPostingFacts)
+            val oldAccount =
+                accounts[oldFacts.accountId]
+                    ?: return DomainResult.Failure(CorrectTransactionVersionViolation.IncompleteOldPostingFacts)
             val oldMatched =
                 reconciliationsByPosting[item.sourcePostingId] == PostingReconciliationStatus.MATCHED
             if (oldMatched && oldAccount.kind == AccountKind.ASSET && !item.facts.sameAs(oldFacts)) {
@@ -215,7 +219,10 @@ private fun replacementSetBalances(replacements: List<ReplacementPostingInput>):
     return true
 }
 
-private fun checkedMultiply(left: Long, right: Long): Long? {
+private fun checkedMultiply(
+    left: Long,
+    right: Long,
+): Long? {
     if (left != 0L && right != 0L && left > Long.MAX_VALUE / right) return null
     return left * right
 }
