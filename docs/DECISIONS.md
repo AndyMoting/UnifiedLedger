@@ -1888,3 +1888,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **边界保持**：无 schema/migration/sql 改动、无 `.external/`、无 parser/matcher/projection 行为变更、无个人数据/本机路径；改动面仅限允许清单（ci.yml、根 + 三模块 build.gradle.kts、.editorconfig、CONTRIBUTING.md、225 个 `.kt` 源/测试（含 2 文件按类名改名））。
 
 **关联决定：** 无先例决定（承接 WORK_PLAN.local backlog 工程项，与账务语义无关）
+
+## D-116 BP-01 银行 parser 门承接批契约（CMB 网银 CSV + CCB 网银 XLS）
+
+**状态：** 已批准（2026-08-28 用户按推荐方案裁决：范围=普通收支 formalization + 余额镜像 + 明确转账/提现路由；B-1 转账路由=完整 kind `transfer_flow_source` + 银行侧方向门变体登记；M-1 余额诊断=新增非阻断诊断级 `note`）。
+
+**冻结输入：** `docs/specs/2026-08-28-bank-import-cmb-ccb-design.md`（Status: approved），冻结文本 = SHA-256 `515dc342a6068e5c73ab043c1985d03851d5c47aa16f015d15796a545b9e9555`。独立规格评审：B-1/M-1..M-3/m-1..m-6 全部闭环，终局 APPROVE（附条件已满足：裁决链归因、CCB 序号统一、batch-h 金额一致性、CCB 显式文件序）。
+
+**批准内容摘要：**
+
+1. **来源格式契约**：CMB 网银 CSV（UTF-8 BOM、注释头 1-6 + 空行 7、表头第 8 行 7 列「交易日期/交易时间/收入/支出/余额/交易类型/交易备注」、引号 + 前置制表符、收/支互斥、余额连续性降序不变量、尾部空行 + 两条汇总整体跳过）；CCB 网银 XLS（OLE2 全文本单元格、标题区 1-3、表头第 4 行 9 列「序号/摘要/币别/钞汇/交易日期/交易金额/账户余额/交易地点/附言/对方账号与户名」、带符号金额方向=符号、升序余额连续性）。
+2. **类型路由矩阵**：普通收支（CMB 普通支出/收入 token 集、CCB 消费/银联入账按方向）；银行侧自转用完整 kind `transfer_flow_source`（D-102 先例，可确认）+ 银行侧方向门变体（银行视角 out→银行=from、钱包=to，与 P4-04 钱包视角互为镜像，D-100 §7 风格契约修订登记，仅限本批银行侧路由，P4-04 冻结 oracle 钱包视角逐值不变）；退款 → P4-06 fail-closed；未知 token 封闭冻结 fail-closed。
+3. **余额镜像**：余额只作证据/对账维度，不进正式交易金额；余额连续性/缺失诊断 = 新增非阻断 `note` 诊断级（D-097 `record_error` 语义不变）；RL-07 代表路径复用 P4-08 confirmLink + D-112 READY 投影惰性物化（同一资金流两端仅一笔正式转账、第二来源补充证据）。
+4. **fixture 与 oracle**：CMB 主批 17 行 + batch-h 19 行（接受 token 每类 ≥2 例 + 边界覆盖）、CCB 18 行 + 变体批；解析级 P-01..P-42、端到端 E-01..E-12、余额镜像 B-01..B-04、回归 R-01/R-02。
+5. **边界**：不做 PDF/其他银行/信用卡（未提供样本）；不引入 matcher 新语义（D-103 组合不变）；不引入产品 Clock/随机 ID；schema 预期零变更（余额镜像零持久化，观察持久化留后续独立批）；provider DTO 零引入；`note` severity 值域扩展按 D-098:1516 追加注册。
+
+**实施登记：** 待实施批。本决定批准契约，不授权实施；实施批以本冻结 spec 为唯一 WHAT/HOW 权威，走独立 worktree、单一 writer、独立规格/质量双评审、distinct verifier、主代理验收的高风险拓扑。
+
+**关联决定：** `D-014`、`D-020`、`D-031`、`D-032`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-109`、`D-111`、`D-112`
