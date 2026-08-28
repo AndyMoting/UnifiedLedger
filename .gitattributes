@@ -1,3 +1,8 @@
 golden/rules/*.json text eol=lf
 docs/migrations/golden-v2/*-expected.json text eol=lf
 golden/rules-v2/*.json text eol=lf
+# BP-01 bank-import fixtures (D-116): the CMB CSV contract is CRLF + UTF-8 BOM on every
+# checkout; the CCB XLS files are binary OLE2 and must never be line-ending normalized.
+tests/fixtures/batch-bp01-cmb-*.csv text eol=crlf
+tests/fixtures/batch-bp01-cmb-f-nonutf8.bin binary
+tests/fixtures/batch-bp01-ccb-*.xls binary
