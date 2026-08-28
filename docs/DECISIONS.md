@@ -1905,6 +1905,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **契约修订登记：** 用户于 2026-08-29 接受 E-11 双形状门契约修订；spec 冻结 SHA-256（UTF-8+LF 规范域，与原冻结同域可比）由 `515dc342a6068e5c73ab043c1985d03851d5c47aa16f015d15796a545b9e9555` 更新为 `15ef5d6101339758c8788852c9fc823d3d92605019e9bc3c6a14a49edb470ee1`（修订文件 git blob SHA-1 = `82a2a741f4e5e949e183bac671143279b6129826`）。银行原始 parser fact 保留来源契约的 `+08:00` 形状；仅在进入既有 `confirmLink` 前由镜像适配层将同一时刻规范化为 UTC `Z` 形。P4-08 既有语义与实现零改动。实现测试已钉死拒绝路径（原始 `+08:00` 形状进入 `confirmLink` 被 `P408_POSTING_TIME_UNRESOLVED` 拒绝且零写入）与成功路径（前置 `Z` 规范化后经既有 `confirmLink` + D-112 READY projection 完整链），并保持单笔正式转账、`CHECKED`、零第二笔/零收入不变量。该登记不改原批准内容，仅记录本次契约修订。
 
-**实施登记：** 待实施批。本决定批准契约，不授权实施；实施批以本冻结 spec 为唯一 WHAT/HOW 权威，走独立 worktree、单一 writer、独立规格/质量双评审、distinct verifier、主代理验收的高风险拓扑。
+**实施登记：** 已于 2026-08-29 按 D-116 授权范围与 E-11 双形状门修订落地（实施批 merge `0c4a634`/`19a2c95`，本地 main）：
+
+1. **交付面**：CMB 网银 CSV 解析器（`CmbBillParser`/`CmbParserTypes`/`CmbSourceTokens`，jvmMain）+ CCB 网银 XLS 解析器（`CcbBillParser`/`CcbParserTypes`/`CcbSourceTokens`，POI HSSF）；`TransferFlowFormalFactory` 重构为共享 `createTransferFormalCommit(observedAccountId)` + `BankStatementTransferFlowFormalFactory` 银行侧方向门变体（spec §3.4，P4-04 钱包视角逐语句等价、R-01 零污染）；spine 接线（intake→candidate→confirm/reject，转账=完整 kind `transfer_flow_source`）；余额镜像 = 非阻断 `note` 诊断（`SPINE_BANK_BALANCE_CONTINUITY`/`SPINE_BANK_BALANCE_MISSING`，D-097 `record_error` 语义不变）+ E2E 锚点断言，零持久化零 schema。
+2. **E-11 双形状门**：银行原始 parser fact 保留 `+08:00`；原样进入既有 `confirmLink` 被 `P408_POSTING_TIME_UNRESOLVED` 拒绝且零写入；镜像适配层在进入 `confirmLink` 前将同一时刻规范化为 UTC `Z` 形后走完整链（单笔正式转账、bank posting `CHECKED`、D-112 READY projection、零第二笔/零收入）；P4-08 语义与实现零改动。
+3. **fixtures 与 oracle**：匿名合成 fixtures 21（CMB 主批 + 变体 14、CCB 主批 + 变体 7）；解析级 P-01..P-55、E2E E-01..E-12、余额镜像 B-01..B-04、回归 R-01/R-02；解析测试 57 + E2E 5 全绿。
+4. **评审与验证**：独立规格评审（文档 delta CLOSED；实施忠实度 APPROVE，无 Blocker/Major）；独立质量评审 APPROVE（披露项：m-2 provenance 规则常量暂为契约文档未接线、m-3 空类型 token → `SPINE_CMB_UNKNOWN_TOKEN`、i-4/i-6/i-7 防御性注册与实现观察）；distinct verifier 19/19 PASS（ktlintCheck、聚焦解析/E2E、migration verifier、compileAndroidMain 独立复跑 exit 0）；六命令全量（application/data jvmTest、migration、Android 编译、check、ktlintCheck）exit 0；合并后 `verify-project` full `valid:true`（Python 806 OK、Gradle check BUILD SUCCESSFUL 30m53s）。
+5. **技术证据门**：CCB XLS 采用 Apache POI HSSF（`poi-ooxml` 5.5.1 已由 D-099 注册，HSSF 为传递依赖、无新增依赖，Apache-2.0）——六维证据（格式兼容/安全/许可/维护/替换）继承 D-099 POI 证据门记录，无新增风险。
+6. **边界保持**：无 schema/migration 变更、无 `.external/`、无 matcher 新语义（D-103 组合不变）、无产品 Clock/随机 ID、无个人数据/真实账单值入仓（fixtures 全为 spec 合成值）；`.gitattributes` 新增 fixture eol/binary 规则（CMB CSV `eol=crlf`、`.xls`/`.bin` binary）为批内范围修正。
 
 **关联决定：** `D-014`、`D-020`、`D-031`、`D-032`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-109`、`D-111`、`D-112`
