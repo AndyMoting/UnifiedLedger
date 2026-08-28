@@ -53,8 +53,9 @@
 
 ### 3.1 CMP 工具链兼容矩阵
 
+- **格式兼容（技术兼容）**：本节首组条目（版本事实、KGP/AGP/Gradle 兼容、JDK、插件配对约束、锚点逐项核对、结论、Windows 渲染）同属本维度；其余四维见本节末尾。
 - **版本事实**（github.com/JetBrains/compose-multiplatform/releases）：CMP `1.12.0` 于 2026-08-25 发布（证据时点前 4 天）；官方配对声明为「Update versions to Compose 1.12.0 and Kotlin 2.4.10」。上一稳定线 `1.11.1` 于 2026-06-02 发布。
-- **KGP/AGP/Gradle 兼容**（kotlinlang.org/docs/gradle-configure-project.html）：KGP `2.4.0`–`2.4.10` 支持 AGP `8.5.2`–`9.1.0`、Gradle `7.6.3`–`9.5.0`；仓库锚点 Kotlin `2.4.10`、AGP-KMP library 插件 `9.1.0`、Gradle `9.5.0` 均落在区间内。（developer.android.com/build/releases/about-agp）AGP `9.1` 要求 Gradle ≥ `9.3.1`、实测上限 `9.5`。（Gradle 官方兼容性矩阵）Gradle `9.5` 要求 JVM `17`–`26`，仓库 JDK 21 满足。
+- **KGP/AGP/Gradle 兼容**（kotlinlang.org/docs/gradle-configure-project.html）：KGP `2.4.0`–`2.4.10` 支持 AGP `8.5.2`–`9.1.0`、Gradle `7.6.3`–`9.5.0`；仓库锚点 Kotlin `2.4.10`、AGP-KMP library 插件 `9.1.0`、Gradle `9.5.0` 均落在区间内。（developer.android.com/build/releases/about-agp）AGP `9.1` 要求 Gradle ≥ `9.3.1`、实测上限 `9.5`。（docs.gradle.org 官方兼容性矩阵，docs.gradle.org/current/userguide/compatibility.html）Gradle `9.5` 要求 JVM `17`–`26`，仓库 JDK 21 满足。
 - **JDK**：CMP Desktop 运行时要求 JDK 11+，`jpackage` 打包要求 JDK 17+；仓库 JDK 21 两者均满足。
 - **插件配对约束**：`org.jetbrains.kotlin.plugin.compose` 的版本必须与 Kotlin 插件版本一致（当前即 `2.4.10`）。
 - **锚点逐项核对**：
@@ -69,8 +70,12 @@
 | Android SDK | minSdk 34 / compileSdk 36 | 无 CMP 侧更高要求登记 | 同左 | 满足 |
 
 - **结论：零工具链升级**。两个候选 CMP 线（`1.11.1` / `1.12.0`）的全部工具链要求均被仓库现有锚点满足；Kotlin `2.4.10`、AGP-KMP `9.1.0`、Gradle `9.5.0`、JDK 21、minSdk 34/compileSdk 36 全部保持不变。
-- **Windows 渲染**：CMP Desktop 默认 Skia/Direct3D 渲染，失败时自动回退软件渲染（JetBrains 官方博客）；可用 `-Dskiko.renderApi` 覆盖。登记为诊断手段，非默认配置。
+- **Windows 渲染**：CMP Desktop 默认 Skia/Direct3D 渲染，失败时自动回退软件渲染（blog.jetbrains.com）；可用 `-Dskiko.renderApi` 覆盖。登记为诊断手段，非默认配置。
 - **风险注记**：CMP `1.12.0` 发布仅 4 天（§8 R-1）；CMP `1.12.0` 的多平台 material3 工件为 alpha（`org.jetbrains.compose.material3:material3:1.12.0-alpha03`，基于 androidx material3 `1.5.0-alpha22`）——Material3 多平台工件的精确版本选择延后至皮肤批证据门冻结（F-1）。
+- **安全**：CMP 工件为 JetBrains 第一方 Maven 发布物，构建期消费；运行期 UI 不引入网络访问、不引入动态代码加载；除 CMP desktop 工件自带的 Skiko 图形后端外不打包任何其他 native 代码。`org.jetbrains.compose` 工件的 OSV 记录本批不断言为零，留待 P5-02 依赖引入时复核登记。
+- **许可**：`org.jetbrains.compose` 工件与 androidx.compose 均为 Apache-2.0（androidx/JetBrains 第一方）。该结论为本批必需项——docs/ARCHITECTURE.md:156 要求每项选择说明适用模块、许可证与替换成本后才能翻转技术选择状态行（§9 第 2 项）。
+- **维护**：JetBrains 第一方维护；`org.jetbrains.compose` 插件线跟随 Kotlin 版本演进，发布节奏与版本事实同源（github.com/JetBrains/compose-multiplatform/releases）。
+- **替换**：最小壳 UI 只消费基础 Compose/Material3 组件；后续替换 CMP 栈 = 重铺占位 UI + 更换 desktop 入口点，业务代码零耦合（端口与应用用例不依赖 UI，F-3/F-4）。
 
 ### 3.2 miuix 六维证据包
 
@@ -133,7 +138,7 @@
 
 ### F-5 ID 端口契约（算法与语义冻结，实装随 P5-02）
 
-- **决定**：产品随机 ID = UUIDv7（RFC 9562）；生成保持惰性——只在持久化 `commitOnce` 的原子首请求 callback 内物化（docs/ARCHITECTURE.md:63 既有不变量）。精确重放、identity conflict 与并发失败方永不消耗 ID（既有 KDoc 契约：`ConfirmedManualExpense.kt:110-113`「`createFormalTransaction` MUST be invoked at most once」；持久化实现 `SqlDelightConfirmedManualExpenseCommitPort.kt:51-55`：claim 失败走 `resolveExisting`，仅 claim 胜者调用 callback）。本批只冻结算法与端口语义；生成器实装、文本形态与接缝命名随 P5-02 冻结。
+- **决定**：产品随机 ID = UUIDv7（RFC 9562）；生成保持惰性——只在持久化 `commitOnce` 的原子首请求 callback 内物化（docs/ARCHITECTURE.md:63 既有不变量）。精确重放、identity conflict 与并发失败方永不消耗 ID（既有 KDoc 契约：`ConfirmedManualExpense.kt:110-113`「`createFormalTransaction` MUST be invoked at most once」；持久化实现 `SqlDelightConfirmedManualExpenseCommitPort.kt:51-55`：claim 失败走 `resolveExisting`，仅 claim 胜者调用 callback）。本批只冻结算法与端口语义；生成器实装、文本形态与接缝命名随 P5-02 冻结。**迁移策略**：当前不存在任何已发布客户端或产品存量 ID 数据（仓库无 app 模块、schema 仅产品账务库），UUIDv7 引入无需数据迁移；将来算法变更按版本替换语义另行立批，不静默切换。
 - **理由**：UUIDv7 是 RFC 9562 标准的时间排序随机 UUID，无需协调方；惰性物化不变量已被既有 spine 与用例测试证明。P5-02 只是在既有 `*IdSource` fun interface 接缝（如 `ConfirmedManualExpenseIdSource`，`ConfirmedManualExpense.kt:59-61`）背后填入产品实现，端口消费方式零改动。
 - **备选与落选理由**：UUIDv4 落选（无时间排序，索引局部性差）；ULID/雪花类方案落选（非 RFC 标准 ID 语义或需要协调方）；请求入口立即预生成落选——重放/冲突路径将无谓消耗 ID，改变既有「失败方零消耗」断言。
 - **风险登记**：随机源必须来自平台安全随机数，实现属组合根/平台侧（P5-02）；Golden v2 命名空间与名字布局不是产品默认、零改动（docs/ARCHITECTURE.md:65）。
@@ -144,7 +149,7 @@
 
 - **F-1**：CMP 版本（UQ-1 裁决后固定）、desktop 主类名、`compose.desktop.application` 块内的具体参数。
 - **F-2**：驱动声明在 `desktop-app` 构建脚本内的确切位置与写法。
-- **F-3**：两个模块的目录布局与组合根对象图的构造顺序。
+- **F-3**：两个模块的目录布局与组合根对象图的构造顺序；本地测试账本的物化方式（空库引导或固定测试 fixture）——钉死后使 P5-02 验收判据「打开本地测试账本」可测。
 - **F-4**：Clock 端口的方法命名与最终签名。
 - **F-5**：UUIDv7 的文本形态（大小写/连字符规范形式）、生成器类型与注入位置。
 
@@ -197,6 +202,7 @@
 - **权衡（中立陈述）**：A 的风险是已知且小的（版本旧但稳定）；B 的风险是不可知的（新版本的未知缺陷）。最小壳只消费基础组件，两方案功能面等价。
 - **推荐**：A。阶段 5 的目标是可运行外壳而非版本先进性；升级路径已登记，A 不构成锁死。
 - **两方案共同点**：无论 A/B，`org.jetbrains.kotlin.plugin.compose` 恒为 `2.4.10`、全部仓库工具链锚点零升级（§3.1 矩阵）；升级到 CMP `1.12.0` 线时同样零工具链升级。
+- **时点快照注记**：两方案中的 miuix 版本配对均为 2026-08-29 时点快照；miuix 依赖实际进入构建在皮肤批，届时按 §3.2 与 §8 R-3 复核维护状态与版本配对后再固定依赖版本。
 
 ### UQ-2 批次边界：P5-02/P5-03 拆分确认
 
@@ -230,7 +236,7 @@
 用户批准本文件后，全部登记动作由独立登记批执行（本批不改动任何既有文件）：
 
 1. `docs/DECISIONS.md` 登记 **D-117**：内容 = §2 四项承接裁决 + §4 F-1..F-5 + UQ-1/UQ-2 裁决结果。
-2. `docs/ARCHITECTURE.md` 技术选择状态表（docs/ARCHITECTURE.md:138-156）同步：「UI 与导航库」行部分翻转（CMP 栈结论入行；皮肤库与导航库结论仍待后续批）、「当前正式持久化边界的数据库与迁移」行补记 Desktop driver 结论、「产品运行时 ID 算法」行翻转为已确定（UUIDv7，P5-02 实装）；「依赖注入方案」维持暂缓。
+2. `docs/ARCHITECTURE.md` 技术选择状态表（docs/ARCHITECTURE.md:138-156）同步：「UI 与导航库」行部分翻转（CMP 栈结论入行；皮肤库与导航库结论仍待后续批）、「当前正式持久化边界的数据库与迁移」行补记 Desktop driver 结论、「产品运行时 ID 算法」行翻转为已确定（UUIDv7，P5-02 实装；当前无产品存量 ID 数据、无需迁移，将来算法变更按版本替换语义另行立批）；「依赖注入方案」维持暂缓。同一批须同步修正 docs/ARCHITECTURE.md:7 的过期 schema 版本叙述（仍写 v21/20 个迁移文件，仓库现处 v27），使其与 :147 行登记后的结论一致，避免表内与正文携带互相矛盾的 schema 版本。
 3. `docs/CURRENT_STATE.md` 与（如存在）`docs/WORK_PLAN.local.md` 同步批次状态；`docs/CONTRIBUTING.md` 与 CI 的命令同步属 P5-02 实施批。
 4. 本文件状态行由 `proposal` 翻转为 `approved`，随后 P5-02 方可开批。
 
