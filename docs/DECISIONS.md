@@ -1915,3 +1915,36 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **边界保持**：无 schema/migration 变更、无 `.external/`、无 matcher 新语义（D-103 组合不变）、无产品 Clock/随机 ID、无个人数据/真实账单值入仓（fixtures 全为 spec 合成值）；`.gitattributes` 新增 fixture eol/binary 规则（CMB CSV `eol=crlf`、`.xls`/`.bin` binary）为批内范围修正。
 
 **关联决定：** `D-014`、`D-020`、`D-031`、`D-032`、`D-096`、`D-097`、`D-098`、`D-099`、`D-100`、`D-101`、`D-102`、`D-103`、`D-104`、`D-105`、`D-109`、`D-111`、`D-112`
+
+## D-117 P5-01 双平台最小外壳契约（阶段 5 规划/证据批）
+
+**状态：** 已批准（2026-08-29 用户裁决 UQ-1 方案 A + UQ-2 保持拆分，即契约批准）。
+
+**冻结输入：** `docs/specs/2026-08-29-p5-01-dual-platform-shell-contract-design.md`（Status: approved），冻结文本 = SHA-256（UTF-8+LF 规范域，与 D-116 同域可比）`62ae562e3642cf72341269fbf494ff3ce96d304407bd43885580aa102a5b0e11`。独立规格评审 REQUEST_CHANGES 六项全部回修，终局 CLOSURE APPROVE；distinct verifier 8/8 与 5/5 PASS。
+
+**承接裁决登记（契约 §2 四项）：**
+
+1. **双皮肤** = 指定皮肤主皮库（命名与证据登记于契约 §3.2）+ Material 3 辅皮（皮肤实现归用户另择前端模型的皮肤批；主皮库依赖在 P5-02/P5-03 不进入构建，随皮肤批经各自证据门进入）。
+2. **演示面 = B**：只读总览 + 一条手工支出写路径，避开 mixed confirm，D-114 已知限制保持休眠。
+3. **产品 ID = UUIDv7**（RFC 9562），实装随 P5-02。
+4. **ktlint 已启用**（D-115）。
+
+**图标资产隐私规则（一并登记）：** 皮肤批使用的图标资产为用户自有第一方图标资产（已授权图标资产），任何 tracked 文件零来源品牌字样、零 NOTICE；第三方项目名作为许可证/技术事实可正常出现，该豁免不适用于图标资产品牌名。
+
+**冻结决定摘要（F-1..F-5）：**
+
+1. **F-1 CMP 栈**：双端 UI 栈 = Compose Multiplatform；`org.jetbrains.compose` + `org.jetbrains.kotlin.plugin.compose`（后者版本恒等于 Kotlin 插件 `2.4.10`）；`jpackage` 安装器打包延后（阶段 5 验收只用 Gradle run/build 任务）；Material3 多平台工件版本选择延后皮肤批（CMP `1.12.0` 线工件为 alpha）。
+2. **F-2 桌面驱动**：`app.cash.sqldelight:sqlite-driver:2.3.2` 置 `desktop-app` jvmMain；Android 驱动声明零改动。
+3. **F-3 组合根契约**：新建 `android-app`/`desktop-app` 两模块（只做组合根、只调用应用用例）；`platform-android`/`platform-desktop` 偏差延后显式登记（组合根暂直接实现少数端口）；DI 与导航库维持暂缓（手工构造 + 占位最简 UI）。
+4. **F-4 Clock 端口**：应用层拥有的端口，返回 `kotlin.time.Instant`、单一无参读取方法；只供应处理/创建/确认/审计时间；来源时间不可由 Clock 覆盖或补写（docs/ARCHITECTURE.md「运行时能力与时间」规则不变）。
+5. **F-5 ID 端口**：UUIDv7 惰性物化于持久化 `commitOnce` 首请求 callback（重放/冲突/失败方零消耗不变量不变）；当前不存在产品存量 ID 数据、无需迁移；将来算法变更按版本替换语义另行立批，不静默切换。
+
+**UQ 裁决结果：** UQ-1 = 方案 A（CMP `1.11.1` + 主皮库 `0.9.3` 成熟稳定配对；CMP `1.12.0` + 主皮库 `0.9.4` stable 可用后经小批升级）；UQ-2 = 保持 P5-02/P5-03 拆分（骨架与演示面各自过门）。
+
+**六维证据包结论：** CMP 工具链兼容矩阵证明两条候选线均被仓库现有锚点满足、零工具链升级（Kotlin `2.4.10`、AGP-KMP `9.1.0`、Gradle `9.5.0`、JDK 21、minSdk 34/compileSdk 36 不变）；主皮库 `0.9.3`（命名见契约 §3.2）Apache-2.0、OSV 0 记录、单维护者风险登记（替换维 = 主题包裹层一行回退 Material3）；`sqlite-driver:2.3.2` 传递 xerial `sqlite-jdbc` 3.51.3.0，SQLite ≥ 3.35.0 满足迁移链 `ALTER TABLE DROP COLUMN` 硬要求。
+
+**边界：** P5-01 为 contract-only 批（零实现、零 schema、零生产代码）；P5-02/P5-03 为规划结构、各自仍须过证据门与用户批准；本登记零生产行为变更。
+
+**理由：** 契约优先纪律（D-096/IMPORT-001 先例：技术栈与端口契约先冻结、后实装）；外部证据门（平台集成/生产技术变更触发，三个证据包按 D-099 六维模板组织，只入中立契约不入原始研究）；独立评审闭环（REQUEST_CHANGES 六项全部回修后 CLOSURE APPROVE，distinct verifier 8/8 与 5/5 PASS）。
+
+**关联决定：** `D-096`、`D-098`、`D-099`、`D-114`、`D-115`、`D-116`
