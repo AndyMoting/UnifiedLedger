@@ -5,8 +5,8 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.P408ConfirmLinkRequest
 import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P408EvidenceResponsibility
-import com.unifiedledger.application.P408MaterializationRequest
 import com.unifiedledger.application.P408Matcher
+import com.unifiedledger.application.P408MaterializationRequest
 import com.unifiedledger.application.P408MaterializeResult
 import com.unifiedledger.application.P408ProjectionState
 import com.unifiedledger.application.P408ReconciliationResult
@@ -29,7 +29,6 @@ import kotlin.test.assertIs
  * (TP-18 + TP-01's numeric path over real store code).
  */
 class P408ProjectionAuthorityStoreTest {
-
     private val closables = mutableListOf<Pair<Path?, SqlDriver?>>()
 
     @AfterTest
@@ -100,9 +99,10 @@ class P408ProjectionAuthorityStoreTest {
         val (db, driver) = newWorld()
         seedSource(db, driver, "request-p", "source-p", "evidence-p", amountMinor = 99, precision = 0)
         val store = SqlDelightEvidenceProjectionStore.createShared(db)
-        val accepted = assertIs<P408MaterializeResult.Accepted>(
-            store.materialize(materializationRequest()),
-        )
+        val accepted =
+            assertIs<P408MaterializeResult.Accepted>(
+                store.materialize(materializationRequest()),
+            )
         assertEquals(P408ProjectionState.READY, accepted.projection.state)
         assertEquals(9900L, accepted.projection.normalizedAmountMinor)
         assertEquals(99L, accepted.projection.rawAmountMinor)
@@ -117,20 +117,23 @@ class P408ProjectionAuthorityStoreTest {
         seedSource(db, driver, "request-h", "source-h", "evidence-half", amountMinor = 5, precision = 1)
         seedSource(db, driver, "request-e", "source-e", "evidence-equal", amountMinor = 700, precision = 2)
         val store = SqlDelightEvidenceProjectionStore.createShared(db)
-        val half = assertIs<P408MaterializeResult.Accepted>(
-            store.materialize(materializationRequest(evidenceId = "evidence-half", requestIdSuffix = "h")),
-        )
+        val half =
+            assertIs<P408MaterializeResult.Accepted>(
+                store.materialize(materializationRequest(evidenceId = "evidence-half", requestIdSuffix = "h")),
+            )
         assertEquals(50L, half.projection.normalizedAmountMinor)
-        val equal = assertIs<P408MaterializeResult.Accepted>(
-            store.materialize(materializationRequest(evidenceId = "evidence-equal", requestIdSuffix = "e")),
-        )
+        val equal =
+            assertIs<P408MaterializeResult.Accepted>(
+                store.materialize(materializationRequest(evidenceId = "evidence-equal", requestIdSuffix = "e")),
+            )
         assertEquals(equal.projection.rawAmountMinor, equal.projection.normalizedAmountMinor)
 
         // TP-04 vector: exact divisor downscale 5000@3 -> 50@1 (integer, lossless).
         seedSource(db, driver, "request-d", "source-d", "evidence-down", amountMinor = 5000, precision = 3)
-        val down = assertIs<P408MaterializeResult.Accepted>(
-            store.materialize(materializationRequest(evidenceId = "evidence-down", requestIdSuffix = "d", targetPrecision = 1)),
-        )
+        val down =
+            assertIs<P408MaterializeResult.Accepted>(
+                store.materialize(materializationRequest(evidenceId = "evidence-down", requestIdSuffix = "d", targetPrecision = 1)),
+            )
         assertEquals(50L, down.projection.normalizedAmountMinor)
     }
 
@@ -154,10 +157,12 @@ class P408ProjectionAuthorityStoreTest {
     fun tp06RemainderRefusesAsNotRepresentable() {
         val (db, driver) = newWorld()
         seedSource(db, driver, "request-p", "source-p", "evidence-p", amountMinor = 33, precision = 2)
-        val rejected = assertIs<P408MaterializeResult.Rejected>(
-            SqlDelightEvidenceProjectionStore.createShared(db)
-                .materialize(materializationRequest(targetPrecision = 0)),
-        )
+        val rejected =
+            assertIs<P408MaterializeResult.Rejected>(
+                SqlDelightEvidenceProjectionStore
+                    .createShared(db)
+                    .materialize(materializationRequest(targetPrecision = 0)),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_AMOUNT_NOT_REPRESENTABLE, rejected.code)
     }
 
@@ -167,10 +172,12 @@ class P408ProjectionAuthorityStoreTest {
     fun tp07CurrencyMismatchRefusesBeforeArithmetic() {
         val (db, driver) = newWorld()
         seedSource(db, driver, "request-p", "source-p", "evidence-p", amountMinor = 100, precision = 2)
-        val rejected = assertIs<P408MaterializeResult.Rejected>(
-            SqlDelightEvidenceProjectionStore.createShared(db)
-                .materialize(materializationRequest().copy(targetCurrencyCode = "USD")),
-        )
+        val rejected =
+            assertIs<P408MaterializeResult.Rejected>(
+                SqlDelightEvidenceProjectionStore
+                    .createShared(db)
+                    .materialize(materializationRequest().copy(targetCurrencyCode = "USD")),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_CURRENCY_MISMATCH, rejected.code)
     }
 
@@ -186,13 +193,15 @@ class P408ProjectionAuthorityStoreTest {
         assertEquals(first.projection, replay.projection)
         // QUAL-001: provenance (requestId) is audit-only and never conflicts;
         // an economic divergence is what must reject.
-        val sameProvenanceReplay = assertIs<P408MaterializeResult.NoChange>(
-            store.materialize(materializationRequest().copy(requestId = "matn-request-2")),
-        )
+        val sameProvenanceReplay =
+            assertIs<P408MaterializeResult.NoChange>(
+                store.materialize(materializationRequest().copy(requestId = "matn-request-2")),
+            )
         assertEquals(first.projection, sameProvenanceReplay.projection)
-        val conflict = assertIs<P408MaterializeResult.Rejected>(
-            store.materialize(materializationRequest().copy(targetAccountId = "account-bank-b")),
-        )
+        val conflict =
+            assertIs<P408MaterializeResult.Rejected>(
+                store.materialize(materializationRequest().copy(targetAccountId = "account-bank-b")),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_STATE_CONFLICT, conflict.code)
     }
 
@@ -220,8 +229,10 @@ class P408ProjectionAuthorityStoreTest {
         }
         assertEquals(1L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
         // Store-level read/write verification: the materialized row round-trips.
-        val readback = SqlDelightEvidenceProjectionStore.createShared(db)
-            .readProjection("ledger-a", "evidence-p")
+        val readback =
+            SqlDelightEvidenceProjectionStore
+                .createShared(db)
+                .readProjection("ledger-a", "evidence-p")
         assertEquals(P408ProjectionState.READY, readback!!.state)
         assertEquals(500L, readback.normalizedAmountMinor)
     }
@@ -251,9 +262,10 @@ class P408ProjectionAuthorityStoreTest {
         seedSource(db, driver, "request-a", "source-a", "evidence-a", amountMinor = 55, precision = 2)
         seedPosting(db, driver)
         val store = SqlDelightP408ReconciliationStore(db, driver)
-        val rejected = assertIs<P408ReconciliationResult.Rejected>(
-            store.confirmLink(confirmRequest().copy(currencyPrecision = 1)),
-        )
+        val rejected =
+            assertIs<P408ReconciliationResult.Rejected>(
+                store.confirmLink(confirmRequest().copy(currencyPrecision = 1)),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_AMOUNT_NOT_REPRESENTABLE, rejected.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceLinkRows().executeAsOne())
         assertEquals(0L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
@@ -280,7 +292,10 @@ class P408ProjectionAuthorityStoreTest {
         assertEquals(1L, db2.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
         assertEquals(
             "CHECKED",
-            db2.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-a").executeAsOne().status,
+            db2.ledgerQueries
+                .selectP408PostingReconciliation("ledger-a", "posting-a")
+                .executeAsOne()
+                .status,
         )
     }
 
@@ -296,9 +311,10 @@ class P408ProjectionAuthorityStoreTest {
             store.confirmLink(confirmRequest(amountMinor = 2400, requestId = "request-snap")),
         )
         val raw = db.ledgerQueries.selectP408EvidenceSourceFacts("ledger-a", "evidence-a").executeAsOne()
-        val snap = db.ledgerQueries
-            .selectP408ReconciliationSnapshotRaw("ledger-a", "request-snap")
-            .executeAsOne()
+        val snap =
+            db.ledgerQueries
+                .selectP408ReconciliationSnapshotRaw("ledger-a", "request-snap")
+                .executeAsOne()
         assertEquals(P408EvidenceProjectionPort.RULE_ID, snap.projection_rule_id)
         assertEquals(1L, snap.projection_rule_version)
         assertEquals(raw.amount_minor, snap.raw_amount_minor)
@@ -369,9 +385,10 @@ class P408ProjectionAuthorityStoreTest {
                 0,
             )
         }
-        val rejected = assertIs<P408ReconciliationResult.Rejected>(
-            SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest(amountMinor = 200)),
-        )
+        val rejected =
+            assertIs<P408ReconciliationResult.Rejected>(
+                SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest(amountMinor = 200)),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_SOURCE_DRIFT, rejected.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceLinkRows().executeAsOne())
     }
@@ -388,10 +405,11 @@ class P408ProjectionAuthorityStoreTest {
         // Same evidence, divergent requested normalized content -> typed conflict at the gate.
         // Divergent MATERIALIZATION input (different explicit target) hits the gate's
         // existing-READY branch before any request-vs-authority echo: STATE_CONFLICT.
-        val rejected = assertIs<P408ReconciliationResult.Rejected>(
-            SqlDelightP408ReconciliationStore(db, driver)
-                .confirmLink(confirmRequest(requestId = "request-conflict").copy(accountId = "account-bank-b")),
-        )
+        val rejected =
+            assertIs<P408ReconciliationResult.Rejected>(
+                SqlDelightP408ReconciliationStore(db, driver)
+                    .confirmLink(confirmRequest(requestId = "request-conflict").copy(accountId = "account-bank-b")),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_STATE_CONFLICT, rejected.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceLinkRows().executeAsOne())
     }
@@ -399,19 +417,28 @@ class P408ProjectionAuthorityStoreTest {
     @Test
     fun spec007ConfirmPathOverflowLeavesZeroResidueAndStaysRetryable() {
         val (db, driver) = newWorld()
-        seedSource(db, driver, "request-a", "source-a", "evidence-a",
-            amountMinor = Long.MAX_VALUE / 2, precision = 0)
-        seedPosting(db, driver)
-        var rejected = assertIs<P408ReconciliationResult.Rejected>(
-            SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest()),
+        seedSource(
+            db,
+            driver,
+            "request-a",
+            "source-a",
+            "evidence-a",
+            amountMinor = Long.MAX_VALUE / 2,
+            precision = 0,
         )
+        seedPosting(db, driver)
+        var rejected =
+            assertIs<P408ReconciliationResult.Rejected>(
+                SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest()),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_ARITHMETIC_OVERFLOW, rejected.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
         assertEquals(0L, db.ledgerQueries.countP408ReconciliationRequestRows().executeAsOne())
         // Same identity retry stays typed and residue-free.
-        rejected = assertIs<P408ReconciliationResult.Rejected>(
-            SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest()),
-        )
+        rejected =
+            assertIs<P408ReconciliationResult.Rejected>(
+                SqlDelightP408ReconciliationStore(db, driver).confirmLink(confirmRequest()),
+            )
         assertEquals(SqlDelightEvidenceProjectionStore.CODE_ARITHMETIC_OVERFLOW, rejected.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
     }
@@ -422,15 +449,16 @@ class P408ProjectionAuthorityStoreTest {
         targetPrecision: Int = 2,
         evidenceId: String = "evidence-p",
         requestIdSuffix: String = "",
-    ): P408MaterializationRequest = P408MaterializationRequest(
-        ledgerId = "ledger-a",
-        requestId = "matn-request" + if (requestIdSuffix.isEmpty()) "" else "-$requestIdSuffix",
-        evidenceId = evidenceId,
-        targetAccountId = "account-bank-a",
-        targetCurrencyCode = "CNY",
-        targetCurrencyPrecision = targetPrecision,
-        materializedAt = "2026-08-11T09:00:00+08:00",
-    )
+    ): P408MaterializationRequest =
+        P408MaterializationRequest(
+            ledgerId = "ledger-a",
+            requestId = "matn-request" + if (requestIdSuffix.isEmpty()) "" else "-$requestIdSuffix",
+            evidenceId = evidenceId,
+            targetAccountId = "account-bank-a",
+            targetCurrencyCode = "CNY",
+            targetCurrencyPrecision = targetPrecision,
+            materializedAt = "2026-08-11T09:00:00+08:00",
+        )
 
     private fun confirmRequest(
         basisVersion: Int = 2,
@@ -470,7 +498,8 @@ class P408ProjectionAuthorityStoreTest {
     }
 }
 
-private fun projectionSqliteProperties(): java.util.Properties = java.util.Properties().apply {
-    setProperty("foreign_keys", "true")
-    setProperty("busy_timeout", "5000")
-}
+private fun projectionSqliteProperties(): java.util.Properties =
+    java.util.Properties().apply {
+        setProperty("foreign_keys", "true")
+        setProperty("busy_timeout", "5000")
+    }

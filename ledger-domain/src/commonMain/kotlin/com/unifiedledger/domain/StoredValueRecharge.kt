@@ -52,14 +52,16 @@ fun createStoredValueRecharge(
     command: StoredValueRechargeCommand,
     ids: StoredValueRechargeIds,
 ): DomainResult<StoredValueRecharge> {
-    val stored = catalog.account(command.storedValueAccountId)
-        ?: return DomainResult.Failure(
-            StoredValueViolation.KnownAccountRequired(StoredValueField.STORED_VALUE_ACCOUNT),
-        )
-    val payment = catalog.account(command.paymentAccountId)
-        ?: return DomainResult.Failure(
-            StoredValueViolation.KnownAccountRequired(StoredValueField.PAYMENT_ACCOUNT),
-        )
+    val stored =
+        catalog.account(command.storedValueAccountId)
+            ?: return DomainResult.Failure(
+                StoredValueViolation.KnownAccountRequired(StoredValueField.STORED_VALUE_ACCOUNT),
+            )
+    val payment =
+        catalog.account(command.paymentAccountId)
+            ?: return DomainResult.Failure(
+                StoredValueViolation.KnownAccountRequired(StoredValueField.PAYMENT_ACCOUNT),
+            )
     if (stored.ledgerId != command.ledgerId || payment.ledgerId != command.ledgerId) {
         return DomainResult.Failure(DomainViolation.InvalidCatalog)
     }
@@ -90,8 +92,9 @@ fun createStoredValueRecharge(
     if (command.bonusAmount.minorUnits < 0L) {
         return DomainResult.Failure(StoredValueViolation.BonusAmountMustBeZeroOrPositive)
     }
-    val composed = checkedAdd(command.paidAmount.minorUnits, command.bonusAmount.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val composed =
+        checkedAdd(command.paidAmount.minorUnits, command.bonusAmount.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
     if (composed != command.creditedAmount.minorUnits) {
         return DomainResult.Failure(StoredValueViolation.CreditedMustEqualPaidPlusBonus)
     }
@@ -103,8 +106,9 @@ fun createStoredValueRecharge(
     ) {
         return DomainResult.Failure(StoredValueViolation.SameCurrencyRequired)
     }
-    val bonusIncome = catalog.accounts.firstOrNull { it.systemRole == STORED_VALUE_BONUS_RIGHT_INCOME_ROLE }
-        ?: return DomainResult.Failure(StoredValueViolation.BonusIncomeAccountRequired)
+    val bonusIncome =
+        catalog.accounts.firstOrNull { it.systemRole == STORED_VALUE_BONUS_RIGHT_INCOME_ROLE }
+            ?: return DomainResult.Failure(StoredValueViolation.BonusIncomeAccountRequired)
     if (
         bonusIncome.kind != AccountKind.INCOME ||
         bonusIncome.realAccount ||
@@ -113,58 +117,66 @@ fun createStoredValueRecharge(
     ) {
         return DomainResult.Failure(StoredValueViolation.BonusIncomeAccountRequired)
     }
-    val paymentAmount = checkedNegate(command.paidAmount.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val bonusAmount = checkedNegate(command.bonusAmount.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val typedPostings = listOf(
-        StoredValueRechargePosting(
-            Posting(ids.storedValuePostingId, stored.id, command.creditedAmount),
-            StoredValueRechargePostingRole.STORED_VALUE_CREDIT,
-        ),
-        StoredValueRechargePosting(
-            Posting(ids.paymentPostingId, payment.id, Money.ofMinor(paymentAmount, command.paidAmount.currency)),
-            StoredValueRechargePostingRole.PAYMENT_OUT,
-        ),
-        StoredValueRechargePosting(
-            Posting(ids.bonusIncomePostingId, bonusIncome.id, Money.ofMinor(bonusAmount, command.bonusAmount.currency)),
-            StoredValueRechargePostingRole.BONUS_INCOME,
-        ),
-    )
-    val postingSet = when (
-        val created = PostingSet.create(ids.postingSetId, typedPostings.map(StoredValueRechargePosting::posting))
-    ) {
-        is DomainResult.Success -> created.value
-        is DomainResult.Failure -> return created
-    }
-    val transaction = Transaction(
-        id = ids.transactionId,
-        ledgerId = command.ledgerId,
-        kind = TransactionKind.STORED_VALUE_RECHARGE,
-        currentVersionId = ids.versionId,
-    )
-    val version = TransactionVersion(
-        id = ids.versionId,
-        transactionId = ids.transactionId,
-        versionNumber = 1,
-        postingSetId = ids.postingSetId,
-        times = command.times,
-    )
-    val formal = when (
-        val created = FormalTransaction.create(transaction, listOf(version), listOf(postingSet))
-    ) {
-        is DomainResult.Success -> created.value
-        is DomainResult.Failure -> return created
-    }
+    val paymentAmount =
+        checkedNegate(command.paidAmount.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val bonusAmount =
+        checkedNegate(command.bonusAmount.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val typedPostings =
+        listOf(
+            StoredValueRechargePosting(
+                Posting(ids.storedValuePostingId, stored.id, command.creditedAmount),
+                StoredValueRechargePostingRole.STORED_VALUE_CREDIT,
+            ),
+            StoredValueRechargePosting(
+                Posting(ids.paymentPostingId, payment.id, Money.ofMinor(paymentAmount, command.paidAmount.currency)),
+                StoredValueRechargePostingRole.PAYMENT_OUT,
+            ),
+            StoredValueRechargePosting(
+                Posting(ids.bonusIncomePostingId, bonusIncome.id, Money.ofMinor(bonusAmount, command.bonusAmount.currency)),
+                StoredValueRechargePostingRole.BONUS_INCOME,
+            ),
+        )
+    val postingSet =
+        when (
+            val created = PostingSet.create(ids.postingSetId, typedPostings.map(StoredValueRechargePosting::posting))
+        ) {
+            is DomainResult.Success -> created.value
+            is DomainResult.Failure -> return created
+        }
+    val transaction =
+        Transaction(
+            id = ids.transactionId,
+            ledgerId = command.ledgerId,
+            kind = TransactionKind.STORED_VALUE_RECHARGE,
+            currentVersionId = ids.versionId,
+        )
+    val version =
+        TransactionVersion(
+            id = ids.versionId,
+            transactionId = ids.transactionId,
+            versionNumber = 1,
+            postingSetId = ids.postingSetId,
+            times = command.times,
+        )
+    val formal =
+        when (
+            val created = FormalTransaction.create(transaction, listOf(version), listOf(postingSet))
+        ) {
+            is DomainResult.Success -> created.value
+            is DomainResult.Failure -> return created
+        }
     return DomainResult.Success(
         StoredValueRecharge(
             formalTransaction = formal,
             postings = typedPostings,
-            reportEffects = StoredValueRechargeReportEffects(
-                cashOutflowMinor = command.paidAmount.minorUnits,
-                specialNonCashBonusIncomeMinor = command.bonusAmount.minorUnits,
-                netWorthChangeMinor = command.bonusAmount.minorUnits,
-            ),
+            reportEffects =
+                StoredValueRechargeReportEffects(
+                    cashOutflowMinor = command.paidAmount.minorUnits,
+                    specialNonCashBonusIncomeMinor = command.bonusAmount.minorUnits,
+                    netWorthChangeMinor = command.bonusAmount.minorUnits,
+                ),
         ),
     )
 }

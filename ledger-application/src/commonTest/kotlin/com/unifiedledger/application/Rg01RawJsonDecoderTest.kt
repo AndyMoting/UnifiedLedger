@@ -15,11 +15,28 @@ class Rg01RawJsonDecoderTest {
         assertEquals("ledger-a", decoded.context.ledgerId.value)
         assertEquals("35.80", (decoded.create.input.amount as Rg01JsonField.Value).value)
         assertEquals("+08:00", decoded.context.validNumericOffset)
-        assertEquals("request-rg01-create", decoded.retry.input.requestId.testValueOrNull())
-        assertEquals("request-rg01-distinct-create", decoded.distinct.input.requestId.testValueOrNull())
+        assertEquals(
+            "request-rg01-create",
+            decoded.retry.input.requestId
+                .testValueOrNull(),
+        )
+        assertEquals(
+            "request-rg01-distinct-create",
+            decoded.distinct.input.requestId
+                .testValueOrNull(),
+        )
         assertEquals(7, decoded.invalidInputs.size)
-        assertEquals("missing-amount", decoded.invalidInputs.first().source.sourceId)
-        assertIs<Rg01JsonField.Null>(decoded.invalidInputs.first().input.amount)
+        assertEquals(
+            "missing-amount",
+            decoded.invalidInputs
+                .first()
+                .source.sourceId,
+        )
+        assertIs<Rg01JsonField.Null>(
+            decoded.invalidInputs
+                .first()
+                .input.amount,
+        )
         kotlin.test.assertEquals("request-rg01-note-update", decoded.noteUpdate.input.requestId)
         kotlin.test.assertEquals("tx-expense-rg01", decoded.noteUpdate.input.transactionId)
         kotlin.test.assertEquals("早餐", decoded.noteUpdate.input.note)
@@ -40,33 +57,36 @@ class Rg01RawJsonDecoderTest {
 
     @Test
     fun rejectsUnknownAndWrongTypedNoteUpdateFields() {
-        val unknown = decodeRg01RawJson(
-            fixtureJson().replace("\"note\":\"早餐\"", "\"note\":\"早餐\",\"extra\":true"),
-        )
+        val unknown =
+            decodeRg01RawJson(
+                fixtureJson().replace("\"note\":\"早餐\"", "\"note\":\"早餐\",\"extra\":true"),
+            )
         assertEquals(
             Rg01RawJsonContractErrorReason.UNKNOWN_FIELD,
             assertIs<Rg01RawJsonDecodeResult.Invalid>(unknown).error.reason,
         )
-        val wrongType = decodeRg01RawJson(
-            fixtureJson().replace("\"transaction_id\":\"tx-expense-rg01\"", "\"transaction_id\":1"),
-        )
+        val wrongType =
+            decodeRg01RawJson(
+                fixtureJson().replace("\"transaction_id\":\"tx-expense-rg01\"", "\"transaction_id\":1"),
+            )
         assertEquals(
             Rg01RawJsonContractErrorReason.WRONG_TYPE,
             assertIs<Rg01RawJsonDecodeResult.Invalid>(wrongType).error.reason,
         )
 
-        val malformedExpected = listOf(
-            fixtureJson().replace("\"expected\":{\"transaction_id\":\"tx-expense-rg01\"", "\"expected\":{\"transaction_id\":false"),
-            fixtureJson().replace("\"current_version_id\":\"version-expense-rg01-v2\"", "\"current_version_id\":false"),
-            fixtureJson().replace("\"versions\":[{\"id\":\"version-expense-rg01-v1\"", "\"versions\":[{\"id\":1"),
-            fixtureJson().replace("\"effective_posting_set_id\":\"posting-set-expense-rg01\"", "\"effective_posting_set_id\":false"),
-            fixtureJson().replace("\"effective_transaction_count\":1", "\"effective_transaction_count\":\"1\""),
-            fixtureJson().replace("\"balances\":{\"asset-bank-a\":\"964.20\"}", "\"balances\":[]"),
-            fixtureJson().replace("\"statistics\":{\"day\":\"2026-01-15\"}", "\"statistics\":{\"day\":1}"),
-            fixtureJson().replace("\"reconciliation\":{\"transaction\":\"pending\"}", "\"reconciliation\":false"),
-            fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":{}"),
-            fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":[{}]"),
-        )
+        val malformedExpected =
+            listOf(
+                fixtureJson().replace("\"expected\":{\"transaction_id\":\"tx-expense-rg01\"", "\"expected\":{\"transaction_id\":false"),
+                fixtureJson().replace("\"current_version_id\":\"version-expense-rg01-v2\"", "\"current_version_id\":false"),
+                fixtureJson().replace("\"versions\":[{\"id\":\"version-expense-rg01-v1\"", "\"versions\":[{\"id\":1"),
+                fixtureJson().replace("\"effective_posting_set_id\":\"posting-set-expense-rg01\"", "\"effective_posting_set_id\":false"),
+                fixtureJson().replace("\"effective_transaction_count\":1", "\"effective_transaction_count\":\"1\""),
+                fixtureJson().replace("\"balances\":{\"asset-bank-a\":\"964.20\"}", "\"balances\":[]"),
+                fixtureJson().replace("\"statistics\":{\"day\":\"2026-01-15\"}", "\"statistics\":{\"day\":1}"),
+                fixtureJson().replace("\"reconciliation\":{\"transaction\":\"pending\"}", "\"reconciliation\":false"),
+                fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":{}"),
+                fixtureJson().replace("\"evidence_refs\":[]", "\"evidence_refs\":[{}]"),
+            )
         malformedExpected.forEach { raw ->
             assertEquals(
                 Rg01RawJsonContractErrorReason.WRONG_TYPE,
@@ -100,10 +120,12 @@ class Rg01RawJsonDecoderTest {
 
     @Test
     fun rejectsDeepObjectsDeepArraysAndOversizedInputWithTypedResourceErrors() {
-        val deepObject = "{\"a\":".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1) +
-            "null" + "}".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1)
-        val deepArray = "[".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1) +
-            "null" + "]".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1)
+        val deepObject =
+            "{\"a\":".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1) +
+                "null" + "}".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1)
+        val deepArray =
+            "[".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1) +
+                "null" + "]".repeat(RG01_RAW_JSON_MAX_NESTING_DEPTH + 1)
         val oversized = " ".repeat(RG01_RAW_JSON_MAX_UTF8_BYTES + 1)
 
         listOf(deepObject, deepArray, oversized).forEach { raw ->
@@ -149,14 +171,18 @@ class Rg01RawJsonDecoderTest {
         assertNotEquals(Rg01RawJsonContractErrorReason.RESOURCE_LIMIT, atLimitError.reason)
     }
 
-    private fun nestedObjectContainers(containerCount: Int, innermost: String): String {
+    private fun nestedObjectContainers(
+        containerCount: Int,
+        innermost: String,
+    ): String {
         require(containerCount >= 1)
         return "{\"a\":".repeat(containerCount - 1) +
             innermost +
             "}".repeat(containerCount - 1)
     }
 
-    private fun fixtureJson(): String = """
+    private fun fixtureJson(): String =
+        """
         {
           "schema_version": 1,
           "case": {"id":"RG-01","level":"core_required","rule_version":1,"timezone":"Asia/Shanghai","currency":"CNY","precision":2,"ledger_id":"ledger-a"},
@@ -169,8 +195,7 @@ class Rg01RawJsonDecoderTest {
           "invalid_inputs": [{"id":"missing-amount","input":{"amount":null,"payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount"}},{"id":"missing-payment-account","input":{"amount":"35.80","payment_account_id":null,"category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"payment_account_id"}},{"id":"missing-secondary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":null},"expected":{"accepted":false,"field":"category_id"}},{"id":"zero-amount","input":{"amount":"0.00","payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount","reason":"must_be_positive"}},{"id":"negative-amount","input":{"amount":"-0.01","payment_account_id":"asset-bank-a","category_id":"expense-category-breakfast"},"expected":{"accepted":false,"field":"amount","reason":"must_be_positive"}},{"id":"primary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":"expense-category-food"},"expected":{"accepted":false,"field":"category_id","reason":"secondary_category_required"}},{"id":"inactive-secondary-category","input":{"amount":"35.80","payment_account_id":"asset-bank-a","category_id":"expense-category-inactive"},"expected":{"accepted":false,"field":"category_id","reason":"category_inactive"}}],
           "forbidden_side_effects": ["invoke_network"]
         }
-    """.trimIndent()
+        """.trimIndent()
 }
 
-private fun <T> Rg01JsonField<T>.testValueOrNull(): T? =
-    (this as? Rg01JsonField.Value<T>)?.value
+private fun <T> Rg01JsonField<T>.testValueOrNull(): T? = (this as? Rg01JsonField.Value<T>)?.value

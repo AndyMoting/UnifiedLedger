@@ -66,18 +66,20 @@ class ConfirmedManualExpenseIdempotencyTest {
         val replacementVersionId = TransactionVersionId("version-expense-rg01-v2")
         harness.commitPort.replaceCommittedTransaction(
             index = 0,
-            replacement = success(
-                harness.commitPort.transactions.single().replaceNote(
-                    command = TransactionNoteUpdateCommand(note = "早餐"),
-                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+            replacement =
+                success(
+                    harness.commitPort.transactions.single().replaceNote(
+                        command = TransactionNoteUpdateCommand(note = "早餐"),
+                        ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                    ),
                 ),
-            ),
         )
         val stateBeforeReplay = harness.commitPort.transactions.single()
 
-        val replayed = assertIs<ConfirmedManualExpenseResult.NoChange>(
-            harness.execute(request),
-        )
+        val replayed =
+            assertIs<ConfirmedManualExpenseResult.NoChange>(
+                harness.execute(request),
+            )
 
         assertEquals(created.receipt, replayed.receipt)
         assertEquals(1, harness.idSource.invocationCount)
@@ -87,11 +89,15 @@ class ConfirmedManualExpenseIdempotencyTest {
         assertEquals(stateBeforeReplay, harness.commitPort.transactions.single())
         assertEquals(
             replacementVersionId,
-            harness.commitPort.transactions.single().transaction.currentVersionId,
+            harness.commitPort.transactions
+                .single()
+                .transaction.currentVersionId,
         )
         assertEquals(
             "早餐",
-            harness.commitPort.transactions.single().versions
+            harness.commitPort.transactions
+                .single()
+                .versions
                 .single { it.id == replacementVersionId }
                 .note,
         )
@@ -106,9 +112,10 @@ class ConfirmedManualExpenseIdempotencyTest {
         val fixture = Rg01ApplicationFixture()
         val harness = ConfirmedExpenseHarness(fixture)
         val firstRequest = fixture.request()
-        val secondRequest = firstRequest.copy(
-            requestId = RequestId("request-rg01-distinct-create"),
-        )
+        val secondRequest =
+            firstRequest.copy(
+                requestId = RequestId("request-rg01-distinct-create"),
+            )
 
         val first = assertIs<ConfirmedManualExpenseResult.Created>(harness.execute(firstRequest))
         val second = assertIs<ConfirmedManualExpenseResult.Created>(harness.execute(secondRequest))
@@ -130,14 +137,22 @@ class ConfirmedManualExpenseIdempotencyTest {
         assertNotEquals(firstTransaction.transaction.id, secondTransaction.transaction.id)
         assertEquals(
             emptySet(),
-            firstTransaction.postingSets.map { it.id }.toSet()
+            firstTransaction.postingSets
+                .map { it.id }
+                .toSet()
                 .intersect(secondTransaction.postingSets.map { it.id }.toSet()),
         )
         assertEquals(
             emptySet(),
-            firstTransaction.postingSets.flatMap { it.postings }.map { it.id }.toSet()
+            firstTransaction.postingSets
+                .flatMap { it.postings }
+                .map { it.id }
+                .toSet()
                 .intersect(
-                    secondTransaction.postingSets.flatMap { it.postings }.map { it.id }.toSet(),
+                    secondTransaction.postingSets
+                        .flatMap { it.postings }
+                        .map { it.id }
+                        .toSet(),
                 ),
         )
         assertEquals(
@@ -153,23 +168,26 @@ class ConfirmedManualExpenseIdempotencyTest {
         val original = fixture.request()
         harness.execute(original)
         val stateBeforeConflicts = harness.commitPort.transactions.toList()
-        val identity = ManualExpenseRequestIdentity(
-            ledgerId = original.ledgerId,
-            requestId = original.requestId,
-        )
-        val conflictingRequests = listOf(
-            original.copy(amount = fixture.money(3_581)),
-            original.copy(amount = Money.ofMinor(3_580, CurrencyUnit("USD", 2))),
-            original.copy(categoryId = CategoryId("expense-category-other")),
-            original.copy(paymentAccountId = AccountId("asset-bank-other")),
-            original.copy(occurredAt = Instant.parse("2026-01-15T00:31:00Z")),
-            original.copy(note = "changed note"),
-        )
+        val identity =
+            ManualExpenseRequestIdentity(
+                ledgerId = original.ledgerId,
+                requestId = original.requestId,
+            )
+        val conflictingRequests =
+            listOf(
+                original.copy(amount = fixture.money(3_581)),
+                original.copy(amount = Money.ofMinor(3_580, CurrencyUnit("USD", 2))),
+                original.copy(categoryId = CategoryId("expense-category-other")),
+                original.copy(paymentAccountId = AccountId("asset-bank-other")),
+                original.copy(occurredAt = Instant.parse("2026-01-15T00:31:00Z")),
+                original.copy(note = "changed note"),
+            )
 
         conflictingRequests.forEach { conflict ->
-            val result = assertIs<ConfirmedManualExpenseResult.RequestIdentityConflict>(
-                harness.execute(conflict),
-            )
+            val result =
+                assertIs<ConfirmedManualExpenseResult.RequestIdentityConflict>(
+                    harness.execute(conflict),
+                )
             assertEquals(identity, result.identity)
         }
 
@@ -199,9 +217,10 @@ class ConfirmedManualExpenseIdempotencyTest {
         val harness = ConfirmedExpenseHarness(fixture)
         val invalid = fixture.request().copy(amount = fixture.money(0))
 
-        val rejected = assertIs<ConfirmedManualExpenseResult.Rejected>(
-            harness.execute(invalid),
-        )
+        val rejected =
+            assertIs<ConfirmedManualExpenseResult.Rejected>(
+                harness.execute(invalid),
+            )
 
         assertEquals(OrdinaryExpenseViolation.AmountMustBePositive, rejected.violation)
         assertEquals(1, harness.idSource.invocationCount)
@@ -210,9 +229,10 @@ class ConfirmedManualExpenseIdempotencyTest {
         assertEquals(emptyList(), harness.commitPort.transactions)
 
         val corrected = invalid.copy(amount = fixture.money(3_580))
-        val created = assertIs<ConfirmedManualExpenseResult.Created>(
-            harness.execute(corrected),
-        )
+        val created =
+            assertIs<ConfirmedManualExpenseResult.Created>(
+                harness.execute(corrected),
+            )
 
         assertEquals(ConfirmationId("confirmation-rg01-2"), created.receipt.confirmationId)
         assertEquals(TransactionId("tx-expense-rg01-distinct"), created.receipt.transactionId)
@@ -235,45 +255,52 @@ private class ConfirmedExpenseHarness(
     var transactionCreateCount = 0
         private set
 
-    private val useCase = ExecuteConfirmedManualExpense(
-        commitPort = commitPort,
-        idSource = idSource,
-        createFormalTransaction = ConfirmedExpenseTransactionFactory { request, ids ->
-            transactionCreateCount += 1
-            check(request.note.isEmpty()) {
-                "This RG-01 slice creates only the frozen empty initial note"
-            }
-            when (val result = createAssetPaidOrdinaryExpense(
+    private val useCase =
+        ExecuteConfirmedManualExpense(
+            commitPort = commitPort,
+            idSource = idSource,
+            createFormalTransaction =
+                ConfirmedExpenseTransactionFactory { request, ids ->
+                    transactionCreateCount += 1
+                    check(request.note.isEmpty()) {
+                        "This RG-01 slice creates only the frozen empty initial note"
+                    }
+                    when (
+                        val result =
+                            createAssetPaidOrdinaryExpense(
+                                catalog = fixture.catalog,
+                                command =
+                                    AssetPaidOrdinaryExpenseCommand(
+                                        ledgerId = request.ledgerId,
+                                        amount = request.amount,
+                                        categoryId = request.categoryId,
+                                        paymentAccountId = request.paymentAccountId,
+                                        times = TransactionTimes.collapsed(request.occurredAt),
+                                    ),
+                                ids = ids.expenseIds,
+                            )
+                    ) {
+                        is DomainResult.Success ->
+                            DomainResult.Success(
+                                ConfirmedManualExpenseCommit(
+                                    confirmationId = ids.confirmationId,
+                                    transaction = result.value,
+                                ),
+                            )
+                        is DomainResult.Failure -> result
+                    }
+                },
+        )
+
+    fun execute(request: ExplicitlyConfirmedManualExpense): ConfirmedManualExpenseResult = useCase.execute(request)
+
+    fun balances() =
+        success(
+            replayBalances(
                 catalog = fixture.catalog,
-                command = AssetPaidOrdinaryExpenseCommand(
-                    ledgerId = request.ledgerId,
-                    amount = request.amount,
-                    categoryId = request.categoryId,
-                    paymentAccountId = request.paymentAccountId,
-                    times = TransactionTimes.collapsed(request.occurredAt),
-                ),
-                ids = ids.expenseIds,
-            )) {
-                is DomainResult.Success -> DomainResult.Success(
-                    ConfirmedManualExpenseCommit(
-                        confirmationId = ids.confirmationId,
-                        transaction = result.value,
-                    ),
-                )
-                is DomainResult.Failure -> result
-            }
-        },
-    )
-
-    fun execute(request: ExplicitlyConfirmedManualExpense): ConfirmedManualExpenseResult =
-        useCase.execute(request)
-
-    fun balances() = success(
-        replayBalances(
-            catalog = fixture.catalog,
-            transactions = listOf(fixture.openingBalance) + commitPort.transactions,
-        ),
-    ).balances
+                transactions = listOf(fixture.openingBalance) + commitPort.transactions,
+            ),
+        ).balances
 }
 
 private class InMemoryConfirmedManualExpenseCommitPort : ConfirmedManualExpenseCommitPort {
@@ -303,23 +330,28 @@ private class InMemoryConfirmedManualExpenseCommitPort : ConfirmedManualExpenseC
             }
         }
 
-        val commit = when (val creationResult = createFormalTransaction()) {
-            is DomainResult.Success -> creationResult.value
-            is DomainResult.Failure -> {
-                return ConfirmedManualExpenseResult.Rejected(creationResult.violation)
+        val commit =
+            when (val creationResult = createFormalTransaction()) {
+                is DomainResult.Success -> creationResult.value
+                is DomainResult.Failure -> {
+                    return ConfirmedManualExpenseResult.Rejected(creationResult.violation)
+                }
             }
-        }
-        val receipt = ConfirmedExpenseReceipt(
-            confirmationId = commit.confirmationId,
-            transactionId = commit.transaction.transaction.id,
-        )
+        val receipt =
+            ConfirmedExpenseReceipt(
+                confirmationId = commit.confirmationId,
+                transactionId = commit.transaction.transaction.id,
+            )
         requests[identity] = CommittedRequest(requestSnapshot, receipt)
         committedTransactions += commit.transaction
         commitCount += 1
         return ConfirmedManualExpenseResult.Created(receipt)
     }
 
-    fun replaceCommittedTransaction(index: Int, replacement: FormalTransaction) {
+    fun replaceCommittedTransaction(
+        index: Int,
+        replacement: FormalTransaction,
+    ) {
         committedTransactions[index] = replacement
     }
 }
@@ -349,97 +381,106 @@ private class Rg01ApplicationFixture {
     private val categoryId = CategoryId("expense-category-breakfast")
     private val expenseOccurredAt = Instant.parse("2026-01-15T00:30:00Z")
 
-    val catalog = success(
-        LedgerCatalog.create(
-            accounts = listOf(
-                Account(
-                    id = paymentAccountId,
-                    ledgerId = ledgerId,
-                    kind = AccountKind.ASSET,
-                    currency = cny,
-                    ownedByUser = true,
-                    realAccount = true,
-                ),
-                Account(
-                    id = expenseAccountId,
-                    ledgerId = ledgerId,
-                    kind = AccountKind.EXPENSE,
-                    currency = cny,
-                    ownedByUser = false,
-                    realAccount = false,
-                ),
-                Account(
-                    id = equityAccountId,
-                    ledgerId = ledgerId,
-                    kind = AccountKind.EQUITY,
-                    currency = cny,
-                    ownedByUser = false,
-                    realAccount = false,
-                ),
-            ),
-            categories = listOf(
-                Category(
-                    id = parentCategoryId,
-                    ledgerId = ledgerId,
-                    parentId = null,
-                    postingAccountId = null,
-                    active = true,
-                ),
-                Category(
-                    id = categoryId,
-                    ledgerId = ledgerId,
-                    parentId = parentCategoryId,
-                    postingAccountId = expenseAccountId,
-                    active = true,
-                ),
-            ),
-        ),
-    )
-
-    val openingBalance: FormalTransaction = run {
-        val transactionId = TransactionId("tx-opening-a")
-        val versionId = TransactionVersionId("version-opening-a-v1")
-        val postingSetId = PostingSetId("posting-set-opening-a")
-        val postingSet = success(
-            PostingSet.create(
-                id = postingSetId,
-                postings = listOf(
-                    Posting(
-                        id = PostingId("posting-opening-bank-a"),
-                        accountId = paymentAccountId,
-                        amount = money(100_000),
-                    ),
-                    Posting(
-                        id = PostingId("posting-opening-equity-a"),
-                        accountId = equityAccountId,
-                        amount = money(-100_000),
-                    ),
-                ),
-            ),
-        )
+    val catalog =
         success(
-            FormalTransaction.create(
-                transaction = Transaction(
-                    id = transactionId,
-                    ledgerId = ledgerId,
-                    kind = TransactionKind.OPENING_BALANCE,
-                    currentVersionId = versionId,
-                ),
-                versions = listOf(
-                    TransactionVersion(
-                        id = versionId,
-                        transactionId = transactionId,
-                        versionNumber = 1,
-                        postingSetId = postingSetId,
-                        times = TransactionTimes.collapsed(
-                            Instant.parse("2025-12-31T16:00:00Z"),
+            LedgerCatalog.create(
+                accounts =
+                    listOf(
+                        Account(
+                            id = paymentAccountId,
+                            ledgerId = ledgerId,
+                            kind = AccountKind.ASSET,
+                            currency = cny,
+                            ownedByUser = true,
+                            realAccount = true,
+                        ),
+                        Account(
+                            id = expenseAccountId,
+                            ledgerId = ledgerId,
+                            kind = AccountKind.EXPENSE,
+                            currency = cny,
+                            ownedByUser = false,
+                            realAccount = false,
+                        ),
+                        Account(
+                            id = equityAccountId,
+                            ledgerId = ledgerId,
+                            kind = AccountKind.EQUITY,
+                            currency = cny,
+                            ownedByUser = false,
+                            realAccount = false,
                         ),
                     ),
-                ),
-                postingSets = listOf(postingSet),
+                categories =
+                    listOf(
+                        Category(
+                            id = parentCategoryId,
+                            ledgerId = ledgerId,
+                            parentId = null,
+                            postingAccountId = null,
+                            active = true,
+                        ),
+                        Category(
+                            id = categoryId,
+                            ledgerId = ledgerId,
+                            parentId = parentCategoryId,
+                            postingAccountId = expenseAccountId,
+                            active = true,
+                        ),
+                    ),
             ),
         )
-    }
+
+    val openingBalance: FormalTransaction =
+        run {
+            val transactionId = TransactionId("tx-opening-a")
+            val versionId = TransactionVersionId("version-opening-a-v1")
+            val postingSetId = PostingSetId("posting-set-opening-a")
+            val postingSet =
+                success(
+                    PostingSet.create(
+                        id = postingSetId,
+                        postings =
+                            listOf(
+                                Posting(
+                                    id = PostingId("posting-opening-bank-a"),
+                                    accountId = paymentAccountId,
+                                    amount = money(100_000),
+                                ),
+                                Posting(
+                                    id = PostingId("posting-opening-equity-a"),
+                                    accountId = equityAccountId,
+                                    amount = money(-100_000),
+                                ),
+                            ),
+                    ),
+                )
+            success(
+                FormalTransaction.create(
+                    transaction =
+                        Transaction(
+                            id = transactionId,
+                            ledgerId = ledgerId,
+                            kind = TransactionKind.OPENING_BALANCE,
+                            currentVersionId = versionId,
+                        ),
+                    versions =
+                        listOf(
+                            TransactionVersion(
+                                id = versionId,
+                                transactionId = transactionId,
+                                versionNumber = 1,
+                                postingSetId = postingSetId,
+                                times =
+                                    TransactionTimes.collapsed(
+                                        Instant.parse("2025-12-31T16:00:00Z"),
+                                    ),
+                            ),
+                        ),
+                    postingSets = listOf(postingSet),
+                ),
+            )
+        }
 
     fun request(
         confirmation: ExplicitManualSave = ExplicitManualSave,
@@ -468,5 +509,4 @@ private class Rg01ApplicationFixture {
     }
 }
 
-private inline fun <reified T> success(result: DomainResult<T>): T =
-    assertIs<DomainResult.Success<T>>(result).value
+private inline fun <reified T> success(result: DomainResult<T>): T = assertIs<DomainResult.Success<T>>(result).value

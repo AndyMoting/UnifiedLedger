@@ -10,13 +10,15 @@ package com.unifiedledger.application
  * normalize amounts themselves; they either consume a READY projection or stay
  * unresolved/rejected with zero writes.
  */
-enum class P408ProjectionState(val storageValue: String) {
+enum class P408ProjectionState(
+    val storageValue: String,
+) {
     READY("READY"),
-    REJECTED("REJECTED");
+    REJECTED("REJECTED"),
+    ;
 
     companion object {
-        fun fromStorage(value: String): P408ProjectionState =
-            values().first { it.storageValue == value }
+        fun fromStorage(value: String): P408ProjectionState = values().first { it.storageValue == value }
     }
 }
 
@@ -60,21 +62,30 @@ data class P408MaterializationRequest(
 
 sealed interface P408MaterializeResult {
     /** First insertion of this exact projection content. */
-    data class Accepted(val projection: P408EvidenceProjection) : P408MaterializeResult
+    data class Accepted(
+        val projection: P408EvidenceProjection,
+    ) : P408MaterializeResult
 
     /** Identical replay of an already-materialized row; nothing appended. */
-    data class NoChange(val projection: P408EvidenceProjection) : P408MaterializeResult
+    data class NoChange(
+        val projection: P408EvidenceProjection,
+    ) : P408MaterializeResult
 
     /**
      * Typed failure. On the standalone/explicit path a REJECTED terminal row is
      * persisted before returning; on confirm-path hooks the whole surrounding
      * transaction aborts instead, so zero rows remain.
      */
-    data class Rejected(val code: String) : P408MaterializeResult
+    data class Rejected(
+        val code: String,
+    ) : P408MaterializeResult
 }
 
 interface P408EvidenceProjectionPort {
-    fun readProjection(ledgerId: String, evidenceId: String): P408EvidenceProjection?
+    fun readProjection(
+        ledgerId: String,
+        evidenceId: String,
+    ): P408EvidenceProjection?
 
     fun materialize(request: P408MaterializationRequest): P408MaterializeResult
 

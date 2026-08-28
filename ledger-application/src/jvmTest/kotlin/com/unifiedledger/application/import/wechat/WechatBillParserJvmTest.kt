@@ -28,17 +28,27 @@ import kotlin.test.assertTrue
  * parser always sees the exact frozen cell text.
  */
 class WechatBillParserJvmTest {
-
     private val inputRef = "batch-p403-a"
 
     private sealed interface CellSpec
-    private data class TextSpec(val value: String) : CellSpec
-    private data class NumSpec(val value: Double) : CellSpec
+
+    private data class TextSpec(
+        val value: String,
+    ) : CellSpec
+
+    private data class NumSpec(
+        val value: Double,
+    ) : CellSpec
 
     private fun num(value: Double) = NumSpec(value)
+
     private fun text(value: String) = TextSpec(value)
 
-    private fun serialOf(date: LocalDate, hour: Int, minute: Int): Double {
+    private fun serialOf(
+        date: LocalDate,
+        hour: Int,
+        minute: Int,
+    ): Double {
         val days = ChronoUnit.DAYS.between(LocalDate.of(1899, 12, 30), date).toDouble()
         return days + (hour * 3600 + minute * 60) / 86400.0
     }
@@ -67,7 +77,10 @@ class WechatBillParserJvmTest {
             cells.forEach { (index, value) -> row.createCell(index).setCellValue(value) }
         }
 
-        fun dataRow(rowIndex: Int, cells: List<Pair<Int, CellSpec>>) {
+        fun dataRow(
+            rowIndex: Int,
+            cells: List<Pair<Int, CellSpec>>,
+        ) {
             val row = sheet.createRow(rowIndex)
             cells.forEach { (index, spec) ->
                 val cell = row.createCell(index)
@@ -87,7 +100,10 @@ class WechatBillParserJvmTest {
         }
     }
 
-    private fun rewriteSheetXml(bytes: ByteArray, replacements: Map<String, String>): ByteArray =
+    private fun rewriteSheetXml(
+        bytes: ByteArray,
+        replacements: Map<String, String>,
+    ): ByteArray =
         rewriteZip(bytes) { entryName, content ->
             if (entryName == "xl/worksheets/sheet1.xml") {
                 var text = content.toString(Charsets.UTF_8)
@@ -98,7 +114,10 @@ class WechatBillParserJvmTest {
             }
         }
 
-    private fun rewriteZip(bytes: ByteArray, transform: (String, ByteArray) -> ByteArray): ByteArray {
+    private fun rewriteZip(
+        bytes: ByteArray,
+        transform: (String, ByteArray) -> ByteArray,
+    ): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zos ->
             ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
@@ -115,7 +134,11 @@ class WechatBillParserJvmTest {
         return out.toByteArray()
     }
 
-    private fun addZipEntry(bytes: ByteArray, entryName: String, content: ByteArray): ByteArray {
+    private fun addZipEntry(
+        bytes: ByteArray,
+        entryName: String,
+        content: ByteArray,
+    ): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zos ->
             ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
@@ -146,11 +169,20 @@ class WechatBillParserJvmTest {
         txNo: String? = "SYN-SECRET-TXNO",
         merchNo: String? = "SYN-SECRET-MERCHNO",
         note: String? = "SYN-SECRET-NOTE",
-    ): List<Pair<Int, CellSpec>> = listOfNotNull(
-        0 to time, 1 to TextSpec(type), 2 to TextSpec(counterparty), 3 to TextSpec(product),
-        4 to TextSpec(direction), 5 to amount, 6 to TextSpec(method), 7 to TextSpec(status),
-        txNo?.let { 8 to TextSpec(it) }, merchNo?.let { 9 to TextSpec(it) }, note?.let { 10 to TextSpec(it) },
-    )
+    ): List<Pair<Int, CellSpec>> =
+        listOfNotNull(
+            0 to time,
+            1 to TextSpec(type),
+            2 to TextSpec(counterparty),
+            3 to TextSpec(product),
+            4 to TextSpec(direction),
+            5 to amount,
+            6 to TextSpec(method),
+            7 to TextSpec(status),
+            txNo?.let { 8 to TextSpec(it) },
+            merchNo?.let { 9 to TextSpec(it) },
+            note?.let { 10 to TextSpec(it) },
+        )
 
     private fun workbookA(): ByteArray {
         val builder = WorkbookBuilder()
@@ -200,12 +232,18 @@ class WechatBillParserJvmTest {
         )
     }
 
-    private fun accepted(rows: List<WechatRowResult>, ordinal: Int): WechatRowResult.Accepted {
+    private fun accepted(
+        rows: List<WechatRowResult>,
+        ordinal: Int,
+    ): WechatRowResult.Accepted {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<WechatRowResult.Accepted>(row)
     }
 
-    private fun rejected(rows: List<WechatRowResult>, ordinal: Int): WechatRowResult.Rejected {
+    private fun rejected(
+        rows: List<WechatRowResult>,
+        ordinal: Int,
+    ): WechatRowResult.Rejected {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<WechatRowResult.Rejected>(row)
     }
@@ -310,7 +348,11 @@ class WechatBillParserJvmTest {
         assertEquals(14, result.rows.size)
         assertEquals(9, result.rows.count { it is WechatRowResult.Accepted })
         assertEquals(5, result.rows.count { it is WechatRowResult.Rejected })
-        val byCode = result.rows.flatMap { it.diagnostics }.groupingBy { it.code }.eachCount()
+        val byCode =
+            result.rows
+                .flatMap { it.diagnostics }
+                .groupingBy { it.code }
+                .eachCount()
         assertEquals(
             mapOf(
                 "SPINE_WEIXIN_REFUND_UNSUPPORTED" to 2,
@@ -326,17 +368,24 @@ class WechatBillParserJvmTest {
     @Test
     fun metadataAreaNeverLeaksIntoOutputAndNonPersistedColumnsStayOutOfDiagnostics() {
         val result = WechatBillParser.parse(inputRef, workbookA())
-        val outputStrings = result.rows.flatMap { row ->
-            when (row) {
-                is WechatRowResult.Accepted -> listOf(
-                    row.facts.amountMinor.toString(), row.facts.currencyCode, row.facts.currencyPrecision.toString(),
-                    row.facts.occurredAt, row.facts.directionToken, row.facts.statusToken ?: "",
-                )
-                is WechatRowResult.Rejected -> emptyList()
-            } + row.diagnostics.flatMap { listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "") }
-        }
-        val forbidden = (0..16).flatMap { listOf("SYN-META-PII-EXPORT-$it", "SYN-META-PII-NICK-$it") } +
-            listOf("SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT", "SYN-SECRET-METHOD", "SYN-SECRET-TXNO", "SYN-SECRET-MERCHNO", "SYN-SECRET-NOTE")
+        val outputStrings =
+            result.rows.flatMap { row ->
+                when (row) {
+                    is WechatRowResult.Accepted ->
+                        listOf(
+                            row.facts.amountMinor.toString(),
+                            row.facts.currencyCode,
+                            row.facts.currencyPrecision.toString(),
+                            row.facts.occurredAt,
+                            row.facts.directionToken,
+                            row.facts.statusToken ?: "",
+                        )
+                    is WechatRowResult.Rejected -> emptyList()
+                } + row.diagnostics.flatMap { listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "") }
+            }
+        val forbidden =
+            (0..16).flatMap { listOf("SYN-META-PII-EXPORT-$it", "SYN-META-PII-NICK-$it") } +
+                listOf("SYN-SECRET-COUNTERPARTY", "SYN-SECRET-PRODUCT", "SYN-SECRET-METHOD", "SYN-SECRET-TXNO", "SYN-SECRET-MERCHNO", "SYN-SECRET-NOTE")
         forbidden.forEach { secret ->
             assertTrue(outputStrings.none { it == secret || it.contains(secret) }, "forbidden value leaked: $secret")
         }
@@ -345,47 +394,56 @@ class WechatBillParserJvmTest {
     @Test
     fun headerMismatchVariantsRejectTheBatchWithStructureMismatch() {
         // 缺列: only ten header cells.
-        val missing = WorkbookBuilder().apply {
-            metadataRows()
-            headerVariant(WechatSourceTokens.HEADER_TOKENS.dropLast(1).mapIndexed { i, t -> i to t })
-        }.bytes()
+        val missing =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    headerVariant(WechatSourceTokens.HEADER_TOKENS.dropLast(1).mapIndexed { i, t -> i to t })
+                }.bytes()
         val missingResult = WechatBillParser.parse("batch-p403-b1", missing)
         assertEquals(WechatBatchOutcome.REJECTED, missingResult.outcome)
         assertDiagnostic(assertIs(missingResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure", expectedInputRef = "batch-p403-b1")
 
         // 多列: twelve header cells.
-        val extra = WorkbookBuilder().apply {
-            metadataRows()
-            headerVariant(WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t -> i to t } + (11 to "多余"))
-        }.bytes()
+        val extra =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    headerVariant(WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t -> i to t } + (11 to "多余"))
+                }.bytes()
         val extraResult = WechatBillParser.parse("batch-p403-b2", extra)
         assertEquals(WechatBatchOutcome.REJECTED, extraResult.outcome)
         assertDiagnostic(assertIs(extraResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure", expectedInputRef = "batch-p403-b2")
 
         // 错位: direction and amount headers swapped.
-        val swapped = WorkbookBuilder().apply {
-            metadataRows()
-            headerVariant(
-                WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t ->
-                    i to when (i) {
-                        4 -> "金额(元)"
-                        5 -> "收/支"
-                        else -> t
-                    }
-                },
-            )
-        }.bytes()
+        val swapped =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    headerVariant(
+                        WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t ->
+                            i to
+                                when (i) {
+                                    4 -> "金额(元)"
+                                    5 -> "收/支"
+                                    else -> t
+                                }
+                        },
+                    )
+                }.bytes()
         val swappedResult = WechatBillParser.parse("batch-p403-b3", swapped)
         assertEquals(WechatBatchOutcome.REJECTED, swappedResult.outcome)
         assertDiagnostic(assertIs(swappedResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure", expectedInputRef = "batch-p403-b3")
 
         // 差一字: amount header token differs by one character.
-        val offByOne = WorkbookBuilder().apply {
-            metadataRows()
-            headerVariant(
-                WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t -> i to if (i == 5) "金额(圆)" else t },
-            )
-        }.bytes()
+        val offByOne =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    headerVariant(
+                        WechatSourceTokens.HEADER_TOKENS.mapIndexed { i, t -> i to if (i == 5) "金额(圆)" else t },
+                    )
+                }.bytes()
         val offByOneResult = WechatBillParser.parse("batch-p403-b4", offByOne)
         assertEquals(WechatBatchOutcome.REJECTED, offByOneResult.outcome)
         assertDiagnostic(assertIs(offByOneResult.diagnostic), "STRUCTURE_MISMATCH", "fatal", "structure", expectedInputRef = "batch-p403-b4")
@@ -394,49 +452,64 @@ class WechatBillParserJvmTest {
     @Test
     fun rowStructureVariantsRejectAtRecordLevelWhileTrailingEmptyCellsAreValid() {
         // 12-column data row.
-        val tooWide = WorkbookBuilder().apply {
-            metadataRows()
-            header()
-            dataRow(18, rowCells(num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)), "商户消费", "支出", num(10.0), "支付成功") + (11 to TextSpec("多余列")))
-        }.bytes()
+        val tooWide =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    header()
+                    dataRow(18, rowCells(num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)), "商户消费", "支出", num(10.0), "支付成功") + (11 to TextSpec("多余列")))
+                }.bytes()
         val tooWideResult = WechatBillParser.parse("batch-p403-f", tooWide)
         assertEquals(WechatBatchOutcome.PARTIAL, tooWideResult.outcome)
         val tooWideRow = rejected(tooWideResult.rows, 0)
         assertDiagnostic(tooWideRow.diagnostics.single(), "STRUCTURE_MISMATCH", "fatal", "record", 0, expectedInputRef = "batch-p403-f")
 
         // 10-column row missing a required column (col 7, 当前状态).
-        val missingStatus = WorkbookBuilder().apply {
-            metadataRows()
-            header()
-            dataRow(
-                18,
-                listOf(
-                    0 to num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)), 1 to TextSpec("商户消费"),
-                    2 to TextSpec("SYN-SECRET-COUNTERPARTY"), 3 to TextSpec("SYN-SECRET-PRODUCT"),
-                    4 to TextSpec("支出"), 5 to num(10.0), 6 to TextSpec("SYN-SECRET-METHOD"),
-                    8 to TextSpec("SYN-SECRET-TXNO"), 9 to TextSpec("SYN-SECRET-MERCHNO"),
-                ),
-            )
-        }.bytes()
+        val missingStatus =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    header()
+                    dataRow(
+                        18,
+                        listOf(
+                            0 to num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)),
+                            1 to TextSpec("商户消费"),
+                            2 to TextSpec("SYN-SECRET-COUNTERPARTY"),
+                            3 to TextSpec("SYN-SECRET-PRODUCT"),
+                            4 to TextSpec("支出"),
+                            5 to num(10.0),
+                            6 to TextSpec("SYN-SECRET-METHOD"),
+                            8 to TextSpec("SYN-SECRET-TXNO"),
+                            9 to TextSpec("SYN-SECRET-MERCHNO"),
+                        ),
+                    )
+                }.bytes()
         val missingStatusResult = WechatBillParser.parse("batch-p403-f", missingStatus)
         assertEquals(WechatBatchOutcome.PARTIAL, missingStatusResult.outcome)
         val missingStatusRow = rejected(missingStatusResult.rows, 0)
         assertDiagnostic(missingStatusRow.diagnostics.single(), "STRUCTURE_MISMATCH", "fatal", "record", 0, expectedInputRef = "batch-p403-f")
 
         // Trailing empty cells in columns 8/9/10 are valid empty values.
-        val trailing = WorkbookBuilder().apply {
-            metadataRows()
-            header()
-            dataRow(
-                18,
-                listOf(
-                    0 to num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)), 1 to TextSpec("商户消费"),
-                    2 to TextSpec("SYN-SECRET-COUNTERPARTY"), 3 to TextSpec("SYN-SECRET-PRODUCT"),
-                    4 to TextSpec("支出"), 5 to num(10.0), 6 to TextSpec("SYN-SECRET-METHOD"),
-                    7 to TextSpec("支付成功"),
-                ),
-            )
-        }.bytes()
+        val trailing =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    header()
+                    dataRow(
+                        18,
+                        listOf(
+                            0 to num(serialOf(LocalDate.of(2026, 8, 1), 12, 30)),
+                            1 to TextSpec("商户消费"),
+                            2 to TextSpec("SYN-SECRET-COUNTERPARTY"),
+                            3 to TextSpec("SYN-SECRET-PRODUCT"),
+                            4 to TextSpec("支出"),
+                            5 to num(10.0),
+                            6 to TextSpec("SYN-SECRET-METHOD"),
+                            7 to TextSpec("支付成功"),
+                        ),
+                    )
+                }.bytes()
         val trailingResult = WechatBillParser.parse("batch-p403-f", trailing)
         assertEquals(WechatBatchOutcome.COMPLETE, trailingResult.outcome)
         val trailingRow = accepted(trailingResult.rows, 0)
@@ -446,10 +519,12 @@ class WechatBillParserJvmTest {
 
     @Test
     fun xlsmContainerIsRejectedAsUnsafeOrOverLimitWithContainerScope() {
-        val valid = WorkbookBuilder().apply {
-            metadataRows()
-            header()
-        }.bytes()
+        val valid =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    header()
+                }.bytes()
         val xlsm = addZipEntry(valid, "xl/vbaProject.bin", byteArrayOf(0, 1, 2, 3))
         val result = WechatBillParser.parse("batch-p403-c", xlsm)
         assertEquals(WechatBatchOutcome.REJECTED, result.outcome)
@@ -526,11 +601,13 @@ class WechatBillParserJvmTest {
         assertEquals(2, accepted(result.rows, 4).facts.currencyPrecision)
 
         // Negative amounts are outside the frozen domain.
-        val negative = WorkbookBuilder().apply {
-            metadataRows()
-            header()
-            dataRow(18, rowCells(num(serialOf(LocalDate.of(2026, 8, 1), 8, 0)), "商户消费", "支出", num(-5.0), "支付成功"))
-        }.bytes()
+        val negative =
+            WorkbookBuilder()
+                .apply {
+                    metadataRows()
+                    header()
+                    dataRow(18, rowCells(num(serialOf(LocalDate.of(2026, 8, 1), 8, 0)), "商户消费", "支出", num(-5.0), "支付成功"))
+                }.bytes()
         val negativeResult = WechatBillParser.parse(inputRef, negative)
         val negativeRow = rejected(negativeResult.rows, 0)
         assertDiagnostic(negativeRow.diagnostics.single(), "FIELD_AMOUNT_INVALID", "record_error", "field", 0, "amount")
@@ -545,15 +622,17 @@ class WechatBillParserJvmTest {
         builder.dataRow(20, rowCells(num(serialOf(LocalDate.of(2026, 8, 5), 9, 0)), "扫二维码付款", "支出", num(12.5), "支付成功"))
         // Inject an empty <row> element (row object present, width <= 0) between the
         // two data rows; POI writes 1-based r attributes, so the gap row is r="20".
-        val bytes = rewriteZip(builder.bytes(mapOf("100.4" to "128.50"))) { entryName, content ->
-            if (entryName == "xl/worksheets/sheet1.xml") {
-                content.toString(Charsets.UTF_8)
-                    .replace("<row r=\"21\">", "<row r=\"20\"/><row r=\"21\">")
-                    .toByteArray(Charsets.UTF_8)
-            } else {
-                content
+        val bytes =
+            rewriteZip(builder.bytes(mapOf("100.4" to "128.50"))) { entryName, content ->
+                if (entryName == "xl/worksheets/sheet1.xml") {
+                    content
+                        .toString(Charsets.UTF_8)
+                        .replace("<row r=\"21\">", "<row r=\"20\"/><row r=\"21\">")
+                        .toByteArray(Charsets.UTF_8)
+                } else {
+                    content
+                }
             }
-        }
         val result = WechatBillParser.parse(inputRef, bytes)
         assertEquals(WechatBatchOutcome.COMPLETE, result.outcome)
         assertEquals(2, result.rows.size)

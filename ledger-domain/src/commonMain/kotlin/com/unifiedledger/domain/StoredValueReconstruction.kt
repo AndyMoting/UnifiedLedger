@@ -51,17 +51,18 @@ fun createStoredValueReconstruction(
         adjustmentTransactionId = adjustmentTransactionId,
         reconstructedTransactionIds = reconstructedTransactionIds.toList(),
         activeMode = StoredValueActiveMode.ADJUSTMENT,
-        history = listOf(
-            StoredValueReconstructionHistory(
-                id = "$id-created",
-                event = "created",
-                activeMode = StoredValueActiveMode.ADJUSTMENT,
-                occurredAt = createdAt,
-                createdAt = createdAt,
-                occurredAtText = createdAtText,
-                createdAtText = createdAtText,
+        history =
+            listOf(
+                StoredValueReconstructionHistory(
+                    id = "$id-created",
+                    event = "created",
+                    activeMode = StoredValueActiveMode.ADJUSTMENT,
+                    occurredAt = createdAt,
+                    createdAt = createdAt,
+                    occurredAtText = createdAtText,
+                    createdAtText = createdAtText,
+                ),
             ),
-        ),
     )
 
 /**
@@ -78,13 +79,15 @@ fun activateReconstructedMode(
 ): StoredValueReconstruction =
     reconstruction.copy(
         activeMode = StoredValueActiveMode.RECONSTRUCTED,
-        history = reconstruction.history + StoredValueReconstructionHistory(
-            id = id,
-            event = "activated",
-            activeMode = StoredValueActiveMode.RECONSTRUCTED,
-            occurredAt = occurredAt,
-            createdAt = createdAt,
-            occurredAtText = occurredAtText,
-            createdAtText = createdAtText,
-        ),
+        history =
+            reconstruction.history +
+                StoredValueReconstructionHistory(
+                    id = id,
+                    event = "activated",
+                    activeMode = StoredValueActiveMode.RECONSTRUCTED,
+                    occurredAt = occurredAt,
+                    createdAt = createdAt,
+                    occurredAtText = occurredAtText,
+                    createdAtText = createdAtText,
+                ),
     )

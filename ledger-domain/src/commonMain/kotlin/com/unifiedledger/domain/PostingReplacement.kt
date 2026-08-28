@@ -6,7 +6,9 @@ package com.unifiedledger.domain
  * (reconciliation-relevant real facts changed, predecessor match history invalidated) or
  * `not_applicable` (non-real posting such as the expense leg).
  */
-enum class ReconciliationEffect(val jsonName: String) {
+enum class ReconciliationEffect(
+    val jsonName: String,
+) {
     PRESERVED("preserved"),
     INVALIDATED("invalidated"),
     NOT_APPLICABLE("not_applicable"),

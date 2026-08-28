@@ -9,13 +9,15 @@ class OrdinaryExpenseValidationTest {
 
     @Test
     fun rejectsZeroAmountWithTypedViolation() {
-        val result = createAssetPaidOrdinaryExpense(
-            catalog = fixture.catalog,
-            command = fixture.command.copy(
-                amount = Money.ofMinor(0L, fixture.cny),
-            ),
-            ids = fixture.expenseIds,
-        )
+        val result =
+            createAssetPaidOrdinaryExpense(
+                catalog = fixture.catalog,
+                command =
+                    fixture.command.copy(
+                        amount = Money.ofMinor(0L, fixture.cny),
+                    ),
+                ids = fixture.expenseIds,
+            )
 
         assertEquals(
             OrdinaryExpenseViolation.AmountMustBePositive,
@@ -25,13 +27,15 @@ class OrdinaryExpenseValidationTest {
 
     @Test
     fun rejectsNegativeOneMinorUnitWithTypedViolation() {
-        val result = createAssetPaidOrdinaryExpense(
-            catalog = fixture.catalog,
-            command = fixture.command.copy(
-                amount = Money.ofMinor(-1L, fixture.cny),
-            ),
-            ids = fixture.expenseIds,
-        )
+        val result =
+            createAssetPaidOrdinaryExpense(
+                catalog = fixture.catalog,
+                command =
+                    fixture.command.copy(
+                        amount = Money.ofMinor(-1L, fixture.cny),
+                    ),
+                ids = fixture.expenseIds,
+            )
 
         assertEquals(
             OrdinaryExpenseViolation.AmountMustBePositive,
@@ -42,11 +46,12 @@ class OrdinaryExpenseValidationTest {
     @Test
     fun rejectsPrimaryCategoryWithTypedViolation() {
         val primaryCategoryId = fixture.categories.single { it.parentId == null }.id
-        val result = createAssetPaidOrdinaryExpense(
-            catalog = fixture.catalog,
-            command = fixture.command.copy(categoryId = primaryCategoryId),
-            ids = fixture.expenseIds,
-        )
+        val result =
+            createAssetPaidOrdinaryExpense(
+                catalog = fixture.catalog,
+                command = fixture.command.copy(categoryId = primaryCategoryId),
+                ids = fixture.expenseIds,
+            )
 
         assertEquals(
             OrdinaryExpenseViolation.SecondaryCategoryRequired,
@@ -58,23 +63,27 @@ class OrdinaryExpenseValidationTest {
     fun classifiesInactiveSecondaryBeforeItsMissingPostingAccount() {
         val primaryCategoryId = fixture.categories.single { it.parentId == null }.id
         val inactiveCategoryId = CategoryId("expense-category-inactive")
-        val catalog = success(
-            LedgerCatalog.create(
-                accounts = fixture.accounts,
-                categories = fixture.categories + Category(
-                    id = inactiveCategoryId,
-                    ledgerId = fixture.ledgerId,
-                    parentId = primaryCategoryId,
-                    postingAccountId = null,
-                    active = false,
+        val catalog =
+            success(
+                LedgerCatalog.create(
+                    accounts = fixture.accounts,
+                    categories =
+                        fixture.categories +
+                            Category(
+                                id = inactiveCategoryId,
+                                ledgerId = fixture.ledgerId,
+                                parentId = primaryCategoryId,
+                                postingAccountId = null,
+                                active = false,
+                            ),
                 ),
-            ),
-        )
-        val result = createAssetPaidOrdinaryExpense(
-            catalog = catalog,
-            command = fixture.command.copy(categoryId = inactiveCategoryId),
-            ids = fixture.expenseIds,
-        )
+            )
+        val result =
+            createAssetPaidOrdinaryExpense(
+                catalog = catalog,
+                command = fixture.command.copy(categoryId = inactiveCategoryId),
+                ids = fixture.expenseIds,
+            )
 
         assertEquals(
             OrdinaryExpenseViolation.CategoryInactive,
@@ -85,23 +94,27 @@ class OrdinaryExpenseValidationTest {
     @Test
     fun doesNotClassifyAnInactiveCategoryWithMissingParentAsCategoryInactive() {
         val invalidCategoryId = CategoryId("expense-category-invalid-parent")
-        val catalog = success(
-            LedgerCatalog.create(
-                accounts = fixture.accounts,
-                categories = fixture.categories + Category(
-                    id = invalidCategoryId,
-                    ledgerId = fixture.ledgerId,
-                    parentId = CategoryId("expense-category-missing-parent"),
-                    postingAccountId = null,
-                    active = false,
+        val catalog =
+            success(
+                LedgerCatalog.create(
+                    accounts = fixture.accounts,
+                    categories =
+                        fixture.categories +
+                            Category(
+                                id = invalidCategoryId,
+                                ledgerId = fixture.ledgerId,
+                                parentId = CategoryId("expense-category-missing-parent"),
+                                postingAccountId = null,
+                                active = false,
+                            ),
                 ),
-            ),
-        )
-        val result = createAssetPaidOrdinaryExpense(
-            catalog = catalog,
-            command = fixture.command.copy(categoryId = invalidCategoryId),
-            ids = fixture.expenseIds,
-        )
+            )
+        val result =
+            createAssetPaidOrdinaryExpense(
+                catalog = catalog,
+                command = fixture.command.copy(categoryId = invalidCategoryId),
+                ids = fixture.expenseIds,
+            )
         val violation = failure(result)
 
         assertNotEquals(OrdinaryExpenseViolation.CategoryInactive, violation)
@@ -111,15 +124,18 @@ class OrdinaryExpenseValidationTest {
     fun rejectsIncomeCategoryEvenWhenItPointsAtAnExpenseAccount() {
         val parent = CategoryId("income-parent")
         val child = CategoryId("income-child")
-        val catalog = success(
-            LedgerCatalog.create(
-                accounts = fixture.accounts,
-                categories = fixture.categories + listOf(
-                    Category(parent, fixture.ledgerId, null, null, true, CategoryKind.INCOME),
-                    Category(child, fixture.ledgerId, parent, fixture.command.categoryId.let { fixture.categories.single { category -> category.id == it }.postingAccountId }, true, CategoryKind.INCOME),
+        val catalog =
+            success(
+                LedgerCatalog.create(
+                    accounts = fixture.accounts,
+                    categories =
+                        fixture.categories +
+                            listOf(
+                                Category(parent, fixture.ledgerId, null, null, true, CategoryKind.INCOME),
+                                Category(child, fixture.ledgerId, parent, fixture.command.categoryId.let { fixture.categories.single { category -> category.id == it }.postingAccountId }, true, CategoryKind.INCOME),
+                            ),
                 ),
-            ),
-        )
+            )
 
         assertEquals(
             DomainViolation.InvalidOrdinaryExpense,

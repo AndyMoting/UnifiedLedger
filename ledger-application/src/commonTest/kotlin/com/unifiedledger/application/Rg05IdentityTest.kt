@@ -83,14 +83,15 @@ class Rg05IdentityTest {
         assertEquals("6aa8c5ff-b64d-5ced-b70a-f26ab5dfa636", goldenV2UuidV5("RG-05"))
     }
 
-    private fun contractIdentities() = mapOf(
-        "manual root" to manualRoot,
-        "manual confirmation" to rg05MigrationId(manualRoot, "confirmation", "$.manual_path.confirmation", MANUAL_REQUEST),
-        "manual posting reconciliation" to rg05MigrationId(manualRoot, "posting_reconciliation", "$.manual_path.expected.reconciliation", "posting-asset-rg05-manual"),
-        "import root" to importRoot,
-        "candidate pending status" to rg05MigrationId(importRoot, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate.status", CANDIDATE),
-        "candidate confirmed status" to rg05MigrationId(importRoot, "candidate_status", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
-        "import confirmation" to rg05MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
-        "import posting reconciliation" to rg05MigrationId(importRoot, "posting_reconciliation", "$.import_path.ordered_operations[*].expected.reconciliation", "posting-asset-rg05-imported"),
-    )
+    private fun contractIdentities() =
+        mapOf(
+            "manual root" to manualRoot,
+            "manual confirmation" to rg05MigrationId(manualRoot, "confirmation", "$.manual_path.confirmation", MANUAL_REQUEST),
+            "manual posting reconciliation" to rg05MigrationId(manualRoot, "posting_reconciliation", "$.manual_path.expected.reconciliation", "posting-asset-rg05-manual"),
+            "import root" to importRoot,
+            "candidate pending status" to rg05MigrationId(importRoot, "candidate_status", "$.import_path.ordered_operations[*].expected.candidate.status", CANDIDATE),
+            "candidate confirmed status" to rg05MigrationId(importRoot, "candidate_status", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
+            "import confirmation" to rg05MigrationId(importRoot, "confirmation", CANDIDATE_STATUS_LOCATOR, CONFIRM_REQUEST),
+            "import posting reconciliation" to rg05MigrationId(importRoot, "posting_reconciliation", "$.import_path.ordered_operations[*].expected.reconciliation", "posting-asset-rg05-imported"),
+        )
 }

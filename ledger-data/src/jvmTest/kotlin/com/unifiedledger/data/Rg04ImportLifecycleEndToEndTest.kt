@@ -1,9 +1,30 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.*
+import com.unifiedledger.application.ExecuteRg04ImportOperation
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.Rg04CandidateId
+import com.unifiedledger.application.Rg04DecodedImportOperation
+import com.unifiedledger.application.Rg04EvidenceId
+import com.unifiedledger.application.Rg04Expected
+import com.unifiedledger.application.Rg04ImportExecutionError
+import com.unifiedledger.application.Rg04ImportExecutionResult
+import com.unifiedledger.application.Rg04ImportReturnedId
+import com.unifiedledger.application.Rg04ImportReturnedIdKind
+import com.unifiedledger.application.Rg04PreparedImportOperation
+import com.unifiedledger.application.Rg04RawJsonCase
+import com.unifiedledger.application.Rg04RawJsonDecodeResult
+import com.unifiedledger.application.Rg04SourceId
+import com.unifiedledger.application.decodeRg04RawJson
 import com.unifiedledger.data.db.LedgerDatabase
-import com.unifiedledger.domain.*
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.MixedPaymentExpenseIds
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVersionId
+import kotlinx.serialization.json.add
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.SQLException
@@ -14,7 +35,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 class Rg04ImportLifecycleEndToEndTest {
     @Test
@@ -75,7 +95,9 @@ class Rg04ImportLifecycleEndToEndTest {
                     confirmed.assetReconciliationId to "posting-asset-rg04-imported",
                     confirmed.liabilityReconciliationId to "posting-liability-rg04-imported",
                 ),
-                database.ledgerQueries.selectRg04PostingReconciliations().executeAsList()
+                database.ledgerQueries
+                    .selectRg04PostingReconciliations()
+                    .executeAsList()
                     .filter { it.posting_id.endsWith("rg04-imported") }
                     .map { it.reconciliation_id to it.posting_id }
                     .toSet(),
@@ -88,12 +110,13 @@ class Rg04ImportLifecycleEndToEndTest {
             assertEquals("0.58", missing.confidence)
 
             val beforeReject = counts(database)
-            val secondConfirmation = executor.execute(
-                Rg04DecodedImportOperation.Confirm(
-                    confirmed.copy(requestId = RequestId("request-second-confirmation")),
-                    Rg04Expected.Accepted,
-                ),
-            )
+            val secondConfirmation =
+                executor.execute(
+                    Rg04DecodedImportOperation.Confirm(
+                        confirmed.copy(requestId = RequestId("request-second-confirmation")),
+                        Rg04Expected.Accepted,
+                    ),
+                )
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.CANDIDATE_NOT_PENDING),
                 secondConfirmation,
@@ -101,18 +124,19 @@ class Rg04ImportLifecycleEndToEndTest {
             assertEquals(beforeReject, counts(database))
 
             val mirror = (case.importOperations[4] as Rg04DecodedImportOperation.Mirror).snapshot
-            val mismatch = executor.execute(
-                Rg04DecodedImportOperation.Mirror(
-                    mirror.copy(
-                        requestId = RequestId("request-mismatch"),
-                        sourceId = Rg04SourceId("source-mismatch"),
-                        evidenceId = Rg04EvidenceId("evidence-mismatch"),
-                        evidenceLinkId = "match-mismatch",
-                        accountId = AccountId("asset-bank-a"),
+            val mismatch =
+                executor.execute(
+                    Rg04DecodedImportOperation.Mirror(
+                        mirror.copy(
+                            requestId = RequestId("request-mismatch"),
+                            sourceId = Rg04SourceId("source-mismatch"),
+                            evidenceId = Rg04EvidenceId("evidence-mismatch"),
+                            evidenceLinkId = "match-mismatch",
+                            accountId = AccountId("asset-bank-a"),
+                        ),
+                        Rg04Expected.Accepted,
                     ),
-                    Rg04Expected.Accepted,
-                ),
-            )
+                )
             assertEquals(Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.MIRROR_TARGET_MISMATCH), mismatch)
             assertEquals(beforeReject, counts(database))
         } finally {
@@ -138,16 +162,18 @@ class Rg04ImportLifecycleEndToEndTest {
                     }
                 }
                 val before = counts(database)
-                val failing = ExecuteRg04ImportOperation(
-                    SqlDelightRg04ImportStore(database, driver, case.catalog) {
-                        if (it == failurePoint) error("injected")
-                    },
-                )
-                val operation = when (failurePoint) {
-                    Rg04ImportFailurePoint.SOURCE_AFTER_CANDIDATE -> case.importOperations[0]
-                    Rg04ImportFailurePoint.CONFIRMATION_AFTER_FORMAL -> case.importOperations[2]
-                    Rg04ImportFailurePoint.MIRROR_AFTER_MATCH -> case.importOperations[4]
-                }
+                val failing =
+                    ExecuteRg04ImportOperation(
+                        SqlDelightRg04ImportStore(database, driver, case.catalog) {
+                            if (it == failurePoint) error("injected")
+                        },
+                    )
+                val operation =
+                    when (failurePoint) {
+                        Rg04ImportFailurePoint.SOURCE_AFTER_CANDIDATE -> case.importOperations[0]
+                        Rg04ImportFailurePoint.CONFIRMATION_AFTER_FORMAL -> case.importOperations[2]
+                        Rg04ImportFailurePoint.MIRROR_AFTER_MATCH -> case.importOperations[4]
+                    }
                 assertFailsWith<IllegalStateException> { failing.execute(operation) }
                 assertEquals(before, counts(database), failurePoint.name)
             } finally {
@@ -195,15 +221,16 @@ class Rg04ImportLifecycleEndToEndTest {
             JdbcSqliteDriver(url).use(LedgerDatabase.Schema::create)
             val pool = Executors.newFixedThreadPool(2)
             try {
-                val futures = List(2) {
-                    pool.submit<Rg04ImportExecutionResult> {
-                        JdbcSqliteDriver(url).use { driver ->
-                            ExecuteRg04ImportOperation(
-                                SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
-                            ).execute(case.importOperations[0])
+                val futures =
+                    List(2) {
+                        pool.submit<Rg04ImportExecutionResult> {
+                            JdbcSqliteDriver(url).use { driver ->
+                                ExecuteRg04ImportOperation(
+                                    SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
+                                ).execute(case.importOperations[0])
+                            }
                         }
                     }
-                }
                 val results = futures.map { it.get() }
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.Accepted })
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.NoChange })
@@ -225,10 +252,14 @@ class Rg04ImportLifecycleEndToEndTest {
     fun concurrentConflictingSourceRequestCommitsOneWinnerWithoutPartialLoser() {
         val case = decodedCase()
         val original = case.importOperations[0] as Rg04DecodedImportOperation.Source
-        val changed = original.copy(snapshot = original.snapshot.copy(
-            observedAt = kotlin.time.Instant.parse("2026-02-11T12:00:01+08:00"),
-            observedAtText = "2026-02-11T12:00:01+08:00",
-        ))
+        val changed =
+            original.copy(
+                snapshot =
+                    original.snapshot.copy(
+                        observedAt = kotlin.time.Instant.parse("2026-02-11T12:00:01+08:00"),
+                        observedAtText = "2026-02-11T12:00:01+08:00",
+                    ),
+            )
         val path = Files.createTempFile("rg04-import-conflict-concurrent-", ".db")
         val url = "jdbc:sqlite:${path.toAbsolutePath()}"
         try {
@@ -262,15 +293,16 @@ class Rg04ImportLifecycleEndToEndTest {
             }
             val pool = Executors.newFixedThreadPool(2)
             try {
-                val futures = List(2) {
-                    pool.submit<Rg04ImportExecutionResult> {
-                        JdbcSqliteDriver(url).use { driver ->
-                            ExecuteRg04ImportOperation(
-                                SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
-                            ).execute(case.importOperations[2])
+                val futures =
+                    List(2) {
+                        pool.submit<Rg04ImportExecutionResult> {
+                            JdbcSqliteDriver(url).use { driver ->
+                                ExecuteRg04ImportOperation(
+                                    SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
+                                ).execute(case.importOperations[2])
+                            }
                         }
                     }
-                }
                 val results = futures.map { it.get() }
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.Accepted })
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.NoChange })
@@ -337,15 +369,16 @@ class Rg04ImportLifecycleEndToEndTest {
             }
             val pool = Executors.newFixedThreadPool(2)
             try {
-                val futures = List(2) {
-                    pool.submit<Rg04ImportExecutionResult> {
-                        JdbcSqliteDriver(url).use { driver ->
-                            ExecuteRg04ImportOperation(
-                                SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
-                            ).execute(case.importOperations[4])
+                val futures =
+                    List(2) {
+                        pool.submit<Rg04ImportExecutionResult> {
+                            JdbcSqliteDriver(url).use { driver ->
+                                ExecuteRg04ImportOperation(
+                                    SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
+                                ).execute(case.importOperations[4])
+                            }
                         }
                     }
-                }
                 val results = futures.map { it.get() }
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.Accepted })
                 assertEquals(1, results.count { it is Rg04ImportExecutionResult.NoChange })
@@ -368,12 +401,16 @@ class Rg04ImportLifecycleEndToEndTest {
     fun concurrentDistinctMirrorsAcceptOnceAndRollBackLosingEvidence() {
         val case = decodedCase()
         val original = case.importOperations[4] as Rg04DecodedImportOperation.Mirror
-        val distinct = original.copy(snapshot = original.snapshot.copy(
-            requestId = RequestId("request-rg04-mirror-concurrent-distinct"),
-            sourceId = Rg04SourceId("source-rg04-mirror-concurrent-distinct"),
-            evidenceId = Rg04EvidenceId("evidence-rg04-mirror-concurrent-distinct"),
-            evidenceLinkId = "match-rg04-mirror-concurrent-distinct",
-        ))
+        val distinct =
+            original.copy(
+                snapshot =
+                    original.snapshot.copy(
+                        requestId = RequestId("request-rg04-mirror-concurrent-distinct"),
+                        sourceId = Rg04SourceId("source-rg04-mirror-concurrent-distinct"),
+                        evidenceId = Rg04EvidenceId("evidence-rg04-mirror-concurrent-distinct"),
+                        evidenceLinkId = "match-rg04-mirror-concurrent-distinct",
+                    ),
+            )
         val path = Files.createTempFile("rg04-import-mirror-owner-concurrent-", ".db")
         val url = "jdbc:sqlite:${path.toAbsolutePath()}"
         try {
@@ -409,19 +446,21 @@ class Rg04ImportLifecycleEndToEndTest {
     fun conflictingSourceAndDistinctConfirmationOrMirrorAreAtomicTypedOutcomes() {
         val case = decodedCase()
         val source = (case.importOperations[0] as Rg04DecodedImportOperation.Source).snapshot
-        val changedSource = source.copy(
-            observedAt = kotlin.time.Instant.parse("2026-02-11T12:00:01+08:00"),
-            observedAtText = "2026-02-11T12:00:01+08:00",
-        )
+        val changedSource =
+            source.copy(
+                observedAt = kotlin.time.Instant.parse("2026-02-11T12:00:01+08:00"),
+                observedAtText = "2026-02-11T12:00:01+08:00",
+            )
         val sourceDriver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(sourceDriver)
             val sourceDatabase = LedgerDatabase(sourceDriver)
             val sourceStore = SqlDelightRg04ImportStore(sourceDatabase, sourceDriver, case.catalog)
             val sourceExecutor = ExecuteRg04ImportOperation(sourceStore)
-            val sourceResults = listOf(source, changedSource).map {
-                sourceExecutor.execute(Rg04DecodedImportOperation.Source(it, Rg04Expected.Accepted))
-            }
+            val sourceResults =
+                listOf(source, changedSource).map {
+                    sourceExecutor.execute(Rg04DecodedImportOperation.Source(it, Rg04Expected.Accepted))
+                }
             assertEquals(1, sourceResults.count { it is Rg04ImportExecutionResult.Accepted })
             assertEquals(1, sourceResults.count { it is Rg04ImportExecutionResult.RequestIdentityConflict })
             assertEquals(1L, sourceDatabase.ledgerQueries.countRg04ImportRequests().executeAsOne())
@@ -445,12 +484,16 @@ class Rg04ImportLifecycleEndToEndTest {
             assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
 
             val mirror = case.importOperations[4] as Rg04DecodedImportOperation.Mirror
-            val distinctMirror = mirror.copy(snapshot = mirror.snapshot.copy(
-                requestId = RequestId("request-rg04-mirror-distinct"),
-                sourceId = Rg04SourceId("source-rg04-mirror-distinct"),
-                evidenceId = Rg04EvidenceId("evidence-rg04-mirror-distinct"),
-                evidenceLinkId = "match-rg04-mirror-distinct",
-            ))
+            val distinctMirror =
+                mirror.copy(
+                    snapshot =
+                        mirror.snapshot.copy(
+                            requestId = RequestId("request-rg04-mirror-distinct"),
+                            sourceId = Rg04SourceId("source-rg04-mirror-distinct"),
+                            evidenceId = Rg04EvidenceId("evidence-rg04-mirror-distinct"),
+                            evidenceLinkId = "match-rg04-mirror-distinct",
+                        ),
+                )
             val beforeMirror = counts(database)
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(mirror))
             val afterMirror = counts(database)
@@ -510,44 +553,47 @@ class Rg04ImportLifecycleEndToEndTest {
             val ids = confirmation.snapshot.formalIds
             val relation = confirmation.snapshot.relationId
             val postingIds = ids.fundingPostingIds + ids.expensePostingId
-            val mutations = buildList {
-                add("UPDATE ledger_transaction SET kind = 'CREDIT_REPAYMENT' WHERE transaction_id = '${ids.transactionId.value}'")
-                add("DELETE FROM ledger_transaction WHERE transaction_id = '${ids.transactionId.value}'")
-                add("UPDATE ledger_transaction_current_version SET current_version_id = 'corrupt-current-version' WHERE transaction_id = '${ids.transactionId.value}'")
-                add("DELETE FROM ledger_transaction_current_version WHERE transaction_id = '${ids.transactionId.value}'")
-                add("UPDATE transaction_version SET version_number = 2 WHERE transaction_id = '${ids.transactionId.value}'")
-                add("DELETE FROM transaction_version WHERE transaction_id = '${ids.transactionId.value}'")
-                add("UPDATE posting_set SET posting_set_id = 'corrupt-posting-set' WHERE posting_set_id = '${ids.postingSetId.value}'")
-                add("DELETE FROM posting_set WHERE posting_set_id = '${ids.postingSetId.value}'")
-                postingIds.forEach { postingId ->
-                    add("UPDATE posting SET amount_minor = amount_minor + 1 WHERE posting_id = '${postingId.value}'")
-                    add("DELETE FROM posting WHERE posting_id = '${postingId.value}'")
+            val mutations =
+                buildList {
+                    add("UPDATE ledger_transaction SET kind = 'CREDIT_REPAYMENT' WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("DELETE FROM ledger_transaction WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("UPDATE ledger_transaction_current_version SET current_version_id = 'corrupt-current-version' WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("DELETE FROM ledger_transaction_current_version WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("UPDATE transaction_version SET version_number = 2 WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("DELETE FROM transaction_version WHERE transaction_id = '${ids.transactionId.value}'")
+                    add("UPDATE posting_set SET posting_set_id = 'corrupt-posting-set' WHERE posting_set_id = '${ids.postingSetId.value}'")
+                    add("DELETE FROM posting_set WHERE posting_set_id = '${ids.postingSetId.value}'")
+                    postingIds.forEach { postingId ->
+                        add("UPDATE posting SET amount_minor = amount_minor + 1 WHERE posting_id = '${postingId.value}'")
+                        add("DELETE FROM posting WHERE posting_id = '${postingId.value}'")
+                    }
+                    add("UPDATE formal_relation SET relation_id = 'corrupt-relation' WHERE relation_id = '$relation'")
+                    add("DELETE FROM formal_relation WHERE relation_id = '$relation'")
+                    add("UPDATE formal_relation_member SET member_index = member_index + 1 WHERE relation_id = '$relation' AND member_index = 0")
+                    add("DELETE FROM formal_relation_member WHERE relation_id = '$relation' AND member_index = 0")
+                    add("UPDATE rg04_mixed_composition SET relation_id = 'corrupt-composition' WHERE relation_id = '$relation'")
+                    add("DELETE FROM rg04_mixed_composition WHERE relation_id = '$relation'")
+                    add("UPDATE rg04_mixed_composition_component SET amount_minor = amount_minor + 1 WHERE relation_id = '$relation'")
+                    add("DELETE FROM rg04_mixed_composition_component WHERE relation_id = '$relation' AND component_index = 0")
+                    postingIds.forEach { postingId ->
+                        add("UPDATE rg04_posting_semantic SET category_id = 'corrupt-category' WHERE posting_id = '${postingId.value}'")
+                        add("DELETE FROM rg04_posting_semantic WHERE posting_id = '${postingId.value}'")
+                    }
+                    listOf(confirmation.snapshot.assetReconciliationId, confirmation.snapshot.liabilityReconciliationId).forEach { reconciliationId ->
+                        add("UPDATE rg04_posting_reconciliation SET status = 'MATCHED' WHERE reconciliation_id = '$reconciliationId'")
+                        add("DELETE FROM rg04_posting_reconciliation WHERE reconciliation_id = '$reconciliationId'")
+                    }
                 }
-                add("UPDATE formal_relation SET relation_id = 'corrupt-relation' WHERE relation_id = '$relation'")
-                add("DELETE FROM formal_relation WHERE relation_id = '$relation'")
-                add("UPDATE formal_relation_member SET member_index = member_index + 1 WHERE relation_id = '$relation' AND member_index = 0")
-                add("DELETE FROM formal_relation_member WHERE relation_id = '$relation' AND member_index = 0")
-                add("UPDATE rg04_mixed_composition SET relation_id = 'corrupt-composition' WHERE relation_id = '$relation'")
-                add("DELETE FROM rg04_mixed_composition WHERE relation_id = '$relation'")
-                add("UPDATE rg04_mixed_composition_component SET amount_minor = amount_minor + 1 WHERE relation_id = '$relation'")
-                add("DELETE FROM rg04_mixed_composition_component WHERE relation_id = '$relation' AND component_index = 0")
-                postingIds.forEach { postingId ->
-                    add("UPDATE rg04_posting_semantic SET category_id = 'corrupt-category' WHERE posting_id = '${postingId.value}'")
-                    add("DELETE FROM rg04_posting_semantic WHERE posting_id = '${postingId.value}'")
-                }
-                listOf(confirmation.snapshot.assetReconciliationId, confirmation.snapshot.liabilityReconciliationId).forEach { reconciliationId ->
-                    add("UPDATE rg04_posting_reconciliation SET status = 'MATCHED' WHERE reconciliation_id = '$reconciliationId'")
-                    add("DELETE FROM rg04_posting_reconciliation WHERE reconciliation_id = '$reconciliationId'")
-                }
-            }
             mutations.forEach { statement ->
                 assertFailsWith<SQLException>(statement) { driver.execute(null, statement, 0) }
             }
             assertEquals(
-                Rg04ImportExecutionResult.NoChange(listOf(
-                    Rg04ImportReturnedId(Rg04ImportReturnedIdKind.CONFIRMATION, confirmation.snapshot.confirmationId),
-                    Rg04ImportReturnedId(Rg04ImportReturnedIdKind.TRANSACTION, confirmation.snapshot.formalIds.transactionId.value),
-                )),
+                Rg04ImportExecutionResult.NoChange(
+                    listOf(
+                        Rg04ImportReturnedId(Rg04ImportReturnedIdKind.CONFIRMATION, confirmation.snapshot.confirmationId),
+                        Rg04ImportReturnedId(Rg04ImportReturnedIdKind.TRANSACTION, confirmation.snapshot.formalIds.transactionId.value),
+                    ),
+                ),
                 executor.execute(confirmation),
             )
         }
@@ -567,8 +613,12 @@ class Rg04ImportLifecycleEndToEndTest {
             val requestId = confirmation.snapshot.requestId.value
             val assetReconciliationId = confirmation.snapshot.assetReconciliationId
             val liabilityReconciliationId = confirmation.snapshot.liabilityReconciliationId
-            val assetPostingId = confirmation.snapshot.formalIds.fundingPostingIds[0].value
-            val liabilityPostingId = confirmation.snapshot.formalIds.fundingPostingIds[1].value
+            val assetPostingId =
+                confirmation.snapshot.formalIds.fundingPostingIds[0]
+                    .value
+            val liabilityPostingId =
+                confirmation.snapshot.formalIds.fundingPostingIds[1]
+                    .value
             val mirrorRequestId = "request-mirror-transition"
             driver.execute(
                 null,
@@ -673,22 +723,31 @@ class Rg04ImportLifecycleEndToEndTest {
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(confirmation))
 
             val snapshot = confirmation.snapshot
-            val mismatches = listOf(
-                "version" to snapshot.copy(formalIds = snapshot.formalIds.copy(versionId = TransactionVersionId("version-conflict"))),
-                "posting-set" to snapshot.copy(formalIds = snapshot.formalIds.copy(postingSetId = PostingSetId("posting-set-conflict"))),
-                "expense-posting" to snapshot.copy(formalIds = snapshot.formalIds.copy(expensePostingId = PostingId("posting-expense-conflict"))),
-                "asset-posting" to snapshot.copy(formalIds = snapshot.formalIds.copy(
-                    fundingPostingIds = listOf(PostingId("posting-asset-conflict"), snapshot.formalIds.fundingPostingIds[1]),
-                )),
-                "liability-posting" to snapshot.copy(formalIds = snapshot.formalIds.copy(
-                    fundingPostingIds = listOf(snapshot.formalIds.fundingPostingIds[0], PostingId("posting-liability-conflict")),
-                )),
-                "confirmed-status" to snapshot.copy(confirmedStatusId = "status-conflict"),
-                "relation-display" to snapshot.copy(relationDisplayName = "conflicting display"),
-                "asset-evidence-link" to snapshot.copy(assetEvidenceLinkId = "evidence-link-conflict"),
-                "asset-reconciliation" to snapshot.copy(assetReconciliationId = "reconciliation-asset-conflict"),
-                "liability-reconciliation" to snapshot.copy(liabilityReconciliationId = "reconciliation-liability-conflict"),
-            )
+            val mismatches =
+                listOf(
+                    "version" to snapshot.copy(formalIds = snapshot.formalIds.copy(versionId = TransactionVersionId("version-conflict"))),
+                    "posting-set" to snapshot.copy(formalIds = snapshot.formalIds.copy(postingSetId = PostingSetId("posting-set-conflict"))),
+                    "expense-posting" to snapshot.copy(formalIds = snapshot.formalIds.copy(expensePostingId = PostingId("posting-expense-conflict"))),
+                    "asset-posting" to
+                        snapshot.copy(
+                            formalIds =
+                                snapshot.formalIds.copy(
+                                    fundingPostingIds = listOf(PostingId("posting-asset-conflict"), snapshot.formalIds.fundingPostingIds[1]),
+                                ),
+                        ),
+                    "liability-posting" to
+                        snapshot.copy(
+                            formalIds =
+                                snapshot.formalIds.copy(
+                                    fundingPostingIds = listOf(snapshot.formalIds.fundingPostingIds[0], PostingId("posting-liability-conflict")),
+                                ),
+                        ),
+                    "confirmed-status" to snapshot.copy(confirmedStatusId = "status-conflict"),
+                    "relation-display" to snapshot.copy(relationDisplayName = "conflicting display"),
+                    "asset-evidence-link" to snapshot.copy(assetEvidenceLinkId = "evidence-link-conflict"),
+                    "asset-reconciliation" to snapshot.copy(assetReconciliationId = "reconciliation-asset-conflict"),
+                    "liability-reconciliation" to snapshot.copy(liabilityReconciliationId = "reconciliation-liability-conflict"),
+                )
             mismatches.forEach { (label, mutated) ->
                 assertEquals(
                     Rg04ImportExecutionResult.RequestIdentityConflict,
@@ -721,10 +780,15 @@ class Rg04ImportLifecycleEndToEndTest {
             )
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.CANDIDATE_NOT_FOUND),
-                executor.execute(confirm.copy(snapshot = confirm.snapshot.copy(
-                    requestId = RequestId("request-unknown-candidate"),
-                    candidateId = Rg04CandidateId("candidate-unknown"),
-                ))),
+                executor.execute(
+                    confirm.copy(
+                        snapshot =
+                            confirm.snapshot.copy(
+                                requestId = RequestId("request-unknown-candidate"),
+                                candidateId = Rg04CandidateId("candidate-unknown"),
+                            ),
+                    ),
+                ),
             )
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.MIRROR_TARGET_NOT_FOUND),
@@ -741,10 +805,15 @@ class Rg04ImportLifecycleEndToEndTest {
             val before = counts(database)
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.CANDIDATE_INCOMPLETE),
-                executor.execute(confirm.copy(snapshot = confirm.snapshot.copy(
-                    requestId = RequestId("request-confirm-incomplete"),
-                    candidateId = Rg04CandidateId("candidate-purchase-rg04-missing-leg"),
-                ))),
+                executor.execute(
+                    confirm.copy(
+                        snapshot =
+                            confirm.snapshot.copy(
+                                requestId = RequestId("request-confirm-incomplete"),
+                                candidateId = Rg04CandidateId("candidate-purchase-rg04-missing-leg"),
+                            ),
+                    ),
+                ),
             )
             assertEquals(before, counts(database))
         }
@@ -754,23 +823,32 @@ class Rg04ImportLifecycleEndToEndTest {
             val database = LedgerDatabase(driver)
             val executor = ExecuteRg04ImportOperation(SqlDelightRg04ImportStore(database, driver, case.catalog))
             val source = case.importOperations[0] as Rg04DecodedImportOperation.Source
-            val invalidCategorySource = source.copy(snapshot = source.snapshot.copy(
-                requestId = RequestId("request-domain-invalid-source"),
-                sourceId = Rg04SourceId("source-domain-invalid"),
-                evidenceId = Rg04EvidenceId("evidence-domain-invalid"),
-                suggestedCategoryId = CategoryId("category-unknown"),
-                candidateId = Rg04CandidateId("candidate-domain-invalid"),
-                candidateStatusId = "status-domain-invalid-pending",
-            ))
+            val invalidCategorySource =
+                source.copy(
+                    snapshot =
+                        source.snapshot.copy(
+                            requestId = RequestId("request-domain-invalid-source"),
+                            sourceId = Rg04SourceId("source-domain-invalid"),
+                            evidenceId = Rg04EvidenceId("evidence-domain-invalid"),
+                            suggestedCategoryId = CategoryId("category-unknown"),
+                            candidateId = Rg04CandidateId("candidate-domain-invalid"),
+                            candidateStatusId = "status-domain-invalid-pending",
+                        ),
+                )
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(invalidCategorySource))
             val before = counts(database)
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.DOMAIN_VALIDATION_FAILED),
-                executor.execute(confirm.copy(snapshot = confirm.snapshot.copy(
-                    requestId = RequestId("request-domain-invalid-confirm"),
-                    candidateId = Rg04CandidateId("candidate-domain-invalid"),
-                    categoryId = CategoryId("category-unknown"),
-                ))),
+                executor.execute(
+                    confirm.copy(
+                        snapshot =
+                            confirm.snapshot.copy(
+                                requestId = RequestId("request-domain-invalid-confirm"),
+                                candidateId = Rg04CandidateId("candidate-domain-invalid"),
+                                categoryId = CategoryId("category-unknown"),
+                            ),
+                    ),
+                ),
             )
             assertEquals(before, counts(database))
         }
@@ -783,41 +861,55 @@ class Rg04ImportLifecycleEndToEndTest {
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(confirm))
 
             val source = case.importOperations[0] as Rg04DecodedImportOperation.Source
-            val secondSource = source.copy(snapshot = source.snapshot.copy(
-                requestId = RequestId("request-ambiguous-source"),
-                sourceId = Rg04SourceId("source-ambiguous"),
-                evidenceId = Rg04EvidenceId("evidence-ambiguous"),
-                candidateId = Rg04CandidateId("candidate-ambiguous"),
-                candidateStatusId = "status-ambiguous-pending",
-            ))
+            val secondSource =
+                source.copy(
+                    snapshot =
+                        source.snapshot.copy(
+                            requestId = RequestId("request-ambiguous-source"),
+                            sourceId = Rg04SourceId("source-ambiguous"),
+                            evidenceId = Rg04EvidenceId("evidence-ambiguous"),
+                            candidateId = Rg04CandidateId("candidate-ambiguous"),
+                            candidateStatusId = "status-ambiguous-pending",
+                        ),
+                )
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(secondSource))
-            val secondConfirm = confirm.copy(snapshot = confirm.snapshot.copy(
-                requestId = RequestId("request-ambiguous-confirm"),
-                candidateId = Rg04CandidateId("candidate-ambiguous"),
-                formalIds = MixedPaymentExpenseIds(
-                    TransactionId("tx-ambiguous"),
-                    TransactionVersionId("version-ambiguous-v1"),
-                    PostingSetId("posting-set-ambiguous"),
-                    PostingId("posting-expense-ambiguous"),
-                    listOf(PostingId("posting-asset-ambiguous"), PostingId("posting-liability-ambiguous")),
-                ),
-                confirmationId = "confirmation-ambiguous",
-                confirmedStatusId = "status-ambiguous-confirmed",
-                relationId = "relation-ambiguous",
-                assetEvidenceLinkId = "match-asset-ambiguous",
-                assetReconciliationId = "reconciliation-asset-ambiguous",
-                liabilityReconciliationId = "reconciliation-liability-ambiguous",
-            ))
+            val secondConfirm =
+                confirm.copy(
+                    snapshot =
+                        confirm.snapshot.copy(
+                            requestId = RequestId("request-ambiguous-confirm"),
+                            candidateId = Rg04CandidateId("candidate-ambiguous"),
+                            formalIds =
+                                MixedPaymentExpenseIds(
+                                    TransactionId("tx-ambiguous"),
+                                    TransactionVersionId("version-ambiguous-v1"),
+                                    PostingSetId("posting-set-ambiguous"),
+                                    PostingId("posting-expense-ambiguous"),
+                                    listOf(PostingId("posting-asset-ambiguous"), PostingId("posting-liability-ambiguous")),
+                                ),
+                            confirmationId = "confirmation-ambiguous",
+                            confirmedStatusId = "status-ambiguous-confirmed",
+                            relationId = "relation-ambiguous",
+                            assetEvidenceLinkId = "match-asset-ambiguous",
+                            assetReconciliationId = "reconciliation-asset-ambiguous",
+                            liabilityReconciliationId = "reconciliation-liability-ambiguous",
+                        ),
+                )
             assertIs<Rg04ImportExecutionResult.Accepted>(executor.execute(secondConfirm))
             val before = counts(database)
             assertEquals(
                 Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.AMBIGUOUS_MIRROR_TARGET),
-                executor.execute(mirror.copy(snapshot = mirror.snapshot.copy(
-                    requestId = RequestId("request-ambiguous-mirror"),
-                    sourceId = Rg04SourceId("source-ambiguous-mirror"),
-                    evidenceId = Rg04EvidenceId("evidence-ambiguous-mirror"),
-                    evidenceLinkId = "match-ambiguous-mirror",
-                ))),
+                executor.execute(
+                    mirror.copy(
+                        snapshot =
+                            mirror.snapshot.copy(
+                                requestId = RequestId("request-ambiguous-mirror"),
+                                sourceId = Rg04SourceId("source-ambiguous-mirror"),
+                                evidenceId = Rg04EvidenceId("evidence-ambiguous-mirror"),
+                                evidenceLinkId = "match-ambiguous-mirror",
+                            ),
+                    ),
+                ),
             )
             assertEquals(before, counts(database))
         }
@@ -833,17 +925,18 @@ private fun concurrentExecute(
     val ready = CountDownLatch(operations.size)
     val start = CountDownLatch(1)
     return try {
-        val futures = operations.map { operation ->
-            pool.submit<Rg04ImportExecutionResult> {
-                ready.countDown()
-                check(start.await(5, TimeUnit.SECONDS))
-                JdbcSqliteDriver(url).use { driver ->
-                    ExecuteRg04ImportOperation(
-                        SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
-                    ).execute(operation)
+        val futures =
+            operations.map { operation ->
+                pool.submit<Rg04ImportExecutionResult> {
+                    ready.countDown()
+                    check(start.await(5, TimeUnit.SECONDS))
+                    JdbcSqliteDriver(url).use { driver ->
+                        ExecuteRg04ImportOperation(
+                            SqlDelightRg04ImportStore(LedgerDatabase(driver), driver, case.catalog),
+                        ).execute(operation)
+                    }
                 }
             }
-        }
         check(ready.await(5, TimeUnit.SECONDS))
         start.countDown()
         futures.map { it.get(10, TimeUnit.SECONDS) }
@@ -852,27 +945,31 @@ private fun concurrentExecute(
     }
 }
 
-internal fun decodedCase(): Rg04RawJsonCase = assertIs<Rg04RawJsonDecodeResult.Success>(
-    decodeRg04RawJson(Files.readString(repositoryFile("golden/rules/rg-04.json"))),
-).value
+internal fun decodedCase(): Rg04RawJsonCase =
+    assertIs<Rg04RawJsonDecodeResult.Success>(
+        decodeRg04RawJson(Files.readString(repositoryFile("golden/rules/rg-04.json"))),
+    ).value
 
-private fun formalCounts(database: LedgerDatabase) = listOf(
-    database.ledgerQueries.countTransactions().executeAsOne(),
-    database.ledgerQueries.countVersions().executeAsOne(),
-    database.ledgerQueries.countPostings().executeAsOne(),
-    database.ledgerQueries.countRg04Relations().executeAsOne(),
-    database.ledgerQueries.countRg04RelationMembers().executeAsOne(),
-)
+private fun formalCounts(database: LedgerDatabase) =
+    listOf(
+        database.ledgerQueries.countTransactions().executeAsOne(),
+        database.ledgerQueries.countVersions().executeAsOne(),
+        database.ledgerQueries.countPostings().executeAsOne(),
+        database.ledgerQueries.countRg04Relations().executeAsOne(),
+        database.ledgerQueries.countRg04RelationMembers().executeAsOne(),
+    )
 
-private fun counts(database: LedgerDatabase) = formalCounts(database) + listOf(
-    database.ledgerQueries.countRg04ImportRequests().executeAsOne(),
-    database.ledgerQueries.countRg04ImportSources().executeAsOne(),
-    database.ledgerQueries.countRg04ImportEvidence().executeAsOne(),
-    database.ledgerQueries.countRg04ImportCandidates().executeAsOne(),
-    database.ledgerQueries.countRg04ImportConfirmations().executeAsOne(),
-    database.ledgerQueries.countRg04ImportMatches().executeAsOne(),
-    database.ledgerQueries.countRg04ImportReceipts().executeAsOne(),
-)
+private fun counts(database: LedgerDatabase) =
+    formalCounts(database) +
+        listOf(
+            database.ledgerQueries.countRg04ImportRequests().executeAsOne(),
+            database.ledgerQueries.countRg04ImportSources().executeAsOne(),
+            database.ledgerQueries.countRg04ImportEvidence().executeAsOne(),
+            database.ledgerQueries.countRg04ImportCandidates().executeAsOne(),
+            database.ledgerQueries.countRg04ImportConfirmations().executeAsOne(),
+            database.ledgerQueries.countRg04ImportMatches().executeAsOne(),
+            database.ledgerQueries.countRg04ImportReceipts().executeAsOne(),
+        )
 
 private fun repositoryFile(relative: String): Path {
     var current = Path.of("").toAbsolutePath()

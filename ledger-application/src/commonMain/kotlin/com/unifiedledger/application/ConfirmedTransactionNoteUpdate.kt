@@ -1,8 +1,6 @@
 package com.unifiedledger.application
 
-import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
-import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionNoteUpdateCommand
@@ -17,7 +15,10 @@ data class ExplicitlyConfirmedTransactionNoteUpdate(
     val confirmation: ExplicitManualSave,
 )
 
-data class TransactionNoteUpdateRequestIdentity(val ledgerId: LedgerId, val requestId: RequestId)
+data class TransactionNoteUpdateRequestIdentity(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+)
 
 data class TransactionNoteUpdateRequestSnapshot(
     val ledgerId: LedgerId,
@@ -43,11 +44,23 @@ fun interface ConfirmedTransactionNoteUpdateIdSource {
 }
 
 sealed interface ConfirmedTransactionNoteUpdateResult {
-    data class Created(val receipt: ConfirmedTransactionNoteUpdateReceipt) : ConfirmedTransactionNoteUpdateResult
-    data class NoChange(val receipt: ConfirmedTransactionNoteUpdateReceipt) : ConfirmedTransactionNoteUpdateResult
-    data class RequestIdentityConflict(val identity: TransactionNoteUpdateRequestIdentity) : ConfirmedTransactionNoteUpdateResult
+    data class Created(
+        val receipt: ConfirmedTransactionNoteUpdateReceipt,
+    ) : ConfirmedTransactionNoteUpdateResult
+
+    data class NoChange(
+        val receipt: ConfirmedTransactionNoteUpdateReceipt,
+    ) : ConfirmedTransactionNoteUpdateResult
+
+    data class RequestIdentityConflict(
+        val identity: TransactionNoteUpdateRequestIdentity,
+    ) : ConfirmedTransactionNoteUpdateResult
+
     data object StaleCurrentVersion : ConfirmedTransactionNoteUpdateResult
-    data class Rejected(val violation: DomainViolation) : ConfirmedTransactionNoteUpdateResult
+
+    data class Rejected(
+        val violation: DomainViolation,
+    ) : ConfirmedTransactionNoteUpdateResult
 }
 
 fun interface ConfirmedTransactionNoteUpdateCommitPort {
@@ -64,11 +77,12 @@ class ExecuteConfirmedTransactionNoteUpdate(
 ) {
     fun execute(request: ExplicitlyConfirmedTransactionNoteUpdate): ConfirmedTransactionNoteUpdateResult {
         val identity = TransactionNoteUpdateRequestIdentity(request.ledgerId, request.requestId)
-        val snapshot = TransactionNoteUpdateRequestSnapshot(
-            request.ledgerId,
-            request.transactionId,
-            TransactionNoteUpdateCommand(request.note),
-        )
+        val snapshot =
+            TransactionNoteUpdateRequestSnapshot(
+                request.ledgerId,
+                request.transactionId,
+                TransactionNoteUpdateCommand(request.note),
+            )
         return commitPort.commitOnce(identity, snapshot) {
             val ids = idSource.next()
             ConfirmedTransactionNoteUpdateResult.Created(
@@ -85,28 +99,43 @@ class ExecuteConfirmedTransactionNoteUpdate(
 
 fun projectRg01TransactionNoteUpdateResult(
     result: ConfirmedTransactionNoteUpdateResult,
-): Rg01OutcomeProjection = when (result) {
-    is ConfirmedTransactionNoteUpdateResult.Created -> Rg01OutcomeProjection(
-        Rg01OutcomeStatus.ACCEPTED,
-        returnedIds = setOf(
-            Rg01ReturnedId("transaction", result.receipt.transactionId.value),
-            Rg01ReturnedId("transaction_version", result.receipt.versionId.value),
-        ),
-    )
-    is ConfirmedTransactionNoteUpdateResult.NoChange -> Rg01OutcomeProjection(
-        Rg01OutcomeStatus.NO_CHANGE, reasonCode = "idempotent_replay",
-        returnedIds = setOf(
-            Rg01ReturnedId("transaction", result.receipt.transactionId.value),
-            Rg01ReturnedId("transaction_version", result.receipt.versionId.value),
-        ),
-    )
-    is ConfirmedTransactionNoteUpdateResult.RequestIdentityConflict -> Rg01OutcomeProjection(
-        Rg01OutcomeStatus.REJECTED, reasonCode = "request_identity_conflict", returnedIds = emptySet(),
-    )
-    ConfirmedTransactionNoteUpdateResult.StaleCurrentVersion -> Rg01OutcomeProjection(
-        Rg01OutcomeStatus.REJECTED, reasonCode = "stale_current_version", returnedIds = emptySet(),
-    )
-    is ConfirmedTransactionNoteUpdateResult.Rejected -> Rg01OutcomeProjection(
-        Rg01OutcomeStatus.REJECTED, reasonCode = "domain_rejected", returnedIds = emptySet(),
-    )
-}
+): Rg01OutcomeProjection =
+    when (result) {
+        is ConfirmedTransactionNoteUpdateResult.Created ->
+            Rg01OutcomeProjection(
+                Rg01OutcomeStatus.ACCEPTED,
+                returnedIds =
+                    setOf(
+                        Rg01ReturnedId("transaction", result.receipt.transactionId.value),
+                        Rg01ReturnedId("transaction_version", result.receipt.versionId.value),
+                    ),
+            )
+        is ConfirmedTransactionNoteUpdateResult.NoChange ->
+            Rg01OutcomeProjection(
+                Rg01OutcomeStatus.NO_CHANGE,
+                reasonCode = "idempotent_replay",
+                returnedIds =
+                    setOf(
+                        Rg01ReturnedId("transaction", result.receipt.transactionId.value),
+                        Rg01ReturnedId("transaction_version", result.receipt.versionId.value),
+                    ),
+            )
+        is ConfirmedTransactionNoteUpdateResult.RequestIdentityConflict ->
+            Rg01OutcomeProjection(
+                Rg01OutcomeStatus.REJECTED,
+                reasonCode = "request_identity_conflict",
+                returnedIds = emptySet(),
+            )
+        ConfirmedTransactionNoteUpdateResult.StaleCurrentVersion ->
+            Rg01OutcomeProjection(
+                Rg01OutcomeStatus.REJECTED,
+                reasonCode = "stale_current_version",
+                returnedIds = emptySet(),
+            )
+        is ConfirmedTransactionNoteUpdateResult.Rejected ->
+            Rg01OutcomeProjection(
+                Rg01OutcomeStatus.REJECTED,
+                reasonCode = "domain_rejected",
+                returnedIds = emptySet(),
+            )
+    }

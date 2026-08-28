@@ -3,7 +3,6 @@ package com.unifiedledger.data
 import app.cash.sqldelight.db.SqlDriver
 import com.unifiedledger.application.Rg08Action
 import com.unifiedledger.application.Rg08CandidateId
-import com.unifiedledger.application.Rg08ConfirmationId
 import com.unifiedledger.application.Rg08EvidenceId
 import com.unifiedledger.application.Rg08EvidenceLinkId
 import com.unifiedledger.application.Rg08ExecutionResult
@@ -112,85 +111,92 @@ class SqlDelightRg08Store private constructor(
         ensureOpeningTransactions()
     }
 
-    override fun commit(operation: Rg08Operation): Rg08ExecutionResult = database.transactionWithResult {
-        if (operation is Rg08Operation.RetryIdempotentInput) {
-            // D-084 generic retry: identity lookup only (the runtime receipt map
-            // semantics); nothing is claimed or persisted for the retry itself.
-            return@transactionWithResult replayRetry(operation)
-        }
-        val fingerprint = operationFingerprint(operation)
-        database.ledgerQueries.claimRg08Operation(
-            operation.ledgerId.value,
-            operation.identity.value,
-            operation.action.code,
-            operationClass(operation),
-            fingerprint,
-        )
-        if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
-            return@transactionWithResult replay(operation, fingerprint)
-        }
-        failureInjector.failAt(Rg08FailurePoint.AFTER_CLAIM)
+    override fun commit(operation: Rg08Operation): Rg08ExecutionResult =
+        database.transactionWithResult {
+            if (operation is Rg08Operation.RetryIdempotentInput) {
+                // D-084 generic retry: identity lookup only (the runtime receipt map
+                // semantics); nothing is claimed or persisted for the retry itself.
+                return@transactionWithResult replayRetry(operation)
+            }
+            val fingerprint = operationFingerprint(operation)
+            database.ledgerQueries.claimRg08Operation(
+                operation.ledgerId.value,
+                operation.identity.value,
+                operation.action.code,
+                operationClass(operation),
+                fingerprint,
+            )
+            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
+                return@transactionWithResult replay(operation, fingerprint)
+            }
+            failureInjector.failAt(Rg08FailurePoint.AFTER_CLAIM)
 
-        val before = loadPersistedSnapshot(operation.ledgerId)
-        val runtime = Rg08Runtime(catalog, lendingCatalog, before)
-        val result = runtime.commit(operation)
-        check(result !is Rg08ExecutionResult.RequestIdentityConflict) {
-            "newly claimed RG-08 operation returned an identity conflict"
+            val before = loadPersistedSnapshot(operation.ledgerId)
+            val runtime = Rg08Runtime(catalog, lendingCatalog, before)
+            val result = runtime.commit(operation)
+            check(result !is Rg08ExecutionResult.RequestIdentityConflict) {
+                "newly claimed RG-08 operation returned an identity conflict"
+            }
+            if (result is Rg08ExecutionResult.Accepted) {
+                persistDelta(operation, before, runtime.snapshot())
+            }
+            failureInjector.failAt(Rg08FailurePoint.AFTER_DELTA)
+            finalizeOperation(operation, fingerprint, result)
+            result
         }
-        if (result is Rg08ExecutionResult.Accepted) {
-            persistDelta(operation, before, runtime.snapshot())
+
+    fun snapshot(ledgerId: LedgerId): Rg08Snapshot = Rg08Runtime(catalog, lendingCatalog, loadPersistedSnapshot(ledgerId)).snapshot()
+
+    private fun operationFingerprint(operation: Rg08Operation): String = Rg08Runtime(catalog, lendingCatalog, emptyList()).operationFingerprint(operation)
+
+    private fun operationClass(operation: Rg08Operation): String =
+        when (operation) {
+            is Rg08Operation.ValidateLendingEvent -> Rg08Action.VALIDATE_LENDING_EVENT.code
+            is Rg08Operation.ValidateLendingSettlement -> Rg08Action.VALIDATE_LENDING_SETTLEMENT.code
+            is Rg08Operation.IngestImportedCollectionCandidate -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
+            is Rg08Operation.RejectIncompleteImportedConfirmation -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
+            is Rg08Operation.ConfirmImportedCollection -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
+            is Rg08Operation.AllocateLendingCollection -> Rg08Action.ALLOCATE_LENDING_COLLECTION.code
+            is Rg08Operation.MergeImportedEvidence -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
+            is Rg08Operation.RenameCounterparty -> Rg08Action.VALIDATE_LENDING_EVENT.code
+            is Rg08Operation.RetryIdempotentInput -> Rg08Action.RETRY_IDEMPOTENT_INPUT.code
+            is Rg08Operation.InvalidInput -> "reject_invalid_rg08_input"
         }
-        failureInjector.failAt(Rg08FailurePoint.AFTER_DELTA)
-        finalizeOperation(operation, fingerprint, result)
-        result
-    }
-
-    fun snapshot(ledgerId: LedgerId): Rg08Snapshot =
-        Rg08Runtime(catalog, lendingCatalog, loadPersistedSnapshot(ledgerId)).snapshot()
-
-    private fun operationFingerprint(operation: Rg08Operation): String =
-        Rg08Runtime(catalog, lendingCatalog, emptyList()).operationFingerprint(operation)
-
-    private fun operationClass(operation: Rg08Operation): String = when (operation) {
-        is Rg08Operation.ValidateLendingEvent -> Rg08Action.VALIDATE_LENDING_EVENT.code
-        is Rg08Operation.ValidateLendingSettlement -> Rg08Action.VALIDATE_LENDING_SETTLEMENT.code
-        is Rg08Operation.IngestImportedCollectionCandidate -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
-        is Rg08Operation.RejectIncompleteImportedConfirmation -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
-        is Rg08Operation.ConfirmImportedCollection -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
-        is Rg08Operation.AllocateLendingCollection -> Rg08Action.ALLOCATE_LENDING_COLLECTION.code
-        is Rg08Operation.MergeImportedEvidence -> Rg08Action.CONFIRM_IMPORTED_LENDING_COLLECTION.code
-        is Rg08Operation.RenameCounterparty -> Rg08Action.VALIDATE_LENDING_EVENT.code
-        is Rg08Operation.RetryIdempotentInput -> Rg08Action.RETRY_IDEMPOTENT_INPUT.code
-        is Rg08Operation.InvalidInput -> "reject_invalid_rg08_input"
-    }
 
     private fun replayRetry(operation: Rg08Operation.RetryIdempotentInput): Rg08ExecutionResult {
-        val saved = database.ledgerQueries
-            .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOneOrNull()
-            ?: return Rg08ExecutionResult.RequestIdentityConflict
+        val saved =
+            database.ledgerQueries
+                .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
+                .executeAsOneOrNull()
+                ?: return Rg08ExecutionResult.RequestIdentityConflict
         if (saved.outcome == "PENDING") {
             error("persisted RG-08 operation is still pending")
         }
-        val returned = database.ledgerQueries
-            .selectRg08ReturnedIds(operation.ledgerId.value, operation.identity.value)
-            .executeAsList()
-            .map(::restoreReturnedId)
+        val returned =
+            database.ledgerQueries
+                .selectRg08ReturnedIds(operation.ledgerId.value, operation.identity.value)
+                .executeAsList()
+                .map(::restoreReturnedId)
         return when (saved.outcome) {
             "ACCEPTED", "NO_CHANGE" -> Rg08ExecutionResult.NoChange(returned)
-            "REJECTED" -> Rg08ExecutionResult.Rejected(
-                reason = Rg08RejectionReason.values().single { it.code == saved.reason_code },
-                fieldPath = Rg08FieldPath.values().single { it.value == saved.field_path },
-            )
+            "REJECTED" ->
+                Rg08ExecutionResult.Rejected(
+                    reason = Rg08RejectionReason.values().single { it.code == saved.reason_code },
+                    fieldPath = Rg08FieldPath.values().single { it.value == saved.field_path },
+                )
             else -> error("unknown RG-08 operation outcome ${saved.outcome}")
         }
     }
 
-    private fun replay(operation: Rg08Operation, fingerprint: String): Rg08ExecutionResult {
-        val saved = database.ledgerQueries
-            .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOneOrNull()
-            ?: return Rg08ExecutionResult.RequestIdentityConflict
+    private fun replay(
+        operation: Rg08Operation,
+        fingerprint: String,
+    ): Rg08ExecutionResult {
+        val saved =
+            database.ledgerQueries
+                .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
+                .executeAsOneOrNull()
+                ?: return Rg08ExecutionResult.RequestIdentityConflict
         if (
             saved.action != operation.action.code ||
             saved.operation_class != operationClass(operation) ||
@@ -201,16 +207,18 @@ class SqlDelightRg08Store private constructor(
         if (saved.outcome == "PENDING") {
             error("persisted RG-08 operation is still pending")
         }
-        val returned = database.ledgerQueries
-            .selectRg08ReturnedIds(operation.ledgerId.value, operation.identity.value)
-            .executeAsList()
-            .map(::restoreReturnedId)
+        val returned =
+            database.ledgerQueries
+                .selectRg08ReturnedIds(operation.ledgerId.value, operation.identity.value)
+                .executeAsList()
+                .map(::restoreReturnedId)
         return when (saved.outcome) {
             "ACCEPTED", "NO_CHANGE" -> Rg08ExecutionResult.NoChange(returned)
-            "REJECTED" -> Rg08ExecutionResult.Rejected(
-                reason = Rg08RejectionReason.values().single { it.code == saved.reason_code },
-                fieldPath = Rg08FieldPath.values().single { it.value == saved.field_path },
-            )
+            "REJECTED" ->
+                Rg08ExecutionResult.Rejected(
+                    reason = Rg08RejectionReason.values().single { it.code == saved.reason_code },
+                    fieldPath = Rg08FieldPath.values().single { it.value == saved.field_path },
+                )
             else -> error("unknown RG-08 operation outcome ${saved.outcome}")
         }
     }
@@ -238,26 +246,30 @@ class SqlDelightRg08Store private constructor(
         fingerprint: String,
         result: Rg08ExecutionResult,
     ) {
-        val outcome = when (result) {
-            is Rg08ExecutionResult.Accepted -> "ACCEPTED"
-            is Rg08ExecutionResult.NoChange -> "NO_CHANGE"
-            is Rg08ExecutionResult.Rejected -> "REJECTED"
-            Rg08ExecutionResult.RequestIdentityConflict -> error("cannot finalize identity conflict")
-        }
+        val outcome =
+            when (result) {
+                is Rg08ExecutionResult.Accepted -> "ACCEPTED"
+                is Rg08ExecutionResult.NoChange -> "NO_CHANGE"
+                is Rg08ExecutionResult.Rejected -> "REJECTED"
+                Rg08ExecutionResult.RequestIdentityConflict -> error("cannot finalize identity conflict")
+            }
         val rejected = result as? Rg08ExecutionResult.Rejected
-        val changed = database.ledgerQueries.updateRg08OperationResult(
-            outcome,
-            rejected?.reason?.code,
-            rejected?.fieldPath?.value,
-            operation.ledgerId.value,
-            operation.identity.value,
-        ).value
+        val changed =
+            database.ledgerQueries
+                .updateRg08OperationResult(
+                    outcome,
+                    rejected?.reason?.code,
+                    rejected?.fieldPath?.value,
+                    operation.ledgerId.value,
+                    operation.identity.value,
+                ).value
         check(changed == 1L) { "RG-08 operation final result did not update" }
-        val returned = when (result) {
-            is Rg08ExecutionResult.Accepted -> result.returnedIds
-            is Rg08ExecutionResult.NoChange -> result.returnedIds
-            else -> emptyList()
-        }
+        val returned =
+            when (result) {
+                is Rg08ExecutionResult.Accepted -> result.returnedIds
+                is Rg08ExecutionResult.NoChange -> result.returnedIds
+                else -> emptyList()
+            }
         returned.forEachIndexed { index, id ->
             val stored = id.stored()
             database.ledgerQueries.insertRg08ReturnedId(
@@ -268,34 +280,43 @@ class SqlDelightRg08Store private constructor(
                 stored.second,
             )
         }
-        check(fingerprint == database.ledgerQueries
-            .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
-            .executeAsOne().input_fingerprint)
+        check(
+            fingerprint ==
+                database.ledgerQueries
+                    .selectRg08Operation(operation.ledgerId.value, operation.identity.value)
+                    .executeAsOne()
+                    .input_fingerprint,
+        )
     }
 
-    private fun Rg08ReturnedId.stored(): Pair<String, String> = when (this) {
-        is Rg08ReturnedId.Transaction -> "TRANSACTION" to id.value
-        is Rg08ReturnedId.Version -> "VERSION" to id.value
-        is Rg08ReturnedId.Position -> "POSITION" to id
-        is Rg08ReturnedId.Settlement -> "SETTLEMENT" to id
-        is Rg08ReturnedId.Component -> "COMPONENT" to id
-        is Rg08ReturnedId.Candidate -> "CANDIDATE" to id.value
-        is Rg08ReturnedId.SourceRecord -> "SOURCE_RECORD" to id.value
-        is Rg08ReturnedId.Evidence -> "EVIDENCE" to id.value
-        is Rg08ReturnedId.EvidenceLink -> "EVIDENCE_LINK" to id.value
-        is Rg08ReturnedId.TargetPosting -> "TARGET_POSTING" to id.value
-        is Rg08ReturnedId.Counterparty -> "COUNTERPARTY" to id
-        is Rg08ReturnedId.NameHistory -> "NAME_HISTORY" to id
-        is Rg08ReturnedId.Request -> "REQUEST" to id
-    }
+    private fun Rg08ReturnedId.stored(): Pair<String, String> =
+        when (this) {
+            is Rg08ReturnedId.Transaction -> "TRANSACTION" to id.value
+            is Rg08ReturnedId.Version -> "VERSION" to id.value
+            is Rg08ReturnedId.Position -> "POSITION" to id
+            is Rg08ReturnedId.Settlement -> "SETTLEMENT" to id
+            is Rg08ReturnedId.Component -> "COMPONENT" to id
+            is Rg08ReturnedId.Candidate -> "CANDIDATE" to id.value
+            is Rg08ReturnedId.SourceRecord -> "SOURCE_RECORD" to id.value
+            is Rg08ReturnedId.Evidence -> "EVIDENCE" to id.value
+            is Rg08ReturnedId.EvidenceLink -> "EVIDENCE_LINK" to id.value
+            is Rg08ReturnedId.TargetPosting -> "TARGET_POSTING" to id.value
+            is Rg08ReturnedId.Counterparty -> "COUNTERPARTY" to id
+            is Rg08ReturnedId.NameHistory -> "NAME_HISTORY" to id
+            is Rg08ReturnedId.Request -> "REQUEST" to id
+        }
 
     private fun ensureOpeningTransactions() {
         if (openingTransactions.isEmpty()) return
         database.transaction {
-            val existing = database.ledgerQueries
-                .selectRg08FormalTransactions(openingTransactions.first().formalTransaction.transaction.ledgerId.value)
-                .executeAsList()
-                .mapTo(mutableSetOf()) { it.transaction_id }
+            val existing =
+                database.ledgerQueries
+                    .selectRg08FormalTransactions(
+                        openingTransactions
+                            .first()
+                            .formalTransaction.transaction.ledgerId.value,
+                    ).executeAsList()
+                    .mapTo(mutableSetOf()) { it.transaction_id }
             openingTransactions.forEach { record ->
                 if (record.formalTransaction.transaction.id.value !in existing) {
                     persistFormalRecord(record)
@@ -345,7 +366,8 @@ class SqlDelightRg08Store private constructor(
                     posting.accountId.value,
                     posting.amount.minorUnits,
                     posting.amount.currency.code,
-                    posting.amount.currency.precision.toLong(),
+                    posting.amount.currency.precision
+                        .toLong(),
                 )
             }
         }
@@ -355,7 +377,10 @@ class SqlDelightRg08Store private constructor(
             formal.transaction.ledgerId.value,
             formal.transaction.id.value,
             record.createdAtText ?: record.createdAt.toString(),
-            record.statisticsAtText ?: formal.versions.last().times.statisticsAt.toString(),
+            record.statisticsAtText ?: formal.versions
+                .last()
+                .times.statisticsAt
+                .toString(),
         )
         // Step 2: the slimmed private table keeps a source-only placeholder row
         // (RG-08 always writes null: the record type has no source id).
@@ -369,181 +394,221 @@ class SqlDelightRg08Store private constructor(
     private fun loadPersistedSnapshot(ledgerId: LedgerId): Rg08Snapshot {
         val ledger = ledgerId.value
         val q = database.ledgerQueries
-        val sources = q.selectRg08AllSourceRecords(ledger).executeAsList().map { row ->
-            LendingSourceRecord(
-                id = row.source_id,
-                sourceRecordId = row.source_record_id,
-                kind = LendingSourceKind.valueOf(row.kind),
-                observedAt = Instant.parse(row.observed_at),
-                bookingAt = row.booking_at?.let(Instant::parse),
-                valueAt = row.value_at?.let(Instant::parse),
-                accountId = row.account_id?.let(::AccountId),
-                counterpartyId = row.counterparty_id,
-                amountMinor = row.amount_minor,
-                currency = currencyOrNull(row.currency_code, row.currency_precision),
-                originalSourcePayloadHash = row.original_source_payload_hash,
-                immutablePayloadHash = row.immutable_payload_hash,
-                mirrorOfSourceId = row.mirror_of_source_id,
-            )
-        }
-        val evidence = q.selectRg08AllEvidence(ledger).executeAsList().map { row ->
-            LendingEvidence(
-                id = row.evidence_id,
-                sourceId = row.source_id,
-                type = LendingEvidenceType.valueOf(row.evidence_type),
-                observedAt = Instant.parse(row.observed_at),
-            )
-        }
-        val evidenceLinks = q.selectRg08AllEvidenceLinks(ledger).executeAsList().map { row ->
-            LendingEvidenceLink(
-                id = row.link_id,
-                sourceId = row.source_id,
-                evidenceId = row.evidence_id,
-                role = LendingEvidenceLinkRole.valueOf(row.role),
-                targetId = row.target_id,
-                status = LendingEvidenceLinkStatus.valueOf(row.status),
-            )
-        }
-        val positionHistory = q.selectRg08AllPositionHistory(ledger)
-            .executeAsList().groupBy { it.position_id }
-        val positions = q.selectRg08AllPositions(ledger).executeAsList().map { row ->
-            LendingPosition(
-                id = row.position_id,
-                counterpartyId = row.counterparty_id,
-                receivableAccountId = AccountId(row.receivable_account_id),
-                currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
-                principalBalanceMinor = row.principal_balance_minor,
-                allocationScope = LendingAllocationScope.valueOf(row.allocation_scope),
-                contractAllocationEnabled = row.contract_allocation_enabled == 1L,
-                history = positionHistory[row.position_id].orEmpty()
-                    .sortedBy { it.history_sequence }
-                    .map { historyRow ->
-                        LendingPositionHistoryEntry(
-                            id = historyRow.history_id,
-                            behaviorCode = LendingBehaviorCode.valueOf(historyRow.behavior_code),
-                            amountMinor = historyRow.amount_minor,
-                            principalBalanceAfterMinor = historyRow.principal_balance_after_minor,
-                            transactionId = TransactionId(historyRow.transaction_id),
-                            occurredAt = Instant.parse(historyRow.occurred_at),
-                        )
-                    },
-            )
-        }
-        val settlementComponents = q.selectRg08AllSettlementComponents(ledger)
-            .executeAsList().groupBy { it.settlement_id }
-        val settlementHistory = q.selectRg08AllSettlementHistory(ledger)
-            .executeAsList().groupBy { it.settlement_id }
-        val settlements = q.selectRg08AllSettlements(ledger).executeAsList().map { row ->
-            LendingSettlement(
-                id = row.settlement_id,
-                behaviorCode = LendingBehaviorCode.valueOf(row.behavior_code),
-                counterpartyId = row.counterparty_id,
-                linkedPositionId = row.linked_position_id,
-                allocatedLendTransactionId = row.allocated_lend_transaction_id?.let(::TransactionId),
-                transactionId = TransactionId(row.transaction_id),
-                destinationAccountId = AccountId(row.destination_account_id),
-                interestCategoryId = CategoryId(row.interest_category_id),
-                totalReceivedMinor = row.total_received_minor,
-                currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
-                actualReceiptAt = Instant.parse(row.actual_receipt_at),
-                confirmedAt = Instant.parse(row.confirmed_at),
-                components = settlementComponents[row.settlement_id].orEmpty()
-                    .sortedBy { it.component_index }
-                    .map { componentRow ->
-                        LendingSettlementComponent(
-                            id = componentRow.component_id,
-                            kind = LendingComponentKind.valueOf(componentRow.kind),
-                            amountMinor = componentRow.amount_minor,
-                            postingId = componentRow.posting_id?.let(::PostingId),
-                        )
-                    },
-                history = settlementHistory[row.settlement_id].orEmpty()
-                    .sortedBy { it.history_sequence }
-                    .map { historyRow ->
-                        LendingSettlementHistoryEntry(
-                            id = historyRow.history_id,
-                            status = LendingSettlementStatus.valueOf(historyRow.status),
-                            occurredAt = Instant.parse(historyRow.occurred_at),
-                            transactionId = TransactionId(historyRow.transaction_id),
-                            formalEffectCount = historyRow.formal_effect_count.toInt(),
-                        )
-                    },
-            )
-        }
-        val candidateHistory = q.selectRg08AllCandidateStatusHistory(ledger)
-            .executeAsList().groupBy { it.candidate_id }
-        val candidateSources = q.selectRg08AllCandidateSources(ledger)
-            .executeAsList().groupBy { it.candidate_id }
-        val candidates = q.selectRg08AllCandidates(ledger).executeAsList().map { row ->
-            val status = LendingCandidateStatus.valueOf(row.status)
-            LendingCandidate(
-                id = row.candidate_id,
-                type = row.type,
-                status = status,
-                proposedTotalReceivedMinor = row.proposed_total_received_minor,
-                proposedPrincipalAmountMinor = row.proposed_principal_amount_minor,
-                proposedInterestAmountMinor = row.proposed_interest_amount_minor,
-                proposedFeeAmountMinor = row.proposed_fee_amount_minor,
-                currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
-                proposedDestinationAccountId = row.proposed_destination_account_id?.let(::AccountId),
-                proposedActualReceiptAt = row.proposed_actual_receipt_at?.let(Instant::parse),
-                proposedBehaviorCode = row.proposed_behavior_code?.let(LendingBehaviorCode::valueOf),
-                proposedCounterpartyId = row.proposed_counterparty_id,
-                bankEvidenceProvesComponentSplit = row.bank_evidence_proves_component_split == 1L,
-                expectedInterestMayConfirmSplit = row.expected_interest_may_confirm_split == 1L,
-                nameMatchMayConfirmCounterparty = row.name_match_may_confirm_counterparty == 1L,
-                requiresConfirmation = confirmationGatesFor(status),
-                sourceIds = candidateSources[row.candidate_id].orEmpty()
-                    .sortedBy { it.source_index }
-                    .map { it.source_id },
-                ruleVersion = row.rule_version.toInt(),
-                confidence = row.confidence,
-                statusHistory = candidateHistory[row.candidate_id].orEmpty()
-                    .sortedBy { it.status_sequence }
-                    .map { historyRow ->
-                        LendingCandidateStatusHistoryEntry(
-                            id = historyRow.history_id,
-                            status = LendingCandidateStatus.valueOf(historyRow.status),
-                            occurredAt = Instant.parse(historyRow.occurred_at),
-                            formalEffectCount = historyRow.formal_effect_count.toInt(),
-                        )
-                    },
-            )
-        }
-        val confirmations = q.selectRg08AllConfirmations(ledger).executeAsList().map { row ->
-            LendingConfirmationProvenance(
-                id = row.confirmation_id,
-                confirmationRequestId = row.confirmation_request_id,
-                role = LendingConfirmationRole.valueOf(row.role),
-                transactionId = TransactionId(row.transaction_id),
-                counterpartyId = row.counterparty_id,
-                confirmedAt = Instant.parse(row.confirmed_at),
-                candidateId = row.candidate_id,
-                settlementId = row.settlement_id,
-            )
-        }
-        val auditLinks = q.selectRg08AllAuditLinks(ledger).executeAsList().map { row ->
-            LendingAuditLink(
-                id = row.audit_link_id,
-                kind = LendingAuditLinkKind.valueOf(row.kind),
-                fromId = row.from_id,
-                toId = row.to_id,
-            )
-        }
-        val postingSemantics = q.selectRg08AllPostingSemantics(ledger).executeAsList()
-            .associate { row ->
-                row.posting_id to Rg08PostingSemantic(row.role, row.reconciliation_eligible == 1L)
-            }
-        val nameHistory = q.selectRg08AllNameHistory(ledger).executeAsList()
-            .groupBy { it.counterparty_id }
-        val counterpartyNames = buildMap {
-            nameHistory.forEach { (counterpartyId, rows) ->
-                put(
-                    counterpartyId,
-                    rows.maxBy { it.history_sequence }.display_name,
+        val sources =
+            q.selectRg08AllSourceRecords(ledger).executeAsList().map { row ->
+                LendingSourceRecord(
+                    id = row.source_id,
+                    sourceRecordId = row.source_record_id,
+                    kind = LendingSourceKind.valueOf(row.kind),
+                    observedAt = Instant.parse(row.observed_at),
+                    bookingAt = row.booking_at?.let(Instant::parse),
+                    valueAt = row.value_at?.let(Instant::parse),
+                    accountId = row.account_id?.let(::AccountId),
+                    counterpartyId = row.counterparty_id,
+                    amountMinor = row.amount_minor,
+                    currency = currencyOrNull(row.currency_code, row.currency_precision),
+                    originalSourcePayloadHash = row.original_source_payload_hash,
+                    immutablePayloadHash = row.immutable_payload_hash,
+                    mirrorOfSourceId = row.mirror_of_source_id,
                 )
             }
-        }
+        val evidence =
+            q.selectRg08AllEvidence(ledger).executeAsList().map { row ->
+                LendingEvidence(
+                    id = row.evidence_id,
+                    sourceId = row.source_id,
+                    type = LendingEvidenceType.valueOf(row.evidence_type),
+                    observedAt = Instant.parse(row.observed_at),
+                )
+            }
+        val evidenceLinks =
+            q.selectRg08AllEvidenceLinks(ledger).executeAsList().map { row ->
+                LendingEvidenceLink(
+                    id = row.link_id,
+                    sourceId = row.source_id,
+                    evidenceId = row.evidence_id,
+                    role = LendingEvidenceLinkRole.valueOf(row.role),
+                    targetId = row.target_id,
+                    status = LendingEvidenceLinkStatus.valueOf(row.status),
+                )
+            }
+        val positionHistory =
+            q
+                .selectRg08AllPositionHistory(ledger)
+                .executeAsList()
+                .groupBy { it.position_id }
+        val positions =
+            q.selectRg08AllPositions(ledger).executeAsList().map { row ->
+                LendingPosition(
+                    id = row.position_id,
+                    counterpartyId = row.counterparty_id,
+                    receivableAccountId = AccountId(row.receivable_account_id),
+                    currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                    principalBalanceMinor = row.principal_balance_minor,
+                    allocationScope = LendingAllocationScope.valueOf(row.allocation_scope),
+                    contractAllocationEnabled = row.contract_allocation_enabled == 1L,
+                    history =
+                        positionHistory[row.position_id]
+                            .orEmpty()
+                            .sortedBy { it.history_sequence }
+                            .map { historyRow ->
+                                LendingPositionHistoryEntry(
+                                    id = historyRow.history_id,
+                                    behaviorCode = LendingBehaviorCode.valueOf(historyRow.behavior_code),
+                                    amountMinor = historyRow.amount_minor,
+                                    principalBalanceAfterMinor = historyRow.principal_balance_after_minor,
+                                    transactionId = TransactionId(historyRow.transaction_id),
+                                    occurredAt = Instant.parse(historyRow.occurred_at),
+                                )
+                            },
+                )
+            }
+        val settlementComponents =
+            q
+                .selectRg08AllSettlementComponents(ledger)
+                .executeAsList()
+                .groupBy { it.settlement_id }
+        val settlementHistory =
+            q
+                .selectRg08AllSettlementHistory(ledger)
+                .executeAsList()
+                .groupBy { it.settlement_id }
+        val settlements =
+            q.selectRg08AllSettlements(ledger).executeAsList().map { row ->
+                LendingSettlement(
+                    id = row.settlement_id,
+                    behaviorCode = LendingBehaviorCode.valueOf(row.behavior_code),
+                    counterpartyId = row.counterparty_id,
+                    linkedPositionId = row.linked_position_id,
+                    allocatedLendTransactionId = row.allocated_lend_transaction_id?.let(::TransactionId),
+                    transactionId = TransactionId(row.transaction_id),
+                    destinationAccountId = AccountId(row.destination_account_id),
+                    interestCategoryId = CategoryId(row.interest_category_id),
+                    totalReceivedMinor = row.total_received_minor,
+                    currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                    actualReceiptAt = Instant.parse(row.actual_receipt_at),
+                    confirmedAt = Instant.parse(row.confirmed_at),
+                    components =
+                        settlementComponents[row.settlement_id]
+                            .orEmpty()
+                            .sortedBy { it.component_index }
+                            .map { componentRow ->
+                                LendingSettlementComponent(
+                                    id = componentRow.component_id,
+                                    kind = LendingComponentKind.valueOf(componentRow.kind),
+                                    amountMinor = componentRow.amount_minor,
+                                    postingId = componentRow.posting_id?.let(::PostingId),
+                                )
+                            },
+                    history =
+                        settlementHistory[row.settlement_id]
+                            .orEmpty()
+                            .sortedBy { it.history_sequence }
+                            .map { historyRow ->
+                                LendingSettlementHistoryEntry(
+                                    id = historyRow.history_id,
+                                    status = LendingSettlementStatus.valueOf(historyRow.status),
+                                    occurredAt = Instant.parse(historyRow.occurred_at),
+                                    transactionId = TransactionId(historyRow.transaction_id),
+                                    formalEffectCount = historyRow.formal_effect_count.toInt(),
+                                )
+                            },
+                )
+            }
+        val candidateHistory =
+            q
+                .selectRg08AllCandidateStatusHistory(ledger)
+                .executeAsList()
+                .groupBy { it.candidate_id }
+        val candidateSources =
+            q
+                .selectRg08AllCandidateSources(ledger)
+                .executeAsList()
+                .groupBy { it.candidate_id }
+        val candidates =
+            q.selectRg08AllCandidates(ledger).executeAsList().map { row ->
+                val status = LendingCandidateStatus.valueOf(row.status)
+                LendingCandidate(
+                    id = row.candidate_id,
+                    type = row.type,
+                    status = status,
+                    proposedTotalReceivedMinor = row.proposed_total_received_minor,
+                    proposedPrincipalAmountMinor = row.proposed_principal_amount_minor,
+                    proposedInterestAmountMinor = row.proposed_interest_amount_minor,
+                    proposedFeeAmountMinor = row.proposed_fee_amount_minor,
+                    currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                    proposedDestinationAccountId = row.proposed_destination_account_id?.let(::AccountId),
+                    proposedActualReceiptAt = row.proposed_actual_receipt_at?.let(Instant::parse),
+                    proposedBehaviorCode = row.proposed_behavior_code?.let(LendingBehaviorCode::valueOf),
+                    proposedCounterpartyId = row.proposed_counterparty_id,
+                    bankEvidenceProvesComponentSplit = row.bank_evidence_proves_component_split == 1L,
+                    expectedInterestMayConfirmSplit = row.expected_interest_may_confirm_split == 1L,
+                    nameMatchMayConfirmCounterparty = row.name_match_may_confirm_counterparty == 1L,
+                    requiresConfirmation = confirmationGatesFor(status),
+                    sourceIds =
+                        candidateSources[row.candidate_id]
+                            .orEmpty()
+                            .sortedBy { it.source_index }
+                            .map { it.source_id },
+                    ruleVersion = row.rule_version.toInt(),
+                    confidence = row.confidence,
+                    statusHistory =
+                        candidateHistory[row.candidate_id]
+                            .orEmpty()
+                            .sortedBy { it.status_sequence }
+                            .map { historyRow ->
+                                LendingCandidateStatusHistoryEntry(
+                                    id = historyRow.history_id,
+                                    status = LendingCandidateStatus.valueOf(historyRow.status),
+                                    occurredAt = Instant.parse(historyRow.occurred_at),
+                                    formalEffectCount = historyRow.formal_effect_count.toInt(),
+                                )
+                            },
+                )
+            }
+        val confirmations =
+            q.selectRg08AllConfirmations(ledger).executeAsList().map { row ->
+                LendingConfirmationProvenance(
+                    id = row.confirmation_id,
+                    confirmationRequestId = row.confirmation_request_id,
+                    role = LendingConfirmationRole.valueOf(row.role),
+                    transactionId = TransactionId(row.transaction_id),
+                    counterpartyId = row.counterparty_id,
+                    confirmedAt = Instant.parse(row.confirmed_at),
+                    candidateId = row.candidate_id,
+                    settlementId = row.settlement_id,
+                )
+            }
+        val auditLinks =
+            q.selectRg08AllAuditLinks(ledger).executeAsList().map { row ->
+                LendingAuditLink(
+                    id = row.audit_link_id,
+                    kind = LendingAuditLinkKind.valueOf(row.kind),
+                    fromId = row.from_id,
+                    toId = row.to_id,
+                )
+            }
+        val postingSemantics =
+            q
+                .selectRg08AllPostingSemantics(ledger)
+                .executeAsList()
+                .associate { row ->
+                    row.posting_id to Rg08PostingSemantic(row.role, row.reconciliation_eligible == 1L)
+                }
+        val nameHistory =
+            q
+                .selectRg08AllNameHistory(ledger)
+                .executeAsList()
+                .groupBy { it.counterparty_id }
+        val counterpartyNames =
+            buildMap {
+                nameHistory.forEach { (counterpartyId, rows) ->
+                    put(
+                        counterpartyId,
+                        rows.maxBy { it.history_sequence }.display_name,
+                    )
+                }
+            }
         return Rg08Snapshot(
             formalTransactions = loadFormalTransactions(ledgerId),
             positions = positions,
@@ -562,60 +627,79 @@ class SqlDelightRg08Store private constructor(
         )
     }
 
-    private fun currencyOrNull(code: String?, precision: Long?): CurrencyUnit? {
+    private fun currencyOrNull(
+        code: String?,
+        precision: Long?,
+    ): CurrencyUnit? {
         if (code == null || precision == null) return null
         return CurrencyUnit(code, precision.toInt())
     }
 
     private fun loadFormalTransactions(ledgerId: LedgerId): List<Rg08FormalTransactionRecord> {
         val ledger = ledgerId.value
-        val metadata = database.ledgerQueries.selectFormalTransactionMetadata(ledger)
-            .executeAsList().associateBy { it.transaction_id }
+        val metadata =
+            database.ledgerQueries
+                .selectFormalTransactionMetadata(ledger)
+                .executeAsList()
+                .associateBy { it.transaction_id }
         return database.ledgerQueries.selectRg08FormalTransactions(ledger).executeAsList().map { row ->
-            val versions = database.ledgerQueries.selectRg08FormalVersions(ledger, row.transaction_id)
-                .executeAsList().map { version ->
-                    TransactionVersion(
-                        id = TransactionVersionId(version.version_id),
-                        transactionId = TransactionId(version.transaction_id),
-                        versionNumber = version.version_number.toInt(),
-                        postingSetId = PostingSetId(version.posting_set_id),
-                        times = TransactionTimes(
-                            occurredAt = Instant.parse(version.occurred_at),
-                            statisticsAt = Instant.parse(version.statistics_at),
-                            effectiveAt = Instant.parse(version.effective_at),
-                        ),
-                        note = version.note,
-                    )
-                }
-            val postingSets = versions.map { it.postingSetId }.distinct().map { postingSetId ->
-                val postings = database.ledgerQueries.selectRg08FormalPostings(ledger, postingSetId.value)
-                    .executeAsList().sortedBy { it.posting_index }.map { posting ->
-                        Posting(
-                            id = PostingId(posting.posting_id),
-                            accountId = AccountId(posting.account_id),
-                            amount = Money.ofMinor(
-                                posting.amount_minor,
-                                CurrencyUnit(posting.currency_code, posting.currency_precision.toInt()),
-                            ),
+            val versions =
+                database.ledgerQueries
+                    .selectRg08FormalVersions(ledger, row.transaction_id)
+                    .executeAsList()
+                    .map { version ->
+                        TransactionVersion(
+                            id = TransactionVersionId(version.version_id),
+                            transactionId = TransactionId(version.transaction_id),
+                            versionNumber = version.version_number.toInt(),
+                            postingSetId = PostingSetId(version.posting_set_id),
+                            times =
+                                TransactionTimes(
+                                    occurredAt = Instant.parse(version.occurred_at),
+                                    statisticsAt = Instant.parse(version.statistics_at),
+                                    effectiveAt = Instant.parse(version.effective_at),
+                                ),
+                            note = version.note,
                         )
                     }
-                when (val created = PostingSet.create(postingSetId, postings)) {
-                    is DomainResult.Success -> created.value
-                    is DomainResult.Failure -> error("invalid persisted RG-08 posting set $postingSetId")
+            val postingSets =
+                versions.map { it.postingSetId }.distinct().map { postingSetId ->
+                    val postings =
+                        database.ledgerQueries
+                            .selectRg08FormalPostings(ledger, postingSetId.value)
+                            .executeAsList()
+                            .sortedBy { it.posting_index }
+                            .map { posting ->
+                                Posting(
+                                    id = PostingId(posting.posting_id),
+                                    accountId = AccountId(posting.account_id),
+                                    amount =
+                                        Money.ofMinor(
+                                            posting.amount_minor,
+                                            CurrencyUnit(posting.currency_code, posting.currency_precision.toInt()),
+                                        ),
+                                )
+                            }
+                    when (val created = PostingSet.create(postingSetId, postings)) {
+                        is DomainResult.Success -> created.value
+                        is DomainResult.Failure -> error("invalid persisted RG-08 posting set $postingSetId")
+                    }
                 }
-            }
-            val transaction = Transaction(
-                id = TransactionId(row.transaction_id),
-                ledgerId = LedgerId(row.ledger_id),
-                kind = TransactionKind.valueOf(row.kind),
-                currentVersionId = TransactionVersionId(row.current_version_id),
-            )
-            val formal = when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
-                is DomainResult.Success -> created.value
-                is DomainResult.Failure -> error("invalid persisted RG-08 formal transaction ${row.transaction_id}")
-            }
-            val savedMetadata = metadata[row.transaction_id]
-                ?: error("missing persisted RG-08 formal transaction metadata for ${row.transaction_id}")
+            val transaction =
+                Transaction(
+                    id = TransactionId(row.transaction_id),
+                    ledgerId = LedgerId(row.ledger_id),
+                    kind = TransactionKind.valueOf(row.kind),
+                    currentVersionId = TransactionVersionId(row.current_version_id),
+                )
+            val formal =
+                when (val created = FormalTransaction.create(transaction, versions, postingSets)) {
+                    is DomainResult.Success -> created.value
+                    is DomainResult.Failure -> error("invalid persisted RG-08 formal transaction ${row.transaction_id}")
+                }
+            val savedMetadata =
+                metadata[row.transaction_id]
+                    ?: error("missing persisted RG-08 formal transaction metadata for ${row.transaction_id}")
             Rg08FormalTransactionRecord(
                 formalTransaction = formal,
                 createdAt = Instant.parse(savedMetadata.created_at),
@@ -630,11 +714,13 @@ class SqlDelightRg08Store private constructor(
         before: Rg08Snapshot,
         after: Rg08Snapshot,
     ) {
-        val beforeTransactionIds = before.formalTransactions
-            .mapTo(mutableSetOf()) { it.formalTransaction.transaction.id.value }
-        val newFormal = after.formalTransactions.filter {
-            it.formalTransaction.transaction.id.value !in beforeTransactionIds
-        }
+        val beforeTransactionIds =
+            before.formalTransactions
+                .mapTo(mutableSetOf()) { it.formalTransaction.transaction.id.value }
+        val newFormal =
+            after.formalTransactions.filter {
+                it.formalTransaction.transaction.id.value !in beforeTransactionIds
+            }
         newFormal.forEach(::persistFormalRecord)
         persistNewFormalSemantics(operation, newFormal, after)
 
@@ -928,10 +1014,14 @@ class SqlDelightRg08Store private constructor(
     private fun persistNameHistoryDelta(operation: Rg08Operation) {
         if (operation !is Rg08Operation.RenameCounterparty) return
         val ledger = operation.ledgerId.value
-        val sequence = (database.ledgerQueries.selectRg08AllNameHistory(ledger)
-            .executeAsList()
-            .filter { it.counterparty_id == operation.input.counterpartyId }
-            .maxOfOrNull { it.history_sequence } ?: 0L) + 1L
+        val sequence =
+            (
+                database.ledgerQueries
+                    .selectRg08AllNameHistory(ledger)
+                    .executeAsList()
+                    .filter { it.counterparty_id == operation.input.counterpartyId }
+                    .maxOfOrNull { it.history_sequence } ?: 0L
+            ) + 1L
         database.ledgerQueries.insertRg08NameHistory(
             ledger,
             operation.input.counterpartyId,
@@ -985,19 +1075,26 @@ class SqlDelightRg08Store private constructor(
         ledgerId: LedgerId,
         after: Rg08Snapshot,
     ) {
-        val current = database.ledgerQueries.selectRg08AllPostingReconciliations(ledgerId.value)
-            .executeAsList().associateBy { it.posting_id }
-        val histories = database.ledgerQueries.selectRg08AllReconciliationHistory(ledgerId.value)
-            .executeAsList().groupBy { it.posting_id }
+        val current =
+            database.ledgerQueries
+                .selectRg08AllPostingReconciliations(ledgerId.value)
+                .executeAsList()
+                .associateBy { it.posting_id }
+        val histories =
+            database.ledgerQueries
+                .selectRg08AllReconciliationHistory(ledgerId.value)
+                .executeAsList()
+                .groupBy { it.posting_id }
         after.reconciliation.forEach { (postingId, currentStatus) ->
             if (currentStatus != "matched") return@forEach
             val row = current[postingId] ?: return@forEach
             if (row.status != "PENDING") return@forEach
-            val link = after.evidenceLinks.firstOrNull {
-                it.targetId == postingId &&
-                    it.role in RECONCILIATION_POSTING_ROLES &&
-                    it.status == LendingEvidenceLinkStatus.MATCHED
-            } ?: error("RG-08 matched reconciliation transition lacks evidence link")
+            val link =
+                after.evidenceLinks.firstOrNull {
+                    it.targetId == postingId &&
+                        it.role in RECONCILIATION_POSTING_ROLES &&
+                        it.status == LendingEvidenceLinkStatus.MATCHED
+                } ?: error("RG-08 matched reconciliation transition lacks evidence link")
             val sequence = (histories[postingId].orEmpty().maxOfOrNull { it.status_sequence } ?: 0L) + 1L
             check(sequence == row.latest_sequence + 1L) { "RG-08 reconciliation sequence mismatch" }
             database.ledgerQueries.insertRg08ReconciliationHistory(
@@ -1020,9 +1117,10 @@ class SqlDelightRg08Store private constructor(
     }
 
     private companion object {
-        val RECONCILIATION_POSTING_ROLES = setOf(
-            LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
-            LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
-        )
+        val RECONCILIATION_POSTING_ROLES =
+            setOf(
+                LendingEvidenceLinkRole.DESTINATION_ASSET_POSTING,
+                LendingEvidenceLinkRole.FUNDING_ASSET_POSTING,
+            )
     }
 }

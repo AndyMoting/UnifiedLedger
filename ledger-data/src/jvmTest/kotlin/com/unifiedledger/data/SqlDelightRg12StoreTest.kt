@@ -12,6 +12,7 @@ import com.unifiedledger.application.Rg12Runtime
 import com.unifiedledger.application.Rg12Snapshot
 import com.unifiedledger.application.adaptRg12Fixture
 import com.unifiedledger.application.parseRg12FixtureInputs
+import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Posting
@@ -25,7 +26,6 @@ import com.unifiedledger.domain.Transaction
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.SQLException
@@ -87,9 +87,10 @@ class SqlDelightRg12StoreTest {
                 )
                 // Operation boundary: one ACCEPTED operation with the returned version id.
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
-                val operationRow = database.ledgerQueries
-                    .selectRg12Operation(fixture.ledgerId.value, "root-correction-request")
-                    .executeAsOne()
+                val operationRow =
+                    database.ledgerQueries
+                        .selectRg12Operation(fixture.ledgerId.value, "root-correction-request")
+                        .executeAsOne()
                 assertEquals("ACCEPTED", operationRow.outcome)
                 assertEquals(
                     listOf("VERSION" to "root-correction-transaction-v2"),
@@ -100,74 +101,110 @@ class SqlDelightRg12StoreTest {
                 )
                 // The v2 version row exists on the shared transaction_version table with its
                 // write-once confirmation id and the fresh posting set.
-                val versions = database.ledgerQueries
-                    .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
-                    .executeAsList()
+                val versions =
+                    database.ledgerQueries
+                        .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
+                        .executeAsList()
                 assertEquals(2L, versions.size.toLong())
                 val v2 = versions.single { it.version_number == 2L }
                 assertEquals("root-correction-transaction-v2", v2.version_id)
                 assertEquals("root-correction-set-v2", v2.posting_set_id)
                 assertEquals("root-correction-confirmation", v2.confirmation_id)
                 // The v2 posting set and its postings are inserted into the shared tables.
-                val v2Postings = database.ledgerQueries
-                    .selectRg12FormalPostings(fixture.ledgerId.value, "root-correction-set-v2")
-                    .executeAsList()
+                val v2Postings =
+                    database.ledgerQueries
+                        .selectRg12FormalPostings(fixture.ledgerId.value, "root-correction-set-v2")
+                        .executeAsList()
                 assertEquals(
                     listOf("root-correction-expense-v2", "root-correction-asset-v2", "root-correction-liability-v2"),
                     v2Postings.map { it.posting_id },
                 )
                 // Current version advanced; per-version metadata carries the corrected_at
                 // creation text; the record statistics time text is preserved.
-                val txRow = database.ledgerQueries
-                    .selectRg12FormalTransactions(fixture.ledgerId.value)
-                    .executeAsList()
-                    .single { it.transaction_id == "root-correction-transaction" }
+                val txRow =
+                    database.ledgerQueries
+                        .selectRg12FormalTransactions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.transaction_id == "root-correction-transaction" }
                 assertEquals("root-correction-transaction-v2", txRow.current_version_id)
-                val versionMetadata = database.ledgerQueries
-                    .selectRg12TransactionVersionMetadata(fixture.ledgerId.value)
-                    .executeAsList()
-                    .single { it.version_id == "root-correction-transaction-v2" }
+                val versionMetadata =
+                    database.ledgerQueries
+                        .selectRg12TransactionVersionMetadata(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.version_id == "root-correction-transaction-v2" }
                 assertEquals("2026-04-20T10:00:00+08:00", versionMetadata.created_at)
-                val recordMetadata = database.ledgerQueries
-                    .selectFormalTransactionMetadata(fixture.ledgerId.value)
-                    .executeAsList()
-                    .single { it.transaction_id == "root-correction-transaction" }
+                val recordMetadata =
+                    database.ledgerQueries
+                        .selectFormalTransactionMetadata(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.transaction_id == "root-correction-transaction" }
                 assertEquals("2026-04-10T09:30:00+08:00", recordMetadata.statistics_at_text)
                 // RG-12 exclusive owners: semantics for all six postings, three matches with
                 // the appended liability history, three facts, three replacement links, one
                 // confirmation, one consumption record and the two seeded report periods.
-                assertEquals(6L, database.ledgerQueries.selectRg12AllPostingSemantics(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    6L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingSemantics(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 val matches = database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList()
                 assertEquals(3L, matches.size.toLong())
                 assertEquals(
                     4L,
-                    matches.sumOf { match ->
-                        database.ledgerQueries
-                            .selectRg12MatchHistory(fixture.ledgerId.value, match.match_id)
-                            .executeAsList().size
-                    }.toLong(),
+                    matches
+                        .sumOf { match ->
+                            database.ledgerQueries
+                                .selectRg12MatchHistory(fixture.ledgerId.value, match.match_id)
+                                .executeAsList()
+                                .size
+                        }.toLong(),
                 )
-                val liabilityHistory = database.ledgerQueries
-                    .selectRg12MatchHistory(fixture.ledgerId.value, "root-correction-match-liability-v1")
-                    .executeAsList()
+                val liabilityHistory =
+                    database.ledgerQueries
+                        .selectRg12MatchHistory(fixture.ledgerId.value, "root-correction-match-liability-v1")
+                        .executeAsList()
                 assertEquals(listOf("MATCHED", "INVALIDATED"), liabilityHistory.map { it.status })
                 assertEquals("2026-04-20T02:00:00Z", liabilityHistory.last().entry_at)
-                assertEquals(4L, database.ledgerQueries.selectRg12AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(3L, database.ledgerQueries.selectRg12AllPostingReplacements(fixture.ledgerId.value).executeAsList().size.toLong())
-                val confirmation = database.ledgerQueries
-                    .selectRg12AllConfirmations(fixture.ledgerId.value)
-                    .executeAsList().single()
+                assertEquals(
+                    4L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReplacements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                val confirmation =
+                    database.ledgerQueries
+                        .selectRg12AllConfirmations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single()
                 assertEquals("root-correction-correct", confirmation.operation_id)
                 assertEquals("operation", confirmation.subject_kind)
                 assertEquals("{}", confirmation.payload)
-                val consumption = database.ledgerQueries
-                    .selectRg12AllConsumptionRecords(fixture.ledgerId.value)
-                    .executeAsList()
-                    .single { it.record_id == "root-correction-consumption-v2" }
+                val consumption =
+                    database.ledgerQueries
+                        .selectRg12AllConsumptionRecords(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.record_id == "root-correction-consumption-v2" }
                 assertEquals("110.00", consumption.amount_text)
                 assertEquals(
                     setOf("2026-04-10", "2026-04-20"),
-                    database.ledgerQueries.selectRg12AllReportPeriods(fixture.ledgerId.value).executeAsList().map { it.period }.toSet(),
+                    database.ledgerQueries
+                        .selectRg12AllReportPeriods(fixture.ledgerId.value)
+                        .executeAsList()
+                        .map { it.period }
+                        .toSet(),
                 )
                 // Snapshot-level lineage: the three-value replacement chain, the invalidated
                 // predecessor match, the inherited asset match, facts and summary.
@@ -226,17 +263,18 @@ class SqlDelightRg12StoreTest {
                     replay.returnedIds,
                 )
                 // A retry by identity replays the finalized receipt without an operation body.
-                val retry = assertIs<Rg12ExecutionResult.NoChange>(
-                    store.commit(
-                        Rg12Operation.RetryIdempotentInput(
-                            fixture.ledgerId,
-                            Rg12RetryInput(
-                                inputId = "root-correction-request",
-                                replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                val retry =
+                    assertIs<Rg12ExecutionResult.NoChange>(
+                        store.commit(
+                            Rg12Operation.RetryIdempotentInput(
+                                fixture.ledgerId,
+                                Rg12RetryInput(
+                                    inputId = "root-correction-request",
+                                    replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                                ),
                             ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals(replay.returnedIds, retry.returnedIds)
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
             }
@@ -251,28 +289,32 @@ class SqlDelightRg12StoreTest {
                     listOf<Rg12ReturnedId>(Rg12ReturnedId.Version(TransactionVersionId("root-correction-transaction-v2"))),
                     replayed.returnedIds,
                 )
-                val retried = assertIs<Rg12ExecutionResult.NoChange>(
-                    store.commit(
-                        Rg12Operation.RetryIdempotentInput(
-                            fixture.ledgerId,
-                            Rg12RetryInput(
-                                inputId = "root-correction-request",
-                                replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                val retried =
+                    assertIs<Rg12ExecutionResult.NoChange>(
+                        store.commit(
+                            Rg12Operation.RetryIdempotentInput(
+                                fixture.ledgerId,
+                                Rg12RetryInput(
+                                    inputId = "root-correction-request",
+                                    replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                                ),
                             ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals(replayed.returnedIds, retried.returnedIds)
                 // A changed fingerprint on the same identity is a conflict.
-                val changed = (correct.operation as Rg12Operation.CorrectTransactionVersion).let { op ->
-                    op.copy(
-                        input = op.input.copy(
-                            replacementPostings = op.input.replacementPostings.mapIndexed { index, item ->
-                                if (index == 1) item.copy(facts = item.facts.copy(amountText = "-69.00")) else item
-                            },
-                        ),
-                    )
-                }
+                val changed =
+                    (correct.operation as Rg12Operation.CorrectTransactionVersion).let { op ->
+                        op.copy(
+                            input =
+                                op.input.copy(
+                                    replacementPostings =
+                                        op.input.replacementPostings.mapIndexed { index, item ->
+                                            if (index == 1) item.copy(facts = item.facts.copy(amountText = "-69.00")) else item
+                                        },
+                                ),
+                        )
+                    }
                 assertEquals(Rg12ExecutionResult.RequestIdentityConflict, store.commit(changed))
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
             }
@@ -299,36 +341,87 @@ class SqlDelightRg12StoreTest {
                 val rejected = assertIs<Rg12ExecutionResult.Rejected>(store.commit(rejection.operation))
                 assertEquals(Rg12RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, rejected.reason)
                 assertEquals("$.attempted_input.explicit_confirmation", rejected.fieldPath.value)
-                val saved = database.ledgerQueries
-                    .selectRg12Operation(fixture.ledgerId.value, "root-rejections-reject-8-request")
-                    .executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg12Operation(fixture.ledgerId.value, "root-rejections-reject-8-request")
+                        .executeAsOne()
                 assertEquals("REJECTED", saved.outcome)
                 assertEquals("explicit_confirmation_required", saved.reason_code)
                 assertEquals("$.attempted_input.explicit_confirmation", saved.field_path)
                 // The rejection persists a receipt with zero dependent rows beyond the
                 // opening baseline: the formal chain stays at the baseline transaction and
                 // every RG-12 exclusive owner keeps its seed counts.
-                assertEquals(0L, database.ledgerQueries.selectRg12ReturnedIds(fixture.ledgerId.value, "root-rejections-reject-8-request").executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12ReturnedIds(fixture.ledgerId.value, "root-rejections-reject-8-request")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(3L, database.ledgerQueries.selectRg12AllPostingSemantics(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllConfirmations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(1L, database.ledgerQueries.selectRg12AllConsumptionRecords(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingSemantics(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllMatches(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReplacements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllConfirmations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg12AllConsumptionRecords(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 // Replay of the same rejected input is stable; retry by identity is stable too.
                 assertEquals(rejected, store.commit(rejection.operation))
-                val retried = assertIs<Rg12ExecutionResult.Rejected>(
-                    store.commit(
-                        Rg12Operation.RetryIdempotentInput(
-                            fixture.ledgerId,
-                            Rg12RetryInput(
-                                inputId = "root-rejections-reject-8-request",
-                                replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                val retried =
+                    assertIs<Rg12ExecutionResult.Rejected>(
+                        store.commit(
+                            Rg12Operation.RetryIdempotentInput(
+                                fixture.ledgerId,
+                                Rg12RetryInput(
+                                    inputId = "root-rejections-reject-8-request",
+                                    replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                                ),
                             ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals(rejected.reason, retried.reason)
                 assertEquals(rejected.fieldPath, retried.fieldPath)
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
@@ -362,11 +455,12 @@ class SqlDelightRg12StoreTest {
             JdbcSqliteDriver(claimUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val injector = object : Rg12FailureInjector {
-                    override fun failAt(point: Rg12FailurePoint) {
-                        if (point == Rg12FailurePoint.AFTER_CLAIM) error("injected RG-12 claim failure")
+                val injector =
+                    object : Rg12FailureInjector {
+                        override fun failAt(point: Rg12FailurePoint) {
+                            if (point == Rg12FailurePoint.AFTER_CLAIM) error("injected RG-12 claim failure")
+                        }
                     }
-                }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
                 // The seeded opening baseline captured before the failure is the reopen
@@ -386,8 +480,22 @@ class SqlDelightRg12StoreTest {
                 // counts and the full snapshot is byte-equal to the baseline.
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(1L, database.ledgerQueries.selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction").executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllMatches(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 assertEquals(claimCounts, ownerTableCounts(database, fixture.ledgerId))
                 assertPersistedSnapshotEquals(claimBaseline, store.snapshot(fixture.ledgerId))
                 // A clean store on the reopened database commits the same operation.
@@ -397,11 +505,12 @@ class SqlDelightRg12StoreTest {
             JdbcSqliteDriver(deltaUrl, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val injector = object : Rg12FailureInjector {
-                    override fun failAt(point: Rg12FailurePoint) {
-                        if (point == Rg12FailurePoint.AFTER_DELTA) error("injected RG-12 delta failure")
+                val injector =
+                    object : Rg12FailureInjector {
+                        override fun failAt(point: Rg12FailurePoint) {
+                            if (point == Rg12FailurePoint.AFTER_DELTA) error("injected RG-12 delta failure")
+                        }
                     }
-                }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
                 // The seeded opening baseline captured before the failure is the reopen
@@ -418,12 +527,54 @@ class SqlDelightRg12StoreTest {
                 // owner keeps its baseline counts.
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(1L, database.ledgerQueries.selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction").executeAsList().size.toLong())
-                assertEquals(3L, database.ledgerQueries.selectRg12AllPostingSemantics(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllConfirmations(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingSemantics(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllMatches(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReplacements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllConfirmations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 // The four owner tables the old counts omitted are pinned to their
                 // pre-failure baseline values (rg12_transaction_version_metadata keeps
                 // the seeded opening-version row; returned ids stay empty; consumption
@@ -450,25 +601,26 @@ class SqlDelightRg12StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val injector = object : Rg12FailureInjector {
-                    override fun failAt(point: Rg12FailurePoint) {
-                        if (point == Rg12FailurePoint.AFTER_DELTA) {
-                            // The delta is already persisted inside the commit transaction;
-                            // this UPDATE violates rg12_reconciliation_guard_update (rows are
-                            // immutable), aborting the whole transaction. The statement
-                            // executes eagerly, so the trigger abort propagates from here.
-                            driver.execute(
-                                null,
-                                """
+                val injector =
+                    object : Rg12FailureInjector {
+                        override fun failAt(point: Rg12FailurePoint) {
+                            if (point == Rg12FailurePoint.AFTER_DELTA) {
+                                // The delta is already persisted inside the commit transaction;
+                                // this UPDATE violates rg12_reconciliation_guard_update (rows are
+                                // immutable), aborting the whole transaction. The statement
+                                // executes eagerly, so the trigger abort propagates from here.
+                                driver.execute(
+                                    null,
+                                    """
                                     UPDATE rg12_posting_reconciliation SET status = 'MATCHED'
                                     WHERE ledger_id = '${fixture.ledgerId.value}'
                                       AND reconciliation_id = 'root-correction-reconciliation-asset-v2'
-                                """.trimIndent(),
-                                0,
-                            )
+                                    """.trimIndent(),
+                                    0,
+                                )
+                            }
                         }
                     }
-                }
                 val failing = store(database, driver, fixture, "root-correction", injector)
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
                 // The seeded opening baseline captured before the failure is the reopen
@@ -477,11 +629,46 @@ class SqlDelightRg12StoreTest {
                 assertFailsWith<SQLException> { failing.commit(correct.operation) }
                 assertEquals(0L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(1L, database.ledgerQueries.selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction").executeAsList().size.toLong())
-                assertEquals(3L, database.ledgerQueries.selectRg12AllPostingSemantics(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllMatches(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(2L, database.ledgerQueries.selectRg12AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingSemantics(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllMatches(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    2L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReplacements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -496,7 +683,9 @@ class SqlDelightRg12StoreTest {
                     2L,
                     database.ledgerQueries
                         .selectRg12FormalVersions(fixture.ledgerId.value, "root-correction-transaction")
-                        .executeAsList().size.toLong(),
+                        .executeAsList()
+                        .size
+                        .toLong(),
                 )
             }
         } finally {
@@ -519,10 +708,11 @@ class SqlDelightRg12StoreTest {
                 val store = store(database, driver, fixture, "root-correction")
                 val correct = fixture.operations.single { it.id == "root-correction-correct" }
                 val operation = correct.operation as Rg12Operation.CorrectTransactionVersion
-                val fingerprint = Rg12Runtime(
-                    fixture.catalogs.getValue("root-correction"),
-                    emptyList(),
-                ).operationFingerprint(operation)
+                val fingerprint =
+                    Rg12Runtime(
+                        fixture.catalogs.getValue("root-correction"),
+                        emptyList(),
+                    ).operationFingerprint(operation)
                 database.ledgerQueries.insertRg12Operation(
                     fixture.ledgerId.value,
                     operation.identity.value,
@@ -535,25 +725,31 @@ class SqlDelightRg12StoreTest {
                 )
                 val error = assertFailsWith<IllegalStateException> { store.commit(operation) }
                 assertTrue(error.message!!.contains("still pending"), "error names the pending state")
-                val saved = database.ledgerQueries
-                    .selectRg12Operation(fixture.ledgerId.value, operation.identity.value)
-                    .executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg12Operation(fixture.ledgerId.value, operation.identity.value)
+                        .executeAsOne()
                 assertEquals("PENDING", saved.outcome)
-                assertEquals(0, database.ledgerQueries
-                    .selectRg12ReturnedIds(fixture.ledgerId.value, operation.identity.value)
-                    .executeAsList().size)
+                assertEquals(
+                    0,
+                    database.ledgerQueries
+                        .selectRg12ReturnedIds(fixture.ledgerId.value, operation.identity.value)
+                        .executeAsList()
+                        .size,
+                )
                 // A retry by identity refuses the pending row the same way.
-                val retryError = assertFailsWith<IllegalStateException> {
-                    store.commit(
-                        Rg12Operation.RetryIdempotentInput(
-                            fixture.ledgerId,
-                            Rg12RetryInput(
-                                inputId = operation.identity.value,
-                                replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                val retryError =
+                    assertFailsWith<IllegalStateException> {
+                        store.commit(
+                            Rg12Operation.RetryIdempotentInput(
+                                fixture.ledgerId,
+                                Rg12RetryInput(
+                                    inputId = operation.identity.value,
+                                    replayedAction = Rg12Action.CORRECT_TRANSACTION_VERSION,
+                                ),
                             ),
-                        ),
-                    )
-                }
+                        )
+                    }
                 assertTrue(retryError.message!!.contains("still pending"), "retry error names the pending state")
                 assertEquals(1L, database.ledgerQueries.countRg12Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg12FormalTransactions(fixture.ledgerId.value).executeAsOne())
@@ -673,12 +869,12 @@ class SqlDelightRg12StoreTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note
-                        ) VALUES ('version-guard-extra', 'transaction-guard-extra', '$ledger', 1,
-                          'posting-set-guard-extra', '2026-04-20T10:00:00+08:00',
-                          '2026-04-20T10:00:00+08:00', '2026-04-20T10:00:00+08:00', NULL)
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note
+                    ) VALUES ('version-guard-extra', 'transaction-guard-extra', '$ledger', 1,
+                      'posting-set-guard-extra', '2026-04-20T10:00:00+08:00',
+                      '2026-04-20T10:00:00+08:00', '2026-04-20T10:00:00+08:00', NULL)
                     """.trimIndent(),
                     0,
                 )
@@ -775,21 +971,26 @@ class SqlDelightRg12StoreTest {
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture, "root-correction")
-                val original = fixture.operations.single { it.id == "root-correction-correct" }
-                    .operation as Rg12Operation.CorrectTransactionVersion
-                val changedInput = original.input.copy(
-                    replacementPostings = original.input.replacementPostings.map { item ->
-                        when (item.sourcePostingId.value) {
-                            "root-correction-expense-v1" -> item.copy(facts = item.facts.copy(amountText = "100.00"))
-                            "root-correction-asset-v1" -> item.copy(facts = item.facts.copy(amountText = "-60.00"))
-                            else -> item
-                        }
-                    },
-                )
-                val changedIds = original.ids.copy(
-                    invalidationEntryIds = listOf("", "root-correction-match-asset-v1-history-2", "root-correction-match-liability-v1-history-2"),
-                    newMatchInvalidationEntryIds = listOf(null, "root-correction-match-asset-v2-history-2", null),
-                )
+                val original =
+                    fixture.operations
+                        .single { it.id == "root-correction-correct" }
+                        .operation as Rg12Operation.CorrectTransactionVersion
+                val changedInput =
+                    original.input.copy(
+                        replacementPostings =
+                            original.input.replacementPostings.map { item ->
+                                when (item.sourcePostingId.value) {
+                                    "root-correction-expense-v1" -> item.copy(facts = item.facts.copy(amountText = "100.00"))
+                                    "root-correction-asset-v1" -> item.copy(facts = item.facts.copy(amountText = "-60.00"))
+                                    else -> item
+                                }
+                            },
+                    )
+                val changedIds =
+                    original.ids.copy(
+                        invalidationEntryIds = listOf("", "root-correction-match-asset-v1-history-2", "root-correction-match-liability-v1-history-2"),
+                        newMatchInvalidationEntryIds = listOf(null, "root-correction-match-asset-v2-history-2", null),
+                    )
                 val changed = original.copy(input = changedInput, ids = changedIds)
                 assertIs<Rg12ExecutionResult.Accepted>(store.commit(changed))
                 val snapshot = store.snapshot(fixture.ledgerId)
@@ -856,7 +1057,10 @@ class SqlDelightRg12StoreTest {
      * of their comparable fields; every other snapshot collection is a data class and is
      * compared directly (RG-11 store-test pattern).
      */
-    private fun assertPersistedSnapshotEquals(expected: Rg12Snapshot, actual: Rg12Snapshot) {
+    private fun assertPersistedSnapshotEquals(
+        expected: Rg12Snapshot,
+        actual: Rg12Snapshot,
+    ) {
         assertEquals(
             expected.formalTransactions.map(::formalProjection),
             actual.formalTransactions.map(::formalProjection),
@@ -874,16 +1078,17 @@ class SqlDelightRg12StoreTest {
         assertEquals(expected.reportPeriods, actual.reportPeriods)
     }
 
-    private fun formalProjection(record: com.unifiedledger.application.Rg12FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-        versionCreatedAtTexts = record.versionCreatedAtTexts,
-        versionConfirmationIds = record.versionConfirmationIds,
-    )
+    private fun formalProjection(record: com.unifiedledger.application.Rg12FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+            versionCreatedAtTexts = record.versionCreatedAtTexts,
+            versionConfirmationIds = record.versionConfirmationIds,
+        )
 
     private data class FormalRecordProjection(
         val transaction: Transaction,
@@ -915,16 +1120,36 @@ class SqlDelightRg12StoreTest {
         val reportPeriods: Long,
     )
 
-    private fun ownerTableCounts(database: LedgerDatabase, ledgerId: LedgerId): OwnerTableCounts = OwnerTableCounts(
-        versionMetadata = database.ledgerQueries
-            .selectRg12TransactionVersionMetadata(ledgerId.value).executeAsList().size.toLong(),
-        returnedIds = database.ledgerQueries
-            .selectRg12ReturnedIds(ledgerId.value, "root-correction-request").executeAsList().size.toLong(),
-        consumption = database.ledgerQueries
-            .selectRg12AllConsumptionRecords(ledgerId.value).executeAsList().size.toLong(),
-        reportPeriods = database.ledgerQueries
-            .selectRg12AllReportPeriods(ledgerId.value).executeAsList().size.toLong(),
-    )
+    private fun ownerTableCounts(
+        database: LedgerDatabase,
+        ledgerId: LedgerId,
+    ): OwnerTableCounts =
+        OwnerTableCounts(
+            versionMetadata =
+                database.ledgerQueries
+                    .selectRg12TransactionVersionMetadata(ledgerId.value)
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            returnedIds =
+                database.ledgerQueries
+                    .selectRg12ReturnedIds(ledgerId.value, "root-correction-request")
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            consumption =
+                database.ledgerQueries
+                    .selectRg12AllConsumptionRecords(ledgerId.value)
+                    .executeAsList()
+                    .size
+                    .toLong(),
+            reportPeriods =
+                database.ledgerQueries
+                    .selectRg12AllReportPeriods(ledgerId.value)
+                    .executeAsList()
+                    .size
+                    .toLong(),
+        )
 
     private fun store(
         database: LedgerDatabase,
@@ -932,13 +1157,14 @@ class SqlDelightRg12StoreTest {
         fixture: Rg12FixtureCase,
         rootId: String,
         injector: Rg12FailureInjector = NO_RG12_TEST_FAILURE,
-    ): SqlDelightRg12Store = SqlDelightRg12Store(
-        database,
-        driver,
-        fixture.catalogs.getValue(rootId),
-        fixture.baselines.getValue(rootId),
-        injector,
-    )
+    ): SqlDelightRg12Store =
+        SqlDelightRg12Store(
+            database,
+            driver,
+            fixture.catalogs.getValue(rootId),
+            fixture.baselines.getValue(rootId),
+            injector,
+        )
 
     private fun loadFixture(): Rg12FixtureCase {
         val raw = Files.readString(repositoryFile("golden/rules/rg-12.json"))
@@ -946,10 +1172,11 @@ class SqlDelightRg12StoreTest {
         return adaptRg12Fixture(raw, inputs)
     }
 
-    private fun sqliteProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun sqliteProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
@@ -960,11 +1187,11 @@ class SqlDelightRg12StoreTest {
         error("repository root not found")
     }
 
-    private val SHANGHAI_INSTANT_FORMAT: DateTimeFormatter =
+    private val shanghaiInstantFormat: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
 
     private fun instantText(instant: Instant): String =
-        SHANGHAI_INSTANT_FORMAT.format(
+        shanghaiInstantFormat.format(
             OffsetDateTime.ofInstant(java.time.Instant.parse(instant.toString()), ZoneOffset.ofHours(8)),
         )
 

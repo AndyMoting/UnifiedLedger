@@ -20,7 +20,6 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -55,11 +54,12 @@ data class Rg06FixtureReplaySummary(
 fun replayRg06Fixture(raw: String): Rg06FixtureReplaySummary {
     val fixture = Json.parseToJsonElement(raw).jsonObject
     val ledgerId = LedgerId(fixture.getValue("case").jsonObject.string("ledger_id"))
-    val operations = buildList {
-        addAll(adaptImportPath(fixture.getValue("import_path").jsonObject, ledgerId))
-        addAll(adaptManualPath(fixture.getValue("manual_path").jsonObject, ledgerId))
-        addAll(adaptInvalidInputs(fixture.getValue("invalid_inputs").jsonArray, ledgerId))
-    }
+    val operations =
+        buildList {
+            addAll(adaptImportPath(fixture.getValue("import_path").jsonObject, ledgerId))
+            addAll(adaptManualPath(fixture.getValue("manual_path").jsonObject, ledgerId))
+            addAll(adaptInvalidInputs(fixture.getValue("invalid_inputs").jsonArray, ledgerId))
+        }
     return Rg06FixtureReplaySummary(
         operations = operations,
         accepted = operations.count { it.expectedStatus == "accepted" },
@@ -68,141 +68,177 @@ fun replayRg06Fixture(raw: String): Rg06FixtureReplaySummary {
     )
 }
 
-private fun adaptImportPath(path: JsonObject, ledgerId: LedgerId): List<Rg06FixtureOperation> {
+private fun adaptImportPath(
+    path: JsonObject,
+    ledgerId: LedgerId,
+): List<Rg06FixtureOperation> {
     val sourceOperations = path.getValue("ordered_operations").jsonArray.map { it.jsonObject }
-    val provenance = path.getValue("canonical_final_state").jsonObject
-        .getValue("candidates").jsonArray
-        .map { it.jsonObject }
-        .mapNotNull { candidate ->
-            candidate["confirmation_provenance"]?.takeUnless { it is JsonNull }?.jsonObject?.let {
-                candidate.string("id") to fixtureInstant(it.string("confirmed_at"))
+    val provenance =
+        path
+            .getValue("canonical_final_state")
+            .jsonObject
+            .getValue("candidates")
+            .jsonArray
+            .map { it.jsonObject }
+            .mapNotNull { candidate ->
+                candidate["confirmation_provenance"]?.takeUnless { it is JsonNull }?.jsonObject?.let {
+                    candidate.string("id") to fixtureInstant(it.string("confirmed_at"))
+                }
+            }.toMap()
+    val sourcePaymentAt =
+        path
+            .getValue("canonical_final_state")
+            .jsonObject
+            .getValue("source_records")
+            .jsonArray
+            .map { it.jsonObject }
+            .associate { source ->
+                source.string("id") to source.string("source_payment_at")
             }
+    val original =
+        sourceOperations.mapIndexed { index, operation ->
+            adaptImportOperation(operation, index, ledgerId, provenance, sourcePaymentAt)
         }
-        .toMap()
-    val sourcePaymentAt = path.getValue("canonical_final_state").jsonObject
-        .getValue("source_records").jsonArray
-        .map { it.jsonObject }
-        .associate { source ->
-            source.string("id") to source.string("source_payment_at")
+    val retries =
+        listOf(
+            "operation-rg06-import-retry-deposit-intake" to 0,
+            "operation-rg06-import-retry-deposit-confirm" to 2,
+            "operation-rg06-import-retry-final-intake" to 3,
+            "operation-rg06-import-retry-final-confirm" to 4,
+            "operation-rg06-import-retry-final-mirror" to 5,
+        ).map { (id, index) ->
+            val source = original[index]
+            source.copy(id = id, expectedStatus = "no_change")
         }
-    val original = sourceOperations.mapIndexed { index, operation ->
-        adaptImportOperation(operation, index, ledgerId, provenance, sourcePaymentAt)
-    }
-    val retries = listOf(
-        "operation-rg06-import-retry-deposit-intake" to 0,
-        "operation-rg06-import-retry-deposit-confirm" to 2,
-        "operation-rg06-import-retry-final-intake" to 3,
-        "operation-rg06-import-retry-final-confirm" to 4,
-        "operation-rg06-import-retry-final-mirror" to 5,
-    ).map { (id, index) ->
-        val source = original[index]
-        source.copy(id = id, expectedStatus = "no_change")
-    }
     return original + retries
 }
 
-private fun adaptManualPath(path: JsonObject, ledgerId: LedgerId): List<Rg06FixtureOperation> {
+private fun adaptManualPath(
+    path: JsonObject,
+    ledgerId: LedgerId,
+): List<Rg06FixtureOperation> {
     val sourceOperations = path.getValue("ordered_operations").jsonArray.map { it.jsonObject }
-    val original = sourceOperations.mapIndexed { index, operation ->
-        adaptManualOperation(operation, index, ledgerId)
-    }
-    val retries = listOf(
-        "operation-rg06-manual-retry-create" to 0,
-        "operation-rg06-manual-retry-deposit" to 1,
-        "operation-rg06-manual-retry-fulfilled" to 2,
-        "operation-rg06-manual-retry-final" to 3,
-        "operation-rg06-manual-retry-completion" to 4,
-    ).map { (id, index) ->
-        val source = original[index]
-        source.copy(id = id, expectedStatus = "no_change")
-    }
+    val original =
+        sourceOperations.mapIndexed { index, operation ->
+            adaptManualOperation(operation, index, ledgerId)
+        }
+    val retries =
+        listOf(
+            "operation-rg06-manual-retry-create" to 0,
+            "operation-rg06-manual-retry-deposit" to 1,
+            "operation-rg06-manual-retry-fulfilled" to 2,
+            "operation-rg06-manual-retry-final" to 3,
+            "operation-rg06-manual-retry-completion" to 4,
+        ).map { (id, index) ->
+            val source = original[index]
+            source.copy(id = id, expectedStatus = "no_change")
+        }
     return original + retries
 }
 
-private fun adaptManualOperation(operation: JsonObject, index: Int, ledgerId: LedgerId): Rg06FixtureOperation {
+private fun adaptManualOperation(
+    operation: JsonObject,
+    index: Int,
+    ledgerId: LedgerId,
+): Rg06FixtureOperation {
     val input = operation.getValue("input").jsonObject
     val expected = operation.getValue("expected").jsonObject
-    val name = when (index) {
-        0 -> "manual-create-group"
-        1 -> "manual-save-deposit"
-        2 -> "manual-mark-fulfilled"
-        3 -> "manual-save-final"
-        4 -> "manual-confirm-completion"
-        5 -> "manual-deposit-evidence"
-        6 -> "manual-final-evidence"
-        else -> error("unsupported RG-06 manual operation index $index")
-    }
-    val typed = when (index) {
-        0 -> Rg06Operation.CreateStagedPayment(
-            ledgerId = ledgerId,
-            input = Rg06CreateStagedPaymentInput(
-                requestId = RequestId(input.string("request_id")),
-                totalAmount = input.money("total_amount"),
-                categoryId = input.optionalString("category_id")?.let(::CategoryId),
-                createdAt = input.instant("created_at"),
-            ),
-            ids = StagedPaymentCreationIds(
-                relationId = StagedPaymentRelationId(expected.getValue("group").jsonObject.string("id")),
-                lifecycleId = StagedPaymentLifecycleId("lifecycle-rg06-manual"),
-                historyId = StagedPaymentHistoryId("history-rg06-manual-created"),
-            ),
-        )
-        1, 3 -> {
-            val payment = expected.getValue("payment").jsonObject
-            val role = StagedPaymentRole.valueOf(input.string("payment_role").uppercase())
-            Rg06Operation.RecordStagedPaymentInstallment(
-                ledgerId = ledgerId,
-                input = Rg06RecordStagedPaymentInstallmentInput(
-                    requestId = RequestId(input.string("request_id")),
-                    relationId = StagedPaymentRelationId(input.string("association_group_id")),
-                    paymentRole = role,
-                    paymentAmount = input.money("payment_amount"),
-                    fundingAccountId = AccountId(input.string("funding_account_id")),
-                    actualPaymentAt = input.instant("actual_payment_at"),
-                ),
-                ids = Rg06ManualInstallmentCommitIds(
-                    confirmationId = Rg06ConfirmationId("confirmation-${role.name.lowercase()}"),
-                    paymentIds = paymentIds(payment, expected),
-                    reconciliationId = Rg06ReconciliationId(
-                        "reconciliation-rg06-manual-${role.name.lowercase()}",
-                    ),
-                ),
-            )
+    val name =
+        when (index) {
+            0 -> "manual-create-group"
+            1 -> "manual-save-deposit"
+            2 -> "manual-mark-fulfilled"
+            3 -> "manual-save-final"
+            4 -> "manual-confirm-completion"
+            5 -> "manual-deposit-evidence"
+            6 -> "manual-final-evidence"
+            else -> error("unsupported RG-06 manual operation index $index")
         }
-        2 -> Rg06Operation.ChangeStagedPaymentFulfillment(
-            ledgerId = ledgerId,
-            input = Rg06ChangeStagedPaymentFulfillmentInput(
-                requestId = RequestId(input.string("request_id")),
-                relationId = StagedPaymentRelationId(input.string("association_group_id")),
-                fulfillmentStatus = StagedPaymentFulfillment.valueOf(input.string("fulfillment_status").uppercase()),
-                occurredAt = input.instant("occurred_at"),
-            ),
-            historyId = lastHistoryId(expected),
-        )
-        4 -> Rg06Operation.ConfirmStagedPaymentCompletion(
-            ledgerId = ledgerId,
-            input = Rg06ConfirmStagedPaymentCompletionInput(
-                requestId = RequestId(input.string("request_id")),
-                relationId = StagedPaymentRelationId(input.string("association_group_id")),
-                confirmed = input.bool("confirmed"),
-                occurredAt = input.instant("occurred_at"),
-            ),
-            historyId = lastHistoryId(expected),
-        )
-        5, 6 -> Rg06Operation.LinkStagedPaymentEvidence(
-            ledgerId = ledgerId,
-            input = Rg06LinkStagedPaymentEvidenceInput(
-                sourceId = Rg06SourceId(input.string("source_id")),
-                evidenceId = Rg06EvidenceId(input.string("evidence_id")),
-                paymentId = InstallmentPaymentId(input.string("payment_id")),
-                postingId = PostingId(input.string("posting_id")),
-            ),
-            evidenceLinkId = Rg06EvidenceLinkId(
-                "match-rg06-manual-${if (index == 5) "deposit" else "final"}",
-            ),
-        )
-        else -> error("unsupported RG-06 manual operation index $index")
-    }
+    val typed =
+        when (index) {
+            0 ->
+                Rg06Operation.CreateStagedPayment(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06CreateStagedPaymentInput(
+                            requestId = RequestId(input.string("request_id")),
+                            totalAmount = input.money("total_amount"),
+                            categoryId = input.optionalString("category_id")?.let(::CategoryId),
+                            createdAt = input.instant("created_at"),
+                        ),
+                    ids =
+                        StagedPaymentCreationIds(
+                            relationId = StagedPaymentRelationId(expected.getValue("group").jsonObject.string("id")),
+                            lifecycleId = StagedPaymentLifecycleId("lifecycle-rg06-manual"),
+                            historyId = StagedPaymentHistoryId("history-rg06-manual-created"),
+                        ),
+                )
+            1, 3 -> {
+                val payment = expected.getValue("payment").jsonObject
+                val role = StagedPaymentRole.valueOf(input.string("payment_role").uppercase())
+                Rg06Operation.RecordStagedPaymentInstallment(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06RecordStagedPaymentInstallmentInput(
+                            requestId = RequestId(input.string("request_id")),
+                            relationId = StagedPaymentRelationId(input.string("association_group_id")),
+                            paymentRole = role,
+                            paymentAmount = input.money("payment_amount"),
+                            fundingAccountId = AccountId(input.string("funding_account_id")),
+                            actualPaymentAt = input.instant("actual_payment_at"),
+                        ),
+                    ids =
+                        Rg06ManualInstallmentCommitIds(
+                            confirmationId = Rg06ConfirmationId("confirmation-${role.name.lowercase()}"),
+                            paymentIds = paymentIds(payment, expected),
+                            reconciliationId =
+                                Rg06ReconciliationId(
+                                    "reconciliation-rg06-manual-${role.name.lowercase()}",
+                                ),
+                        ),
+                )
+            }
+            2 ->
+                Rg06Operation.ChangeStagedPaymentFulfillment(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06ChangeStagedPaymentFulfillmentInput(
+                            requestId = RequestId(input.string("request_id")),
+                            relationId = StagedPaymentRelationId(input.string("association_group_id")),
+                            fulfillmentStatus = StagedPaymentFulfillment.valueOf(input.string("fulfillment_status").uppercase()),
+                            occurredAt = input.instant("occurred_at"),
+                        ),
+                    historyId = lastHistoryId(expected),
+                )
+            4 ->
+                Rg06Operation.ConfirmStagedPaymentCompletion(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06ConfirmStagedPaymentCompletionInput(
+                            requestId = RequestId(input.string("request_id")),
+                            relationId = StagedPaymentRelationId(input.string("association_group_id")),
+                            confirmed = input.bool("confirmed"),
+                            occurredAt = input.instant("occurred_at"),
+                        ),
+                    historyId = lastHistoryId(expected),
+                )
+            5, 6 ->
+                Rg06Operation.LinkStagedPaymentEvidence(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06LinkStagedPaymentEvidenceInput(
+                            sourceId = Rg06SourceId(input.string("source_id")),
+                            evidenceId = Rg06EvidenceId(input.string("evidence_id")),
+                            paymentId = InstallmentPaymentId(input.string("payment_id")),
+                            postingId = PostingId(input.string("posting_id")),
+                        ),
+                    evidenceLinkId =
+                        Rg06EvidenceLinkId(
+                            "match-rg06-manual-${if (index == 5) "deposit" else "final"}",
+                        ),
+                )
+            else -> error("unsupported RG-06 manual operation index $index")
+        }
     return Rg06FixtureOperation(
         id = "operation-rg06-$name",
         rootPurpose = "rg06_manual_staged_payment_lifecycle",
@@ -221,73 +257,83 @@ private fun adaptImportOperation(
 ): Rg06FixtureOperation {
     val input = operation.getValue("input").jsonObject
     val expected = operation.getValue("expected").jsonObject
-    val name = when (index) {
-        0 -> "import-intake-deposit"
-        1 -> "import-intake-ambiguous"
-        2 -> "import-confirm-deposit"
-        3 -> "import-intake-final"
-        4 -> "import-confirm-final"
-        5 -> "import-merge-final-mirror"
-        else -> error("unsupported RG-06 import operation index $index")
-    }
-    val typed = when (index) {
-        0, 1, 3 -> Rg06Operation.IngestStagedPaymentBankFact(
-            ledgerId = ledgerId,
-            input = Rg06IngestStagedPaymentBankFactInput(
-                sourceId = Rg06SourceId(input.string("source_id")),
-                evidenceId = Rg06EvidenceId(input.string("evidence_id")),
-                sourcePaymentAt = input.instant("source_payment_at"),
-                sourcePaymentAtText = input.string("source_payment_at"),
-                amount = input.money("amount"),
-                suggestedPaymentRole = input.optionalString("suggested_payment_role")?.let { StagedPaymentRole.valueOf(it.uppercase()) },
-            ),
-            ids = Rg06IngestCommitIds(
-                candidateId = Rg06CandidateId(expected.getValue("candidate").jsonObject.string("id")),
-                pendingStatusId = Rg06CandidateStatusId(
-                    pendingCandidateStatusId(expected.getValue("candidate").jsonObject.string("id")),
-                ),
-            ),
-        )
-        2, 4 -> {
-            val candidate = expected.getValue("payment").jsonObject
-            val candidateId = Rg06CandidateId(input.string("candidate_id"))
-            val suffix = candidateId.value.removePrefix("candidate-")
-            Rg06Operation.ConfirmStagedPaymentCandidate(
-                ledgerId = ledgerId,
-                input = Rg06ConfirmStagedPaymentCandidateInput(
-                    requestId = RequestId(input.string("request_id")),
-                    candidateId = candidateId,
-                    relationId = StagedPaymentRelationId(input.string("association_group_id")),
-                    paymentRole = StagedPaymentRole.valueOf(input.string("payment_role").uppercase()),
-                    categoryId = CategoryId(input.string("category_id")),
-                    fundingAccountId = AccountId(input.string("funding_account_id")),
-                    exactBindingConfirmed = input.bool("exact_binding_confirmed"),
-                    confirmedAt = provenance[candidateId.value],
-                ),
-                ids = Rg06CandidateConfirmationCommitIds(
-                    confirmationId = Rg06ConfirmationId("confirmation-${candidateId.value}"),
-                    paymentIds = paymentIds(candidate, expected),
-                    evidenceLinkId = Rg06EvidenceLinkId("match-$suffix"),
-                    confirmedStatusId = Rg06CandidateStatusId("candidate-status-${candidateId.value}-confirmed"),
-                    reconciliationId = Rg06ReconciliationId("reconciliation-$suffix"),
-                ),
-            )
+    val name =
+        when (index) {
+            0 -> "import-intake-deposit"
+            1 -> "import-intake-ambiguous"
+            2 -> "import-confirm-deposit"
+            3 -> "import-intake-final"
+            4 -> "import-confirm-final"
+            5 -> "import-merge-final-mirror"
+            else -> error("unsupported RG-06 import operation index $index")
         }
-        5 -> Rg06Operation.MergeStagedPaymentMirrorEvidence(
-            ledgerId = ledgerId,
-            input = Rg06MergeStagedPaymentMirrorEvidenceInput(
-                sourceId = Rg06SourceId(input.string("source_id")),
-                evidenceId = Rg06EvidenceId(input.string("evidence_id")),
-                paymentId = InstallmentPaymentId(input.string("payment_id")),
-                postingId = PostingId(input.string("posting_id")),
-                amount = input.money("amount"),
-                // The v1 merge input omits this fact; source_records owns its exact timestamp.
-                sourcePaymentAt = fixtureInstant(sourcePaymentAt.getValue(input.string("source_id"))),
-                sourcePaymentAtText = sourcePaymentAt.getValue(input.string("source_id")),
-            ),
-        )
-        else -> error("unsupported RG-06 import operation index $index")
-    }
+    val typed =
+        when (index) {
+            0, 1, 3 ->
+                Rg06Operation.IngestStagedPaymentBankFact(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06IngestStagedPaymentBankFactInput(
+                            sourceId = Rg06SourceId(input.string("source_id")),
+                            evidenceId = Rg06EvidenceId(input.string("evidence_id")),
+                            sourcePaymentAt = input.instant("source_payment_at"),
+                            sourcePaymentAtText = input.string("source_payment_at"),
+                            amount = input.money("amount"),
+                            suggestedPaymentRole = input.optionalString("suggested_payment_role")?.let { StagedPaymentRole.valueOf(it.uppercase()) },
+                        ),
+                    ids =
+                        Rg06IngestCommitIds(
+                            candidateId = Rg06CandidateId(expected.getValue("candidate").jsonObject.string("id")),
+                            pendingStatusId =
+                                Rg06CandidateStatusId(
+                                    pendingCandidateStatusId(expected.getValue("candidate").jsonObject.string("id")),
+                                ),
+                        ),
+                )
+            2, 4 -> {
+                val candidate = expected.getValue("payment").jsonObject
+                val candidateId = Rg06CandidateId(input.string("candidate_id"))
+                val suffix = candidateId.value.removePrefix("candidate-")
+                Rg06Operation.ConfirmStagedPaymentCandidate(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06ConfirmStagedPaymentCandidateInput(
+                            requestId = RequestId(input.string("request_id")),
+                            candidateId = candidateId,
+                            relationId = StagedPaymentRelationId(input.string("association_group_id")),
+                            paymentRole = StagedPaymentRole.valueOf(input.string("payment_role").uppercase()),
+                            categoryId = CategoryId(input.string("category_id")),
+                            fundingAccountId = AccountId(input.string("funding_account_id")),
+                            exactBindingConfirmed = input.bool("exact_binding_confirmed"),
+                            confirmedAt = provenance[candidateId.value],
+                        ),
+                    ids =
+                        Rg06CandidateConfirmationCommitIds(
+                            confirmationId = Rg06ConfirmationId("confirmation-${candidateId.value}"),
+                            paymentIds = paymentIds(candidate, expected),
+                            evidenceLinkId = Rg06EvidenceLinkId("match-$suffix"),
+                            confirmedStatusId = Rg06CandidateStatusId("candidate-status-${candidateId.value}-confirmed"),
+                            reconciliationId = Rg06ReconciliationId("reconciliation-$suffix"),
+                        ),
+                )
+            }
+            5 ->
+                Rg06Operation.MergeStagedPaymentMirrorEvidence(
+                    ledgerId = ledgerId,
+                    input =
+                        Rg06MergeStagedPaymentMirrorEvidenceInput(
+                            sourceId = Rg06SourceId(input.string("source_id")),
+                            evidenceId = Rg06EvidenceId(input.string("evidence_id")),
+                            paymentId = InstallmentPaymentId(input.string("payment_id")),
+                            postingId = PostingId(input.string("posting_id")),
+                            amount = input.money("amount"),
+                            // The v1 merge input omits this fact; source_records owns its exact timestamp.
+                            sourcePaymentAt = fixtureInstant(sourcePaymentAt.getValue(input.string("source_id"))),
+                            sourcePaymentAtText = sourcePaymentAt.getValue(input.string("source_id")),
+                        ),
+                )
+            else -> error("unsupported RG-06 import operation index $index")
+        }
     return Rg06FixtureOperation(
         id = "operation-rg06-$name",
         rootPurpose = "rg06_import_staged_payment_lifecycle",
@@ -297,123 +343,173 @@ private fun adaptImportOperation(
     )
 }
 
-private fun pendingCandidateStatusId(candidateId: String): String = when (candidateId) {
-    "candidate-rg06-import-deposit" -> "candidate-status-source-rg06-import-deposit-pending"
-    "candidate-rg06-import-ambiguous" -> "candidate-status-source-rg06-import-ambiguous-pending"
-    "candidate-rg06-import-final" -> "candidate-status-source-rg06-import-final-pending"
-    else -> error("unsupported RG-06 imported candidate status identity $candidateId")
-}
-
-private fun adaptInvalidInputs(inputs: JsonArray, ledgerId: LedgerId): List<Rg06FixtureOperation> = inputs.map { element ->
-    val invalid = element.jsonObject
-    val id = invalid.string("id")
-    val input = invalid.getValue("input").jsonObject
-    val context = invalid.string("operation_context")
-    val typed = when (context) {
-        "group_creation" -> invalidCreate(id, input, ledgerId)
-        "payment_creation" -> invalidInstallment(id, input, ledgerId)
-        "payment_progress_transition" -> invalidCompletion(id, input, ledgerId)
-        else -> error("unsupported RG-06 invalid operation context $context")
+private fun pendingCandidateStatusId(candidateId: String): String =
+    when (candidateId) {
+        "candidate-rg06-import-deposit" -> "candidate-status-source-rg06-import-deposit-pending"
+        "candidate-rg06-import-ambiguous" -> "candidate-status-source-rg06-import-ambiguous-pending"
+        "candidate-rg06-import-final" -> "candidate-status-source-rg06-import-final-pending"
+        else -> error("unsupported RG-06 imported candidate status identity $candidateId")
     }
-    Rg06FixtureOperation(
-        id = "operation-rg06-rejection-$id",
-        rootPurpose = "rg06_rejected_$id",
-        sourcePath = "$.invalid_inputs[*]#$id",
-        expectedStatus = "rejected",
-        operation = typed,
-    )
-}
 
-private fun invalidCreate(id: String, input: JsonObject, ledgerId: LedgerId): Rg06Operation.CreateStagedPayment {
+private fun adaptInvalidInputs(
+    inputs: JsonArray,
+    ledgerId: LedgerId,
+): List<Rg06FixtureOperation> =
+    inputs.map { element ->
+        val invalid = element.jsonObject
+        val id = invalid.string("id")
+        val input = invalid.getValue("input").jsonObject
+        val context = invalid.string("operation_context")
+        val typed =
+            when (context) {
+                "group_creation" -> invalidCreate(id, input, ledgerId)
+                "payment_creation" -> invalidInstallment(id, input, ledgerId)
+                "payment_progress_transition" -> invalidCompletion(id, input, ledgerId)
+                else -> error("unsupported RG-06 invalid operation context $context")
+            }
+        Rg06FixtureOperation(
+            id = "operation-rg06-rejection-$id",
+            rootPurpose = "rg06_rejected_$id",
+            sourcePath = "$.invalid_inputs[*]#$id",
+            expectedStatus = "rejected",
+            operation = typed,
+        )
+    }
+
+private fun invalidCreate(
+    id: String,
+    input: JsonObject,
+    ledgerId: LedgerId,
+): Rg06Operation.CreateStagedPayment {
     val amount = input.optionalString("total_amount") ?: "300.00"
-    val category = input.optionalString("category_id")?.let(::CategoryId)
-        ?: if (input.containsKey("category_id")) null else CategoryId("expense-category-service")
+    val category =
+        input.optionalString("category_id")?.let(::CategoryId)
+            ?: if (input.containsKey("category_id")) null else CategoryId("expense-category-service")
     return Rg06Operation.CreateStagedPayment(
         ledgerId = ledgerId,
-        input = Rg06CreateStagedPaymentInput(
-            requestId = RequestId("request-rg06-rejection-$id"),
-            totalAmount = amount.toMoney("CNY"),
-            categoryId = category,
-            createdAt = Instant.parse("2026-04-20T09:00:00+08:00"),
-        ),
-        ids = StagedPaymentCreationIds(
-            relationId = StagedPaymentRelationId("association-group-rg06-rejected-$id"),
-            lifecycleId = StagedPaymentLifecycleId("lifecycle-rg06-rejected-$id"),
-            historyId = StagedPaymentHistoryId("history-rg06-rejected-$id"),
-        ),
+        input =
+            Rg06CreateStagedPaymentInput(
+                requestId = RequestId("request-rg06-rejection-$id"),
+                totalAmount = amount.toMoney("CNY"),
+                categoryId = category,
+                createdAt = Instant.parse("2026-04-20T09:00:00+08:00"),
+            ),
+        ids =
+            StagedPaymentCreationIds(
+                relationId = StagedPaymentRelationId("association-group-rg06-rejected-$id"),
+                lifecycleId = StagedPaymentLifecycleId("lifecycle-rg06-rejected-$id"),
+                historyId = StagedPaymentHistoryId("history-rg06-rejected-$id"),
+            ),
     )
 }
 
-private fun invalidInstallment(id: String, input: JsonObject, ledgerId: LedgerId): Rg06Operation.RecordStagedPaymentInstallment {
-    val role = input.optionalString("payment_role")?.let { StagedPaymentRole.valueOf(it.uppercase()) }
-        ?: if (id.contains("final")) StagedPaymentRole.FINAL else StagedPaymentRole.DEPOSIT
+private fun invalidInstallment(
+    id: String,
+    input: JsonObject,
+    ledgerId: LedgerId,
+): Rg06Operation.RecordStagedPaymentInstallment {
+    val role =
+        input.optionalString("payment_role")?.let { StagedPaymentRole.valueOf(it.uppercase()) }
+            ?: if (id.contains("final")) StagedPaymentRole.FINAL else StagedPaymentRole.DEPOSIT
     val currency = input.optionalString("payment_currency") ?: "CNY"
     val amount = input.optionalString("payment_amount") ?: if (role == StagedPaymentRole.FINAL) "220.00" else "80.00"
     val funding = input.optionalString("funding_account_id") ?: "asset-bank-a"
     return Rg06Operation.RecordStagedPaymentInstallment(
         ledgerId = ledgerId,
-        input = Rg06RecordStagedPaymentInstallmentInput(
-            requestId = RequestId("request-rg06-rejection-$id"),
-            relationId = StagedPaymentRelationId("association-group-rg06-invalid"),
-            paymentRole = role,
-            paymentAmount = amount.toMoney(currency),
-            fundingAccountId = AccountId(funding),
-            actualPaymentAt = Instant.parse(if (role == StagedPaymentRole.FINAL) "2026-05-03T16:30:00+08:00" else "2026-04-28T10:00:00+08:00"),
-        ),
-        ids = Rg06ManualInstallmentCommitIds(
-            confirmationId = Rg06ConfirmationId("confirmation-rg06-rejected-$id"),
-            paymentIds = paymentIdsForSuffix("rejected-$id", role),
-            reconciliationId = Rg06ReconciliationId("reconciliation-rg06-rejected-$id"),
-        ),
+        input =
+            Rg06RecordStagedPaymentInstallmentInput(
+                requestId = RequestId("request-rg06-rejection-$id"),
+                relationId = StagedPaymentRelationId("association-group-rg06-invalid"),
+                paymentRole = role,
+                paymentAmount = amount.toMoney(currency),
+                fundingAccountId = AccountId(funding),
+                actualPaymentAt = Instant.parse(if (role == StagedPaymentRole.FINAL) "2026-05-03T16:30:00+08:00" else "2026-04-28T10:00:00+08:00"),
+            ),
+        ids =
+            Rg06ManualInstallmentCommitIds(
+                confirmationId = Rg06ConfirmationId("confirmation-rg06-rejected-$id"),
+                paymentIds = paymentIdsForSuffix("rejected-$id", role),
+                reconciliationId = Rg06ReconciliationId("reconciliation-rg06-rejected-$id"),
+            ),
     )
 }
 
-private fun invalidCompletion(id: String, input: JsonObject, ledgerId: LedgerId): Rg06Operation.ConfirmStagedPaymentCompletion =
+private fun invalidCompletion(
+    id: String,
+    input: JsonObject,
+    ledgerId: LedgerId,
+): Rg06Operation.ConfirmStagedPaymentCompletion =
     Rg06Operation.ConfirmStagedPaymentCompletion(
         ledgerId = ledgerId,
-        input = Rg06ConfirmStagedPaymentCompletionInput(
-            requestId = RequestId("request-rg06-rejection-$id"),
-            relationId = StagedPaymentRelationId("association-group-rg06-invalid"),
-            confirmed = true,
-            occurredAt = Instant.parse("2026-05-04T09:00:00+08:00"),
-        ),
+        input =
+            Rg06ConfirmStagedPaymentCompletionInput(
+                requestId = RequestId("request-rg06-rejection-$id"),
+                relationId = StagedPaymentRelationId("association-group-rg06-invalid"),
+                confirmed = true,
+                occurredAt = Instant.parse("2026-05-04T09:00:00+08:00"),
+            ),
         historyId = StagedPaymentHistoryId("history-rg06-rejected-$id"),
     )
 
-private fun paymentIds(payment: JsonObject, expected: JsonObject): StagedPaymentInstallmentIds {
+private fun paymentIds(
+    payment: JsonObject,
+    expected: JsonObject,
+): StagedPaymentInstallmentIds {
     val paymentId = payment.string("id")
     val transactionId = payment.string("transaction_id")
     val role = payment.string("role")
     val suffix = paymentId.removePrefix("payment-")
-    val historyId = expected.getValue("group").jsonObject.getValue("state_history").jsonArray.last().jsonObject.string("id")
+    val historyId =
+        expected
+            .getValue("group")
+            .jsonObject
+            .getValue("state_history")
+            .jsonArray
+            .last()
+            .jsonObject
+            .string("id")
     return StagedPaymentInstallmentIds(
         paymentId = InstallmentPaymentId(paymentId),
         historyId = StagedPaymentHistoryId(historyId),
-        expenseIds = AssetPaidOrdinaryExpenseIds(
-            transactionId = TransactionId(transactionId),
-            versionId = TransactionVersionId("version-$suffix-v1"),
-            postingSetId = PostingSetId("posting-set-$suffix"),
-            expensePostingId = PostingId("posting-expense-$suffix"),
-            paymentPostingId = PostingId("posting-asset-$suffix"),
-        ),
+        expenseIds =
+            AssetPaidOrdinaryExpenseIds(
+                transactionId = TransactionId(transactionId),
+                versionId = TransactionVersionId("version-$suffix-v1"),
+                postingSetId = PostingSetId("posting-set-$suffix"),
+                expensePostingId = PostingId("posting-expense-$suffix"),
+                paymentPostingId = PostingId("posting-asset-$suffix"),
+            ),
     )
 }
 
-private fun paymentIdsForSuffix(suffix: String, role: StagedPaymentRole): StagedPaymentInstallmentIds =
+private fun paymentIdsForSuffix(
+    suffix: String,
+    role: StagedPaymentRole,
+): StagedPaymentInstallmentIds =
     StagedPaymentInstallmentIds(
         paymentId = InstallmentPaymentId("payment-$suffix-${role.name.lowercase()}"),
         historyId = StagedPaymentHistoryId("history-$suffix"),
-        expenseIds = AssetPaidOrdinaryExpenseIds(
-            transactionId = TransactionId("tx-$suffix"),
-            versionId = TransactionVersionId("version-$suffix-v1"),
-            postingSetId = PostingSetId("posting-set-$suffix"),
-            expensePostingId = PostingId("posting-expense-$suffix"),
-            paymentPostingId = PostingId("posting-asset-$suffix"),
-        ),
+        expenseIds =
+            AssetPaidOrdinaryExpenseIds(
+                transactionId = TransactionId("tx-$suffix"),
+                versionId = TransactionVersionId("version-$suffix-v1"),
+                postingSetId = PostingSetId("posting-set-$suffix"),
+                expensePostingId = PostingId("posting-expense-$suffix"),
+                paymentPostingId = PostingId("posting-asset-$suffix"),
+            ),
     )
 
 private fun lastHistoryId(expected: JsonObject): StagedPaymentHistoryId =
-    StagedPaymentHistoryId(expected.getValue("group").jsonObject.getValue("state_history").jsonArray.last().jsonObject.string("id"))
+    StagedPaymentHistoryId(
+        expected
+            .getValue("group")
+            .jsonObject
+            .getValue("state_history")
+            .jsonArray
+            .last()
+            .jsonObject
+            .string("id"),
+    )
 
 private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
 
@@ -438,8 +534,9 @@ private fun String.toMoney(currency: String): Money {
 
 private fun fixtureInstant(text: String): Instant {
     if ('/' !in text) return Instant.parse(text)
-    val match = Regex("^(\\d{4})/(\\d{1,2})/(\\d{1,2}) (\\d{1,2}):(\\d{2}):(\\d{2})$").matchEntire(text)
-        ?: error("invalid frozen v1 confirmation time $text")
+    val match =
+        Regex("^(\\d{4})/(\\d{1,2})/(\\d{1,2}) (\\d{1,2}):(\\d{2}):(\\d{2})$").matchEntire(text)
+            ?: error("invalid frozen v1 confirmation time $text")
     val year = match.groupValues[1]
     val month = match.groupValues[2]
     val day = match.groupValues[3]

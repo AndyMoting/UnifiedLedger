@@ -2,10 +2,10 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
+import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import java.sql.SQLException
 
 class Rg03SchemaV5Test {
     @Test

@@ -1,8 +1,9 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.CreditFlowFormalFactory
+import com.unifiedledger.application.CandidateId
 import com.unifiedledger.application.ConfirmImportCandidate
+import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteManualIncomeSave
 import com.unifiedledger.application.ExecuteRg04ImportOperation
@@ -42,7 +43,6 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
-import com.unifiedledger.application.CandidateId
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.P408ConfirmLinkRequest
 import com.unifiedledger.application.P408EvidenceProjectionPort
@@ -54,22 +54,21 @@ import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.Rg02DecodedManualIncomeInput
 import com.unifiedledger.application.Rg02JsonField
 import com.unifiedledger.application.Rg02ManualIncomeContext
-import com.unifiedledger.application.Rg03ManualTransferSnapshot
 import com.unifiedledger.application.Rg03ExecutionResult
+import com.unifiedledger.application.Rg03ManualTransferSnapshot
 import com.unifiedledger.application.Rg03PreparedOperation
 import com.unifiedledger.application.Rg05ManualSnapshot
 import com.unifiedledger.application.Rg05PreparedOperation
 import com.unifiedledger.application.Rg06CreateStagedPaymentInput
 import com.unifiedledger.application.Rg06Operation
+import com.unifiedledger.application.Rg07ExecutionResult
 import com.unifiedledger.application.Rg07ManualExpenseInput
 import com.unifiedledger.application.Rg07Operation
-import com.unifiedledger.application.Rg07ExecutionResult
 import com.unifiedledger.application.Rg08ExecutionResult
 import com.unifiedledger.application.Rg08Operation
 import com.unifiedledger.application.Rg09ExecutionResult
 import com.unifiedledger.application.Rg09Operation
 import com.unifiedledger.application.Rg10ExecutionResult
-import com.unifiedledger.application.Rg10Operation
 import com.unifiedledger.application.Rg11CreateIds
 import com.unifiedledger.application.Rg11CreateInput
 import com.unifiedledger.application.Rg11ExecutionResult
@@ -88,39 +87,34 @@ import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.AccountTransferIds
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
 import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CreditRefundOriginalExpense
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.MergedPaymentExpenseIds
 import com.unifiedledger.domain.MergedPaymentItem
+import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PeriodicAllocationAnchor
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSet
 import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.StagedPaymentCreationIds
+import com.unifiedledger.domain.StagedPaymentHistoryId
+import com.unifiedledger.domain.StagedPaymentLifecycleId
+import com.unifiedledger.domain.StagedPaymentRelationId
 import com.unifiedledger.domain.Transaction
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.StagedPaymentCreationIds
-import com.unifiedledger.domain.StagedPaymentHistoryId
-import com.unifiedledger.domain.StagedPaymentLifecycleId
-import com.unifiedledger.domain.StagedPaymentRelationId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
-import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
-import com.unifiedledger.domain.CreditRefundOriginalExpense
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Properties
@@ -236,9 +230,15 @@ class P409SiloSpineCoexistenceTest {
                 assertIs<com.unifiedledger.application.Rg04ImportExecutionResult.Accepted>(rg04Executor.execute(rg04Case.importOperations[0]))
 
                 // RG-05 (i): the merged-payment store, manual path + replay.
-                val store05 = SqlDelightRg05Store(database, driver, rg05Catalog(), object : Rg05IdentitySource {
-                    override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation-p409-rg05", "reconciliation-p409-rg05")
-                })
+                val store05 =
+                    SqlDelightRg05Store(
+                        database,
+                        driver,
+                        rg05Catalog(),
+                        object : Rg05IdentitySource {
+                            override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation-p409-rg05", "reconciliation-p409-rg05")
+                        },
+                    )
                 val rg05Operation = rg05ManualOperation()
                 assertIs<com.unifiedledger.application.Rg05ExecutionResult.Accepted>(store05.commit(rg05Operation))
 
@@ -333,9 +333,15 @@ class P409SiloSpineCoexistenceTest {
                     ExecuteRg04ImportOperation(SqlDelightRg04ImportStore(database, driver, rg04Case.catalog)).execute(rg04Case.importOperations[0]),
                 )
 
-                val store05 = SqlDelightRg05Store(database, driver, rg05Catalog(), object : Rg05IdentitySource {
-                    override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation-p409-rg05", "reconciliation-p409-rg05")
-                })
+                val store05 =
+                    SqlDelightRg05Store(
+                        database,
+                        driver,
+                        rg05Catalog(),
+                        object : Rg05IdentitySource {
+                            override fun manual(requestId: RequestId) = Rg05ManualCommitIds("confirmation-p409-rg05", "reconciliation-p409-rg05")
+                        },
+                    )
                 assertIs<com.unifiedledger.application.Rg05ExecutionResult.NoChange>(store05.commit(rg05ManualOperation()))
 
                 val store06 = SqlDelightRg06Store(database, driver, rg06Catalog(), "+08:00") { _, _ -> null }
@@ -372,44 +378,52 @@ class P409SiloSpineCoexistenceTest {
 
     // ---------- the section 5.2 spine form ----------
 
-    private fun coexistCatalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("coexist-asset-a"), coexistLedgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("coexist-asset-b"), coexistLedgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("coexist-credit"), coexistLedgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("coexist-expense-food"), coexistLedgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("coexist-income-salary"), coexistLedgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("coexist-category-primary-food"), coexistLedgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("coexist-category-food"), coexistLedgerId, parentId = CategoryId("coexist-category-primary-food"), postingAccountId = AccountId("coexist-expense-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("coexist-category-primary-salary"), coexistLedgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("coexist-category-salary"), coexistLedgerId, parentId = CategoryId("coexist-category-primary-salary"), postingAccountId = AccountId("coexist-income-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("coexist catalog failure: ${result.violation}")
-    }
+    private fun coexistCatalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("coexist-asset-a"), coexistLedgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("coexist-asset-b"), coexistLedgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("coexist-credit"), coexistLedgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("coexist-expense-food"), coexistLedgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("coexist-income-salary"), coexistLedgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("coexist-category-primary-food"), coexistLedgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("coexist-category-food"), coexistLedgerId, parentId = CategoryId("coexist-category-primary-food"), postingAccountId = AccountId("coexist-expense-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("coexist-category-primary-salary"), coexistLedgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("coexist-category-salary"), coexistLedgerId, parentId = CategoryId("coexist-category-primary-salary"), postingAccountId = AccountId("coexist-income-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("coexist catalog failure: ${result.violation}")
+        }
 
     private fun originalExpenseReader(driver: JdbcSqliteDriver): (TransactionId) -> CreditRefundOriginalExpense? {
         return fun(transactionId: TransactionId): CreditRefundOriginalExpense? {
-            val rows = selectTypedRows(
-                driver,
-                "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
-                    "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
-                    "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
-                    "WHERE t.ledger_id = '${coexistLedgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
-                listOf(false, false, false, false),
-            )
+            val rows =
+                selectTypedRows(
+                    driver,
+                    "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
+                        "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
+                        "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
+                        "WHERE t.ledger_id = '${coexistLedgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
+                    listOf(false, false, false, false),
+                )
             if (rows.size != 1) return null
             return CreditRefundOriginalExpense(
-                transactionId, LedgerId(rows[0][1] as String),
-                com.unifiedledger.domain.TransactionKind.valueOf(rows[0][0] as String),
-                rows[0][3] as String, AccountId(rows[0][2] as String),
+                transactionId,
+                LedgerId(rows[0][1] as String),
+                com.unifiedledger.domain.TransactionKind
+                    .valueOf(rows[0][0] as String),
+                rows[0][3] as String,
+                AccountId(rows[0][2] as String),
             )
         }
     }
@@ -424,20 +438,29 @@ class P409SiloSpineCoexistenceTest {
     ) {
         fun intake(request: ImportIntakeRequest) = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
-        fun confirm(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory) =
-            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
+        fun confirm(
+            request: ImportCandidateConfirmRequest,
+            factory: ImportCandidateFormalFactory,
+        ) = ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
     }
 
-    private fun spineExecutor(database: LedgerDatabase, driver: JdbcSqliteDriver, intakeIds: ImportIntakeIdSource, commitIds: ImportIdSource) =
-        SpineExecutor(database, SqlDelightImportSpineStore(database, driver), coexistCatalog(), driver, intakeIds, commitIds)
+    private fun spineExecutor(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        intakeIds: ImportIntakeIdSource,
+        commitIds: ImportIdSource,
+    ) = SpineExecutor(database, SqlDelightImportSpineStore(database, driver), coexistCatalog(), driver, intakeIds, commitIds)
 
-    private fun ordinaryFactory() = object : ImportCandidateFormalFactory {
-        private val catalog = coexistCatalog()
-        private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
+    private fun ordinaryFactory() =
+        object : ImportCandidateFormalFactory {
+            private val catalog = coexistCatalog()
+            private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
-    }
+            override fun create(
+                input: ImportCandidateFormalizationInput,
+                ids: ImportCommitIds,
+            ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
+        }
 
     private fun transferFactory() = com.unifiedledger.application.TransferFlowFormalFactory(coexistCatalog(), AccountId("coexist-asset-a"))
 
@@ -445,40 +468,67 @@ class P409SiloSpineCoexistenceTest {
 
     private fun mixedFactory() = MixedPaymentFlowFormalFactory(coexistCatalog())
 
-    private fun spineIntakeRequest(requestId: String, ordinal: Int, kind: ImportRecordKind, facts: ImportSourceFacts, completeness: ImportCompleteness, profile: ImportPaymentProfile?) =
-        ImportIntakeRequest(
-            identity = ImportRequestIdentity(coexistLedgerId, ImportRequestId(requestId)),
-            inputRef = inputRef,
-            recordOrdinal = ordinal,
-            recordKind = kind,
-            facts = facts,
-            completeness = completeness,
-            candidateGeneratedAt = generatedAt,
-            paymentProfile = profile,
-        )
+    private fun spineIntakeRequest(
+        requestId: String,
+        ordinal: Int,
+        kind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        completeness: ImportCompleteness,
+        profile: ImportPaymentProfile?,
+    ) = ImportIntakeRequest(
+        identity = ImportRequestIdentity(coexistLedgerId, ImportRequestId(requestId)),
+        inputRef = inputRef,
+        recordOrdinal = ordinal,
+        recordKind = kind,
+        facts = facts,
+        completeness = completeness,
+        candidateGeneratedAt = generatedAt,
+        paymentProfile = profile,
+    )
 
-    private fun spineIntakeIds(prefix: String, duplicates: List<Pair<String, String>> = emptyList()) = ImportIntakeIds(
-        ImportSourceId("source-$prefix"), ImportEvidenceId("evidence-$prefix"),
-        ImportCandidateId("candidate-$prefix"), ImportStatusHistoryId("status-$prefix-1"),
+    private fun spineIntakeIds(
+        prefix: String,
+        duplicates: List<Pair<String, String>> = emptyList(),
+    ) = ImportIntakeIds(
+        ImportSourceId("source-$prefix"),
+        ImportEvidenceId("evidence-$prefix"),
+        ImportCandidateId("candidate-$prefix"),
+        ImportStatusHistoryId("status-$prefix-1"),
         duplicates.map { ImportDuplicateIntakeIds(ImportDuplicateCandidateId(it.first), ImportStatusHistoryId(it.second)) },
     )
 
-    private fun spineCommitIds(prefix: String, threePostings: Boolean = false) = ImportCommitIds(
+    private fun spineCommitIds(
+        prefix: String,
+        threePostings: Boolean = false,
+    ) = ImportCommitIds(
         ImportConfirmationId("confirmation-$prefix"),
         ImportStatusHistoryId("status-$prefix-2"),
         ImportFormalIds(
-            TransactionId("tx-$prefix"), TransactionVersionId("version-$prefix-v1"), PostingSetId("posting-set-$prefix"),
+            TransactionId("tx-$prefix"),
+            TransactionVersionId("version-$prefix-v1"),
+            PostingSetId("posting-set-$prefix"),
             (0..if (threePostings) 2 else 1).map { PostingId("posting-$prefix-$it") },
         ),
     )
 
-    private fun ordinaryConfirm(requestId: String, candidate: String, hash: String, category: String, funding: String) =
-        ImportCandidateConfirmRequest(
-            ImportRequestIdentity(coexistLedgerId, ImportRequestId(requestId)), ImportCandidateId(candidate), hash, confirmedAt,
-            ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(category), AccountId(funding)),
-        )
+    private fun ordinaryConfirm(
+        requestId: String,
+        candidate: String,
+        hash: String,
+        category: String,
+        funding: String,
+    ) = ImportCandidateConfirmRequest(
+        ImportRequestIdentity(coexistLedgerId, ImportRequestId(requestId)),
+        ImportCandidateId(candidate),
+        hash,
+        confirmedAt,
+        ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(category), AccountId(funding)),
+    )
 
-    private fun runFullSpineForm(database: LedgerDatabase, driver: JdbcSqliteDriver) {
+    private fun runFullSpineForm(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
         val hash = { kind: ImportRecordKind, facts: ImportSourceFacts, profile: ImportPaymentProfile? -> fingerprint.digest(kind, facts, profile) }
 
         // RL-01: ordinary expense confirmed + equal re-intake as duplicate + review.
@@ -496,27 +546,35 @@ class P409SiloSpineCoexistenceTest {
         // RL-02: ordinary income confirmed.
         run1(database, driver, spineIntakeIds("sp-rl02"), spineCommitIds("sp-rl02")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl02", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl02-confirm")), ImportCandidateId("candidate-sp-rl02"),
-                    hash(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, null), confirmedAt,
-                    ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("coexist-category-salary"), AccountId("coexist-asset-a")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl02-confirm")),
+                        ImportCandidateId("candidate-sp-rl02"),
+                        hash(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, null),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("coexist-category-salary"), AccountId("coexist-asset-a")),
+                    ),
+                    ordinaryFactory(),
                 ),
-                ordinaryFactory(),
-            ))
+            )
         }
 
         // RL-03: complete transfer confirmed + confirmLink (combo anchor a); missing leg pending.
         run1(database, driver, spineIntakeIds("sp-rl03c"), spineCommitIds("sp-rl03c")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl03c", 3, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl03c-confirm")), ImportCandidateId("candidate-sp-rl03c"),
-                    hash(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, null), confirmedAt,
-                    ImportConfirmDecisionFields.TransferFlow(AccountId("coexist-asset-a"), AccountId("coexist-asset-b")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl03c-confirm")),
+                        ImportCandidateId("candidate-sp-rl03c"),
+                        hash(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, null),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.TransferFlow(AccountId("coexist-asset-a"), AccountId("coexist-asset-b")),
+                    ),
+                    transferFactory(),
                 ),
-                transferFactory(),
-            ))
+            )
         }
         run1(database, driver, spineIntakeIds("sp-rl03m"), spineCommitIds("unused")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl03m", 4, ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, rl03MissingFacts, ImportCompleteness.VALID_COMPLETE, null)))
@@ -543,12 +601,12 @@ class P409SiloSpineCoexistenceTest {
                     accountId = "coexist-asset-a",
                     responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
                     basisVersion = 2,
-                            projectionId = "proj-evidence-sp-rl03x",
-                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-                            projectionRuleVersion = 1,
-                            normalizedAmountMinor = 3000,
-                            rawAmountMinor = 3000,
-                            rawCurrencyPrecision = 2,
+                    projectionId = "proj-evidence-sp-rl03x",
+                    projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                    projectionRuleVersion = 1,
+                    normalizedAmountMinor = 3000,
+                    rawAmountMinor = 3000,
+                    rawCurrencyPrecision = 2,
                     matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
                     windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
                     naturalDayDistance = 0,
@@ -564,14 +622,18 @@ class P409SiloSpineCoexistenceTest {
         // RL-04: second-source routing — complete variant confirmed, incomplete stays put.
         run1(database, driver, spineIntakeIds("sp-rl04c"), spineCommitIds("sp-rl04c")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl04c", 5, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, ImportCompleteness.VALID_COMPLETE, null)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl04c-confirm")), ImportCandidateId("candidate-sp-rl04c"),
-                    hash(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, null), confirmedAt,
-                    ImportConfirmDecisionFields.TransferFlow(AccountId("coexist-asset-a"), AccountId("coexist-asset-b")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl04c-confirm")),
+                        ImportCandidateId("candidate-sp-rl04c"),
+                        hash(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, null),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.TransferFlow(AccountId("coexist-asset-a"), AccountId("coexist-asset-b")),
+                    ),
+                    transferFactory(),
                 ),
-                transferFactory(),
-            ))
+            )
         }
         run1(database, driver, spineIntakeIds("sp-rl04i"), spineCommitIds("unused")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl04i", 6, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04IncompleteFacts, ImportCompleteness.VALID_INCOMPLETE, null)))
@@ -580,49 +642,65 @@ class P409SiloSpineCoexistenceTest {
         // RL-05: the three credit anchors confirmed in sequence.
         run1(database, driver, spineIntakeIds("sp-rl05e"), spineCommitIds("sp-rl05e")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl05e", 7, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05e-confirm")), ImportCandidateId("candidate-sp-rl05e"),
-                    hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, directProfile), confirmedAt,
-                    ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05e-confirm")),
+                        ImportCandidateId("candidate-sp-rl05e"),
+                        hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, directProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit")),
+                    ),
+                    creditFactory(driver),
                 ),
-                creditFactory(driver),
-            ))
+            )
         }
         run1(database, driver, spineIntakeIds("sp-rl05r"), spineCommitIds("sp-rl05r")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl05r", 8, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, rl05RepayFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05r-confirm")), ImportCandidateId("candidate-sp-rl05r"),
-                    hash(ImportRecordKind.CREDIT_REPAYMENT_SOURCE, rl05RepayFacts, repaymentProfile), confirmedAt,
-                    ImportConfirmDecisionFields.CreditRepaymentFlow(AccountId("coexist-asset-a"), AccountId("coexist-credit")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05r-confirm")),
+                        ImportCandidateId("candidate-sp-rl05r"),
+                        hash(ImportRecordKind.CREDIT_REPAYMENT_SOURCE, rl05RepayFacts, repaymentProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.CreditRepaymentFlow(AccountId("coexist-asset-a"), AccountId("coexist-credit")),
+                    ),
+                    creditFactory(driver),
                 ),
-                creditFactory(driver),
-            ))
+            )
         }
         run1(database, driver, spineIntakeIds("sp-rl05f"), spineCommitIds("sp-rl05f")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl05f", 9, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05RefundFacts, ImportCompleteness.VALID_COMPLETE, refundProfile)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05f-confirm")), ImportCandidateId("candidate-sp-rl05f"),
-                    hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05RefundFacts, refundProfile), confirmedAt,
-                    ImportConfirmDecisionFields.CreditExpenseRefundFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit"), TransactionId("tx-sp-rl05e")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl05f-confirm")),
+                        ImportCandidateId("candidate-sp-rl05f"),
+                        hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05RefundFacts, refundProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.CreditExpenseRefundFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit"), TransactionId("tx-sp-rl05e")),
+                    ),
+                    creditFactory(driver),
                 ),
-                creditFactory(driver),
-            ))
+            )
         }
 
         // RL-06: mixed payment confirmed.
         run1(database, driver, spineIntakeIds("sp-rl06"), spineCommitIds("sp-rl06", threePostings = true)).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-rl06", 10, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl06-confirm")), ImportCandidateId("candidate-sp-rl06"),
-                    hash(ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, mixedProfile), confirmedAt,
-                    ImportConfirmDecisionFields.MixedPaymentFlow(CategoryId("coexist-category-food"), AccountId("coexist-asset-a"), AccountId("coexist-credit"), 360L, 880L),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-rl06-confirm")),
+                        ImportCandidateId("candidate-sp-rl06"),
+                        hash(ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, mixedProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.MixedPaymentFlow(CategoryId("coexist-category-food"), AccountId("coexist-asset-a"), AccountId("coexist-credit"), 360L, 880L),
+                    ),
+                    mixedFactory(),
                 ),
-                mixedFactory(),
-            ))
+            )
         }
 
         // RL-08: the four closed variants stay zero-funds.
@@ -643,14 +721,18 @@ class P409SiloSpineCoexistenceTest {
         // mixed pair dismissed-lookalike still formalizes.
         run1(database, driver, spineIntakeIds("sp-cb-crda"), spineCommitIds("sp-cb-crda")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-cb-crda", 15, ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-crda-confirm")), ImportCandidateId("candidate-sp-cb-crda"),
-                    hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, directProfile), confirmedAt,
-                    ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit")),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-crda-confirm")),
+                        ImportCandidateId("candidate-sp-cb-crda"),
+                        hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, directProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit")),
+                    ),
+                    creditFactory(driver),
                 ),
-                creditFactory(driver),
-            ))
+            )
         }
         run1(database, driver, spineIntakeIds("sp-cb-crdb", listOf("duplicate-sp-cb-crd" to "history-duplicate-sp-cb-crd")), spineCommitIds("unused")).apply {
             assertAccepted(intake(spineIntakeRequest("req-sp-cb-crdb", 16, ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
@@ -663,8 +745,10 @@ class P409SiloSpineCoexistenceTest {
         assertIs<ImportCandidateDecisionResult.Rejected>(
             run1(database, driver, spineIntakeIds("unused"), spineCommitIds("sp-cb-crdb")).confirm(
                 ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-crdb-confirm")), ImportCandidateId("candidate-sp-cb-crdb"),
-                    hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, directProfile), confirmedAt,
+                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-crdb-confirm")),
+                    ImportCandidateId("candidate-sp-cb-crdb"),
+                    hash(ImportRecordKind.CREDIT_EXPENSE_SOURCE, comboBCreditFacts, directProfile),
+                    confirmedAt,
                     ImportConfirmDecisionFields.CreditExpenseFlow(CategoryId("coexist-category-food"), AccountId("coexist-credit")),
                 ),
                 creditFactory(driver),
@@ -682,18 +766,25 @@ class P409SiloSpineCoexistenceTest {
             ),
         )
         run1(database, driver, spineIntakeIds("unused"), spineCommitIds("sp-cb-mixb", threePostings = true)).apply {
-            assertAccepted(confirm(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-mixb-confirm")), ImportCandidateId("candidate-sp-cb-mixb"),
-                    hash(ImportRecordKind.MIXED_PAYMENT_SOURCE, comboBMixedFacts, mixedProfile), confirmedAt,
-                    ImportConfirmDecisionFields.MixedPaymentFlow(CategoryId("coexist-category-food"), AccountId("coexist-asset-a"), AccountId("coexist-credit"), 500L, 1000L),
+            assertAccepted(
+                confirm(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(coexistLedgerId, ImportRequestId("req-sp-cb-mixb-confirm")),
+                        ImportCandidateId("candidate-sp-cb-mixb"),
+                        hash(ImportRecordKind.MIXED_PAYMENT_SOURCE, comboBMixedFacts, mixedProfile),
+                        confirmedAt,
+                        ImportConfirmDecisionFields.MixedPaymentFlow(CategoryId("coexist-category-food"), AccountId("coexist-asset-a"), AccountId("coexist-credit"), 500L, 1000L),
+                    ),
+                    mixedFactory(),
                 ),
-                mixedFactory(),
-            ))
+            )
         }
     }
 
-    private fun spineReplay(database: LedgerDatabase, driver: JdbcSqliteDriver) {
+    private fun spineReplay(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
         val run = run1(database, driver, spineIntakeIds("unused"), spineCommitIds("unused"))
         assertIs<ImportIntakeResult.NoChange>(run.intake(spineIntakeRequest("req-sp-rl01", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null)))
         assertIs<ImportCandidateDecisionResult.NoChange>(
@@ -710,33 +801,66 @@ class P409SiloSpineCoexistenceTest {
         decision: ImportDuplicateStatus = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
         requestId: String = "review-$candidateId",
     ): ImportDuplicateReviewRequest {
-        val digest = comparisonFingerprint.digest(
-            ImportDuplicateComparisonSnapshot(
-                ImportSourceId(subjectSourceId), ImportSourceId(existingSourceId), kind, kind.contractVersion,
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision, facts.occurredAt, facts.directionToken, facts.statusToken,
-            ),
-        )
+        val digest =
+            comparisonFingerprint.digest(
+                ImportDuplicateComparisonSnapshot(
+                    ImportSourceId(subjectSourceId),
+                    ImportSourceId(existingSourceId),
+                    kind,
+                    kind.contractVersion,
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision,
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                ),
+            )
         return ImportDuplicateReviewRequest(
             ImportRequestIdentity(coexistLedgerId, ImportRequestId(requestId)),
-            ImportDuplicateCandidateId(candidateId), digest, decision, "exact",
-            reviewedAt, "reviewer-p409", reviewedAt,
-            ImportDuplicateReviewId("$requestId-review"), ImportStatusHistoryId("$requestId-history"),
+            ImportDuplicateCandidateId(candidateId),
+            digest,
+            decision,
+            "exact",
+            reviewedAt,
+            "reviewer-p409",
+            reviewedAt,
+            ImportDuplicateReviewId("$requestId-review"),
+            ImportStatusHistoryId("$requestId-history"),
         )
     }
 
-    private fun run1(database: LedgerDatabase, driver: JdbcSqliteDriver, intakeIds: ImportIntakeIds, commitIds: ImportCommitIds): SpineRun =
+    private fun run1(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        intakeIds: ImportIntakeIds,
+        commitIds: ImportCommitIds,
+    ): SpineRun =
         SpineRun(
             spineExecutor(
-                database, driver,
-                object : ImportIntakeIdSource { override fun next() = intakeIds },
-                object : ImportIdSource { override fun next() = commitIds },
+                database,
+                driver,
+                object : ImportIntakeIdSource {
+                    override fun next() = intakeIds
+                },
+                object : ImportIdSource {
+                    override fun next() = commitIds
+                },
             ),
         )
 
-    private class SpineRun(private val executor: SpineExecutor) {
+    private class SpineRun(
+        private val executor: SpineExecutor,
+    ) {
         fun intake(request: ImportIntakeRequest) = executor.intake(request)
-        fun confirm(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory) = executor.confirm(request, factory)
+
+        fun confirm(
+            request: ImportCandidateConfirmRequest,
+            factory: ImportCandidateFormalFactory,
+        ) = executor.confirm(request, factory)
+
         fun assertAccepted(result: ImportIntakeResult) = assertIs<ImportIntakeResult.Accepted>(result)
+
         fun assertAccepted(result: ImportCandidateDecisionResult) = assertIs<ImportCandidateDecisionResult.Accepted>(result)
     }
 
@@ -745,208 +869,263 @@ class P409SiloSpineCoexistenceTest {
     private fun rg01Commit(): Triple<com.unifiedledger.application.ManualExpenseRequestIdentity, com.unifiedledger.application.ManualExpenseRequestSnapshot, com.unifiedledger.application.ConfirmedManualExpenseCommit> {
         val ledger = earlySiloLedger
         val identity = com.unifiedledger.application.ManualExpenseRequestIdentity(ledger, RequestId("request-p409-rg01"))
-        val snapshot = com.unifiedledger.application.ManualExpenseRequestSnapshot(
-            ledgerId = ledger,
-            amount = Money.ofMinor(3_580, cny),
-            categoryId = CategoryId("expense-category-breakfast"),
-            paymentAccountId = AccountId("asset-bank-a"),
-            occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
-            note = "",
-        )
+        val snapshot =
+            com.unifiedledger.application.ManualExpenseRequestSnapshot(
+                ledgerId = ledger,
+                amount = Money.ofMinor(3_580, cny),
+                categoryId = CategoryId("expense-category-breakfast"),
+                paymentAccountId = AccountId("asset-bank-a"),
+                occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
+                note = "",
+            )
         val transactionId = TransactionId("tx-p409-rg01")
         val postingSetId = PostingSetId("posting-set-p409-rg01")
         val versionId = TransactionVersionId("version-p409-rg01-v1")
-        val postingSet = assertIs<DomainResult.Success<PostingSet>>(
-            PostingSet.create(
-                postingSetId,
-                listOf(
-                    Posting(PostingId("posting-p409-rg01-expense"), AccountId("expense-account-breakfast"), Money.ofMinor(3_580, cny)),
-                    Posting(PostingId("posting-p409-rg01-asset"), AccountId("asset-bank-a"), Money.ofMinor(-3_580, cny)),
+        val postingSet =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    postingSetId,
+                    listOf(
+                        Posting(PostingId("posting-p409-rg01-expense"), AccountId("expense-account-breakfast"), Money.ofMinor(3_580, cny)),
+                        Posting(PostingId("posting-p409-rg01-asset"), AccountId("asset-bank-a"), Money.ofMinor(-3_580, cny)),
+                    ),
                 ),
-            ),
-        ).value
-        val formal = assertIs<DomainResult.Success<FormalTransaction>>(
-            FormalTransaction.create(
-                Transaction(transactionId, ledger, TransactionKind.EXPENSE, versionId),
-                listOf(TransactionVersion(versionId, transactionId, 1, postingSetId, TransactionTimes.collapsed(snapshot.occurredAt), snapshot.note)),
-                listOf(postingSet),
-            ),
-        ).value
+            ).value
+        val formal =
+            assertIs<DomainResult.Success<FormalTransaction>>(
+                FormalTransaction.create(
+                    Transaction(transactionId, ledger, TransactionKind.EXPENSE, versionId),
+                    listOf(TransactionVersion(versionId, transactionId, 1, postingSetId, TransactionTimes.collapsed(snapshot.occurredAt), snapshot.note)),
+                    listOf(postingSet),
+                ),
+            ).value
         return Triple(identity, snapshot, com.unifiedledger.application.ConfirmedManualExpenseCommit(com.unifiedledger.application.ConfirmationId("confirmation-p409-rg01"), formal))
     }
 
-    private fun rg02IncomeFactory() = com.unifiedledger.application.ConfirmedIncomeTransactionFactory { request, ids ->
-        val incomeAccount = AccountId("income-account-salary")
-        val postingSet = assertIs<DomainResult.Success<PostingSet>>(
-            PostingSet.create(
-                ids.incomeIds.postingSetId,
-                listOf(
-                    Posting(ids.incomeIds.receivingPostingId, request.receivingAccountId, request.amount),
-                    Posting(ids.incomeIds.incomePostingId, incomeAccount, Money.ofMinor(-request.amount.minorUnits, request.amount.currency)),
+    private fun rg02IncomeFactory() =
+        com.unifiedledger.application.ConfirmedIncomeTransactionFactory { request, ids ->
+            val incomeAccount = AccountId("income-account-salary")
+            val postingSet =
+                assertIs<DomainResult.Success<PostingSet>>(
+                    PostingSet.create(
+                        ids.incomeIds.postingSetId,
+                        listOf(
+                            Posting(ids.incomeIds.receivingPostingId, request.receivingAccountId, request.amount),
+                            Posting(ids.incomeIds.incomePostingId, incomeAccount, Money.ofMinor(-request.amount.minorUnits, request.amount.currency)),
+                        ),
+                    ),
+                ).value
+            val formal =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        Transaction(ids.incomeIds.transactionId, request.ledgerId, TransactionKind.INCOME, ids.incomeIds.versionId),
+                        listOf(
+                            TransactionVersion(
+                                ids.incomeIds.versionId,
+                                ids.incomeIds.transactionId,
+                                1,
+                                ids.incomeIds.postingSetId,
+                                TransactionTimes.collapsed(request.occurredAt),
+                                request.note,
+                            ),
+                        ),
+                        listOf(postingSet),
+                    ),
+                ).value
+            DomainResult.Success(com.unifiedledger.application.ConfirmedManualIncomeCommit(ids.confirmationId, formal))
+        }
+
+    private fun rg02SaveInputOn() =
+        assertIs<com.unifiedledger.application.Rg02ManualIncomeAdaptResult.Success>(
+            adaptRg02ManualIncomeInput(
+                Rg02ManualIncomeContext(ledgerId = earlySiloLedger, currency = cny, caseTimeZone = "Asia/Shanghai"),
+                Rg02DecodedManualIncomeInput(
+                    requestId = Rg02JsonField.Value("request-p409-rg02"),
+                    occurredAt = Rg02JsonField.Value("2026-01-16T09:00:00+08:00"),
+                    amount = Rg02JsonField.Value("3000.00"),
+                    currency = Rg02JsonField.Value("CNY"),
+                    categoryId = Rg02JsonField.Value("income-category-salary"),
+                    receivingAccountId = Rg02JsonField.Value("asset-bank-a"),
+                    note = Rg02JsonField.Value(""),
+                    explicitConfirmation = Rg02JsonField.Value(true),
                 ),
             ),
-        ).value
-        val formal = assertIs<DomainResult.Success<FormalTransaction>>(
-            FormalTransaction.create(
-                Transaction(ids.incomeIds.transactionId, request.ledgerId, TransactionKind.INCOME, ids.incomeIds.versionId),
-                listOf(
-                    TransactionVersion(
-                        ids.incomeIds.versionId, ids.incomeIds.transactionId, 1,
-                        ids.incomeIds.postingSetId, TransactionTimes.collapsed(request.occurredAt), request.note,
-                    ),
-                ),
-                listOf(postingSet),
+        ).value.saveInput
+
+    private fun incomeSaveOn(driver: JdbcSqliteDriver) =
+        ExecuteManualIncomeSave(
+            com.unifiedledger.application.ExecuteConfirmedManualIncome(
+                SqlDelightConfirmedManualIncomeCommitPort(LedgerDatabase(driver), driver),
+                {
+                    com.unifiedledger.application.ConfirmedManualIncomeCommitIds(
+                        com.unifiedledger.application.ConfirmationId("confirmation-p409-rg02"),
+                        AssetReceivedOrdinaryIncomeIds(
+                            TransactionId("tx-p409-rg02"),
+                            TransactionVersionId("version-p409-rg02-v1"),
+                            PostingSetId("posting-set-p409-rg02"),
+                            PostingId("posting-p409-rg02-asset"),
+                            PostingId("posting-p409-rg02-income"),
+                        ),
+                    )
+                },
+                rg02IncomeFactory(),
             ),
-        ).value
-        DomainResult.Success(com.unifiedledger.application.ConfirmedManualIncomeCommit(ids.confirmationId, formal))
-    }
-
-    private fun rg02SaveInputOn() = assertIs<com.unifiedledger.application.Rg02ManualIncomeAdaptResult.Success>(
-        adaptRg02ManualIncomeInput(
-            Rg02ManualIncomeContext(ledgerId = earlySiloLedger, currency = cny, caseTimeZone = "Asia/Shanghai"),
-            Rg02DecodedManualIncomeInput(
-                requestId = Rg02JsonField.Value("request-p409-rg02"),
-                occurredAt = Rg02JsonField.Value("2026-01-16T09:00:00+08:00"),
-                amount = Rg02JsonField.Value("3000.00"),
-                currency = Rg02JsonField.Value("CNY"),
-                categoryId = Rg02JsonField.Value("income-category-salary"),
-                receivingAccountId = Rg02JsonField.Value("asset-bank-a"),
-                note = Rg02JsonField.Value(""),
-                explicitConfirmation = Rg02JsonField.Value(true),
-            ),
-        ),
-    ).value.saveInput
-
-    private fun incomeSaveOn(driver: JdbcSqliteDriver) = ExecuteManualIncomeSave(
-        com.unifiedledger.application.ExecuteConfirmedManualIncome(
-            SqlDelightConfirmedManualIncomeCommitPort(LedgerDatabase(driver), driver),
-            {
-                com.unifiedledger.application.ConfirmedManualIncomeCommitIds(
-                    com.unifiedledger.application.ConfirmationId("confirmation-p409-rg02"),
-                    AssetReceivedOrdinaryIncomeIds(
-                        TransactionId("tx-p409-rg02"), TransactionVersionId("version-p409-rg02-v1"), PostingSetId("posting-set-p409-rg02"),
-                        PostingId("posting-p409-rg02-asset"), PostingId("posting-p409-rg02-income"),
-                    ),
-                )
-            },
-            rg02IncomeFactory(),
-        ),
-    )
-
-    private fun rg03ManualSnapshot() = Rg03ManualTransferSnapshot(
-        earlySiloLedger, RequestId("request-p409-rg03"), Instant.parse("2026-01-20T02:00:00Z"),
-        AccountId("asset-bank-a"), AccountId("asset-wallet-b"),
-        Money.ofMinor(6_000, cny), Money.ofMinor(5_900, cny), Money.ofMinor(100, cny),
-        CategoryId("expense-category-transfer-fee"),
-    )
-
-    private fun rg06CreateOperation() = Rg06Operation.CreateStagedPayment(
-        ledgerId = LedgerId("ledger-a"),
-        input = Rg06CreateStagedPaymentInput(
-            requestId = RequestId("request-p409-rg06"),
-            totalAmount = Money.ofMinor(30_000, cny),
-            categoryId = CategoryId("expense-service"),
-            createdAt = Instant.parse("2026-04-20T09:00:00+08:00"),
-        ),
-        ids = StagedPaymentCreationIds(
-            StagedPaymentRelationId("relation-p409-rg06"),
-            StagedPaymentLifecycleId("lifecycle-p409-rg06"),
-            StagedPaymentHistoryId("history-p409-rg06"),
-        ),
-    )
-
-    private fun rg07ExpenseOperation() = Rg07Operation.ManualExpense(
-        earlySiloLedger,
-        Rg07ManualExpenseInput(
-            RequestId("request-p409-rg07"), Money.ofMinor(1_000, cny), CategoryId("ledger-a-daily"),
-            AccountId("ledger-a-asset"), Instant.parse("2026-01-10T04:00:00Z"), "", true,
-        ),
-    )
-
-    private fun rg03Catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            listOf(
-                Account(AccountId("asset-bank-a"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
-                Account(AccountId("asset-wallet-b"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
-                Account(AccountId("liability-credit-c"), earlySiloLedger, AccountKind.LIABILITY, cny, true, true),
-                Account(AccountId("expense-account-transfer-fee"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
-            ),
-            listOf(
-                Category(CategoryId("expense-category-financial"), earlySiloLedger, null, null, true),
-                Category(CategoryId("expense-category-transfer-fee"), earlySiloLedger, CategoryId("expense-category-financial"), AccountId("expense-account-transfer-fee"), true),
-            ),
-        ),
-    ).value
-
-    private fun rg03IdentitySource(): Rg03IdentitySource = object : Rg03IdentitySource {
-        override fun source(requestId: RequestId) = Rg03SourceCommitIds(CandidateId("candidate-p409-rg03"), "status-p409-rg03")
-        override fun transfer(requestId: RequestId) = Rg03TransferCommitIds(
-            com.unifiedledger.application.ConfirmationId("confirmation-p409-rg03"),
-            AccountTransferIds(
-                TransactionId("tx-p409-rg03"), TransactionVersionId("version-p409-rg03-v1"), PostingSetId("posting-set-p409-rg03"),
-                PostingId("posting-p409-rg03-source"), PostingId("posting-p409-rg03-destination"), PostingId("posting-p409-rg03-fee"),
-            ),
-            "reconciliation-p409-rg03-source",
-            "reconciliation-p409-rg03-destination",
-            null,
-            null,
         )
-        override fun mirror(requestId: RequestId) = Rg03MirrorCommitIds("match-p409-rg03")
-    }
 
-    private fun rg05Catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            listOf(
-                Account(AccountId("asset"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
-                Account(AccountId("expense-a-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
-                Account(AccountId("expense-b-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
+    private fun rg03ManualSnapshot() =
+        Rg03ManualTransferSnapshot(
+            earlySiloLedger,
+            RequestId("request-p409-rg03"),
+            Instant.parse("2026-01-20T02:00:00Z"),
+            AccountId("asset-bank-a"),
+            AccountId("asset-wallet-b"),
+            Money.ofMinor(6_000, cny),
+            Money.ofMinor(5_900, cny),
+            Money.ofMinor(100, cny),
+            CategoryId("expense-category-transfer-fee"),
+        )
+
+    private fun rg06CreateOperation() =
+        Rg06Operation.CreateStagedPayment(
+            ledgerId = LedgerId("ledger-a"),
+            input =
+                Rg06CreateStagedPaymentInput(
+                    requestId = RequestId("request-p409-rg06"),
+                    totalAmount = Money.ofMinor(30_000, cny),
+                    categoryId = CategoryId("expense-service"),
+                    createdAt = Instant.parse("2026-04-20T09:00:00+08:00"),
+                ),
+            ids =
+                StagedPaymentCreationIds(
+                    StagedPaymentRelationId("relation-p409-rg06"),
+                    StagedPaymentLifecycleId("lifecycle-p409-rg06"),
+                    StagedPaymentHistoryId("history-p409-rg06"),
+                ),
+        )
+
+    private fun rg07ExpenseOperation() =
+        Rg07Operation.ManualExpense(
+            earlySiloLedger,
+            Rg07ManualExpenseInput(
+                RequestId("request-p409-rg07"),
+                Money.ofMinor(1_000, cny),
+                CategoryId("ledger-a-daily"),
+                AccountId("ledger-a-asset"),
+                Instant.parse("2026-01-10T04:00:00Z"),
+                "",
+                true,
             ),
-            listOf(
-                Category(CategoryId("root"), earlySiloLedger, null, null, true),
-                Category(CategoryId("daily"), earlySiloLedger, CategoryId("root"), AccountId("expense-a-account"), true),
-                Category(CategoryId("service"), earlySiloLedger, CategoryId("root"), AccountId("expense-b-account"), true),
+        )
+
+    private fun rg03Catalog(): LedgerCatalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                listOf(
+                    Account(AccountId("asset-bank-a"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                    Account(AccountId("asset-wallet-b"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                    Account(AccountId("liability-credit-c"), earlySiloLedger, AccountKind.LIABILITY, cny, true, true),
+                    Account(AccountId("expense-account-transfer-fee"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
+                ),
+                listOf(
+                    Category(CategoryId("expense-category-financial"), earlySiloLedger, null, null, true),
+                    Category(CategoryId("expense-category-transfer-fee"), earlySiloLedger, CategoryId("expense-category-financial"), AccountId("expense-account-transfer-fee"), true),
+                ),
             ),
-        ),
-    ).value
+        ).value
+
+    private fun rg03IdentitySource(): Rg03IdentitySource =
+        object : Rg03IdentitySource {
+            override fun source(requestId: RequestId) = Rg03SourceCommitIds(CandidateId("candidate-p409-rg03"), "status-p409-rg03")
+
+            override fun transfer(requestId: RequestId) =
+                Rg03TransferCommitIds(
+                    com.unifiedledger.application.ConfirmationId("confirmation-p409-rg03"),
+                    AccountTransferIds(
+                        TransactionId("tx-p409-rg03"),
+                        TransactionVersionId("version-p409-rg03-v1"),
+                        PostingSetId("posting-set-p409-rg03"),
+                        PostingId("posting-p409-rg03-source"),
+                        PostingId("posting-p409-rg03-destination"),
+                        PostingId("posting-p409-rg03-fee"),
+                    ),
+                    "reconciliation-p409-rg03-source",
+                    "reconciliation-p409-rg03-destination",
+                    null,
+                    null,
+                )
+
+            override fun mirror(requestId: RequestId) = Rg03MirrorCommitIds("match-p409-rg03")
+        }
+
+    private fun rg05Catalog(): LedgerCatalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                listOf(
+                    Account(AccountId("asset"), earlySiloLedger, AccountKind.ASSET, cny, true, true),
+                    Account(AccountId("expense-a-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
+                    Account(AccountId("expense-b-account"), earlySiloLedger, AccountKind.EXPENSE, cny, false, false),
+                ),
+                listOf(
+                    Category(CategoryId("root"), earlySiloLedger, null, null, true),
+                    Category(CategoryId("daily"), earlySiloLedger, CategoryId("root"), AccountId("expense-a-account"), true),
+                    Category(CategoryId("service"), earlySiloLedger, CategoryId("root"), AccountId("expense-b-account"), true),
+                ),
+            ),
+        ).value
 
     private fun rg05ManualOperation(): Rg05PreparedOperation.Manual {
-        val snapshot = Rg05ManualSnapshot(
-            earlySiloLedger, RequestId("request-p409-rg05"), Instant.parse("2026-04-10T10:30:00Z"), "2026-04-10T10:30:00Z",
-            Money.ofMinor(10_000, cny), AccountId("asset"),
-            listOf(
-                MergedPaymentItem("a", Money.ofMinor(4_000, cny), CategoryId("daily"), "daily", Instant.parse("2026-04-10T09:00:00Z")),
-                MergedPaymentItem("b", Money.ofMinor(6_000, cny), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
-            ), true,
-        )
+        val snapshot =
+            Rg05ManualSnapshot(
+                earlySiloLedger,
+                RequestId("request-p409-rg05"),
+                Instant.parse("2026-04-10T10:30:00Z"),
+                "2026-04-10T10:30:00Z",
+                Money.ofMinor(10_000, cny),
+                AccountId("asset"),
+                listOf(
+                    MergedPaymentItem("a", Money.ofMinor(4_000, cny), CategoryId("daily"), "daily", Instant.parse("2026-04-10T09:00:00Z")),
+                    MergedPaymentItem("b", Money.ofMinor(6_000, cny), CategoryId("service"), "service", Instant.parse("2026-04-10T09:05:00Z")),
+                ),
+                true,
+            )
         return Rg05PreparedOperation.Manual(
             snapshot,
             MergedPaymentExpenseIds(
-                TransactionId("tx-p409-rg05"), TransactionVersionId("version-p409-rg05"), PostingSetId("posting-set-p409-rg05"),
-                listOf(PostingId("posting-p409-rg05-a"), PostingId("posting-p409-rg05-b")), PostingId("posting-p409-rg05-asset"),
+                TransactionId("tx-p409-rg05"),
+                TransactionVersionId("version-p409-rg05"),
+                PostingSetId("posting-set-p409-rg05"),
+                listOf(PostingId("posting-p409-rg05-a"), PostingId("posting-p409-rg05-b")),
+                PostingId("posting-p409-rg05-asset"),
             ),
-            "relation-p409-rg05", "", "", mapOf("a" to "consumption-p409-rg05-a", "b" to "consumption-p409-rg05-b"),
+            "relation-p409-rg05",
+            "",
+            "",
+            mapOf("a" to "consumption-p409-rg05-a", "b" to "consumption-p409-rg05-b"),
             mapOf("a" to "allocation-p409-rg05-a", "b" to "allocation-p409-rg05-b"),
         )
     }
 
-    private fun rg06Catalog(): LedgerCatalog = assertIs<DomainResult.Success<LedgerCatalog>>(
-        LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("asset-bank"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, true),
-                Account(AccountId("expense-service-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, cny, false, false),
-                Account(AccountId("income-account"), LedgerId("ledger-a"), AccountKind.INCOME, cny, false, false),
-                Account(AccountId("asset-nonfinancial"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, false),
-                Account(AccountId("asset-external"), LedgerId("ledger-a"), AccountKind.ASSET, cny, false, true),
-                Account(AccountId("liability"), LedgerId("ledger-a"), AccountKind.LIABILITY, cny, true, true),
+    private fun rg06Catalog(): LedgerCatalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                accounts =
+                    listOf(
+                        Account(AccountId("asset-bank"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, true),
+                        Account(AccountId("expense-service-account"), LedgerId("ledger-a"), AccountKind.EXPENSE, cny, false, false),
+                        Account(AccountId("income-account"), LedgerId("ledger-a"), AccountKind.INCOME, cny, false, false),
+                        Account(AccountId("asset-nonfinancial"), LedgerId("ledger-a"), AccountKind.ASSET, cny, true, false),
+                        Account(AccountId("asset-external"), LedgerId("ledger-a"), AccountKind.ASSET, cny, false, true),
+                        Account(AccountId("liability"), LedgerId("ledger-a"), AccountKind.LIABILITY, cny, true, true),
+                    ),
+                categories =
+                    listOf(
+                        Category(CategoryId("expense-root"), LedgerId("ledger-a"), null, null, true),
+                        Category(CategoryId("expense-service"), LedgerId("ledger-a"), CategoryId("expense-root"), AccountId("expense-service-account"), true),
+                        Category(CategoryId("income-root"), LedgerId("ledger-a"), null, null, true, CategoryKind.INCOME),
+                        Category(CategoryId("income-child"), LedgerId("ledger-a"), CategoryId("income-root"), AccountId("income-account"), true, CategoryKind.INCOME),
+                    ),
             ),
-            categories = listOf(
-                Category(CategoryId("expense-root"), LedgerId("ledger-a"), null, null, true),
-                Category(CategoryId("expense-service"), LedgerId("ledger-a"), CategoryId("expense-root"), AccountId("expense-service-account"), true),
-                Category(CategoryId("income-root"), LedgerId("ledger-a"), null, null, true, CategoryKind.INCOME),
-                Category(CategoryId("income-child"), LedgerId("ledger-a"), CategoryId("income-root"), AccountId("income-account"), true, CategoryKind.INCOME),
-            ),
-        ),
-    ).value
+        ).value
 
     private fun rg07Catalog(): LedgerCatalog {
         val ledger = earlySiloLedger
@@ -964,31 +1143,54 @@ class P409SiloSpineCoexistenceTest {
         ).value
     }
 
-    private fun rg07IdentitySource(): Rg07IdentitySource = object : Rg07IdentitySource {
-        private fun owner(operation: Rg07Operation) = "${operation.ledgerId.value}-${operation.identity.value}"
-        override fun operationId(operation: Rg07Operation) = "operation-${owner(operation)}"
-        override fun manual(operation: Rg07Operation.ManualExpense) = Rg07ManualCommitFacts(
-            "confirmation-${owner(operation)}", "reconciliation-${owner(operation)}", Instant.parse("2026-01-10T04:01:00Z"),
-        )
-        override fun relation(operation: Rg07Operation.Status) = "relation-${owner(operation)}"
-        override fun domainEntity(operation: Rg07Operation, relationId: String) = "entity-${owner(operation)}"
-        override fun formal(operation: Rg07Operation) = Rg07FormalIds(
-            "transaction-${owner(operation)}", "version-${owner(operation)}", "posting-set-${owner(operation)}",
-            "posting-first-${owner(operation)}", "posting-second-${owner(operation)}",
-        )
-        override fun receipt(operation: Rg07Operation, relationId: String, assetPostingId: String) =
-            Rg07ReceiptCommitIds(
-                "confirmation-${owner(operation)}", "reconciliation-${owner(operation)}", "entity-${owner(operation)}",
+    private fun rg07IdentitySource(): Rg07IdentitySource =
+        object : Rg07IdentitySource {
+            private fun owner(operation: Rg07Operation) = "${operation.ledgerId.value}-${operation.identity.value}"
+
+            override fun operationId(operation: Rg07Operation) = "operation-${owner(operation)}"
+
+            override fun manual(operation: Rg07Operation.ManualExpense) =
+                Rg07ManualCommitFacts(
+                    "confirmation-${owner(operation)}",
+                    "reconciliation-${owner(operation)}",
+                    Instant.parse("2026-01-10T04:01:00Z"),
+                )
+
+            override fun relation(operation: Rg07Operation.Status) = "relation-${owner(operation)}"
+
+            override fun domainEntity(
+                operation: Rg07Operation,
+                relationId: String,
+            ) = "entity-${owner(operation)}"
+
+            override fun formal(operation: Rg07Operation) =
+                Rg07FormalIds(
+                    "transaction-${owner(operation)}",
+                    "version-${owner(operation)}",
+                    "posting-set-${owner(operation)}",
+                    "posting-first-${owner(operation)}",
+                    "posting-second-${owner(operation)}",
+                )
+
+            override fun receipt(
+                operation: Rg07Operation,
+                relationId: String,
+                assetPostingId: String,
+            ) = Rg07ReceiptCommitIds(
+                "confirmation-${owner(operation)}",
+                "reconciliation-${owner(operation)}",
+                "entity-${owner(operation)}",
             )
-    }
+        }
 
     private fun rg11Catalog(): LedgerCatalog {
         val ledgerA = LedgerId("ledger-a")
-        val accounts = listOf(
-            Account(AccountId("asset-bank-a"), ledgerA, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-            Account(AccountId("prepaid-account-a"), ledgerA, AccountKind.ASSET, cny, ownedByUser = true, realAccount = false),
-            Account(AccountId("expense-account-a"), ledgerA, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-        )
+        val accounts =
+            listOf(
+                Account(AccountId("asset-bank-a"), ledgerA, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                Account(AccountId("prepaid-account-a"), ledgerA, AccountKind.ASSET, cny, ownedByUser = true, realAccount = false),
+                Account(AccountId("expense-account-a"), ledgerA, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+            )
         val categories = listOf(Category(CategoryId("category-a"), ledgerA, parentId = CategoryId("root"), postingAccountId = AccountId("expense-account-a"), active = true))
         return when (val created = LedgerCatalog.create(accounts, categories)) {
             is DomainResult.Success -> created.value
@@ -999,50 +1201,56 @@ class P409SiloSpineCoexistenceTest {
     private fun rg11CreateOperation(): com.unifiedledger.application.Rg11Operation.CreatePeriodicAllocation =
         com.unifiedledger.application.Rg11Operation.CreatePeriodicAllocation(
             ledgerId = LedgerId("ledger-a"),
-            input = Rg11CreateInput(
-                requestId = RequestId("request-p409-rg11"),
-                paymentAccountId = AccountId("asset-bank-a"),
-                prepaidAccountId = AccountId("prepaid-account-a"),
-                categoryId = CategoryId("category-a"),
-                amount = Money.ofMinor(10_000L, cny),
-                currency = cny,
-                startAt = Instant.parse("2026-01-30T16:00:00Z"),
-                anchor = PeriodicAllocationAnchor.MonthEnd,
-                explicitConfirmation = true,
-                occurredAt = Instant.parse("2026-01-30T16:00:00Z"),
-                installmentCount = 3,
-            ),
-            ids = Rg11CreateIds(
-                transactionId = TransactionId("transaction-p409-rg11"),
-                versionId = TransactionVersionId("version-p409-rg11"),
-                postingSetId = PostingSetId("posting-set-p409-rg11"),
-                paymentPostingId = PostingId("payment-p409-rg11"),
-                prepaidPostingId = PostingId("prepaid-p409-rg11"),
-                scheduleId = "schedule-p409-rg11",
-                revisionId = "revision-p409-rg11",
-                installmentIds = listOf("installment-p409-rg11-1", "installment-p409-rg11-2", "installment-p409-rg11-3"),
-            ),
+            input =
+                Rg11CreateInput(
+                    requestId = RequestId("request-p409-rg11"),
+                    paymentAccountId = AccountId("asset-bank-a"),
+                    prepaidAccountId = AccountId("prepaid-account-a"),
+                    categoryId = CategoryId("category-a"),
+                    amount = Money.ofMinor(10_000L, cny),
+                    currency = cny,
+                    startAt = Instant.parse("2026-01-30T16:00:00Z"),
+                    anchor = PeriodicAllocationAnchor.MonthEnd,
+                    explicitConfirmation = true,
+                    occurredAt = Instant.parse("2026-01-30T16:00:00Z"),
+                    installmentCount = 3,
+                ),
+            ids =
+                Rg11CreateIds(
+                    transactionId = TransactionId("transaction-p409-rg11"),
+                    versionId = TransactionVersionId("version-p409-rg11"),
+                    postingSetId = PostingSetId("posting-set-p409-rg11"),
+                    paymentPostingId = PostingId("payment-p409-rg11"),
+                    prepaidPostingId = PostingId("prepaid-p409-rg11"),
+                    scheduleId = "schedule-p409-rg11",
+                    revisionId = "revision-p409-rg11",
+                    installmentIds = listOf("installment-p409-rg11-1", "installment-p409-rg11-2", "installment-p409-rg11-3"),
+                ),
         )
 
-    private fun loadFixture08() = adaptRg08Fixture(
-        Files.readString(repositoryFile("golden/rules/rg-08.json")),
-        parseRg08FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg08-runtime-input.json"))),
-    )
+    private fun loadFixture08() =
+        adaptRg08Fixture(
+            Files.readString(repositoryFile("golden/rules/rg-08.json")),
+            parseRg08FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg08-runtime-input.json"))),
+        )
 
-    private fun loadFixture09() = adaptRg09Fixture(
-        Files.readString(repositoryFile("golden/rules/rg-09.json")),
-        parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json"))),
-    )
+    private fun loadFixture09() =
+        adaptRg09Fixture(
+            Files.readString(repositoryFile("golden/rules/rg-09.json")),
+            parseRg09FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg09-runtime-input.json"))),
+        )
 
-    private fun loadFixture10() = adaptRg10Fixture(
-        Files.readString(repositoryFile("golden/rules/rg-10.json")),
-        parseRg10FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg10-runtime-input.json"))),
-    )
+    private fun loadFixture10() =
+        adaptRg10Fixture(
+            Files.readString(repositoryFile("golden/rules/rg-10.json")),
+            parseRg10FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg10-runtime-input.json"))),
+        )
 
-    private fun loadFixture12() = adaptRg12Fixture(
-        Files.readString(repositoryFile("golden/rules/rg-12.json")),
-        parseRg12FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg12-runtime-input.json"))),
-    )
+    private fun loadFixture12() =
+        adaptRg12Fixture(
+            Files.readString(repositoryFile("golden/rules/rg-12.json")),
+            parseRg12FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg12-runtime-input.json"))),
+        )
 
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
@@ -1055,108 +1263,142 @@ class P409SiloSpineCoexistenceTest {
 
     // ---------- snapshots and filters ----------
 
-    private fun sqliteProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun sqliteProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
-    private fun tableNames(driver: JdbcSqliteDriver, filter: String): List<String> = driver.executeQuery(
-        null,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND ($filter) ORDER BY name",
-        { cursor ->
-            val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-            app.cash.sqldelight.db.QueryResult.Value(names)
-        },
-        0,
-    ).value
+    private fun tableNames(
+        driver: JdbcSqliteDriver,
+        filter: String,
+    ): List<String> =
+        driver
+            .executeQuery(
+                null,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND ($filter) ORDER BY name",
+                { cursor ->
+                    val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(names)
+                },
+                0,
+            ).value
 
     private fun siloTableFilter() =
-        ("name LIKE 'rg\\_%' ESCAPE '\\' OR name IN (" +
-            "'manual_expense_request','confirmed_expense_request','manual_income_request','confirmed_income_receipt')")
+        (
+            "name LIKE 'rg\\_%' ESCAPE '\\' OR name IN (" +
+                "'manual_expense_request','confirmed_expense_request','manual_income_request','confirmed_income_receipt')"
+        )
 
     /** Every silo-owned table's full rows, stringified (capture-compare projection). */
-    private fun siloSnapshot(driver: JdbcSqliteDriver): Map<String, List<List<String?>>> =
-        tableNames(driver, siloTableFilter()).associateWith { table -> stringRows(driver, table) }
+    private fun siloSnapshot(driver: JdbcSqliteDriver): Map<String, List<List<String?>>> = tableNames(driver, siloTableFilter()).associateWith { table -> stringRows(driver, table) }
 
     /** Every user table's full rows (reopen-stability projection). */
-    private fun allTableSnapshot(driver: JdbcSqliteDriver): Map<String, List<List<String?>>> =
-        tableNames(driver, "1=1").associateWith { table -> stringRows(driver, table) }
+    private fun allTableSnapshot(driver: JdbcSqliteDriver): Map<String, List<List<String?>>> = tableNames(driver, "1=1").associateWith { table -> stringRows(driver, table) }
 
-    private fun stringRows(driver: JdbcSqliteDriver, table: String): List<List<String?>> {
-        val columns = driver.executeQuery(
-            null,
-            "SELECT count(*) FROM pragma_table_info('$table')",
-            { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)).toInt()) },
-            0,
-        ).value
-        return driver.executeQuery(
-            null,
-            "SELECT * FROM $table",
-            { cursor ->
-                val rows = mutableListOf<List<String?>>()
-                while (cursor.next().value) {
-                    rows += (0 until columns).map { index -> cursor.getString(index) }
-                }
-                app.cash.sqldelight.db.QueryResult.Value(rows.sortedBy { row -> row.joinToString("\u0000") { it ?: "" } })
-            },
-            0,
-        ).value
+    private fun stringRows(
+        driver: JdbcSqliteDriver,
+        table: String,
+    ): List<List<String?>> {
+        val columns =
+            driver
+                .executeQuery(
+                    null,
+                    "SELECT count(*) FROM pragma_table_info('$table')",
+                    { cursor ->
+                        cursor.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(requireNotNull(cursor.getLong(0)).toInt())
+                    },
+                    0,
+                ).value
+        return driver
+            .executeQuery(
+                null,
+                "SELECT * FROM $table",
+                { cursor ->
+                    val rows = mutableListOf<List<String?>>()
+                    while (cursor.next().value) {
+                        rows += (0 until columns).map { index -> cursor.getString(index) }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.sortedBy { row -> row.joinToString("\u0000") { it ?: "" } })
+                },
+                0,
+            ).value
     }
 
     /** (table, id column) pairs for the reverse cross-talk filter over the spine owners. */
-    private fun spineIdFilters(): List<Pair<String, String>> = listOf(
-        "import_request" to "request_id",
-        "import_source_record" to "source_id",
-        "import_evidence" to "evidence_id",
-        "import_candidate" to "candidate_id",
-        "import_candidate_payment_profile" to "candidate_id",
-        "import_candidate_requires_confirmation" to "candidate_id",
-        "import_candidate_status_history" to "candidate_id",
-        "import_candidate_decision_snapshot" to "candidate_id",
-        "import_confirmation" to "candidate_id",
-        "import_receipt" to "candidate_id",
-        "import_duplicate_candidate" to "candidate_id",
-        "import_duplicate_status_history" to "candidate_id",
-        "import_duplicate_review_request" to "request_id",
-        "import_duplicate_review_snapshot" to "candidate_id",
-        "import_duplicate_review_receipt" to "candidate_id",
-        "reconciliation_request" to "request_id",
-        "reconciliation_request_snapshot" to "candidate_id",
-        "evidence_link" to "link_id",
-        "evidence_link_history" to "link_id",
-        "posting_reconciliation" to "reconciliation_id",
-        "posting_reconciliation_history" to "reconciliation_id",
-        "reconciliation_receipt" to "request_id",
-        "ledger_transaction" to "transaction_id",
-        "posting_set" to "posting_set_id",
-        "transaction_version" to "version_id",
-        "ledger_transaction_current_version" to "transaction_id",
-        "posting" to "posting_id",
-        "mixed_payment_group" to "group_id",
-        "mixed_payment_group_leg" to "group_id",
-    )
+    private fun spineIdFilters(): List<Pair<String, String>> =
+        listOf(
+            "import_request" to "request_id",
+            "import_source_record" to "source_id",
+            "import_evidence" to "evidence_id",
+            "import_candidate" to "candidate_id",
+            "import_candidate_payment_profile" to "candidate_id",
+            "import_candidate_requires_confirmation" to "candidate_id",
+            "import_candidate_status_history" to "candidate_id",
+            "import_candidate_decision_snapshot" to "candidate_id",
+            "import_confirmation" to "candidate_id",
+            "import_receipt" to "candidate_id",
+            "import_duplicate_candidate" to "candidate_id",
+            "import_duplicate_status_history" to "candidate_id",
+            "import_duplicate_review_request" to "request_id",
+            "import_duplicate_review_snapshot" to "candidate_id",
+            "import_duplicate_review_receipt" to "candidate_id",
+            "reconciliation_request" to "request_id",
+            "reconciliation_request_snapshot" to "candidate_id",
+            "evidence_link" to "link_id",
+            "evidence_link_history" to "link_id",
+            "posting_reconciliation" to "reconciliation_id",
+            "posting_reconciliation_history" to "reconciliation_id",
+            "reconciliation_receipt" to "request_id",
+            "ledger_transaction" to "transaction_id",
+            "posting_set" to "posting_set_id",
+            "transaction_version" to "version_id",
+            "ledger_transaction_current_version" to "transaction_id",
+            "posting" to "posting_id",
+            "mixed_payment_group" to "group_id",
+            "mixed_payment_group_leg" to "group_id",
+        )
 
-    private fun queryCount(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            check(cursor.next().value)
-            app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
-        },
-        0,
-    ).value
+    private fun queryCount(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 
-    private fun selectTypedRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
-                }
-            }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
+    private fun selectTypedRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
 }

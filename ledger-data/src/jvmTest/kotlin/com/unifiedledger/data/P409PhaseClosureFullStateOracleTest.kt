@@ -1,8 +1,8 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ConfirmImportCandidate
+import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -54,10 +54,6 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
@@ -66,14 +62,10 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
-import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -82,7 +74,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -137,30 +128,34 @@ class P409PhaseClosureFullStateOracleTest {
     /** The five original kinds of the legacy ledger_transaction.kind CHECK. */
     private val legacyTransactionKinds = setOf("OPENING_BALANCE", "EXPENSE", "INCOME", "ACCOUNT_TRANSFER", "CREDIT_REPAYMENT")
 
-    private fun catalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("account-asset-b"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("account-credit-huabei"), ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("expense-account-clothes"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("account-asset-other-ledger"), LedgerId("ledger-p409-other"), AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-clothes"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-clothes"), ledgerId, parentId = CategoryId("category-primary-clothes"), postingAccountId = AccountId("expense-account-clothes"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("p409 oracle catalog failure: ${result.violation}")
-    }
+    private fun catalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("account-asset-b"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("account-credit-huabei"), ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("expense-account-clothes"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("account-asset-other-ledger"), LedgerId("ledger-p409-other"), AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-clothes"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-clothes"), ledgerId, parentId = CategoryId("category-primary-clothes"), postingAccountId = AccountId("expense-account-clothes"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("p409 oracle catalog failure: ${result.violation}")
+        }
 
     private fun accounts(): List<Account> = catalog().accounts
 
@@ -182,40 +177,51 @@ class P409PhaseClosureFullStateOracleTest {
         paymentProfile = profile,
     )
 
-    private fun intakeIds(prefix: String, duplicates: List<Pair<String, String>> = emptyList()) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        duplicates: List<Pair<String, String>> = emptyList(),
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
         statusHistoryId = ImportStatusHistoryId("status-$prefix-1"),
-        duplicateIds = duplicates.map { (candidateId, historyId) ->
-            ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
-        },
+        duplicateIds =
+            duplicates.map { (candidateId, historyId) ->
+                ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
+            },
     )
 
-    private fun commitIds(prefix: String) = ImportCommitIds(
-        confirmationId = ImportConfirmationId("confirmation-$prefix"),
-        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId("tx-$prefix"),
-            versionId = TransactionVersionId("version-$prefix-v1"),
-            postingSetId = PostingSetId("posting-set-$prefix"),
-            postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1")),
-        ),
-    )
+    private fun commitIds(prefix: String) =
+        ImportCommitIds(
+            confirmationId = ImportConfirmationId("confirmation-$prefix"),
+            statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+            formalIds =
+                ImportFormalIds(
+                    transactionId = TransactionId("tx-$prefix"),
+                    versionId = TransactionVersionId("version-$prefix-v1"),
+                    postingSetId = PostingSetId("posting-set-$prefix"),
+                    postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1")),
+                ),
+        )
 
-    private fun commitIds3(prefix: String) = ImportCommitIds(
-        confirmationId = ImportConfirmationId("confirmation-$prefix"),
-        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId("tx-$prefix"),
-            versionId = TransactionVersionId("version-$prefix-v1"),
-            postingSetId = PostingSetId("posting-set-$prefix"),
-            postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1"), PostingId("posting-$prefix-2")),
-        ),
-    )
+    private fun commitIds3(prefix: String) =
+        ImportCommitIds(
+            confirmationId = ImportConfirmationId("confirmation-$prefix"),
+            statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+            formalIds =
+                ImportFormalIds(
+                    transactionId = TransactionId("tx-$prefix"),
+                    versionId = TransactionVersionId("version-$prefix-v1"),
+                    postingSetId = PostingSetId("posting-set-$prefix"),
+                    postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1"), PostingId("posting-$prefix-2")),
+                ),
+        )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -223,8 +229,11 @@ class P409PhaseClosureFullStateOracleTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -233,31 +242,39 @@ class P409PhaseClosureFullStateOracleTest {
     }
 
     /** Ordinary v1 factory: "out" formalizes the expense, "in" the income (lifecycle precedent). */
-    private class OrdinaryFlowFormalFactory(private val catalog: LedgerCatalog) : ImportCandidateFormalFactory {
+    private class OrdinaryFlowFormalFactory(
+        private val catalog: LedgerCatalog,
+    ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
     /** Store-backed original-expense reader for the refund variant (P406 precedent). */
     private fun originalExpenseReader(driver: JdbcSqliteDriver): (TransactionId) -> CreditRefundOriginalExpense? {
         return fun(transactionId: TransactionId): CreditRefundOriginalExpense? {
-            val rows = selectRows(
-                driver,
-                "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
-                    "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
-                    "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
-                    "WHERE t.ledger_id = '${ledgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
-                listOf(false, false, false, false),
-            )
+            val rows =
+                selectRows(
+                    driver,
+                    "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
+                        "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
+                        "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
+                        "WHERE t.ledger_id = '${ledgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
+                    listOf(false, false, false, false),
+                )
             if (rows.size != 1) return null
             return CreditRefundOriginalExpense(
-                transactionId, LedgerId(rows[0][1] as String),
-                com.unifiedledger.domain.TransactionKind.valueOf(rows[0][0] as String),
-                rows[0][3] as String, AccountId(rows[0][2] as String),
+                transactionId,
+                LedgerId(rows[0][1] as String),
+                com.unifiedledger.domain.TransactionKind
+                    .valueOf(rows[0][0] as String),
+                rows[0][3] as String,
+                AccountId(rows[0][2] as String),
             )
         }
     }
@@ -274,11 +291,12 @@ class P409PhaseClosureFullStateOracleTest {
         val intakeIds: ImportIntakeIdSource,
         val commitIds: ImportIdSource,
     ) {
-        fun intake(request: ImportIntakeRequest): ImportIntakeResult =
-            ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
+        fun intake(request: ImportIntakeRequest): ImportIntakeResult = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
-        fun confirm(request: ImportCandidateConfirmRequest, factory: ImportCandidateFormalFactory): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
+        fun confirm(
+            request: ImportCandidateConfirmRequest,
+            factory: ImportCandidateFormalFactory,
+        ): ImportCandidateDecisionResult = ConfirmImportCandidate(store, commitIds, factory, catalog).execute(request)
 
         fun confirmOrdinary(request: ImportCandidateConfirmRequest) = confirm(request, ordinaryFactory)
 
@@ -298,13 +316,16 @@ class P409PhaseClosureFullStateOracleTest {
         val store = SqlDelightImportSpineStore(database, driver)
         val cat = catalog()
         return Executor(
-            database, driver, store,
+            database,
+            driver,
+            store,
             cat,
             OrdinaryFlowFormalFactory(cat),
             TransferFlowFormalFactory(cat, AccountId("account-asset-a")),
             CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
             MixedPaymentFlowFormalFactory(cat),
-            intakeIds, commitIds,
+            intakeIds,
+            commitIds,
         )
     }
 
@@ -318,13 +339,16 @@ class P409PhaseClosureFullStateOracleTest {
         val store = SqlDelightImportSpineStore(database, driver, failure)
         val cat = catalog()
         return Executor(
-            database, driver, store,
+            database,
+            driver,
+            store,
             cat,
             OrdinaryFlowFormalFactory(cat),
             TransferFlowFormalFactory(cat, AccountId("account-asset-a")),
             CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
             MixedPaymentFlowFormalFactory(cat),
-            intakeIds, commitIds,
+            intakeIds,
+            commitIds,
         )
     }
 
@@ -448,7 +472,6 @@ class P409PhaseClosureFullStateOracleTest {
         linkId: String,
         reconciliationId: String,
     ) = P408ConfirmLinkRequest(
-
         ledgerId = ledgerId.value,
         requestId = requestId,
         evidenceId = evidenceId,
@@ -472,17 +495,20 @@ class P409PhaseClosureFullStateOracleTest {
         createdAt = confirmedAt,
     ).let { base ->
         // Write-always-v2 (D-112 UQ-4): scale-equal fixtures carry raw == normalized.
-        if (base.basisVersion == 1) base.copy(
-            basisVersion = 2,
-            projectionId = "proj-$evidenceId",
-            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-            projectionRuleVersion = 1,
-            normalizedAmountMinor = amountMinor,
-            rawAmountMinor = amountMinor,
-            rawCurrencyPrecision = 2,
-        ) else base
+        if (base.basisVersion == 1) {
+            base.copy(
+                basisVersion = 2,
+                projectionId = "proj-$evidenceId",
+                projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                projectionRuleVersion = 1,
+                normalizedAmountMinor = amountMinor,
+                rawAmountMinor = amountMinor,
+                rawCurrencyPrecision = 2,
+            )
+        } else {
+            base
+        }
     }
-
 
     // ---------- canonical capture (29 row lists + 2 projections) ----------
 
@@ -499,7 +525,10 @@ class P409PhaseClosureFullStateOracleTest {
         val netWorthChangeMinor: Long,
     )
 
-    private data class ReportTx(val kind: String, val postings: List<Triple<String, Long, String>>)
+    private data class ReportTx(
+        val kind: String,
+        val postings: List<Triple<String, Long, String>>,
+    )
 
     private data class ReconciliationDimensionRow(
         val postingId: String,
@@ -543,98 +572,123 @@ class P409PhaseClosureFullStateOracleTest {
         val reconciliationDimension: List<ReconciliationDimensionRow>,
     )
 
-    private val rowComparator = Comparator<List<Any?>> { left, right ->
-        val size = maxOf(left.size, right.size)
-        for (index in 0 until size) {
-            val l = left.getOrNull(index)
-            val r = right.getOrNull(index)
-            val compare = when {
-                l == null && r == null -> 0
-                l == null -> -1
-                r == null -> 1
-                else -> l.toString().compareTo(r.toString())
+    private val rowComparator =
+        Comparator<List<Any?>> { left, right ->
+            val size = maxOf(left.size, right.size)
+            for (index in 0 until size) {
+                val l = left.getOrNull(index)
+                val r = right.getOrNull(index)
+                val compare =
+                    when {
+                        l == null && r == null -> 0
+                        l == null -> -1
+                        r == null -> 1
+                        else -> l.toString().compareTo(r.toString())
+                    }
+                if (compare != 0) return@Comparator compare
             }
-            if (compare != 0) return@Comparator compare
+            0
         }
-        0
-    }
 
-    private fun selectRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
-                }
+    private fun selectRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
+
+    private fun captureFullState(
+        driver: JdbcSqliteDriver,
+        accounts: List<Account>,
+    ): P409FullState {
+        val formalJoin =
+            "FROM posting AS p " +
+                "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
+        val formalRows =
+            selectRows(
+                driver,
+                "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor, p.currency_code $formalJoin",
+                listOf(false, false, false, false, true, false),
+            )
+        val reportTxs =
+            formalRows.groupBy { it[0] as String }.map { (_, rows) ->
+                ReportTx(rows.first()[2] as String, rows.map { Triple(it[3] as String, it[4] as Long, it[5] as String) })
             }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
-
-    private fun captureFullState(driver: JdbcSqliteDriver, accounts: List<Account>): P409FullState {
-        val formalJoin = "FROM posting AS p " +
-            "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-            "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
-        val formalRows = selectRows(
-            driver,
-            "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor, p.currency_code $formalJoin",
-            listOf(false, false, false, false, true, false),
-        )
-        val reportTxs = formalRows.groupBy { it[0] as String }.map { (_, rows) ->
-            ReportTx(rows.first()[2] as String, rows.map { Triple(it[3] as String, it[4] as Long, it[5] as String) })
-        }
         val ledgerAccounts = accounts.filter { it.ledgerId == ledgerId }
         val accountKindById = ledgerAccounts.associate { it.id.value to it.kind }
         val report = reduceReport(reportTxs, ledgerAccounts, accountKindById)
         val reconciliationStore = SqlDelightP408ReconciliationStore(LedgerDatabase(driver), driver)
-        val reconciliationDimension = reconciliationStore.readReconciliationReport(ledgerId.value)
-            .map { ReconciliationDimensionRow(it.postingId, it.transactionId, it.accountId, it.status.name, it.activeLinkIds) }
-            .sortedBy { it.postingId }
+        val reconciliationDimension =
+            reconciliationStore
+                .readReconciliationReport(ledgerId.value)
+                .map { ReconciliationDimensionRow(it.postingId, it.transactionId, it.accountId, it.status.name, it.activeLinkIds) }
+                .sortedBy { it.postingId }
         return P409FullState(
             importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
-            importSourceRecord = selectRows(
-                driver,
-                "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
-                listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
-            ).sortedWith(rowComparator),
+            importSourceRecord =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
+                    listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
+                ).sortedWith(rowComparator),
             importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
             importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
-            importCandidatePaymentProfile = selectRows(
-                driver,
-                "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile",
-                listOf(false, false, false, false, false),
-            ).sortedWith(rowComparator),
+            importCandidatePaymentProfile =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile",
+                    listOf(false, false, false, false, false),
+                ).sortedWith(rowComparator),
             importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
             importCandidateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
-            importCandidateDecisionSnapshot = selectRows(
-                driver,
-                "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
-                listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
-            ).sortedWith(rowComparator),
+            importCandidateDecisionSnapshot =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
+                    listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
+                ).sortedWith(rowComparator),
             importConfirmation = selectRows(driver, "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
             importReceipt = selectRows(driver, "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-            duplicateCandidate = selectRows(
-                driver,
-                "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
-                listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
-            ).sortedWith(rowComparator),
+            duplicateCandidate =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
+                    listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
+                ).sortedWith(rowComparator),
             duplicateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class FROM import_duplicate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
             duplicateReviewRequest = selectRows(driver, "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM import_duplicate_review_request", listOf(false, false, false, false, false, false)).sortedWith(rowComparator),
             duplicateReviewSnapshot = selectRows(driver, "SELECT ledger_id, request_id, candidate_id, expected_comparison_fingerprint, decision, reason_token, reviewed_at, reviewer_reference, generated_at, review_id FROM import_duplicate_review_snapshot", listOf(false, false, false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
             duplicateReviewReceipt = selectRows(driver, "SELECT ledger_id, request_id, candidate_id, review_id, history_id, outcome FROM import_duplicate_review_receipt", listOf(false, false, false, false, false, false)).sortedWith(rowComparator),
             reconciliationRequest = selectRows(driver, "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM reconciliation_request", listOf(false, false, false, false, false, false)).sortedWith(rowComparator),
-            reconciliationRequestSnapshot = selectRows(
-                driver,
-                "SELECT ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision FROM reconciliation_request_snapshot",
-                listOf(false, false, false, false, false, false, true, false, true, false, false, false, true, false, true, true, false, false, false),
-            ).sortedWith(rowComparator),
-            evidenceLink = selectRows(
-                driver,
-                "SELECT ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at FROM evidence_link",
-                listOf(false, false, false, false, false, false, true, false, false, false, false),
-            ).sortedWith(rowComparator),
+            reconciliationRequestSnapshot =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision FROM reconciliation_request_snapshot",
+                    listOf(false, false, false, false, false, false, true, false, true, false, false, false, true, false, true, true, false, false, false),
+                ).sortedWith(rowComparator),
+            evidenceLink =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at FROM evidence_link",
+                    listOf(false, false, false, false, false, false, true, false, false, false, false),
+                ).sortedWith(rowComparator),
             evidenceLinkHistory = selectRows(driver, "SELECT ledger_id, link_id, sequence, state, reason, request_id, occurred_at FROM evidence_link_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
             postingReconciliation = selectRows(driver, "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)).sortedWith(rowComparator),
             postingReconciliationHistory = selectRows(driver, "SELECT ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at FROM posting_reconciliation_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
@@ -644,16 +698,18 @@ class P409PhaseClosureFullStateOracleTest {
             transactionVersion = selectRows(driver, "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false)).sortedWith(rowComparator),
             ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
             posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
-            mixedPaymentGroup = selectRows(
-                driver,
-                "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group",
-                listOf(false, false, false, false, false, true, false),
-            ).sortedWith(rowComparator),
-            mixedPaymentGroupLeg = selectRows(
-                driver,
-                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg",
-                listOf(false, false, true, false, false, true),
-            ).sortedWith(rowComparator),
+            mixedPaymentGroup =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group",
+                    listOf(false, false, false, false, false, true, false),
+                ).sortedWith(rowComparator),
+            mixedPaymentGroupLeg =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg",
+                    listOf(false, false, true, false, false, true),
+                ).sortedWith(rowComparator),
             report = mapOf(ledgerId.value to report),
             reconciliationDimension = reconciliationDimension,
         )
@@ -696,18 +752,21 @@ class P409PhaseClosureFullStateOracleTest {
             val positiveTotal = tx.postings.sumOf { if (it.second > 0L) it.second else 0L }
             when (tx.kind) {
                 "ACCOUNT_TRANSFER" -> internalTransfer += positiveTotal
-                "EXPENSE" -> tx.postings.forEach { (accountId, amount, _) ->
-                    if (accountKindById[accountId] == AccountKind.ASSET && amount < 0L) cashOutflow += -amount
-                }
-                "INCOME" -> tx.postings.forEach { (accountId, amount, _) ->
-                    if (accountKindById[accountId] == AccountKind.ASSET && amount > 0L) cashInflow += amount
-                }
+                "EXPENSE" ->
+                    tx.postings.forEach { (accountId, amount, _) ->
+                        if (accountKindById[accountId] == AccountKind.ASSET && amount < 0L) cashOutflow += -amount
+                    }
+                "INCOME" ->
+                    tx.postings.forEach { (accountId, amount, _) ->
+                        if (accountKindById[accountId] == AccountKind.ASSET && amount > 0L) cashInflow += amount
+                    }
                 // Repayment moves real funds out of an asset account (P406 precedent:
                 // purchase-day credit cash flow is zero, repayment cash flow is the
                 // asset leg).
-                "CREDIT_REPAYMENT" -> tx.postings.forEach { (accountId, amount, _) ->
-                    if (accountKindById[accountId] == AccountKind.ASSET && amount < 0L) cashOutflow += -amount
-                }
+                "CREDIT_REPAYMENT" ->
+                    tx.postings.forEach { (accountId, amount, _) ->
+                        if (accountKindById[accountId] == AccountKind.ASSET && amount < 0L) cashOutflow += -amount
+                    }
                 else -> Unit
             }
         }
@@ -726,7 +785,11 @@ class P409PhaseClosureFullStateOracleTest {
         )
     }
 
-    private fun assertFullState(expected: P409FullState, actual: P409FullState, checkpoint: String) {
+    private fun assertFullState(
+        expected: P409FullState,
+        actual: P409FullState,
+        checkpoint: String,
+    ) {
         assertEquals(expected.importRequest, actual.importRequest, "$checkpoint: import_request")
         assertEquals(expected.importSourceRecord, actual.importSourceRecord, "$checkpoint: import_source_record")
         assertEquals(expected.importEvidence, actual.importEvidence, "$checkpoint: import_evidence")
@@ -762,33 +825,60 @@ class P409PhaseClosureFullStateOracleTest {
 
     // ---------- test-side expected builder (never reads the database under test) ----------
 
-    private fun comparisonDigest(kind: ImportRecordKind, facts: ImportSourceFacts, subjectSourceId: String, existingSourceId: String?): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            ImportSourceId(subjectSourceId), existingSourceId?.let(::ImportSourceId), kind, kind.contractVersion,
-            facts.amountMinor, facts.currencyCode, facts.currencyPrecision, facts.occurredAt,
-            facts.directionToken, facts.statusToken,
-        )
+    private fun comparisonDigest(
+        kind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        subjectSourceId: String,
+        existingSourceId: String?,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                ImportSourceId(subjectSourceId),
+                existingSourceId?.let(::ImportSourceId),
+                kind,
+                kind.contractVersion,
+                facts.amountMinor,
+                facts.currencyCode,
+                facts.currencyPrecision,
+                facts.occurredAt,
+                facts.directionToken,
+                facts.statusToken,
+            )
         return comparisonFingerprint.digest(projection)
     }
 
-    private fun comparisonJson(kind: ImportRecordKind, facts: ImportSourceFacts, subjectSourceId: String, existingSourceId: String?): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            ImportSourceId(subjectSourceId), existingSourceId?.let(::ImportSourceId), kind, kind.contractVersion,
-            facts.amountMinor, facts.currencyCode, facts.currencyPrecision, facts.occurredAt,
-            facts.directionToken, facts.statusToken,
-        )
+    private fun comparisonJson(
+        kind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        subjectSourceId: String,
+        existingSourceId: String?,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                ImportSourceId(subjectSourceId),
+                existingSourceId?.let(::ImportSourceId),
+                kind,
+                kind.contractVersion,
+                facts.amountMinor,
+                facts.currencyCode,
+                facts.currencyPrecision,
+                facts.occurredAt,
+                facts.directionToken,
+                facts.statusToken,
+            )
         val target = if (existingSourceId == null) "null" else "\"$existingSourceId\""
         return "{\"possible_existing_source_id\":$target,\"subject_source_id\":\"$subjectSourceId\",\"tuple\":${comparisonFingerprint.canonicalJson(projection)}}"
     }
 
-    private fun candidateKindFor(kind: ImportRecordKind) = when (kind) {
-        ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
-        ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
-        ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
-        ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
-        ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
-        ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
-    }
+    private fun candidateKindFor(kind: ImportRecordKind) =
+        when (kind) {
+            ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
+            ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
+            ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+            ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+            ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+            ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
+        }
 
     private inner class Expected {
         val requests = mutableListOf<List<Any?>>()
@@ -837,40 +927,80 @@ class P409PhaseClosureFullStateOracleTest {
             val settled = facts.fundingState == ImportFundingState.SETTLED
             val hash = fingerprint.digest(kind, facts, profile)
             requests += row(ledgerId.value, requestId, "intake")
-            sources += row(
-                ledgerId.value, "source-$prefix", requestId, inputRef, ordinal.toLong(), kind.storageValue,
-                hash, kind.contractVersion.toLong(), if (complete) "valid_complete" else "valid_incomplete",
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision.toLong(), facts.occurredAt,
-                facts.directionToken, facts.statusToken, facts.fundingState.name, facts.fundingRuleId,
-                facts.fundingRuleVersion.toLong(), generatedAt,
-            )
+            sources +=
+                row(
+                    ledgerId.value,
+                    "source-$prefix",
+                    requestId,
+                    inputRef,
+                    ordinal.toLong(),
+                    kind.storageValue,
+                    hash,
+                    kind.contractVersion.toLong(),
+                    if (complete) "valid_complete" else "valid_incomplete",
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision.toLong(),
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                    facts.fundingState.name,
+                    facts.fundingRuleId,
+                    facts.fundingRuleVersion.toLong(),
+                    generatedAt,
+                )
             evidence += row(ledgerId.value, "evidence-$prefix", "source-$prefix", "source_observation", facts.occurredAt)
             candidates += row(ledgerId.value, "candidate-$prefix", "source-$prefix", candidateKindFor(kind), if (complete) "1.00" else "0.50", kind.storageValue, 1L)
             if (profile != null) {
                 profiles += row(ledgerId.value, "candidate-$prefix", profile.variant.storageValue, profile.assetLegKindToken, profile.creditLegKindToken)
             }
             requirements += row(ledgerId.value, "candidate-$prefix", 0L, "formal_transaction_creation")
-            statusHistory += row(
-                ledgerId.value, "candidate-$prefix", 1L, "status-$prefix-1",
-                if (complete && settled) "pending_confirmation" else "incomplete", requestId, "creation",
-            )
+            statusHistory +=
+                row(
+                    ledgerId.value,
+                    "candidate-$prefix",
+                    1L,
+                    "status-$prefix-1",
+                    if (complete && settled) "pending_confirmation" else "incomplete",
+                    requestId,
+                    "creation",
+                )
             receipts += row(ledgerId.value, requestId, "accepted", "source-$prefix", "evidence-$prefix", "candidate-$prefix", null, null)
             duplicates.forEach { (duplicateCandidateId, historyId, existingSourceId) ->
                 if (existingSourceId == null) {
-                    duplicateCandidates += row(
-                        ledgerId.value, duplicateCandidateId, "source-$prefix", null, "CLOSED_OR_FAILED_NO_FUNDS",
-                        "sha256:no-funds-source-$prefix", comparisonJson(kind, facts, "source-$prefix", null),
-                        "source_declared + mechanical_decode", "exact",
-                        "p407_exact_business_tuple_v1", 1L, generatedAt, requestId,
-                    )
+                    duplicateCandidates +=
+                        row(
+                            ledgerId.value,
+                            duplicateCandidateId,
+                            "source-$prefix",
+                            null,
+                            "CLOSED_OR_FAILED_NO_FUNDS",
+                            "sha256:no-funds-source-$prefix",
+                            comparisonJson(kind, facts, "source-$prefix", null),
+                            "source_declared + mechanical_decode",
+                            "exact",
+                            "p407_exact_business_tuple_v1",
+                            1L,
+                            generatedAt,
+                            requestId,
+                        )
                 } else {
-                    duplicateCandidates += row(
-                        ledgerId.value, duplicateCandidateId, "source-$prefix", existingSourceId, "EXACT_BUSINESS_TUPLE",
-                        comparisonDigest(kind, facts, "source-$prefix", existingSourceId),
-                        comparisonJson(kind, facts, "source-$prefix", existingSourceId),
-                        "source_declared + mechanical_decode + p407_exact_business_tuple_v1", "exact",
-                        "p407_exact_business_tuple_v1", 1L, generatedAt, requestId,
-                    )
+                    duplicateCandidates +=
+                        row(
+                            ledgerId.value,
+                            duplicateCandidateId,
+                            "source-$prefix",
+                            existingSourceId,
+                            "EXACT_BUSINESS_TUPLE",
+                            comparisonDigest(kind, facts, "source-$prefix", existingSourceId),
+                            comparisonJson(kind, facts, "source-$prefix", existingSourceId),
+                            "source_declared + mechanical_decode + p407_exact_business_tuple_v1",
+                            "exact",
+                            "p407_exact_business_tuple_v1",
+                            1L,
+                            generatedAt,
+                            requestId,
+                        )
                 }
                 duplicateHistory += row(ledgerId.value, duplicateCandidateId, 1L, historyId, "DEFERRED", requestId, "creation")
             }
@@ -887,10 +1017,11 @@ class P409PhaseClosureFullStateOracleTest {
             val timeText = Instant.parse(occurredAt).toString()
             val persistedKind = if (kind in legacyTransactionKinds) kind else "EXPENSE"
             val canonicalKind = if (kind in legacyTransactionKinds) null else kind
-            val note = when (kind) {
-                "REFUND_RECEIPT", "ACCOUNT_TRANSFER" -> null
-                else -> ""
-            }
+            val note =
+                when (kind) {
+                    "REFUND_RECEIPT", "ACCOUNT_TRANSFER" -> null
+                    else -> ""
+                }
             transactions += row("tx-$prefix", ledgerId.value, persistedKind, canonicalKind)
             postingSets += row("posting-set-$prefix", ledgerId.value)
             versions += row("version-$prefix-v1", "tx-$prefix", ledgerId.value, 1L, "posting-set-$prefix", timeText, timeText, timeText, note)
@@ -956,35 +1087,78 @@ class P409PhaseClosureFullStateOracleTest {
         fun review(request: ImportDuplicateReviewRequest) {
             val digest = ImportDuplicateReviewFingerprint().digest(request)
             reviewRequests += row(ledgerId.value, request.identity.requestId.value, "review_duplicate", digest, "ACCEPTED", null)
-            reviewSnapshots += row(
-                ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.expectedComparisonFingerprint,
-                request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference,
-                request.generatedAt, request.reviewId.value,
-            )
-            duplicateHistory += row(
-                ledgerId.value, request.candidateId.value, 2L, request.historyId.value, request.decision.name,
-                request.identity.requestId.value, "status_transition",
-            )
-            reviewReceipts += row(
-                ledgerId.value, request.identity.requestId.value, request.candidateId.value, request.reviewId.value,
-                request.historyId.value, request.decision.name,
-            )
+            reviewSnapshots +=
+                row(
+                    ledgerId.value,
+                    request.identity.requestId.value,
+                    request.candidateId.value,
+                    request.expectedComparisonFingerprint,
+                    request.decision.name,
+                    request.reasonToken,
+                    request.reviewedAt,
+                    request.reviewerReference,
+                    request.generatedAt,
+                    request.reviewId.value,
+                )
+            duplicateHistory +=
+                row(
+                    ledgerId.value,
+                    request.candidateId.value,
+                    2L,
+                    request.historyId.value,
+                    request.decision.name,
+                    request.identity.requestId.value,
+                    "status_transition",
+                )
+            reviewReceipts +=
+                row(
+                    ledgerId.value,
+                    request.identity.requestId.value,
+                    request.candidateId.value,
+                    request.reviewId.value,
+                    request.historyId.value,
+                    request.decision.name,
+                )
         }
 
         fun confirmLink(request: P408ConfirmLinkRequest) {
             reconciliationRequests += row(ledgerId.value, request.requestId, "confirm_link", request.fingerprint(), "ACCEPTED", null)
-            reconciliationSnapshots += row(
-                ledgerId.value, request.requestId, request.evidenceId, request.candidateId, request.postingId,
-                request.transactionId, request.amountMinor, request.currencyCode, request.currencyPrecision.toLong(),
-                request.direction, request.accountId, request.responsibility.storageValue, request.basisVersion.toLong(),
-                request.matchBasis.toSortedSet().joinToString(","), request.windowDays.toLong(), request.naturalDayDistance.toLong(),
-                request.sourceOccurredAt, request.confirmedAt, "confirm_match",
-            )
-            evidenceLinks += row(
-                ledgerId.value, request.linkId, request.evidenceId, request.postingId, request.transactionId,
-                request.responsibility.storageValue, request.basisVersion.toLong(),
-                request.matchBasis.toSortedSet().joinToString(","), request.candidateId, request.requestId, request.createdAt,
-            )
+            reconciliationSnapshots +=
+                row(
+                    ledgerId.value,
+                    request.requestId,
+                    request.evidenceId,
+                    request.candidateId,
+                    request.postingId,
+                    request.transactionId,
+                    request.amountMinor,
+                    request.currencyCode,
+                    request.currencyPrecision.toLong(),
+                    request.direction,
+                    request.accountId,
+                    request.responsibility.storageValue,
+                    request.basisVersion.toLong(),
+                    request.matchBasis.toSortedSet().joinToString(","),
+                    request.windowDays.toLong(),
+                    request.naturalDayDistance.toLong(),
+                    request.sourceOccurredAt,
+                    request.confirmedAt,
+                    "confirm_match",
+                )
+            evidenceLinks +=
+                row(
+                    ledgerId.value,
+                    request.linkId,
+                    request.evidenceId,
+                    request.postingId,
+                    request.transactionId,
+                    request.responsibility.storageValue,
+                    request.basisVersion.toLong(),
+                    request.matchBasis.toSortedSet().joinToString(","),
+                    request.candidateId,
+                    request.requestId,
+                    request.createdAt,
+                )
             evidenceLinkHistory += row(ledgerId.value, request.linkId, 1L, "active", "confirmed", request.requestId, request.confirmedAt)
             postingReconciliations += row(ledgerId.value, request.reconciliationId, request.postingId, "CHECKED", 2L)
             postingReconciliationHistory += row(ledgerId.value, request.reconciliationId, 1L, "PENDING", null, request.requestId, request.sourceOccurredAt)
@@ -992,9 +1166,14 @@ class P409PhaseClosureFullStateOracleTest {
             reconciliationReceipts += row(ledgerId.value, request.requestId, "ACCEPTED", request.linkId, request.reconciliationId, 2L)
             // The linked posting's dimension row flips to CHECKED (the unlinked leg of
             // the same transfer keeps its virtual PENDING row).
-            val checkedRow = ReconciliationDimensionRow(
-                request.postingId, request.transactionId, request.accountId, P408ReconciliationStatus.CHECKED.name, listOf(request.linkId),
-            )
+            val checkedRow =
+                ReconciliationDimensionRow(
+                    request.postingId,
+                    request.transactionId,
+                    request.accountId,
+                    P408ReconciliationStatus.CHECKED.name,
+                    listOf(request.linkId),
+                )
             val rowIndex = reconciliationDimension.indexOfFirst { it.postingId == request.postingId }
             if (rowIndex >= 0) reconciliationDimension[rowIndex] = checkedRow else reconciliationDimension += checkedRow
         }
@@ -1009,10 +1188,20 @@ class P409PhaseClosureFullStateOracleTest {
             responsibility: String,
         ) {
             reconciliationRequests += row(ledgerId.value, requestId, "confirm_link", "fp-$requestId", "ACCEPTED", null)
-            evidenceLinks += row(
-                ledgerId.value, linkId, evidenceId, postingId, transactionId, responsibility, 1L,
-                "account,amount,currency,direction,occurred_at_window", "candidate-rl07-preseed", requestId, confirmedAt,
-            )
+            evidenceLinks +=
+                row(
+                    ledgerId.value,
+                    linkId,
+                    evidenceId,
+                    postingId,
+                    transactionId,
+                    responsibility,
+                    1L,
+                    "account,amount,currency,direction,occurred_at_window",
+                    "candidate-rl07-preseed",
+                    requestId,
+                    confirmedAt,
+                )
         }
 
         fun state(accounts: List<Account>): P409FullState {
@@ -1058,8 +1247,11 @@ class P409PhaseClosureFullStateOracleTest {
 
     private fun row(vararg values: Any?): List<Any?> = values.toList()
 
-    private fun hashOf(kind: ImportRecordKind, facts: ImportSourceFacts, profile: ImportPaymentProfile?) =
-        fingerprint.digest(kind, facts, profile)
+    private fun hashOf(
+        kind: ImportRecordKind,
+        facts: ImportSourceFacts,
+        profile: ImportPaymentProfile?,
+    ) = fingerprint.digest(kind, facts, profile)
 
     // ---------- Test 1: RL-01 ordinary expense full chain ----------
 
@@ -1075,13 +1267,15 @@ class P409PhaseClosureFullStateOracleTest {
             // Checkpoint 1: intake + confirm of the first 45.80 row.
             val first = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("rl01"))), BatchCommitIdSource(listOf(commitIds("rl01"))))
             assertIs<ImportIntakeResult.Accepted>(first.intake(intakeRequest("req-rl01", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null)))
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                first.confirmOrdinary(ordinaryConfirmRequest("req-rl01-confirm", "candidate-rl01", hashRl01)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    first.confirmOrdinary(ordinaryConfirmRequest("req-rl01-confirm", "candidate-rl01", hashRl01)),
+                )
             assertEquals("tx-rl01", confirmed.receipt.transactionId?.value)
             expected.intake("req-rl01", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null, "rl01")
             expected.confirm(
-                "req-rl01-confirm", "rl01",
+                "req-rl01-confirm",
+                "rl01",
                 decisionRow = row(ledgerId.value, "req-rl01-confirm", "confirm", "candidate-rl01", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl01", "EXPENSE", rl01Facts.occurredAt, Triple("expense-account-food", 4580L, "CNY"), Triple("account-asset-a", -4580L, "CNY"))
@@ -1090,16 +1284,24 @@ class P409PhaseClosureFullStateOracleTest {
 
             // Checkpoint 2: an equal row at another ordinal is an EXACT_BUSINESS_TUPLE
             // duplicate candidate deferred at creation.
-            val second = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("rl01-dup", duplicates = listOf("duplicate-rl01" to "history-duplicate-rl01")))),
-                BatchCommitIdSource(emptyList()),
-            )
+            val second =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("rl01-dup", duplicates = listOf("duplicate-rl01" to "history-duplicate-rl01")))),
+                    BatchCommitIdSource(emptyList()),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 second.intake(intakeRequest("req-rl01-dup", 1, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null)),
             )
             expected.intake(
-                "req-rl01-dup", 1, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null, "rl01-dup",
+                "req-rl01-dup",
+                1,
+                ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                rl01Facts,
+                ImportCompleteness.VALID_COMPLETE,
+                null,
+                "rl01-dup",
                 duplicates = listOf(Triple("duplicate-rl01", "history-duplicate-rl01", "source-rl01")),
             )
             state = expected.state(accounts())
@@ -1107,11 +1309,14 @@ class P409PhaseClosureFullStateOracleTest {
 
             // Checkpoint 3: review CONFIRMED_DUPLICATE terminal — review tables populated,
             // the original formal graph untouched, zero second transaction.
-            val review = reviewRequest(
-                "review-rl01", "duplicate-rl01",
-                comparisonDigest(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, "source-rl01-dup", "source-rl01"),
-                ImportDuplicateStatus.CONFIRMED_DUPLICATE, "exact-duplicate",
-            )
+            val review =
+                reviewRequest(
+                    "review-rl01",
+                    "duplicate-rl01",
+                    comparisonDigest(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, "source-rl01-dup", "source-rl01"),
+                    ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                    "exact-duplicate",
+                )
             assertIs<ImportDuplicateReviewResult.Accepted>(ReviewImportDuplicateCandidate(second.store).execute(review))
             expected.review(review)
             state = expected.state(accounts())
@@ -1141,21 +1346,23 @@ class P409PhaseClosureFullStateOracleTest {
 
             val run = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("rl02"))), BatchCommitIdSource(listOf(commitIds("rl02"))))
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl02", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null)))
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmOrdinary(
-                    ImportCandidateConfirmRequest(
-                        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-rl02-confirm")),
-                        candidateId = ImportCandidateId("candidate-rl02"),
-                        expectedContentHash = hashRl02,
-                        explicitConfirmedAt = confirmedAt,
-                        decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-salary"), AccountId("account-asset-a")),
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmOrdinary(
+                        ImportCandidateConfirmRequest(
+                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-rl02-confirm")),
+                            candidateId = ImportCandidateId("candidate-rl02"),
+                            expectedContentHash = hashRl02,
+                            explicitConfirmedAt = confirmedAt,
+                            decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-salary"), AccountId("account-asset-a")),
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("tx-rl02", confirmed.receipt.transactionId?.value)
             expected.intake("req-rl02", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null, "rl02")
             expected.confirm(
-                "req-rl02-confirm", "rl02",
+                "req-rl02-confirm",
+                "rl02",
                 decisionRow = row(ledgerId.value, "req-rl02-confirm", "confirm", "candidate-rl02", hashRl02, "category-salary", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl02", "INCOME", rl02Facts.occurredAt, Triple("account-asset-a", 7250L, "CNY"), Triple("income-account-salary", -7250L, "CNY"))
@@ -1164,17 +1371,18 @@ class P409PhaseClosureFullStateOracleTest {
 
             // Replay of the original intake and confirm receipts: zero new rows.
             assertIs<ImportIntakeResult.NoChange>(run.intake(intakeRequest("req-rl02", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null)))
-            val replay = assertIs<ImportCandidateDecisionResult.NoChange>(
-                run.confirmOrdinary(
-                    ImportCandidateConfirmRequest(
-                        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-rl02-confirm")),
-                        candidateId = ImportCandidateId("candidate-rl02"),
-                        expectedContentHash = hashRl02,
-                        explicitConfirmedAt = confirmedAt,
-                        decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-salary"), AccountId("account-asset-a")),
+            val replay =
+                assertIs<ImportCandidateDecisionResult.NoChange>(
+                    run.confirmOrdinary(
+                        ImportCandidateConfirmRequest(
+                            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-rl02-confirm")),
+                            candidateId = ImportCandidateId("candidate-rl02"),
+                            expectedContentHash = hashRl02,
+                            explicitConfirmedAt = confirmedAt,
+                            decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-salary"), AccountId("account-asset-a")),
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(confirmed.receipt, replay.receipt)
             assertFullState(state, captureFullState(driver, accounts()), "rl02-replay")
 
@@ -1206,7 +1414,8 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rl03c-confirm", "candidate-rl03c", hashComplete)))
             expected.intake("req-rl03c", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rl03c")
             expected.confirm(
-                "req-rl03c-confirm", "rl03c",
+                "req-rl03c-confirm",
+                "rl03c",
                 decisionRow = row(ledgerId.value, "req-rl03c-confirm", "confirm", "candidate-rl03c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl03c", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
@@ -1224,11 +1433,20 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rl03x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl03MirrorFacts, ImportCompleteness.VALID_COMPLETE, null)))
             expected.intake("req-rl03x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl03MirrorFacts, ImportCompleteness.VALID_COMPLETE, null, "rl03x")
             val p408Store = SqlDelightP408ReconciliationStore(database, driver)
-            val linkRequest = confirmLinkRequest(
-                "req-rl03-link", "evidence-rl03x", "posting-rl03c-0", "tx-rl03c", 3000,
-                "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                rl03MirrorFacts.occurredAt, "link-rl03", "reconciliation-posting-rl03c-0",
-            )
+            val linkRequest =
+                confirmLinkRequest(
+                    "req-rl03-link",
+                    "evidence-rl03x",
+                    "posting-rl03c-0",
+                    "tx-rl03c",
+                    3000,
+                    "out",
+                    "account-asset-a",
+                    P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                    rl03MirrorFacts.occurredAt,
+                    "link-rl03",
+                    "reconciliation-posting-rl03c-0",
+                )
             val linked = assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(linkRequest))
             assertEquals(2L, linked.receipt.historySequence)
             expected.confirmLink(linkRequest)
@@ -1237,9 +1455,10 @@ class P409PhaseClosureFullStateOracleTest {
 
             // Checkpoint 3: replay with fresh link ids returns the original receipt and
             // writes nothing.
-            val replay = assertIs<P408ReconciliationResult.NoChange>(
-                p408Store.confirmLink(linkRequest.copy(linkId = "link-rl03-replay", reconciliationId = "reconciliation-replay")),
-            )
+            val replay =
+                assertIs<P408ReconciliationResult.NoChange>(
+                    p408Store.confirmLink(linkRequest.copy(linkId = "link-rl03-replay", reconciliationId = "reconciliation-replay")),
+                )
             assertEquals(linked.receipt, replay.receipt)
             assertFullState(state, captureFullState(driver, accounts()), "rl03-link-replay")
 
@@ -1250,12 +1469,19 @@ class P409PhaseClosureFullStateOracleTest {
             expected.intake("req-rl03m", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, rl03MissingFacts, ImportCompleteness.VALID_COMPLETE, null, "rl03m")
             state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "rl03-missing-intake")
-            val gateClosed = assertIs<ImportCandidateDecisionResult.Rejected>(
-                missing.confirmTransfer(transferConfirmRequest("req-rl03m-confirm", "candidate-rl03m", hashMissing)),
-            )
+            val gateClosed =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    missing.confirmTransfer(transferConfirmRequest("req-rl03m-confirm", "candidate-rl03m", hashMissing)),
+                )
             assertEquals("SPINE_TRANSFER_NOT_CONFIRMABLE", gateClosed.diagnostic.code)
             assertFullState(state, captureFullState(driver, accounts()), "rl03-missing-stays-pending")
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-rl03m").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-rl03m")
+                    .executeAsOne()
+                    .status,
+            )
 
             val projection = captureFullState(driver, accounts()).report.getValue(ledgerId.value)
             assertEquals(3000L, projection.internalTransferMinor)
@@ -1281,22 +1507,31 @@ class P409PhaseClosureFullStateOracleTest {
 
             // The yuebao-routing output shape as two variants: VALID_COMPLETE (route
             // resolved, confirmable) and VALID_INCOMPLETE (insufficient data, stays put).
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("rl04c"), intakeIds("rl04i"))),
-                BatchCommitIdSource(listOf(commitIds("rl04c"))),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("rl04c"), intakeIds("rl04i"))),
+                    BatchCommitIdSource(listOf(commitIds("rl04c"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl04c", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, ImportCompleteness.VALID_COMPLETE, null)))
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl04i", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04IncompleteFacts, ImportCompleteness.VALID_INCOMPLETE, null)))
             expected.intake("req-rl04c", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rl04c")
             expected.intake("req-rl04i", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04IncompleteFacts, ImportCompleteness.VALID_INCOMPLETE, null, "rl04i")
             var state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "rl04-two-variants")
-            assertEquals("incomplete", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-rl04i").executeAsOne().status)
+            assertEquals(
+                "incomplete",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-rl04i")
+                    .executeAsOne()
+                    .status,
+            )
 
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rl04c-confirm", "candidate-rl04c", hashComplete)))
             expected.confirm(
-                "req-rl04c-confirm", "rl04c",
+                "req-rl04c-confirm",
+                "rl04c",
                 decisionRow = row(ledgerId.value, "req-rl04c-confirm", "confirm", "candidate-rl04c", hashComplete, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
             )
             expected.formal("rl04c", "ACCOUNT_TRANSFER", rl04CompleteFacts.occurredAt, Triple("account-asset-a", -2000L, "CNY"), Triple("account-asset-b", 2000L, "CNY"))
@@ -1311,11 +1546,20 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rl04x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl04MirrorFacts, ImportCompleteness.VALID_COMPLETE, null)))
             expected.intake("req-rl04x", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl04MirrorFacts, ImportCompleteness.VALID_COMPLETE, null, "rl04x")
             val p408Store = SqlDelightP408ReconciliationStore(database, driver)
-            val linkRequest = confirmLinkRequest(
-                "req-rl04-link", "evidence-rl04x", "posting-rl04c-1", "tx-rl04c", 2000,
-                "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                rl04MirrorFacts.occurredAt, "link-rl04", "reconciliation-posting-rl04c-1",
-            )
+            val linkRequest =
+                confirmLinkRequest(
+                    "req-rl04-link",
+                    "evidence-rl04x",
+                    "posting-rl04c-1",
+                    "tx-rl04c",
+                    2000,
+                    "in",
+                    "account-asset-b",
+                    P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
+                    rl04MirrorFacts.occurredAt,
+                    "link-rl04",
+                    "reconciliation-posting-rl04c-1",
+                )
             assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(linkRequest))
             expected.confirmLink(linkRequest)
             state = expected.state(accounts())
@@ -1345,16 +1589,19 @@ class P409PhaseClosureFullStateOracleTest {
             val hashRefund = hashOf(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05RefundFacts, refundProfile)
 
             // Anchor 1: credit expense — full externalExpense, zero purchase-day cash flow.
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("rl05e"), intakeIds("rl05r"), intakeIds("rl05f"))),
-                BatchCommitIdSource(listOf(commitIds("rl05e"), commitIds("rl05r"), commitIds("rl05f"))),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("rl05e"), intakeIds("rl05r"), intakeIds("rl05f"))),
+                    BatchCommitIdSource(listOf(commitIds("rl05e"), commitIds("rl05r"), commitIds("rl05f"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl05e", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmCredit(creditExpenseConfirmRequest("req-rl05e-confirm", "candidate-rl05e", hashExpense)))
             expected.intake("req-rl05e", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "rl05e")
             expected.confirm(
-                "req-rl05e-confirm", "rl05e",
+                "req-rl05e-confirm",
+                "rl05e",
                 decisionRow = row(ledgerId.value, "req-rl05e-confirm", "confirm", "candidate-rl05e", hashExpense, "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt),
             )
             expected.formal("rl05e", "EXPENSE", rl05ExpenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
@@ -1367,7 +1614,8 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmCredit(creditRepaymentConfirmRequest("req-rl05r-confirm", "candidate-rl05r", hashRepay)))
             expected.intake("req-rl05r", 1, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, rl05RepayFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile, "rl05r")
             expected.confirm(
-                "req-rl05r-confirm", "rl05r",
+                "req-rl05r-confirm",
+                "rl05r",
                 decisionRow = row(ledgerId.value, "req-rl05r-confirm", "confirm", "candidate-rl05r", hashRepay, null, null, null, null, "account-credit-huabei", "account-asset-a", null, null, null, confirmedAt),
             )
             expected.formal("rl05r", "CREDIT_REPAYMENT", rl05RepayFacts.occurredAt, Triple("account-asset-a", -5620L, "CNY"), Triple("account-credit-huabei", 5620L, "CNY"))
@@ -1380,7 +1628,8 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmCredit(creditRefundConfirmRequest("req-rl05f-confirm", "candidate-rl05f", hashRefund, original = "tx-rl05e")))
             expected.intake("req-rl05f", 2, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05RefundFacts, ImportCompleteness.VALID_COMPLETE, refundProfile, "rl05f")
             expected.confirm(
-                "req-rl05f-confirm", "rl05f",
+                "req-rl05f-confirm",
+                "rl05f",
                 decisionRow = row(ledgerId.value, "req-rl05f-confirm", "confirm", "candidate-rl05f", hashRefund, "category-food", null, null, null, "account-credit-huabei", null, "tx-rl05e", null, null, confirmedAt),
             )
             expected.formal("rl05f", "REFUND_RECEIPT", rl05RefundFacts.occurredAt, Triple("account-credit-huabei", 1535L, "CNY"), Triple("expense-account-food", -1535L, "CNY"))
@@ -1420,19 +1669,25 @@ class P409PhaseClosureFullStateOracleTest {
             assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmMixed(mixedConfirmRequest("req-rl06-confirm", "candidate-rl06", hashMixed)))
             expected.intake("req-rl06", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "rl06")
             expected.confirm(
-                "req-rl06-confirm", "rl06",
+                "req-rl06-confirm",
+                "rl06",
                 decisionRow = row(ledgerId.value, "req-rl06-confirm", "confirm", "candidate-rl06", hashMixed, "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt),
             )
             expected.formal3(
-                "rl06", rl06Facts.occurredAt,
+                "rl06",
+                rl06Facts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-rl06-confirm", "rl06", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-rl06-confirm",
+                "rl06",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             val state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "rl06-mixed")
@@ -1469,22 +1724,29 @@ class P409PhaseClosureFullStateOracleTest {
 
                 // Fixtures: two confirmed transfers (A/B and C/D postings) plus two
                 // evidence-host rows for the failure and concurrency legs.
-                val run = executor(
-                    database, driver,
-                    BatchIntakeIdSource(
-                        listOf(
-                            intakeIds("rl07a"), intakeIds("rl07b"),
-                            intakeIds("rl07i"), intakeIds("rl07pre"),
-                            intakeIds("rl07x1"), intakeIds("rl07x2"), intakeIds("rl07x3"),
+                val run =
+                    executor(
+                        database,
+                        driver,
+                        BatchIntakeIdSource(
+                            listOf(
+                                intakeIds("rl07a"),
+                                intakeIds("rl07b"),
+                                intakeIds("rl07i"),
+                                intakeIds("rl07pre"),
+                                intakeIds("rl07x1"),
+                                intakeIds("rl07x2"),
+                                intakeIds("rl07x3"),
+                            ),
                         ),
-                    ),
-                    BatchCommitIdSource(listOf(commitIds("rl07a"), commitIds("rl07b"))),
-                )
+                        BatchCommitIdSource(listOf(commitIds("rl07a"), commitIds("rl07b"))),
+                    )
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-rl07a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null)))
                 assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rl07a-confirm", "candidate-rl07a", hashRl03)))
                 expected.intake("req-rl07a", 0, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rl07a")
                 expected.confirm(
-                    "req-rl07a-confirm", "rl07a",
+                    "req-rl07a-confirm",
+                    "rl07a",
                     decisionRow = row(ledgerId.value, "req-rl07a-confirm", "confirm", "candidate-rl07a", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rl07a", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
@@ -1492,7 +1754,8 @@ class P409PhaseClosureFullStateOracleTest {
                 assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rl07b-confirm", "candidate-rl07b", hashRl04Second)))
                 expected.intake("req-rl07b", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04SecondFacts, ImportCompleteness.VALID_COMPLETE, null, "rl07b")
                 expected.confirm(
-                    "req-rl07b-confirm", "rl07b",
+                    "req-rl07b-confirm",
+                    "rl07b",
                     decisionRow = row(ledgerId.value, "req-rl07b-confirm", "confirm", "candidate-rl07b", hashRl04Second, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rl07b", "ACCOUNT_TRANSFER", rl04SecondFacts.occurredAt, Triple("account-asset-a", -2500L, "CNY"), Triple("account-asset-b", 2500L, "CNY"))
@@ -1521,18 +1784,28 @@ class P409PhaseClosureFullStateOracleTest {
 
                 // Leg 1 (main path): synthetic mirror evidence -> exact posting decision ->
                 // link/status change and zero second transaction.
-                val leg1 = confirmLinkRequest(
-                    "req-rl07-leg1", "evidence-rl07x1", "posting-rl07a-0", "tx-rl07a", 3000,
-                    "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl07x1Facts.occurredAt, "link-rl07-leg1", "reconciliation-posting-rl07a-0",
-                )
+                val leg1 =
+                    confirmLinkRequest(
+                        "req-rl07-leg1",
+                        "evidence-rl07x1",
+                        "posting-rl07a-0",
+                        "tx-rl07a",
+                        3000,
+                        "out",
+                        "account-asset-a",
+                        P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                        rl07x1Facts.occurredAt,
+                        "link-rl07-leg1",
+                        "reconciliation-posting-rl07a-0",
+                    )
                 val accepted = assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(leg1))
                 expected.confirmLink(leg1)
                 state = expected.state(accounts())
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg1")
-                val leg1Replay = assertIs<P408ReconciliationResult.NoChange>(
-                    p408Store.confirmLink(leg1.copy(linkId = "link-rl07-leg1-replay", reconciliationId = "reconciliation-replay")),
-                )
+                val leg1Replay =
+                    assertIs<P408ReconciliationResult.NoChange>(
+                        p408Store.confirmLink(leg1.copy(linkId = "link-rl07-leg1-replay", reconciliationId = "reconciliation-replay")),
+                    )
                 assertEquals(accepted.receipt, leg1Replay.receipt)
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg1-replay")
                 assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
@@ -1551,19 +1824,37 @@ class P409PhaseClosureFullStateOracleTest {
                 expected.rawLink("req-rl07-preseed", "link-rl07-b", "evidence-rl07pre", "posting-rl07a-1", "tx-rl07a", "real_account_posting")
                 state = expected.state(accounts())
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg2-preseed")
-                val failingRequest = confirmLinkRequest(
-                    "req-rl07-leg2", "evidence-rl07x2", "posting-rl07a-1", "tx-rl07a", 3000,
-                    "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                    rl07x2Facts.occurredAt, "link-rl07-b", "reconciliation-posting-rl07a-1",
-                )
+                val failingRequest =
+                    confirmLinkRequest(
+                        "req-rl07-leg2",
+                        "evidence-rl07x2",
+                        "posting-rl07a-1",
+                        "tx-rl07a",
+                        3000,
+                        "in",
+                        "account-asset-b",
+                        P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
+                        rl07x2Facts.occurredAt,
+                        "link-rl07-b",
+                        "reconciliation-posting-rl07a-1",
+                    )
                 val constraintRejected = assertIs<P408ReconciliationResult.Rejected>(p408Store.confirmLink(failingRequest))
                 assertEquals("P408_RECONCILIATION_CONSTRAINT_VIOLATION", constraintRejected.code)
                 assertFullState(state, captureFullState(driver, accounts()), "rl07-leg2-constraint-zero-residue")
-                val corrected = confirmLinkRequest(
-                    "req-rl07-leg2", "evidence-rl07x2", "posting-rl07a-1", "tx-rl07a", 3000,
-                    "in", "account-asset-b", P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
-                    rl07x2Facts.occurredAt, "link-rl07-leg2", "reconciliation-posting-rl07a-1",
-                )
+                val corrected =
+                    confirmLinkRequest(
+                        "req-rl07-leg2",
+                        "evidence-rl07x2",
+                        "posting-rl07a-1",
+                        "tx-rl07a",
+                        3000,
+                        "in",
+                        "account-asset-b",
+                        P408EvidenceResponsibility.DESTINATION_ASSET_POSTING,
+                        rl07x2Facts.occurredAt,
+                        "link-rl07-leg2",
+                        "reconciliation-posting-rl07a-1",
+                    )
                 assertIs<P408ReconciliationResult.Accepted>(p408Store.confirmLink(corrected))
                 expected.confirmLink(corrected)
                 state = expected.state(accounts())
@@ -1571,16 +1862,34 @@ class P409PhaseClosureFullStateOracleTest {
 
                 // Leg 3 (F5): concurrent confirmLink on the same posting — single winner,
                 // loser typed conflict with zero residue.
-                val leg3a = confirmLinkRequest(
-                    "req-rl07-leg3a", "evidence-rl07x3", "posting-rl07b-0", "tx-rl07b", 2500,
-                    "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl07x3Facts.occurredAt, "link-rl07-leg3a", "reconciliation-posting-rl07b-0",
-                )
-                val leg3b = confirmLinkRequest(
-                    "req-rl07-leg3b", "evidence-rl07x3", "posting-rl07b-0", "tx-rl07b", 2500,
-                    "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rl07x3Facts.occurredAt, "link-rl07-leg3b", "reconciliation-posting-rl07b-0",
-                )
+                val leg3a =
+                    confirmLinkRequest(
+                        "req-rl07-leg3a",
+                        "evidence-rl07x3",
+                        "posting-rl07b-0",
+                        "tx-rl07b",
+                        2500,
+                        "out",
+                        "account-asset-a",
+                        P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                        rl07x3Facts.occurredAt,
+                        "link-rl07-leg3a",
+                        "reconciliation-posting-rl07b-0",
+                    )
+                val leg3b =
+                    confirmLinkRequest(
+                        "req-rl07-leg3b",
+                        "evidence-rl07x3",
+                        "posting-rl07b-0",
+                        "tx-rl07b",
+                        2500,
+                        "out",
+                        "account-asset-a",
+                        P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                        rl07x3Facts.occurredAt,
+                        "link-rl07-leg3b",
+                        "reconciliation-posting-rl07b-0",
+                    )
                 val results = concurrentP408(url, listOf(leg3a, leg3b))
                 val winner: P408ConfirmLinkRequest
                 if (results[0] is P408ReconciliationResult.Accepted) {
@@ -1618,18 +1927,25 @@ class P409PhaseClosureFullStateOracleTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val expected = Expected()
-            val closedRows = listOf(
-                Quintuple("rl08o", ImportRecordKind.ORDINARY_FLOW_SOURCE, rl08ClosedFacts, null, 4),
-                Quintuple("rl08t", ImportRecordKind.TRANSFER_FLOW_SOURCE, rl08TransferClosedFacts, null, 5),
-                Quintuple("rl08c", ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl08CreditClosedFacts, directProfile, 6),
-                Quintuple("rl08m", ImportRecordKind.MIXED_PAYMENT_SOURCE, rl08MixedClosedFacts, mixedProfile, 7),
-            )
+            val closedRows =
+                listOf(
+                    Quintuple("rl08o", ImportRecordKind.ORDINARY_FLOW_SOURCE, rl08ClosedFacts, null, 4),
+                    Quintuple("rl08t", ImportRecordKind.TRANSFER_FLOW_SOURCE, rl08TransferClosedFacts, null, 5),
+                    Quintuple("rl08c", ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl08CreditClosedFacts, directProfile, 6),
+                    Quintuple("rl08m", ImportRecordKind.MIXED_PAYMENT_SOURCE, rl08MixedClosedFacts, mixedProfile, 7),
+                )
             val intakeBatches = closedRows.map { (prefix, _, _, _, _) -> intakeIds(prefix, duplicates = listOf("duplicate-$prefix" to "history-duplicate-$prefix")) }
             val run = executor(database, driver, BatchIntakeIdSource(intakeBatches), BatchCommitIdSource(emptyList()))
             closedRows.forEachIndexed { index, (prefix, kind, facts, profile, ordinal) ->
                 assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-$prefix", ordinal, kind, facts, ImportCompleteness.VALID_COMPLETE, profile)))
                 expected.intake(
-                    "req-$prefix", ordinal, kind, facts, ImportCompleteness.VALID_COMPLETE, profile, prefix,
+                    "req-$prefix",
+                    ordinal,
+                    kind,
+                    facts,
+                    ImportCompleteness.VALID_COMPLETE,
+                    profile,
+                    prefix,
                     duplicates = listOf(Triple("duplicate-$prefix", "history-duplicate-$prefix", null)),
                 )
             }
@@ -1643,7 +1959,13 @@ class P409PhaseClosureFullStateOracleTest {
             assertEquals(0L, projection.netWorthChangeMinor)
             assertTrue(projection.balancesByAccount.values.all { it == 0L })
             closedRows.forEach { (prefix, _, _, _, _) ->
-                assertEquals("incomplete", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-$prefix").executeAsOne().status)
+                assertEquals(
+                    "incomplete",
+                    database.ledgerQueries
+                        .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-$prefix")
+                        .executeAsOne()
+                        .status,
+                )
                 assertEquals("CLOSED_OR_FAILED_NO_FUNDS", selectRows(driver, "SELECT kind FROM import_duplicate_candidate WHERE candidate_id = 'duplicate-$prefix'", listOf(false)).single().single())
             }
 
@@ -1671,45 +1993,58 @@ class P409PhaseClosureFullStateOracleTest {
 
             // Credit leg: two equal rows -> exact-tuple duplicate -> CONFIRMED_DUPLICATE
             // blocks the second candidate's formalization.
-            val creditRun = executor(
-                database, driver,
-                BatchIntakeIdSource(
-                    listOf(
-                        intakeIds("crd-a"),
-                        intakeIds("crd-b", duplicates = listOf("duplicate-crd" to "history-duplicate-crd")),
-                        intakeIds("mix-a"),
+            val creditRun =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(
+                        listOf(
+                            intakeIds("crd-a"),
+                            intakeIds("crd-b", duplicates = listOf("duplicate-crd" to "history-duplicate-crd")),
+                            intakeIds("mix-a"),
+                        ),
                     ),
-                ),
-                BatchCommitIdSource(listOf(commitIds("crd-a"), commitIds3("mix-b"))),
-            )
+                    BatchCommitIdSource(listOf(commitIds("crd-a"), commitIds3("mix-b"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(creditRun.intake(intakeRequest("req-crd-a", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
             expected.intake("req-crd-a", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "crd-a")
             assertIs<ImportCandidateDecisionResult.Accepted>(creditRun.confirmCredit(creditExpenseConfirmRequest("req-crd-a-confirm", "candidate-crd-a", hashExpense)))
             expected.confirm(
-                "req-crd-a-confirm", "crd-a",
+                "req-crd-a-confirm",
+                "crd-a",
                 decisionRow = row(ledgerId.value, "req-crd-a-confirm", "confirm", "candidate-crd-a", hashExpense, "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt),
             )
             expected.formal("crd-a", "EXPENSE", rl05ExpenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
             assertIs<ImportIntakeResult.Accepted>(creditRun.intake(intakeRequest("req-crd-b", 1, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
             expected.intake(
-                "req-crd-b", 1, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "crd-b",
+                "req-crd-b",
+                1,
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                rl05ExpenseFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                directProfile,
+                "crd-b",
                 duplicates = listOf(Triple("duplicate-crd", "history-duplicate-crd", "source-crd-a")),
             )
             var state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "b-credit-duplicate")
 
-            val confirmedDuplicate = reviewRequest(
-                "review-crd", "duplicate-crd",
-                comparisonDigest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, "source-crd-b", "source-crd-a"),
-                ImportDuplicateStatus.CONFIRMED_DUPLICATE, "exact",
-            )
+            val confirmedDuplicate =
+                reviewRequest(
+                    "review-crd",
+                    "duplicate-crd",
+                    comparisonDigest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, "source-crd-b", "source-crd-a"),
+                    ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                    "exact",
+                )
             assertIs<ImportDuplicateReviewResult.Accepted>(ReviewImportDuplicateCandidate(creditRun.store).execute(confirmedDuplicate))
             expected.review(confirmedDuplicate)
             state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "b-credit-review")
-            val blocked = assertIs<ImportCandidateDecisionResult.Rejected>(
-                creditRun.confirmCredit(creditExpenseConfirmRequest("req-crd-b-confirm", "candidate-crd-b", hashExpense)),
-            )
+            val blocked =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    creditRun.confirmCredit(creditExpenseConfirmRequest("req-crd-b-confirm", "candidate-crd-b", hashExpense)),
+                )
             assertEquals("SPINE_DUPLICATE_NOT_CONFIRMABLE", blocked.diagnostic.code)
             assertFullState(state, captureFullState(driver, accounts()), "b-credit-blocked")
 
@@ -1717,24 +2052,35 @@ class P409PhaseClosureFullStateOracleTest {
             // the distinct re-entry still formalizes.
             assertIs<ImportIntakeResult.Accepted>(creditRun.intake(intakeRequest("req-mix-a", 2, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile)))
             expected.intake("req-mix-a", 2, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mix-a")
-            val mixedDuplicateRun = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("mix-b", duplicates = listOf("duplicate-mix" to "history-duplicate-mix")))),
-                BatchCommitIdSource(emptyList()),
-            )
+            val mixedDuplicateRun =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mix-b", duplicates = listOf("duplicate-mix" to "history-duplicate-mix")))),
+                    BatchCommitIdSource(emptyList()),
+                )
             assertIs<ImportIntakeResult.Accepted>(mixedDuplicateRun.intake(intakeRequest("req-mix-b", 3, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile)))
             expected.intake(
-                "req-mix-b", 3, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mix-b",
+                "req-mix-b",
+                3,
+                ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                rl06Facts,
+                ImportCompleteness.VALID_COMPLETE,
+                mixedProfile,
+                "mix-b",
                 duplicates = listOf(Triple("duplicate-mix", "history-duplicate-mix", "source-mix-a")),
             )
             state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "b-mixed-duplicate")
 
-            val dismissed = reviewRequest(
-                "review-mix", "duplicate-mix",
-                comparisonDigest(ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, "source-mix-b", "source-mix-a"),
-                ImportDuplicateStatus.DISMISSED_LOOKALIKE, "manual-dismissal",
-            )
+            val dismissed =
+                reviewRequest(
+                    "review-mix",
+                    "duplicate-mix",
+                    comparisonDigest(ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, "source-mix-b", "source-mix-a"),
+                    ImportDuplicateStatus.DISMISSED_LOOKALIKE,
+                    "manual-dismissal",
+                )
             assertIs<ImportDuplicateReviewResult.Accepted>(ReviewImportDuplicateCandidate(mixedDuplicateRun.store).execute(dismissed))
             expected.review(dismissed)
             state = expected.state(accounts())
@@ -1742,19 +2088,25 @@ class P409PhaseClosureFullStateOracleTest {
 
             assertIs<ImportCandidateDecisionResult.Accepted>(creditRun.confirmMixed(mixedConfirmRequest("req-mix-b-confirm", "candidate-mix-b", hashMixed)))
             expected.confirm(
-                "req-mix-b-confirm", "mix-b",
+                "req-mix-b-confirm",
+                "mix-b",
                 decisionRow = row(ledgerId.value, "req-mix-b-confirm", "confirm", "candidate-mix-b", hashMixed, "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt),
             )
             expected.formal3(
-                "mix-b", rl06Facts.occurredAt,
+                "mix-b",
+                rl06Facts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-mix-b-confirm", "mix-b", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-mix-b-confirm",
+                "mix-b",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             state = expected.state(accounts())
             assertFullState(state, captureFullState(driver, accounts()), "b-mixed-formalized")
@@ -1788,7 +2140,8 @@ class P409PhaseClosureFullStateOracleTest {
                 assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmOrdinary(ordinaryConfirmRequest("req-rz1-confirm", "candidate-rz1", hashRl01)))
                 expected.intake("req-rz1", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null, "rz1")
                 expected.confirm(
-                    "req-rz1-confirm", "rz1",
+                    "req-rz1-confirm",
+                    "rz1",
                     decisionRow = row(ledgerId.value, "req-rz1-confirm", "confirm", "candidate-rz1", hashRl01, "category-food", "account-asset-a", null, null, null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rz1", "EXPENSE", rl01Facts.occurredAt, Triple("expense-account-food", 4580L, "CNY"), Triple("account-asset-a", -4580L, "CNY"))
@@ -1796,7 +2149,8 @@ class P409PhaseClosureFullStateOracleTest {
                 assertIs<ImportCandidateDecisionResult.Accepted>(run.confirmTransfer(transferConfirmRequest("req-rz3-confirm", "candidate-rz3", hashRl03)))
                 expected.intake("req-rz3", 1, ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, ImportCompleteness.VALID_COMPLETE, null, "rz3")
                 expected.confirm(
-                    "req-rz3-confirm", "rz3",
+                    "req-rz3-confirm",
+                    "rz3",
                     decisionRow = row(ledgerId.value, "req-rz3-confirm", "confirm", "candidate-rz3", hashRl03, null, null, "account-asset-a", "account-asset-b", null, null, null, null, null, confirmedAt),
                 )
                 expected.formal("rz3", "ACCOUNT_TRANSFER", rl03CompleteFacts.occurredAt, Triple("account-asset-a", -3000L, "CNY"), Triple("account-asset-b", 3000L, "CNY"))
@@ -1807,11 +2161,20 @@ class P409PhaseClosureFullStateOracleTest {
                 val rzxFacts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
                 assertIs<ImportIntakeResult.Accepted>(mirror.intake(intakeRequest("req-rzx", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rzxFacts, ImportCompleteness.VALID_COMPLETE, null)))
                 expected.intake("req-rzx", 2, ImportRecordKind.ORDINARY_FLOW_SOURCE, rzxFacts, ImportCompleteness.VALID_COMPLETE, null, "rzx")
-                val linkRequest = confirmLinkRequest(
-                    "req-rz3-link", "evidence-rzx", "posting-rz3-0", "tx-rz3", 3000,
-                    "out", "account-asset-a", P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                    rzxFacts.occurredAt, "link-rz3", "reconciliation-posting-rz3-0",
-                )
+                val linkRequest =
+                    confirmLinkRequest(
+                        "req-rz3-link",
+                        "evidence-rzx",
+                        "posting-rz3-0",
+                        "tx-rz3",
+                        3000,
+                        "out",
+                        "account-asset-a",
+                        P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                        rzxFacts.occurredAt,
+                        "link-rz3",
+                        "reconciliation-posting-rz3-0",
+                    )
                 val linkResult = p408Store.confirmLink(linkRequest)
                 assertIs<P408ReconciliationResult.Accepted>(linkResult)
                 expected.confirmLink(linkRequest)
@@ -1846,11 +2209,13 @@ class P409PhaseClosureFullStateOracleTest {
             val hashMixed = hashOf(ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, mixedProfile)
             JdbcSqliteDriver(url).use { driver ->
                 val database = LedgerDatabase(driver)
-                val setup = executor(
-                    database, driver,
-                    BatchIntakeIdSource(listOf(intakeIds("cc"), intakeIds("cm"))),
-                    BatchCommitIdSource(emptyList()),
-                )
+                val setup =
+                    executor(
+                        database,
+                        driver,
+                        BatchIntakeIdSource(listOf(intakeIds("cc"), intakeIds("cm"))),
+                        BatchCommitIdSource(emptyList()),
+                    )
                 assertIs<ImportIntakeResult.Accepted>(setup.intake(intakeRequest("req-cc", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, rl05ExpenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
                 assertIs<ImportIntakeResult.Accepted>(setup.intake(intakeRequest("req-cm", 1, ImportRecordKind.MIXED_PAYMENT_SOURCE, rl06Facts, ImportCompleteness.VALID_COMPLETE, mixedProfile)))
             }
@@ -1894,11 +2259,13 @@ class P409PhaseClosureFullStateOracleTest {
             val hashRl01 = hashOf(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, null)
             val hashRl02 = hashOf(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, null)
 
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("df-o"), intakeIds("df-i"))),
-                BatchCommitIdSource((1..6).map { commitIds("df-attempt-$it") }),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("df-o"), intakeIds("df-i"))),
+                    BatchCommitIdSource((1..6).map { commitIds("df-attempt-$it") }),
+                )
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-df-o", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, ImportCompleteness.VALID_COMPLETE, null)))
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-df-i", 1, ImportRecordKind.ORDINARY_FLOW_SOURCE, rl02Facts, ImportCompleteness.VALID_COMPLETE, null)))
 
@@ -1936,17 +2303,30 @@ class P409PhaseClosureFullStateOracleTest {
                 ),
             )
 
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-df-o").executeAsOne().status)
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-df-i").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-df-o")
+                    .executeAsOne()
+                    .status,
+            )
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-df-i")
+                    .executeAsOne()
+                    .status,
+            )
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countImportConfirmations().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
 
             // The failed claims stay retryable: a corrected decision on the same identity
             // now accepts.
-            val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmOrdinary(ordinaryConfirmRequest("req-df-1", "candidate-df-o", hashRl01)),
-            )
+            val corrected =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmOrdinary(ordinaryConfirmRequest("req-df-1", "candidate-df-o", hashRl01)),
+                )
             assertEquals("tx-df-attempt-6", corrected.receipt.transactionId?.value)
         } finally {
             driver.close()
@@ -1955,22 +2335,32 @@ class P409PhaseClosureFullStateOracleTest {
 
     // ---------- helpers ----------
 
-    private data class Quintuple<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
+    private data class Quintuple<A, B, C, D, E>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D,
+        val fifth: E,
+    )
 
-    private fun concurrentP408(url: String, requests: List<P408ConfirmLinkRequest>): List<P408ReconciliationResult> {
+    private fun concurrentP408(
+        url: String,
+        requests: List<P408ConfirmLinkRequest>,
+    ): List<P408ReconciliationResult> {
         val pool = Executors.newFixedThreadPool(requests.size)
         val ready = CountDownLatch(requests.size)
         val start = CountDownLatch(1)
         return try {
-            val futures = requests.map { request ->
-                pool.submit<P408ReconciliationResult> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    JdbcSqliteDriver(url).use { driver ->
-                        SqlDelightP408ReconciliationStore(LedgerDatabase(driver), driver).confirmLink(request)
+            val futures =
+                requests.map { request ->
+                    pool.submit<P408ReconciliationResult> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        JdbcSqliteDriver(url).use { driver ->
+                            SqlDelightP408ReconciliationStore(LedgerDatabase(driver), driver).confirmLink(request)
+                        }
                     }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(15, TimeUnit.SECONDS) }
@@ -1989,22 +2379,24 @@ class P409PhaseClosureFullStateOracleTest {
         val ready = CountDownLatch(2)
         val start = CountDownLatch(1)
         return try {
-            val futures = (1..2).map {
-                pool.submit<ImportCandidateDecisionResult> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    JdbcSqliteDriver(url).use { driver ->
-                        val database = LedgerDatabase(driver)
-                        val store = SqlDelightImportSpineStore(database, driver)
-                        val factory = if (credit) {
-                            CreditFlowFormalFactory(catalog(), originalExpenseReader(driver))
-                        } else {
-                            MixedPaymentFlowFormalFactory(catalog())
+            val futures =
+                (1..2).map {
+                    pool.submit<ImportCandidateDecisionResult> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        JdbcSqliteDriver(url).use { driver ->
+                            val database = LedgerDatabase(driver)
+                            val store = SqlDelightImportSpineStore(database, driver)
+                            val factory =
+                                if (credit) {
+                                    CreditFlowFormalFactory(catalog(), originalExpenseReader(driver))
+                                } else {
+                                    MixedPaymentFlowFormalFactory(catalog())
+                                }
+                            ConfirmImportCandidate(store, commitIds, factory, catalog()).execute(request)
                         }
-                        ConfirmImportCandidate(store, commitIds, factory, catalog()).execute(request)
                     }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(15, TimeUnit.SECONDS) }

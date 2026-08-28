@@ -5,14 +5,14 @@ import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
-import com.unifiedledger.application.ImportCandidateDecision
 import com.unifiedledger.application.ImportCandidateDecisionResult
-import com.unifiedledger.application.ImportCandidateDecisionSnapshot
 import com.unifiedledger.application.ImportCandidateFormalFactory
+import com.unifiedledger.application.ImportCandidateFormalizationInput
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCandidateRejectRequest
 import com.unifiedledger.application.ImportCommitIds
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportConfirmDecisionFields
 import com.unifiedledger.application.ImportConfirmationId
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportDuplicateCandidateId
@@ -31,15 +31,11 @@ import com.unifiedledger.application.ImportIntakeIds
 import com.unifiedledger.application.ImportIntakeRequest
 import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportIntakeSnapshot
-import com.unifiedledger.application.ImportRawIdentity
 import com.unifiedledger.application.ImportReceipt
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
-import com.unifiedledger.application.ImportResolvedSourceFacts
 import com.unifiedledger.application.ImportReturnedId
-import com.unifiedledger.application.ImportCandidateFormalizationInput
-import com.unifiedledger.application.ImportConfirmDecisionFields
-import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportReturnedIdKind
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
@@ -51,26 +47,17 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
-import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
-import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import java.nio.file.Files
 import java.sql.SQLException
 import java.util.concurrent.CountDownLatch
@@ -82,7 +69,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
-import kotlin.time.Instant
 
 /**
  * P4-02 spine end-to-end oracle (spec section 9, T-01..T-30). The spec's operation
@@ -101,51 +87,59 @@ class ImportSpineLifecycleEndToEndTest {
     private val hashR3 = "sha256:911f0b27473a382752837ac1eaca05e9f7ab1d13fc944b8e5e349b30fb86fe35"
     private val hashR5 = "sha256:80b823a2a5a392a431c15e84b2ca1783337c57d53a2b940f414b53befeef1e47"
 
-    private fun r1(requestId: String = "req-a-intake") = ImportIntakeRequest(
-        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
-        inputRef = "batch-p402-a",
-        recordOrdinal = 0,
-        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-        completeness = ImportCompleteness.VALID_COMPLETE,
-        candidateGeneratedAt = "2026-08-19T08:00:00Z",
-    )
+    private fun r1(requestId: String = "req-a-intake") =
+        ImportIntakeRequest(
+            identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+            inputRef = "batch-p402-a",
+            recordOrdinal = 0,
+            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+            facts = ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+            completeness = ImportCompleteness.VALID_COMPLETE,
+            candidateGeneratedAt = "2026-08-19T08:00:00Z",
+        )
 
-    private fun r1Prime(requestId: String) = r1(requestId = requestId).copy(
-        facts = ImportSourceFacts(12851, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-    )
+    private fun r1Prime(requestId: String) =
+        r1(requestId = requestId).copy(
+            facts = ImportSourceFacts(12851, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+        )
 
-    private fun r2() = ImportIntakeRequest(
-        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-b-intake")),
-        inputRef = "batch-p402-a",
-        recordOrdinal = 1,
-        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-        completeness = ImportCompleteness.VALID_COMPLETE,
-        candidateGeneratedAt = "2026-08-19T08:00:00Z",
-    )
+    private fun r2() =
+        ImportIntakeRequest(
+            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-b-intake")),
+            inputRef = "batch-p402-a",
+            recordOrdinal = 1,
+            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+            facts = ImportSourceFacts(1000000, "CNY", 2, "2026-08-05T09:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+            completeness = ImportCompleteness.VALID_COMPLETE,
+            candidateGeneratedAt = "2026-08-19T08:00:00Z",
+        )
 
-    private fun r3() = ImportIntakeRequest(
-        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-c-intake")),
-        inputRef = "batch-p402-b",
-        recordOrdinal = 0,
-        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-        completeness = ImportCompleteness.VALID_INCOMPLETE,
-        candidateGeneratedAt = "2026-08-19T08:00:00Z",
-    )
+    private fun r3() =
+        ImportIntakeRequest(
+            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-c-intake")),
+            inputRef = "batch-p402-b",
+            recordOrdinal = 0,
+            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+            facts = ImportSourceFacts(4500, "CNY", 2, "2026-08-06T18:45:00+08:00", "out", null, ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+            completeness = ImportCompleteness.VALID_INCOMPLETE,
+            candidateGeneratedAt = "2026-08-19T08:00:00Z",
+        )
 
-    private fun r5() = ImportIntakeRequest(
-        identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-e-intake")),
-        inputRef = "batch-p402-c",
-        recordOrdinal = 0,
-        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-        facts = ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
-        completeness = ImportCompleteness.VALID_COMPLETE,
-        candidateGeneratedAt = "2026-08-19T08:00:00Z",
-    )
+    private fun r5() =
+        ImportIntakeRequest(
+            identity = ImportRequestIdentity(ledgerId, ImportRequestId("req-e-intake")),
+            inputRef = "batch-p402-c",
+            recordOrdinal = 0,
+            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+            facts = ImportSourceFacts(888800, "CNY", 2, "2026-08-08T10:00:00+08:00", "in", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1),
+            completeness = ImportCompleteness.VALID_COMPLETE,
+            candidateGeneratedAt = "2026-08-19T08:00:00Z",
+        )
 
-    private fun intakeIds(prefix: String, statusId: String) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        statusId: String,
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
@@ -162,16 +156,20 @@ class ImportSpineLifecycleEndToEndTest {
     ) = ImportCommitIds(
         confirmationId = ImportConfirmationId(confirmation),
         statusHistoryId = ImportStatusHistoryId(statusId),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId(tx),
-            versionId = TransactionVersionId(version),
-            postingSetId = PostingSetId(postingSet),
-            postingIds = postingIds.map(::PostingId),
-        ),
+        formalIds =
+            ImportFormalIds(
+                transactionId = TransactionId(tx),
+                versionId = TransactionVersionId(version),
+                postingSetId = PostingSetId(postingSet),
+                postingIds = postingIds.map(::PostingId),
+            ),
     )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -179,8 +177,11 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -188,8 +189,11 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
-    private class BatchStatusIdSource(private val batches: List<ImportStatusHistoryId>) : ImportStatusIdSource {
+    private class BatchStatusIdSource(
+        private val batches: List<ImportStatusHistoryId>,
+    ) : ImportStatusIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportStatusHistoryId {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "status id batch exhausted" }
@@ -204,28 +208,34 @@ class ImportSpineLifecycleEndToEndTest {
     ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
-    private fun catalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("spine test catalog failure: ${result.violation}")
-    }
+    private fun catalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("spine test catalog failure: ${result.violation}")
+        }
 
     private class Executor(
         val database: LedgerDatabase,
@@ -237,8 +247,7 @@ class ImportSpineLifecycleEndToEndTest {
     ) {
         val store = SqlDelightImportSpineStore(database, driver)
 
-        fun intake(request: ImportIntakeRequest): ImportIntakeResult =
-            ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
+        fun intake(request: ImportIntakeRequest): ImportIntakeResult = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
             ConfirmImportCandidate(
@@ -248,47 +257,61 @@ class ImportSpineLifecycleEndToEndTest {
                 catalog,
             ).execute(request)
 
-        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
-            RejectImportCandidate(store, statusIds).execute(request)
+        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult = RejectImportCandidate(store, statusIds).execute(request)
     }
 
-    private fun confirmRequest(requestId: String = "req-a-confirm", candidate: String = "candidate-a", hash: String = hashR1, category: String = "category-food", funding: String = "account-asset-a", confirmedAt: String? = "2026-08-07T10:00:00+08:00") =
-        ImportCandidateConfirmRequest(
-            identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
-            candidateId = ImportCandidateId(candidate),
-            expectedContentHash = hash,
-            explicitConfirmedAt = confirmedAt,
-            decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
+    private fun confirmRequest(
+        requestId: String = "req-a-confirm",
+        candidate: String = "candidate-a",
+        hash: String = hashR1,
+        category: String = "category-food",
+        funding: String = "account-asset-a",
+        confirmedAt: String? = "2026-08-07T10:00:00+08:00",
+    ) = ImportCandidateConfirmRequest(
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        candidateId = ImportCandidateId(candidate),
+        expectedContentHash = hash,
+        explicitConfirmedAt = confirmedAt,
+        decisionFields =
+            ImportConfirmDecisionFields.OrdinaryFlow(
                 categoryId = CategoryId(category),
                 fundingAccountId = AccountId(funding),
             ),
-        )
-
-    private fun rejectRequest(requestId: String = "req-b-reject", candidate: String = "candidate-b", hash: String = hashR2) =
-        ImportCandidateRejectRequest(
-            identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
-            candidateId = ImportCandidateId(candidate),
-            expectedContentHash = hash,
-        )
-
-    private fun spineCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countImportRequests().executeAsOne(),
-        database.ledgerQueries.countImportSourceRecords().executeAsOne(),
-        database.ledgerQueries.countImportEvidence().executeAsOne(),
-        database.ledgerQueries.countImportCandidates().executeAsOne(),
-        database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
-        database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
-        database.ledgerQueries.countImportConfirmations().executeAsOne(),
-        database.ledgerQueries.countImportReceipts().executeAsOne(),
     )
 
-    private fun formalCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countTransactions().executeAsOne(),
-        database.ledgerQueries.countVersions().executeAsOne(),
-        database.ledgerQueries.countPostings().executeAsOne(),
+    private fun rejectRequest(
+        requestId: String = "req-b-reject",
+        candidate: String = "candidate-b",
+        hash: String = hashR2,
+    ) = ImportCandidateRejectRequest(
+        identity = ImportRequestIdentity(ledgerId, ImportRequestId(requestId)),
+        candidateId = ImportCandidateId(candidate),
+        expectedContentHash = hash,
     )
 
-    private fun receiptOf(database: LedgerDatabase, requestId: String): ImportReceipt {
+    private fun spineCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countImportRequests().executeAsOne(),
+            database.ledgerQueries.countImportSourceRecords().executeAsOne(),
+            database.ledgerQueries.countImportEvidence().executeAsOne(),
+            database.ledgerQueries.countImportCandidates().executeAsOne(),
+            database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
+            database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
+            database.ledgerQueries.countImportConfirmations().executeAsOne(),
+            database.ledgerQueries.countImportReceipts().executeAsOne(),
+        )
+
+    private fun formalCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countTransactions().executeAsOne(),
+            database.ledgerQueries.countVersions().executeAsOne(),
+            database.ledgerQueries.countPostings().executeAsOne(),
+        )
+
+    private fun receiptOf(
+        database: LedgerDatabase,
+        requestId: String,
+    ): ImportReceipt {
         val row = database.ledgerQueries.selectImportReceiptByRequest(ledgerId.value, requestId).executeAsOne()
         return ImportReceipt(
             requestId = ImportRequestId(row.request_id),
@@ -300,15 +323,21 @@ class ImportSpineLifecycleEndToEndTest {
         )
     }
 
-    private fun scalarText(driver: JdbcSqliteDriver, sql: String): String = driver.executeQuery(
-        null,
-        sql,
-        { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getString(0)!!)
-        },
-        0,
-    ).value
+    private fun scalarText(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): String =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getString(0)!!)
+                },
+                0,
+            ).value
 
     @Test
     fun executesO01ToO17WithStableReplayStatusTransitionsAndReceipts() {
@@ -316,16 +345,18 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("a", "status-a-1"),
-                    intakeIds("b", "status-b-1"),
-                    intakeIds("c", "status-c-1"),
-                ),
-            )
-            val commitIds = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("a", "status-a-1"),
+                        intakeIds("b", "status-b-1"),
+                        intakeIds("c", "status-c-1"),
+                    ),
+                )
+            val commitIds =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
             val statusIds = BatchStatusIdSource(listOf(ImportStatusHistoryId("status-b-2")))
             val executor = Executor(database, driver, catalog(), intakeIds, commitIds, statusIds)
 
@@ -389,9 +420,10 @@ class ImportSpineLifecycleEndToEndTest {
             // SPEC-003 (D-105 section 5): candidate_generated_at is an audit fact, not a
             // source fact. A raw-identity replay carrying a different audit timestamp is a
             // zero-write NoChange, never a collision.
-            val generatedAtReplay = assertIs<ImportIntakeResult.NoChange>(
-                executor.intake(r1(requestId = "req-a-generated-at").copy(candidateGeneratedAt = "2026-08-20T00:00:00Z")),
-            )
+            val generatedAtReplay =
+                assertIs<ImportIntakeResult.NoChange>(
+                    executor.intake(r1(requestId = "req-a-generated-at").copy(candidateGeneratedAt = "2026-08-20T00:00:00Z")),
+                )
             assertNull(generatedAtReplay.receipt)
             assertEquals("equivalent_replay", generatedAtReplay.reasonCode)
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
@@ -460,23 +492,26 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
 
             // O-07: re-confirm a confirmed candidate with a new request.
-            val o07 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(requestId = "req-a-confirm-2")),
-            )
+            val o07 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(requestId = "req-a-confirm-2")),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", o07.diagnostic.code)
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
 
             // O-08: same request, different category: request identity conflict.
-            val o08 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(category = "category-other")),
-            )
+            val o08 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(category = "category-other")),
+                )
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", o08.diagnostic.code)
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
 
             // O-09: same request, stale expected hash: stale fingerprint rejection.
-            val o09 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(hash = hashR2)),
-            )
+            val o09 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(hash = hashR2)),
+                )
             assertEquals("SPINE_STALE_FINGERPRINT", o09.diagnostic.code)
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
 
@@ -513,16 +548,18 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(listOf(4L, 2L, 2L, 2L, 4L, 2L, 1L, 4L), spineCounts(database))
 
             // O-13: reject C2 again with a new request.
-            val o13 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.reject(rejectRequest(requestId = "req-b-reject-2")),
-            )
+            val o13 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.reject(rejectRequest(requestId = "req-b-reject-2")),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", o13.diagnostic.code)
             assertEquals(listOf(4L, 2L, 2L, 2L, 4L, 2L, 1L, 4L), spineCounts(database))
 
             // O-14: confirm the rejected C2.
-            val o14 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(requestId = "req-b-confirm", candidate = "candidate-b", hash = hashR2, category = "category-salary")),
-            )
+            val o14 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(requestId = "req-b-confirm", candidate = "candidate-b", hash = hashR2, category = "category-salary")),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", o14.diagnostic.code)
             assertEquals(listOf(4L, 2L, 2L, 2L, 4L, 2L, 1L, 4L), spineCounts(database))
 
@@ -536,16 +573,18 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals("2026-08-06T18:45:00+08:00", scalarText(driver, "SELECT observed_at FROM import_evidence WHERE ledger_id = 'ledger-p402' AND evidence_id = 'evidence-c'"))
 
             // O-16: confirm the incomplete C3.
-            val o16 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(requestId = "req-c-confirm", candidate = "candidate-c", hash = hashR3)),
-            )
+            val o16 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(requestId = "req-c-confirm", candidate = "candidate-c", hash = hashR3)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", o16.diagnostic.code)
             assertEquals(listOf(5L, 3L, 3L, 3L, 5L, 2L, 1L, 5L), spineCounts(database))
 
             // O-17: reject the incomplete C3.
-            val o17 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.reject(rejectRequest(requestId = "req-c-reject", candidate = "candidate-c", hash = hashR3)),
-            )
+            val o17 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.reject(rejectRequest(requestId = "req-c-reject", candidate = "candidate-c", hash = hashR3)),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", o17.diagnostic.code)
             assertEquals(listOf(5L, 3L, 3L, 3L, 5L, 2L, 1L, 5L), spineCounts(database))
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
@@ -558,13 +597,14 @@ class ImportSpineLifecycleEndToEndTest {
     fun concurrentIntakesCommitOnceWithoutLoserResidue() {
         // O-18: concurrent identical intake (same request).
         runIntakeScenario("spine-intake-o18-") { url ->
-            val results = concurrentExecute(
-                url,
-                listOf(
-                    { intakeOn(url, r1()) },
-                    { intakeOn(url, r1()) },
-                ),
-            )
+            val results =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { intakeOn(url, r1()) },
+                        { intakeOn(url, r1()) },
+                    ),
+                )
             assertEquals(1, results.count { it is ImportIntakeResult.Accepted })
             assertEquals(1, results.count { it is ImportIntakeResult.NoChange })
             assertSpineCounts(url, listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L))
@@ -572,13 +612,14 @@ class ImportSpineLifecycleEndToEndTest {
 
         // O-19: concurrent conflicting intake (same request, different content).
         runIntakeScenario("spine-intake-o19-") { url ->
-            val results = concurrentExecute(
-                url,
-                listOf(
-                    { intakeOn(url, r1(requestId = "req-a-race")) },
-                    { intakeOn(url, r1Prime(requestId = "req-a-race")) },
-                ),
-            )
+            val results =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { intakeOn(url, r1(requestId = "req-a-race")) },
+                        { intakeOn(url, r1Prime(requestId = "req-a-race")) },
+                    ),
+                )
             assertEquals(1, results.count { it is ImportIntakeResult.Accepted })
             val o19Rejected = results.filterIsInstance<ImportIntakeResult.Rejected>().single()
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", o19Rejected.diagnostic.code)
@@ -587,13 +628,14 @@ class ImportSpineLifecycleEndToEndTest {
 
         // O-20: concurrent distinct requests, same raw identity, equivalent content.
         runIntakeScenario("spine-intake-o20-") { url ->
-            val results = concurrentExecute(
-                url,
-                listOf(
-                    { intakeOn(url, r1(requestId = "req-a-intake-4")) },
-                    { intakeOn(url, r1(requestId = "req-a-intake-5")) },
-                ),
-            )
+            val results =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { intakeOn(url, r1(requestId = "req-a-intake-4")) },
+                        { intakeOn(url, r1(requestId = "req-a-intake-5")) },
+                    ),
+                )
             assertEquals(1, results.count { it is ImportIntakeResult.Accepted })
             assertEquals(1, results.count { it is ImportIntakeResult.NoChange })
             // The loser wrote nothing, not even a request row.
@@ -601,7 +643,10 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
-    private fun runIntakeScenario(prefix: String, body: (String) -> Unit) {
+    private fun runIntakeScenario(
+        prefix: String,
+        body: (String) -> Unit,
+    ) {
         val path = Files.createTempFile(prefix, ".db")
         val url = "jdbc:sqlite:${path.toAbsolutePath()}"
         try {
@@ -612,7 +657,10 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
-    private fun assertSpineCounts(url: String, expected: List<Long>) {
+    private fun assertSpineCounts(
+        url: String,
+        expected: List<Long>,
+    ) {
         JdbcSqliteDriver(url).use { driver ->
             assertEquals(expected, spineCounts(LedgerDatabase(driver)))
         }
@@ -635,16 +683,18 @@ class ImportSpineLifecycleEndToEndTest {
             }
             // O-21: same confirm request from two threads; the shared ID source is
             // consumed exactly once.
-            val sharedIds = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
-            val o21 = concurrentExecute(
-                url,
-                listOf(
-                    { confirmOn(url, catalog, sharedIds, confirmRequest(requestId = "req-a-confirm-c1")) },
-                    { confirmOn(url, catalog, sharedIds, confirmRequest(requestId = "req-a-confirm-c1")) },
-                ),
-            )
+            val sharedIds =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
+            val o21 =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { confirmOn(url, catalog, sharedIds, confirmRequest(requestId = "req-a-confirm-c1")) },
+                        { confirmOn(url, catalog, sharedIds, confirmRequest(requestId = "req-a-confirm-c1")) },
+                    ),
+                )
             assertEquals(1, o21.count { it is ImportCandidateDecisionResult.Accepted })
             assertEquals(1, o21.count { it is ImportCandidateDecisionResult.NoChange })
             assertEquals(1, sharedIds.calls.get())
@@ -665,16 +715,18 @@ class ImportSpineLifecycleEndToEndTest {
                     ImportContentFingerprint(),
                 ).execute(r2())
             }
-            val sharedIds2 = BatchCommitIdSource(
-                listOf(commitIds("confirmation-b", "status-b-2", "tx-b", "version-b-v1", "posting-set-b", listOf("posting-asset-b", "posting-income-b"))),
-            )
-            val o22 = concurrentExecute(
-                url,
-                listOf(
-                    { confirmOn(url, catalog, sharedIds2, confirmRequest(requestId = "req-b-confirm-c2", candidate = "candidate-b", hash = hashR2, category = "category-salary", confirmedAt = "2026-08-05T10:00:00+08:00")) },
-                    { confirmOn(url, catalog, sharedIds2, confirmRequest(requestId = "req-b-confirm-c3", candidate = "candidate-b", hash = hashR2, category = "category-salary", confirmedAt = "2026-08-05T10:00:00+08:00")) },
-                ),
-            )
+            val sharedIds2 =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-b", "status-b-2", "tx-b", "version-b-v1", "posting-set-b", listOf("posting-asset-b", "posting-income-b"))),
+                )
+            val o22 =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { confirmOn(url, catalog, sharedIds2, confirmRequest(requestId = "req-b-confirm-c2", candidate = "candidate-b", hash = hashR2, category = "category-salary", confirmedAt = "2026-08-05T10:00:00+08:00")) },
+                        { confirmOn(url, catalog, sharedIds2, confirmRequest(requestId = "req-b-confirm-c3", candidate = "candidate-b", hash = hashR2, category = "category-salary", confirmedAt = "2026-08-05T10:00:00+08:00")) },
+                    ),
+                )
             assertEquals(1, o22.count { it is ImportCandidateDecisionResult.Accepted })
             val o22Rejected = o22.filterIsInstance<ImportCandidateDecisionResult.Rejected>().single()
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", o22Rejected.diagnostic.code)
@@ -696,10 +748,12 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val failingStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
-            )
+            val failingStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
+                )
             val batch1 = BatchIntakeIdSource(listOf(intakeIds("a-attempt-1", "status-a-1-attempt-1")))
             assertFailsWith<IllegalStateException> {
                 ExecuteImportIntake(failingStore, batch1, ImportContentFingerprint()).execute(r1())
@@ -730,22 +784,29 @@ class ImportSpineLifecycleEndToEndTest {
                 BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1"))),
                 ImportContentFingerprint(),
             ).execute(r1())
-            val failingStore = SqlDelightImportSpineStore(
-                database2, driver2,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
-            )
-            val attempt1 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-a-attempt-1", "status-a-2-attempt-1", "tx-a-attempt-1",
-                        "version-a-attempt-1-v1", "posting-set-a-attempt-1",
-                        listOf("posting-expense-a-attempt-1", "posting-asset-a-attempt-1"),
+            val failingStore =
+                SqlDelightImportSpineStore(
+                    database2,
+                    driver2,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+                )
+            val attempt1 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-a-attempt-1",
+                            "status-a-2-attempt-1",
+                            "tx-a-attempt-1",
+                            "version-a-attempt-1-v1",
+                            "posting-set-a-attempt-1",
+                            listOf("posting-expense-a-attempt-1", "posting-asset-a-attempt-1"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertFailsWith<IllegalStateException> {
                 ConfirmImportCandidate(
-                    failingStore, attempt1,
+                    failingStore,
+                    attempt1,
                     OrdinaryFlowFormalFactory(catalog, CategoryId("category-food"), AccountId("account-asset-a")),
                     catalog,
                 ).execute(confirmRequest())
@@ -754,12 +815,14 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database2))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database2))
             // The corrected retry consumes batch 2 and commits all-or-nothing.
-            val batch2 = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
+            val batch2 =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 ConfirmImportCandidate(
-                    normalStore, batch2,
+                    normalStore,
+                    batch2,
                     OrdinaryFlowFormalFactory(catalog, CategoryId("category-food"), AccountId("account-asset-a")),
                     catalog,
                 ).execute(confirmRequest()),
@@ -787,48 +850,64 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
             // O-29: confirm with an unknown category: domain failure, zero residue.
-            val attempt1 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-b-attempt-1", "status-e-2-attempt-1", "tx-b-attempt-1",
-                        "version-e-attempt-1-v1", "posting-set-e-attempt-1",
-                        listOf("posting-asset-e-attempt-1", "posting-income-e-attempt-1"),
+            val attempt1 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-b-attempt-1",
+                            "status-e-2-attempt-1",
+                            "tx-b-attempt-1",
+                            "version-e-attempt-1-v1",
+                            "posting-set-e-attempt-1",
+                            listOf("posting-asset-e-attempt-1", "posting-income-e-attempt-1"),
+                        ),
                     ),
-                ),
-            )
-            val o29 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                Executor(database, driver, catalog, intakeIds, attempt1, BatchStatusIdSource(emptyList())).confirm(
-                    confirmRequest(
-                        requestId = "req-e-confirm", candidate = "candidate-e", hash = hashR5,
-                        category = "category-unknown", funding = "account-asset-a",
-                        confirmedAt = "2026-08-09T09:00:00+08:00",
+                )
+            val o29 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    Executor(database, driver, catalog, intakeIds, attempt1, BatchStatusIdSource(emptyList())).confirm(
+                        confirmRequest(
+                            requestId = "req-e-confirm",
+                            candidate = "candidate-e",
+                            hash = hashR5,
+                            category = "category-unknown",
+                            funding = "account-asset-a",
+                            confirmedAt = "2026-08-09T09:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", o29.diagnostic.code)
             assertEquals(1, attempt1.calls.get())
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
 
             // O-30: corrected retry with the same request identity: accepted.
-            val batch2 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-b", "status-e-2", "tx-b",
-                        "version-e-v1", "posting-set-e",
-                        listOf("posting-asset-e", "posting-income-e"),
+            val batch2 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-b",
+                            "status-e-2",
+                            "tx-b",
+                            "version-e-v1",
+                            "posting-set-e",
+                            listOf("posting-asset-e", "posting-income-e"),
+                        ),
                     ),
-                ),
-            )
-            val o30 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                Executor(database, driver, catalog, intakeIds, batch2, BatchStatusIdSource(emptyList())).confirm(
-                    confirmRequest(
-                        requestId = "req-e-confirm", candidate = "candidate-e", hash = hashR5,
-                        category = "category-salary", funding = "account-asset-a",
-                        confirmedAt = "2026-08-09T09:00:00+08:00",
+                )
+            val o30 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    Executor(database, driver, catalog, intakeIds, batch2, BatchStatusIdSource(emptyList())).confirm(
+                        confirmRequest(
+                            requestId = "req-e-confirm",
+                            candidate = "candidate-e",
+                            hash = hashR5,
+                            category = "category-salary",
+                            funding = "account-asset-a",
+                            confirmedAt = "2026-08-09T09:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-b"),
@@ -858,39 +937,43 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val executor = Executor(
-                database, driver, catalog(),
-                BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1"), intakeIds("b", "status-b-1"), intakeIds("c", "status-c-1"))),
-                BatchCommitIdSource(
-                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-                ),
-                BatchStatusIdSource(emptyList()),
-            )
+            val executor =
+                Executor(
+                    database,
+                    driver,
+                    catalog(),
+                    BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1"), intakeIds("b", "status-b-1"), intakeIds("c", "status-c-1"))),
+                    BatchCommitIdSource(
+                        listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                    ),
+                    BatchStatusIdSource(emptyList()),
+                )
             executor.intake(r1())
             executor.confirm(confirmRequest())
             executor.intake(r2())
             executor.intake(r3())
 
-            val mutations = listOf(
-                "UPDATE import_request SET operation = 'intake'",
-                "DELETE FROM import_request",
-                "UPDATE import_source_record SET amount_minor = 1",
-                "DELETE FROM import_source_record",
-                "UPDATE import_evidence SET observed_at = 'changed'",
-                "DELETE FROM import_evidence",
-                "UPDATE import_candidate SET confidence = '9.99'",
-                "DELETE FROM import_candidate",
-                "UPDATE import_candidate_requires_confirmation SET requirement = 'formal_transaction_creation'",
-                "DELETE FROM import_candidate_requires_confirmation",
-                "UPDATE import_candidate_status_history SET status = 'incomplete'",
-                "DELETE FROM import_candidate_status_history",
-                "UPDATE import_candidate_decision_snapshot SET decision = 'reject'",
-                "DELETE FROM import_candidate_decision_snapshot",
-                "UPDATE import_confirmation SET confirmed_at = 'changed'",
-                "DELETE FROM import_confirmation",
-                "UPDATE import_receipt SET outcome = 'accepted'",
-                "DELETE FROM import_receipt",
-            )
+            val mutations =
+                listOf(
+                    "UPDATE import_request SET operation = 'intake'",
+                    "DELETE FROM import_request",
+                    "UPDATE import_source_record SET amount_minor = 1",
+                    "DELETE FROM import_source_record",
+                    "UPDATE import_evidence SET observed_at = 'changed'",
+                    "DELETE FROM import_evidence",
+                    "UPDATE import_candidate SET confidence = '9.99'",
+                    "DELETE FROM import_candidate",
+                    "UPDATE import_candidate_requires_confirmation SET requirement = 'formal_transaction_creation'",
+                    "DELETE FROM import_candidate_requires_confirmation",
+                    "UPDATE import_candidate_status_history SET status = 'incomplete'",
+                    "DELETE FROM import_candidate_status_history",
+                    "UPDATE import_candidate_decision_snapshot SET decision = 'reject'",
+                    "DELETE FROM import_candidate_decision_snapshot",
+                    "UPDATE import_confirmation SET confirmed_at = 'changed'",
+                    "DELETE FROM import_confirmation",
+                    "UPDATE import_receipt SET outcome = 'accepted'",
+                    "DELETE FROM import_receipt",
+                )
             mutations.forEach { statement ->
                 assertFailsWith<SQLException>(statement) { driver.execute(null, statement, 0) }
             }
@@ -978,29 +1061,36 @@ class ImportSpineLifecycleEndToEndTest {
         val url = "jdbc:sqlite:${path.toAbsolutePath()}"
         val catalog = catalog()
         try {
-            val originalReceipts = JdbcSqliteDriver(url).use { driver ->
-                LedgerDatabase.Schema.create(driver)
-                val database = LedgerDatabase(driver)
-                val executor = Executor(
-                    database, driver, catalog,
-                    BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1"))),
-                    BatchCommitIdSource(
-                        listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-                    ),
-                    BatchStatusIdSource(emptyList()),
-                )
-                val intake = assertIs<ImportIntakeResult.Accepted>(executor.intake(r1()))
-                val confirm = assertIs<ImportCandidateDecisionResult.Accepted>(executor.confirm(confirmRequest()))
-                intake.receipt to confirm.receipt
-            }
+            val originalReceipts =
+                JdbcSqliteDriver(url).use { driver ->
+                    LedgerDatabase.Schema.create(driver)
+                    val database = LedgerDatabase(driver)
+                    val executor =
+                        Executor(
+                            database,
+                            driver,
+                            catalog,
+                            BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1"))),
+                            BatchCommitIdSource(
+                                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                            ),
+                            BatchStatusIdSource(emptyList()),
+                        )
+                    val intake = assertIs<ImportIntakeResult.Accepted>(executor.intake(r1()))
+                    val confirm = assertIs<ImportCandidateDecisionResult.Accepted>(executor.confirm(confirmRequest()))
+                    intake.receipt to confirm.receipt
+                }
             JdbcSqliteDriver(url).use { driver ->
                 val database = LedgerDatabase(driver)
-                val executor = Executor(
-                    database, driver, catalog,
-                    BatchIntakeIdSource(emptyList()),
-                    BatchCommitIdSource(emptyList()),
-                    BatchStatusIdSource(emptyList()),
-                )
+                val executor =
+                    Executor(
+                        database,
+                        driver,
+                        catalog,
+                        BatchIntakeIdSource(emptyList()),
+                        BatchCommitIdSource(emptyList()),
+                        BatchStatusIdSource(emptyList()),
+                    )
                 val replayIntake = assertIs<ImportIntakeResult.NoChange>(executor.intake(r1()))
                 assertEquals(originalReceipts.first, replayIntake.receipt)
                 val replayConfirm = assertIs<ImportCandidateDecisionResult.NoChange>(executor.confirm(confirmRequest()))
@@ -1051,25 +1141,28 @@ class ImportSpineLifecycleEndToEndTest {
             val database = LedgerDatabase(driver)
             val catalog = catalog()
             val intakeIds = BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1")))
-            val commitIds = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
+            val commitIds =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
             val executor = Executor(database, driver, catalog, intakeIds, commitIds, BatchStatusIdSource(emptyList()))
             assertIs<ImportIntakeResult.Accepted>(executor.intake(r1()))
 
             // Claim succeeds (new request, pending candidate), hash mismatch: stale.
-            val stale = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executor.confirm(confirmRequest(requestId = "req-a-confirm-stale", hash = hashR2)),
-            )
+            val stale =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executor.confirm(confirmRequest(requestId = "req-a-confirm-stale", hash = hashR2)),
+                )
             assertEquals("SPINE_STALE_FINGERPRINT", stale.diagnostic.code)
             assertEquals(0, commitIds.calls.get())
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
 
             // The identity stays available: the corrected retry with the same request id.
-            val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executor.confirm(confirmRequest(requestId = "req-a-confirm-stale")),
-            )
+            val corrected =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executor.confirm(confirmRequest(requestId = "req-a-confirm-stale")),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-a"),
@@ -1085,7 +1178,10 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
-    private fun intakeOn(url: String, request: ImportIntakeRequest): ImportIntakeResult =
+    private fun intakeOn(
+        url: String,
+        request: ImportIntakeRequest,
+    ): ImportIntakeResult =
         JdbcSqliteDriver(url).use { driver ->
             val database = LedgerDatabase(driver)
             ExecuteImportIntake(
@@ -1101,55 +1197,86 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(
-                intakeIds("p407-a", "status-p407-a"),
-                intakeIds("p407-b", "status-p407-b").copy(
-                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-b-a"),
-                        ImportStatusHistoryId("duplicate-status-p407-b-a"),
-                    )),
-                ),
-                intakeIds("p407-c", "status-p407-c").copy(
-                    duplicateIds = listOf(
-                        com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-a"), ImportStatusHistoryId("duplicate-status-p407-c-a")),
-                        com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-b"), ImportStatusHistoryId("duplicate-status-p407-c-b")),
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p407-a", "status-p407-a"),
+                        intakeIds("p407-b", "status-p407-b").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-b-a"),
+                                        ImportStatusHistoryId("duplicate-status-p407-b-a"),
+                                    ),
+                                ),
+                        ),
+                        intakeIds("p407-c", "status-p407-c").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-a"), ImportStatusHistoryId("duplicate-status-p407-c-a")),
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-b"), ImportStatusHistoryId("duplicate-status-p407-c-b")),
+                                ),
+                        ),
                     ),
-                ),
-            ))
+                )
             val intake = ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-a")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-b").copy(inputRef = "batch-p407-b")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-c").copy(inputRef = "batch-p407-c")))
-            val candidates = driver.executeQuery(
-                null,
-                """
-                    SELECT candidate.candidate_id, candidate.subject_source_id,
-                           candidate.possible_existing_source_id, candidate.kind,
-                           history.history_id, history.status
-                    FROM import_duplicate_candidate AS candidate
-                    JOIN import_duplicate_status_history AS history
-                      ON history.ledger_id = candidate.ledger_id
-                     AND history.candidate_id = candidate.candidate_id
-                    ORDER BY candidate.candidate_id
-                """.trimIndent(),
-                { cursor ->
-                    app.cash.sqldelight.db.QueryResult.Value(
-                        buildList {
-                            while (cursor.next().value) {
-                                add(
-                                    listOf(
-                                        cursor.getString(0), cursor.getString(1), cursor.getString(2),
-                                        cursor.getString(3), cursor.getString(4), cursor.getString(5),
-                                    ),
-                                )
-                            }
+            val candidates =
+                driver
+                    .executeQuery(
+                        null,
+                        """
+                        SELECT candidate.candidate_id, candidate.subject_source_id,
+                               candidate.possible_existing_source_id, candidate.kind,
+                               history.history_id, history.status
+                        FROM import_duplicate_candidate AS candidate
+                        JOIN import_duplicate_status_history AS history
+                          ON history.ledger_id = candidate.ledger_id
+                         AND history.candidate_id = candidate.candidate_id
+                        ORDER BY candidate.candidate_id
+                        """.trimIndent(),
+                        { cursor ->
+                            app.cash.sqldelight.db.QueryResult.Value(
+                                buildList {
+                                    while (cursor.next().value) {
+                                        add(
+                                            listOf(
+                                                cursor.getString(0),
+                                                cursor.getString(1),
+                                                cursor.getString(2),
+                                                cursor.getString(3),
+                                                cursor.getString(4),
+                                                cursor.getString(5),
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
                         },
-                    )
-                },
-                0,
-            ).value
-            assertEquals(3L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
-            assertEquals(3L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+                        0,
+                    ).value
+            assertEquals(
+                3L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
+            assertEquals(
+                3L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
             assertEquals(
                 listOf(
                     listOf("duplicate-p407-b-a", "source-p407-b", "source-p407-a", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-b-a", "DEFERRED"),
@@ -1158,7 +1285,9 @@ class ImportSpineLifecycleEndToEndTest {
                 ),
                 candidates,
             )
-        } finally { driver.close() }
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -1166,6 +1295,7 @@ class ImportSpineLifecycleEndToEndTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
+
             fun execute(sql: String) = driver.execute(null, sql, 0)
             execute("INSERT INTO import_request VALUES ('ledger-p407-owner','request-create','intake')")
             execute("INSERT INTO import_request VALUES ('ledger-p407-owner','request-other','intake')")
@@ -1199,8 +1329,19 @@ class ImportSpineLifecycleEndToEndTest {
                 execute("INSERT INTO import_duplicate_review_receipt VALUES ('ledger-p407-owner','review-other','duplicate-owner','review-owner','history-wrong','CONFIRMED_DISTINCT')")
             }
             execute("INSERT INTO import_duplicate_review_receipt VALUES ('ledger-p407-owner','review-other','duplicate-owner','review-owner','history-review','CONFIRMED_DISTINCT')")
-            assertEquals(2L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!) }, 0).value)
-        } finally { driver.close() }
+            assertEquals(
+                2L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { cursor ->
+                        cursor.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(cursor.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -1209,27 +1350,47 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(
-                intakeIds("p407-block-a", "status-p407-block-a"),
-                intakeIds("p407-block-b", "status-p407-block-b").copy(
-                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"),
-                        ImportStatusHistoryId("duplicate-status-p407-block"),
-                    )),
-                ),
-            ))
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p407-block-a", "status-p407-block-a"),
+                        intakeIds("p407-block-b", "status-p407-block-b").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"),
+                                        ImportStatusHistoryId("duplicate-status-p407-block"),
+                                    ),
+                                ),
+                        ),
+                    ),
+                )
             val executor = Executor(database, driver, catalog(), ids, BatchCommitIdSource(emptyList()), BatchStatusIdSource(emptyList()))
             executor.intake(r1("request-p407-block-a"))
             executor.intake(r1("request-p407-block-b").copy(inputRef = "batch-p407-block-b"))
-            val candidateFingerprint = driver.executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-block'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value
-            val review = ReviewImportDuplicateCandidate(executor.store).execute(
-                com.unifiedledger.application.ImportDuplicateReviewRequest(
-                    ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-block")),
-                    com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"), candidateFingerprint!!,
-                    com.unifiedledger.application.ImportDuplicateStatus.CONFIRMED_DUPLICATE, "exact", "2026-08-19T12:00:00+08:00", "reviewer-p407", "2026-08-19T12:00:00+08:00",
-                    com.unifiedledger.application.ImportDuplicateReviewId("review-p407-block"), ImportStatusHistoryId("review-history-p407-block"),
-                ),
-            )
+            val candidateFingerprint =
+                driver
+                    .executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-block'", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getString(0)!!)
+                    }, 0)
+                    .value
+            val review =
+                ReviewImportDuplicateCandidate(executor.store).execute(
+                    com.unifiedledger.application.ImportDuplicateReviewRequest(
+                        ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-block")),
+                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"),
+                        candidateFingerprint!!,
+                        com.unifiedledger.application.ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                        "exact",
+                        "2026-08-19T12:00:00+08:00",
+                        "reviewer-p407",
+                        "2026-08-19T12:00:00+08:00",
+                        com.unifiedledger.application.ImportDuplicateReviewId("review-p407-block"),
+                        ImportStatusHistoryId("review-history-p407-block"),
+                    ),
+                )
             assertIs<com.unifiedledger.application.ImportDuplicateReviewResult.Accepted>(review)
             val before = formalCounts(database)
             val candidateHistoryBefore = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne()
@@ -1239,7 +1400,9 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(before, formalCounts(database))
             assertEquals(0L, database.ledgerQueries.countImportConfirmations().executeAsOne())
             assertEquals(candidateHistoryBefore, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
-        } finally { driver.close() }
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -1248,34 +1411,70 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(
-                intakeIds("p407-no-funds", "status-p407-no-funds").copy(
-                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-no-funds"),
-                        ImportStatusHistoryId("duplicate-status-p407-no-funds"),
-                    )),
-                ),
-                intakeIds("p407-settled-after-no-funds", "status-p407-settled-after-no-funds"),
-            ))
-            val request = r1("request-p407-no-funds").copy(
-                facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS, fundingRuleId = "source-contract-no-funds-v1"),
-            )
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p407-no-funds", "status-p407-no-funds").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-no-funds"),
+                                        ImportStatusHistoryId("duplicate-status-p407-no-funds"),
+                                    ),
+                                ),
+                        ),
+                        intakeIds("p407-settled-after-no-funds", "status-p407-settled-after-no-funds"),
+                    ),
+                )
+            val request =
+                r1("request-p407-no-funds").copy(
+                    facts = r1().facts.copy(fundingState = com.unifiedledger.application.ImportFundingState.NO_FUNDS, fundingRuleId = "source-contract-no-funds-v1"),
+                )
             val result = ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint()).execute(request)
             assertIs<ImportIntakeResult.Accepted>(result)
             assertEquals(1L, database.ledgerQueries.countImportSourceRecords().executeAsOne())
             assertEquals(1L, database.ledgerQueries.countImportEvidence().executeAsOne())
             assertEquals(1L, database.ledgerQueries.countImportCandidates().executeAsOne())
             assertEquals(1L, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
-            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_candidate_status_history WHERE status='incomplete'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
-            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate WHERE kind='CLOSED_OR_FAILED_NO_FUNDS'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(
+                1L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_candidate_status_history WHERE status='incomplete'", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
+            assertEquals(
+                1L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate WHERE kind='CLOSED_OR_FAILED_NO_FUNDS'", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(SqlDelightImportSpineStore(database, driver), ids, ImportContentFingerprint()).execute(
                     r1("request-p407-settled-after-no-funds").copy(inputRef = "batch-p407-settled-after-no-funds"),
                 ),
             )
-            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
+            assertEquals(
+                1L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
-        } finally { driver.close() }
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -1287,14 +1486,20 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(
-                intakeIds("p407-nf-review", "status-p407-nf-review").copy(
-                    duplicateIds = listOf(com.unifiedledger.application.ImportDuplicateIntakeIds(
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
-                        ImportStatusHistoryId("duplicate-status-p407-nf-review"),
-                    )),
-                ),
-            ))
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p407-nf-review", "status-p407-nf-review").copy(
+                            duplicateIds =
+                                listOf(
+                                    com.unifiedledger.application.ImportDuplicateIntakeIds(
+                                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                                        ImportStatusHistoryId("duplicate-status-p407-nf-review"),
+                                    ),
+                                ),
+                        ),
+                    ),
+                )
             val store = SqlDelightImportSpineStore(database, driver)
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(store, ids, ImportContentFingerprint()).execute(
@@ -1303,58 +1508,77 @@ class ImportSpineLifecycleEndToEndTest {
                     ),
                 ),
             )
-            fun duplicateReviewRows(): List<Long> = listOf(
-                "import_duplicate_review_request",
-                "import_duplicate_review_snapshot",
-                "import_duplicate_review_receipt",
-            ).map { table ->
-                driver.executeQuery(null, "SELECT count(*) FROM $table", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value
-            }
-            val noFundsFingerprint = driver.executeQuery(
-                null,
-                "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id = 'duplicate-p407-nf-review'",
-                { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0,
-            ).value
-            val rejected = assertIs<ImportDuplicateReviewResult.Rejected>(
-                ReviewImportDuplicateCandidate(store).execute(
-                    com.unifiedledger.application.ImportDuplicateReviewRequest(
-                        ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
-                        noFundsFingerprint,
-                        ImportDuplicateStatus.CONFIRMED_DUPLICATE,
-                        "closed-no-funds",
-                        "2026-08-19T12:00:00+08:00",
-                        "reviewer-p407",
-                        "2026-08-19T12:00:00+08:00",
-                        com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
-                        ImportStatusHistoryId("review-history-p407-nf-review"),
+
+            fun duplicateReviewRows(): List<Long> =
+                listOf(
+                    "import_duplicate_review_request",
+                    "import_duplicate_review_snapshot",
+                    "import_duplicate_review_receipt",
+                ).map { table ->
+                    driver
+                        .executeQuery(null, "SELECT count(*) FROM $table", { c ->
+                            c.next()
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(c.getLong(0)!!)
+                        }, 0)
+                        .value
+                }
+            val noFundsFingerprint =
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id = 'duplicate-p407-nf-review'",
+                        { c ->
+                            c.next()
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(c.getString(0)!!)
+                        },
+                        0,
+                    ).value
+            val rejected =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    ReviewImportDuplicateCandidate(store).execute(
+                        com.unifiedledger.application.ImportDuplicateReviewRequest(
+                            ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
+                            com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                            noFundsFingerprint,
+                            ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                            "closed-no-funds",
+                            "2026-08-19T12:00:00+08:00",
+                            "reviewer-p407",
+                            "2026-08-19T12:00:00+08:00",
+                            com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
+                            ImportStatusHistoryId("review-history-p407-nf-review"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", rejected.diagnostic.code)
             assertEquals(listOf(0L, 0L, 0L), duplicateReviewRows())
             // The candidate stays DEFERRED and the rolled-back claim keeps the identity
             // retryable: the corrected decision accepts on the same request id.
             assertEquals("DEFERRED", database.ledgerQueries.selectDuplicateCurrentStatus(ledgerId.value, "duplicate-p407-nf-review").executeAsOne())
-            val corrected = assertIs<ImportDuplicateReviewResult.Accepted>(
-                ReviewImportDuplicateCandidate(store).execute(
-                    com.unifiedledger.application.ImportDuplicateReviewRequest(
-                        ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
-                        com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
-                        noFundsFingerprint,
-                        ImportDuplicateStatus.DISMISSED_LOOKALIKE,
-                        "manual-dismissal",
-                        "2026-08-19T12:30:00+08:00",
-                        "reviewer-p407",
-                        "2026-08-19T12:30:00+08:00",
-                        com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
-                        ImportStatusHistoryId("review-history-p407-nf-review"),
+            val corrected =
+                assertIs<ImportDuplicateReviewResult.Accepted>(
+                    ReviewImportDuplicateCandidate(store).execute(
+                        com.unifiedledger.application.ImportDuplicateReviewRequest(
+                            ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-nf-review")),
+                            com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-nf-review"),
+                            noFundsFingerprint,
+                            ImportDuplicateStatus.DISMISSED_LOOKALIKE,
+                            "manual-dismissal",
+                            "2026-08-19T12:30:00+08:00",
+                            "reviewer-p407",
+                            "2026-08-19T12:30:00+08:00",
+                            com.unifiedledger.application.ImportDuplicateReviewId("review-p407-nf-review"),
+                            ImportStatusHistoryId("review-history-p407-nf-review"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(ImportDuplicateStatus.DISMISSED_LOOKALIKE, corrected.receipt.outcome)
             assertEquals(listOf(1L, 1L, 1L), duplicateReviewRows())
-        } finally { driver.close() }
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -1364,31 +1588,59 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val ids = BatchIntakeIdSource(listOf(
-                intakeIds("p407-r-a", "status-p407-r-a"),
-                intakeIds("p407-r-b", "status-p407-r-b").copy(
-                    duplicateIds = listOf(ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-p407-r"), ImportStatusHistoryId("duplicate-status-p407-r"))),
-                ),
-            ))
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p407-r-a", "status-p407-r-a"),
+                        intakeIds("p407-r-b", "status-p407-r-b").copy(
+                            duplicateIds = listOf(ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-p407-r"), ImportStatusHistoryId("duplicate-status-p407-r"))),
+                        ),
+                    ),
+                )
             val store = SqlDelightImportSpineStore(database, driver)
             val intake = ExecuteImportIntake(store, ids, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-r-a")))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(r1("request-p407-r-b").copy(inputRef = "batch-p407-r-b")))
-            val review = ImportDuplicateReviewRequest(
-                ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-r")), ImportDuplicateCandidateId("duplicate-p407-r"),
-                driver.executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-r'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value,
-                ImportDuplicateStatus.CONFIRMED_DUPLICATE, "duplicate", "2026-08-19T10:00:00+08:00", "reviewer", "2026-08-19T10:01:00+08:00",
-                ImportDuplicateReviewId("review-p407-r"), ImportStatusHistoryId("review-history-p407-r"),
-            )
+            val review =
+                ImportDuplicateReviewRequest(
+                    ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-r")),
+                    ImportDuplicateCandidateId("duplicate-p407-r"),
+                    driver
+                        .executeQuery(null, "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-p407-r'", { c ->
+                            c.next()
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(c.getString(0)!!)
+                        }, 0)
+                        .value,
+                    ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                    "duplicate",
+                    "2026-08-19T10:00:00+08:00",
+                    "reviewer",
+                    "2026-08-19T10:01:00+08:00",
+                    ImportDuplicateReviewId("review-p407-r"),
+                    ImportStatusHistoryId("review-history-p407-r"),
+                )
             val reviewed = ReviewImportDuplicateCandidate(store).execute(review)
             assertIs<ImportDuplicateReviewResult.Accepted>(reviewed)
             assertIs<ImportDuplicateReviewResult.NoChange>(ReviewImportDuplicateCandidate(store).execute(review))
-            val conflict = assertIs<ImportDuplicateReviewResult.Rejected>(
-                ReviewImportDuplicateCandidate(store).execute(review.copy(reasonToken = "different-decision")),
-            )
+            val conflict =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    ReviewImportDuplicateCandidate(store).execute(review.copy(reasonToken = "different-decision")),
+                )
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
-            assertEquals(1L, driver.executeQuery(null, "SELECT count(*) FROM import_duplicate_review_receipt", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value)
-        } finally { driver.close() }
+            assertEquals(
+                1L,
+                driver
+                    .executeQuery(null, "SELECT count(*) FROM import_duplicate_review_receipt", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getLong(0)!!)
+                    }, 0)
+                    .value,
+            )
+        } finally {
+            driver.close()
+        }
     }
 
     private fun confirmOn(
@@ -1396,28 +1648,33 @@ class ImportSpineLifecycleEndToEndTest {
         catalog: LedgerCatalog,
         commitIds: ImportIdSource,
         request: ImportCandidateConfirmRequest,
-    ): ImportCandidateDecisionResult = JdbcSqliteDriver(url).use { driver ->
-        val database = LedgerDatabase(driver)
-        ConfirmImportCandidate(
-            SqlDelightImportSpineStore(database, driver),
-            commitIds,
-            OrdinaryFlowFormalFactory(catalog, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
-            catalog,
-        ).execute(request)
-    }
+    ): ImportCandidateDecisionResult =
+        JdbcSqliteDriver(url).use { driver ->
+            val database = LedgerDatabase(driver)
+            ConfirmImportCandidate(
+                SqlDelightImportSpineStore(database, driver),
+                commitIds,
+                OrdinaryFlowFormalFactory(catalog, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
+                catalog,
+            ).execute(request)
+        }
 
-    private fun concurrentExecute(url: String, operations: List<() -> Any>): List<Any> {
+    private fun concurrentExecute(
+        url: String,
+        operations: List<() -> Any>,
+    ): List<Any> {
         val pool = Executors.newFixedThreadPool(operations.size)
         val ready = CountDownLatch(operations.size)
         val start = CountDownLatch(1)
         return try {
-            val futures = operations.map { operation ->
-                pool.submit<Any> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    operation()
+            val futures =
+                operations.map { operation ->
+                    pool.submit<Any> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        operation()
+                    }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(10, TimeUnit.SECONDS) }

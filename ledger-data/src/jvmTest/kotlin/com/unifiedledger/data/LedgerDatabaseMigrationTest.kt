@@ -29,7 +29,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 1, 6)
                 driver.execute(null, "INSERT INTO rg04_operation_request VALUES ('ledger-a','rg04-existing','CREDIT_PRINCIPAL_REPAYMENT')", 0)
             }
-                JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 11) }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver -> LedgerDatabase.Schema.migrate(driver, 6, 11) }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
                 assertEquals(1L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
@@ -95,15 +95,18 @@ class LedgerDatabaseMigrationTest {
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 // The blocker is the only rg04 object: no rg04 table of the aborted
                 // migration landed and no stage table survives.
-                driver.executeQuery(
-                    null,
-                    "SELECT name FROM sqlite_master WHERE name LIKE 'rg04_%' ORDER BY name",
-                    { cursor ->
-                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                        app.cash.sqldelight.db.QueryResult.Value(names)
-                    },
-                    0,
-                ).value.let { assertEquals(listOf("rg04_operation_request"), it) }
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg04_%' ORDER BY name",
+                        { cursor ->
+                            val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(names)
+                        },
+                        0,
+                    ).value
+                    .let { assertEquals(listOf("rg04_operation_request"), it) }
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE '%_stage'"))
                 // No trigger of the aborted migration leaked: the v5 schema has no
                 // triggers at all.
@@ -155,7 +158,9 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, database.ledgerQueries.countRg03OperationReceipts().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg04OperationRequests().executeAsOne())
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
@@ -241,15 +246,18 @@ class LedgerDatabaseMigrationTest {
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 // The blocker is the only object of the aborted migration: the second
                 // income owner never landed and no stage table survives.
-                driver.executeQuery(
-                    null,
-                    "SELECT name FROM sqlite_master WHERE name IN ('manual_income_request', 'confirmed_income_receipt') ORDER BY name",
-                    { cursor ->
-                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                        app.cash.sqldelight.db.QueryResult.Value(names)
-                    },
-                    0,
-                ).value.let { assertEquals(listOf("manual_income_request"), it) }
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT name FROM sqlite_master WHERE name IN ('manual_income_request', 'confirmed_income_receipt') ORDER BY name",
+                        { cursor ->
+                            val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(names)
+                        },
+                        0,
+                    ).value
+                    .let { assertEquals(listOf("manual_income_request"), it) }
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE '%_stage'"))
                 // Every core table the migration would have dropped is back in its
                 // original v3 shape with the seeded rows untouched: the ledger_transaction
@@ -265,10 +273,10 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN (
-                              'confirmed_expense_receipt', 'transaction_note_update_request',
-                              'confirmed_transaction_note_update_receipt'
-                            )
+                        SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN (
+                          'confirmed_expense_receipt', 'transaction_note_update_request',
+                          'confirmed_transaction_note_update_receipt'
+                        )
                         """.trimIndent(),
                     ),
                 )
@@ -323,19 +331,20 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 1, 22)
-                val seed = listOf(
-                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
-                    "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
-                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
-                    "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
-                    "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
-                    "INSERT INTO posting VALUES ('posting-transfer-in','posting-set-transfer','ledger-a',1,'account-platform-b',1000,'CNY',2)",
-                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer-stale','ledger-a','ACCOUNT_TRANSFER',NULL)",
-                    "INSERT INTO posting_set VALUES ('posting-set-transfer-stale','ledger-a')",
-                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer-stale','tx-transfer-stale','ledger-a',1,'posting-set-transfer-stale','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00',NULL)",
-                    "INSERT INTO posting VALUES ('posting-transfer-stale','posting-set-transfer-stale','ledger-a',0,'account-bank-stale',-1000,'CNY',2)",
-                    "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','posting-expense-existing','TRANSFER_PRINCIPAL_OUT',NULL,1)",
-                )
+                val seed =
+                    listOf(
+                        "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                        "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
+                        "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                        "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
+                        "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                        "INSERT INTO posting VALUES ('posting-transfer-in','posting-set-transfer','ledger-a',1,'account-platform-b',1000,'CNY',2)",
+                        "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer-stale','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                        "INSERT INTO posting_set VALUES ('posting-set-transfer-stale','ledger-a')",
+                        "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer-stale','tx-transfer-stale','ledger-a',1,'posting-set-transfer-stale','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00','2026-08-11T12:00:00+08:00',NULL)",
+                        "INSERT INTO posting VALUES ('posting-transfer-stale','posting-set-transfer-stale','ledger-a',0,'account-bank-stale',-1000,'CNY',2)",
+                        "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','posting-expense-existing','TRANSFER_PRINCIPAL_OUT',NULL,1)",
+                    )
                 seed.forEach { driver.execute(null, it, 0) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
@@ -346,13 +355,17 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM reconciliation_request WHERE request_id = 'migration-v23-seed'"))
                 assertEquals(
                     "PENDING",
-                    database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-out")
-                        .executeAsOne().status,
+                    database.ledgerQueries
+                        .selectP408PostingReconciliation("ledger-a", "posting-transfer-out")
+                        .executeAsOne()
+                        .status,
                 )
                 assertEquals(
                     "PENDING",
-                    database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-in")
-                        .executeAsOne().status,
+                    database.ledgerQueries
+                        .selectP408PostingReconciliation("ledger-a", "posting-transfer-in")
+                        .executeAsOne()
+                        .status,
                 )
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation WHERE posting_id = 'posting-expense-existing'"))
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM posting_reconciliation WHERE posting_id = 'posting-transfer-stale'"))
@@ -375,16 +388,17 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 1, 22)
-                val seed = listOf(
-                    "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
-                    "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
-                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
-                    "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
-                    "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
-                    "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
-                    "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')",
-                    "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
-                )
+                val seed =
+                    listOf(
+                        "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-transfer','ledger-a','ACCOUNT_TRANSFER',NULL)",
+                        "INSERT INTO posting_set VALUES ('posting-set-transfer','ledger-a')",
+                        "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-transfer','tx-transfer','ledger-a',1,'posting-set-transfer','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                        "INSERT INTO ledger_transaction_current_version VALUES ('tx-transfer','ledger-a','version-transfer')",
+                        "INSERT INTO posting VALUES ('posting-transfer-out','posting-set-transfer','ledger-a',0,'account-bank-a',-1000,'CNY',2)",
+                        "INSERT INTO import_request VALUES ('ledger-a','import-a','intake')",
+                        "INSERT INTO import_source_record VALUES ('ledger-a','source-a','import-a','batch-a',0,'ordinary_flow_source','hash-a',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled')",
+                        "INSERT INTO import_evidence VALUES ('ledger-a','evidence-a','source-a','source_observation','2026-08-10T12:00:01+08:00')",
+                    )
                 seed.forEach { driver.execute(null, it, 0) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
@@ -401,39 +415,40 @@ class LedgerDatabaseMigrationTest {
                 assertEquals("PENDING", seeded.status)
                 assertEquals(1L, seeded.latest_sequence)
 
-                val accepted = assertIs<P408ReconciliationResult.Accepted>(
-                    store.confirmLink(
-                        P408ConfirmLinkRequest(
-                            ledgerId = "ledger-a",
-                            requestId = "request-a",
-                            evidenceId = "evidence-a",
-                            candidateId = "candidate-transient-a",
-                            postingId = "posting-transfer-out",
-                            transactionId = "tx-transfer",
-                            amountMinor = 1000,
-                            currencyCode = "CNY",
-                            currencyPrecision = 2,
-                            direction = "out",
-                            accountId = "account-bank-a",
-                            responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
-                            basisVersion = 2,
-                            projectionId = "proj-evidence-a",
-                            projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
-                            projectionRuleVersion = 1,
-                            normalizedAmountMinor = 1000,
-                            rawAmountMinor = 1000,
-                            rawCurrencyPrecision = 2,
-                            matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
-                            windowDays = 2,
-                            naturalDayDistance = 0,
-                            sourceOccurredAt = "2026-08-10T12:00:00+08:00",
-                            confirmedAt = "2026-08-10T13:00:00+08:00",
-                            linkId = "link-a",
-                            reconciliationId = "reconciliation-posting-transfer-out",
-                            createdAt = "2026-08-10T13:00:00+08:00",
+                val accepted =
+                    assertIs<P408ReconciliationResult.Accepted>(
+                        store.confirmLink(
+                            P408ConfirmLinkRequest(
+                                ledgerId = "ledger-a",
+                                requestId = "request-a",
+                                evidenceId = "evidence-a",
+                                candidateId = "candidate-transient-a",
+                                postingId = "posting-transfer-out",
+                                transactionId = "tx-transfer",
+                                amountMinor = 1000,
+                                currencyCode = "CNY",
+                                currencyPrecision = 2,
+                                direction = "out",
+                                accountId = "account-bank-a",
+                                responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                                basisVersion = 2,
+                                projectionId = "proj-evidence-a",
+                                projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                                projectionRuleVersion = 1,
+                                normalizedAmountMinor = 1000,
+                                rawAmountMinor = 1000,
+                                rawCurrencyPrecision = 2,
+                                matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
+                                windowDays = 2,
+                                naturalDayDistance = 0,
+                                sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+                                confirmedAt = "2026-08-10T13:00:00+08:00",
+                                linkId = "link-a",
+                                reconciliationId = "reconciliation-posting-transfer-out",
+                                createdAt = "2026-08-10T13:00:00+08:00",
+                            ),
                         ),
-                    ),
-                )
+                    )
                 assertEquals(2L, accepted.receipt.historySequence)
                 assertEquals("reconciliation-posting-transfer-out", accepted.receipt.reconciliationId)
 
@@ -476,15 +491,18 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
-                val sharedTables = driver.executeQuery(
-                    null,
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reconciliation_request','reconciliation_request_snapshot','evidence_link','evidence_link_history','posting_reconciliation','posting_reconciliation_history','reconciliation_receipt') ORDER BY name",
-                    { cursor ->
-                        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                        app.cash.sqldelight.db.QueryResult.Value(names)
-                    },
-                    0,
-                ).value
+                val sharedTables =
+                    driver
+                        .executeQuery(
+                            null,
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reconciliation_request','reconciliation_request_snapshot','evidence_link','evidence_link_history','posting_reconciliation','posting_reconciliation_history','reconciliation_receipt') ORDER BY name",
+                            { cursor ->
+                                val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                                app.cash.sqldelight.db.QueryResult
+                                    .Value(names)
+                            },
+                            0,
+                        ).value
                 assertEquals(listOf("reconciliation_request"), sharedTables)
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'reconciliation\\_%' ESCAPE '\\'"))
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'evidence\\_link\\_%' ESCAPE '\\'"))
@@ -589,10 +607,14 @@ class LedgerDatabaseMigrationTest {
                 // The five new decision-snapshot columns exist.
                 assertEquals(5L, queryCount(driver, "SELECT count(*) FROM pragma_table_info('import_candidate_decision_snapshot') WHERE name IN ('credit_liability_account_id', 'asset_account_id', 'original_transaction_id', 'asset_leg_minor', 'credit_leg_minor')"))
                 listOf(
-                    "import_candidate_payment_profile_guard_update", "import_candidate_payment_profile_guard_delete",
-                    "mixed_payment_group_guard_update", "mixed_payment_group_guard_delete",
-                    "mixed_payment_group_leg_guard_update", "mixed_payment_group_leg_guard_delete",
-                    "mixed_payment_group_complete", "mixed_payment_group_leg_before_head",
+                    "import_candidate_payment_profile_guard_update",
+                    "import_candidate_payment_profile_guard_delete",
+                    "mixed_payment_group_guard_update",
+                    "mixed_payment_group_guard_delete",
+                    "mixed_payment_group_leg_guard_update",
+                    "mixed_payment_group_leg_guard_delete",
+                    "mixed_payment_group_complete",
+                    "mixed_payment_group_leg_before_head",
                 ).forEach { trigger ->
                     assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='$trigger'"), trigger)
                 }
@@ -601,7 +623,9 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(null, "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) VALUES ('ledger-p406', 'source-p406-v3', 'request-p406-v3', 'batch-p406', 2, 'credit_repayment_source', 'sha256:p406-v3', 3, 'valid_complete', 5620, 'CNY', 2, '2026-08-22T12:00:00+08:00', 'out', 'settled')", 0)
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-v3' AND contract_version=3"))
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
@@ -632,7 +656,9 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_source_record WHERE source_id='source-p406-rollback' AND amount_minor=100"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-p406-rollback'"))
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
@@ -657,24 +683,36 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_evidence WHERE evidence_id='evidence-p407'"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM import_candidate_status_history WHERE status_id='history-p407'"))
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
     fun populatedV23ToV24RebuildPreservesFormalAndP408GraphForeignKeysAndGuards() {
         val path = Files.createTempFile("ledger-data-v23-v24-p408-populated-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
-        val p408Triggers = listOf(
-            "reconciliation_request_guard_update", "reconciliation_request_guard_delete",
-            "reconciliation_snapshot_guard_update", "reconciliation_snapshot_guard_delete",
-            "reconciliation_receipt_guard_update", "reconciliation_receipt_guard_delete",
-            "evidence_link_guard_update", "evidence_link_guard_delete",
-            "evidence_link_history_guard_update", "evidence_link_history_guard_delete",
-            "posting_reconciliation_guard_delete", "posting_reconciliation_history_guard_update",
-            "posting_reconciliation_history_guard_delete", "evidence_link_history_sequence_guard",
-            "evidence_link_history_transition_guard", "posting_reconciliation_history_sequence_guard",
-            "posting_reconciliation_history_link_guard", "posting_reconciliation_update_guard",
-        )
+        val p408Triggers =
+            listOf(
+                "reconciliation_request_guard_update",
+                "reconciliation_request_guard_delete",
+                "reconciliation_snapshot_guard_update",
+                "reconciliation_snapshot_guard_delete",
+                "reconciliation_receipt_guard_update",
+                "reconciliation_receipt_guard_delete",
+                "evidence_link_guard_update",
+                "evidence_link_guard_delete",
+                "evidence_link_history_guard_update",
+                "evidence_link_history_guard_delete",
+                "posting_reconciliation_guard_delete",
+                "posting_reconciliation_history_guard_update",
+                "posting_reconciliation_history_guard_delete",
+                "evidence_link_history_sequence_guard",
+                "evidence_link_history_transition_guard",
+                "posting_reconciliation_history_sequence_guard",
+                "posting_reconciliation_history_link_guard",
+                "posting_reconciliation_update_guard",
+            )
         try {
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
@@ -706,7 +744,9 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
                 p408Triggers.forEach { trigger -> assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='$trigger'")) }
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
@@ -740,7 +780,9 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='import_duplicate_candidate'"))
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'import_duplicate_%'"))
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 
     @Test
@@ -783,10 +825,14 @@ class LedgerDatabaseMigrationTest {
                     ),
                 )
                 database.ledgerQueries.insertTransaction("refund-v10", "ledger-v9", "REFUND_RECEIPT")
-                val rg07Table = driver.executeQuery(null, "SELECT name FROM sqlite_master WHERE type='table' AND name='rg07_operation'", { cursor ->
-                    cursor.next()
-                    app.cash.sqldelight.db.QueryResult.Value(cursor.getString(0))
-                }, 0).value
+                val rg07Table =
+                    driver
+                        .executeQuery(null, "SELECT name FROM sqlite_master WHERE type='table' AND name='rg07_operation'", { cursor ->
+                            cursor.next()
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(cursor.getString(0))
+                        }, 0)
+                        .value
                 assertEquals("rg07_operation", rg07Table)
             }
         } finally {
@@ -811,13 +857,13 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note
-                        ) VALUES (
-                          'version-v10', 'transaction-v10', 'ledger-v10', 1, 'posting-set-v10',
-                          '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL
-                        )
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note
+                    ) VALUES (
+                      'version-v10', 'transaction-v10', 'ledger-v10', 1, 'posting-set-v10',
+                      '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -829,31 +875,31 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg06_installment(
-                          ledger_id, relation_id, installment_index, payment_id, payment_role,
-                          amount_minor, currency_code, currency_precision, funding_account_id,
-                          transaction_id, transaction_version_id, posting_set_id, expense_posting_id,
-                          asset_posting_id, actual_payment_at, statistics_at, source_payment_at,
-                          source_payment_at_text
-                        ) VALUES (
-                          'ledger-v10', 'relation-v10', 0, 'payment-v10', 'DEPOSIT',
-                          1000, 'CNY', 2, 'asset-bank', 'transaction-v10', 'version-v10',
-                          'posting-set-v10', 'expense-v10', 'asset-v10',
-                          '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL, NULL
-                        )
+                    INSERT INTO rg06_installment(
+                      ledger_id, relation_id, installment_index, payment_id, payment_role,
+                      amount_minor, currency_code, currency_precision, funding_account_id,
+                      transaction_id, transaction_version_id, posting_set_id, expense_posting_id,
+                      asset_posting_id, actual_payment_at, statistics_at, source_payment_at,
+                      source_payment_at_text
+                    ) VALUES (
+                      'ledger-v10', 'relation-v10', 0, 'payment-v10', 'DEPOSIT',
+                      1000, 'CNY', 2, 'asset-bank', 'transaction-v10', 'version-v10',
+                      'posting-set-v10', 'expense-v10', 'asset-v10',
+                      '2026-04-28T10:00:00Z', '2026-04-28T10:00:00Z', NULL, NULL
+                    )
                     """.trimIndent(),
                     0,
                 )
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg06_confirmation(
-                          ledger_id, confirmation_id, identity_value, confirmation_kind,
-                          candidate_id, relation_id, payment_id, payment_role, category_id, funding_account_id
-                        ) VALUES (
-                          'ledger-v10', 'confirmation-v10', 'identity-v10', 'MANUAL_INSTALLMENT',
-                          NULL, 'relation-v10', 'payment-v10', 'DEPOSIT', 'expense-service', 'asset-bank'
-                        )
+                    INSERT INTO rg06_confirmation(
+                      ledger_id, confirmation_id, identity_value, confirmation_kind,
+                      candidate_id, relation_id, payment_id, payment_role, category_id, funding_account_id
+                    ) VALUES (
+                      'ledger-v10', 'confirmation-v10', 'identity-v10', 'MANUAL_INSTALLMENT',
+                      NULL, 'relation-v10', 'payment-v10', 'DEPOSIT', 'expense-service', 'asset-bank'
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -879,9 +925,10 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                val confirmed = database.ledgerQueries
-                    .selectRg06ConfirmationForIdentity("ledger-v10", "identity-v10")
-                    .executeAsOne()
+                val confirmed =
+                    database.ledgerQueries
+                        .selectRg06ConfirmationForIdentity("ledger-v10", "identity-v10")
+                        .executeAsOne()
                 assertEquals(null, confirmed.confirmed_at)
             }
         } finally {
@@ -942,12 +989,13 @@ class LedgerDatabaseMigrationTest {
             }
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg09_%' ORDER BY name",
-                    ).use { rows ->
-                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
-                        assertEquals(listOf("rg09_candidate"), names)
-                    }
+                    statement
+                        .executeQuery(
+                            "SELECT name FROM sqlite_master WHERE name LIKE 'rg09_%' ORDER BY name",
+                        ).use { rows ->
+                            val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                            assertEquals(listOf("rg09_candidate"), names)
+                        }
                 }
             }
         } finally {
@@ -1053,12 +1101,13 @@ class LedgerDatabaseMigrationTest {
             }
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg08_%' ORDER BY name",
-                    ).use { rows ->
-                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
-                        assertEquals(listOf("rg08_position"), names)
-                    }
+                    statement
+                        .executeQuery(
+                            "SELECT name FROM sqlite_master WHERE name LIKE 'rg08_%' ORDER BY name",
+                        ).use { rows ->
+                            val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                            assertEquals(listOf("rg08_position"), names)
+                        }
                 }
             }
         } finally {
@@ -1098,11 +1147,46 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg11Operations("ledger-a").executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg11FormalTransactions("ledger-a").executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg11AllSchedules("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg11AllRevisions("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg11AllInstallments("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg11AllConfirmations("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg11AllAuditLinks("ledger-a").executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg11AllSchedules("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg11AllRevisions("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg11AllInstallments("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg11AllConfirmations("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg11AllAuditLinks("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
@@ -1130,12 +1214,13 @@ class LedgerDatabaseMigrationTest {
             }
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg11_%' ORDER BY name",
-                    ).use { rows ->
-                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
-                        assertEquals(listOf("rg11_schedule"), names)
-                    }
+                    statement
+                        .executeQuery(
+                            "SELECT name FROM sqlite_master WHERE name LIKE 'rg11_%' ORDER BY name",
+                        ).use { rows ->
+                            val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                            assertEquals(listOf("rg11_schedule"), names)
+                        }
                 }
             }
         } finally {
@@ -1176,12 +1261,12 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note
-                        ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
-                          'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                          '2026-01-15T00:30:00Z', NULL)
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note
+                    ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
+                      'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL)
                     """.trimIndent(),
                     0,
                 )
@@ -1193,12 +1278,12 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note, confirmation_id
-                        ) VALUES ('version-recognition-v2', 'transaction-recognition-v16', 'ledger-a', 2,
-                          'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                          '2026-01-15T00:30:00Z', NULL, 'confirmation-recognition-v16')
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note, confirmation_id
+                    ) VALUES ('version-recognition-v2', 'transaction-recognition-v16', 'ledger-a', 2,
+                      'posting-set-recognition', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL, 'confirmation-recognition-v16')
                     """.trimIndent(),
                     0,
                 )
@@ -1219,15 +1304,71 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(2L, database.ledgerQueries.countRg12FormalTransactions("ledger-a").executeAsOne())
                 // Every rg12 owner exists and starts empty.
                 assertEquals(0L, database.ledgerQueries.countRg12Operations("ledger-a").executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingSemantics("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllMatches("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReconciliations("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllPostingReplacements("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllConfirmations("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllConsumptionRecords("ledger-a").executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg12AllReportPeriods("ledger-a").executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingSemantics("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllMatches("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReconciliations("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllPostingReplacements("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllConfirmations("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllConsumptionRecords("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12AllReportPeriods("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM rg12_formal_transaction_metadata"))
-                assertEquals(0L, database.ledgerQueries.selectRg12TransactionVersionMetadata("ledger-a").executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg12TransactionVersionMetadata("ledger-a")
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
                 assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
                 assertEquals(0L, queryCount(driver, "SELECT count(*) FROM pragma_foreign_key_check"))
                 // The RG-11 write-once confirmation id survives the guard extension.
@@ -1236,9 +1377,9 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM transaction_version
-                            WHERE version_id = 'version-recognition-v2'
-                              AND confirmation_id = 'confirmation-recognition-v16'
+                        SELECT count(*) FROM transaction_version
+                        WHERE version_id = 'version-recognition-v2'
+                          AND confirmation_id = 'confirmation-recognition-v16'
                         """.trimIndent(),
                     ),
                 )
@@ -1247,12 +1388,12 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note, confirmation_id
-                        ) VALUES ('version-existing-v2', 'tx-existing', 'ledger-a', 2,
-                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                          '2026-01-15T00:30:00Z', NULL, 'confirmation-expense-v17')
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note, confirmation_id
+                    ) VALUES ('version-existing-v2', 'tx-existing', 'ledger-a', 2,
+                      'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL, 'confirmation-expense-v17')
                     """.trimIndent(),
                     0,
                 )
@@ -1261,8 +1402,8 @@ class LedgerDatabaseMigrationTest {
                     driver.execute(
                         null,
                         """
-                            UPDATE transaction_version SET confirmation_id = 'confirmation-expense-v17-again'
-                            WHERE version_id = 'version-existing-v2'
+                        UPDATE transaction_version SET confirmation_id = 'confirmation-expense-v17-again'
+                        WHERE version_id = 'version-existing-v2'
                         """.trimIndent(),
                         0,
                     )
@@ -1272,12 +1413,12 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note
-                        ) VALUES ('version-purchase-v1', 'transaction-purchase-v17', 'ledger-a', 1,
-                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                          '2026-01-15T00:30:00Z', NULL)
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note
+                    ) VALUES ('version-purchase-v1', 'transaction-purchase-v17', 'ledger-a', 1,
+                      'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL)
                     """.trimIndent(),
                     0,
                 )
@@ -1285,12 +1426,12 @@ class LedgerDatabaseMigrationTest {
                     driver.execute(
                         null,
                         """
-                            INSERT INTO transaction_version(
-                              version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                              occurred_at, statistics_at, effective_at, note, confirmation_id
-                            ) VALUES ('version-purchase-v2', 'transaction-purchase-v17', 'ledger-a', 2,
-                              'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                              '2026-01-15T00:30:00Z', NULL, 'confirmation-purchase-v17')
+                        INSERT INTO transaction_version(
+                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                          occurred_at, statistics_at, effective_at, note, confirmation_id
+                        ) VALUES ('version-purchase-v2', 'transaction-purchase-v17', 'ledger-a', 2,
+                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                          '2026-01-15T00:30:00Z', NULL, 'confirmation-purchase-v17')
                         """.trimIndent(),
                         0,
                     )
@@ -1320,20 +1461,22 @@ class LedgerDatabaseMigrationTest {
             }
             DriverManager.getConnection(url).use { connection ->
                 connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT name FROM sqlite_master WHERE name LIKE 'rg12_%' ORDER BY name",
-                    ).use { rows ->
-                        val names = buildList { while (rows.next()) add(rows.getString(1)) }
-                        assertEquals(listOf("rg12_operation"), names)
-                    }
+                    statement
+                        .executeQuery(
+                            "SELECT name FROM sqlite_master WHERE name LIKE 'rg12_%' ORDER BY name",
+                        ).use { rows ->
+                            val names = buildList { while (rows.next()) add(rows.getString(1)) }
+                            assertEquals(listOf("rg12_operation"), names)
+                        }
                     // The transaction rollback restored the dropped RG-11 guards: the
                     // shared confirmation guard is still in place at v16 semantics.
-                    statement.executeQuery(
-                        "SELECT count(*) FROM sqlite_master WHERE name = 'rg11_transaction_version_confirmation_guard_insert'",
-                    ).use { rows ->
-                        check(rows.next())
-                        assertEquals(1L, rows.getLong(1))
-                    }
+                    statement
+                        .executeQuery(
+                            "SELECT count(*) FROM sqlite_master WHERE name = 'rg11_transaction_version_confirmation_guard_insert'",
+                        ).use { rows ->
+                            check(rows.next())
+                            assertEquals(1L, rows.getLong(1))
+                        }
                 }
             }
         } finally {
@@ -1544,6 +1687,7 @@ class LedgerDatabaseMigrationTest {
         val tamperedPath = Files.createTempFile("ledger-data-v18-v19-rg12-tampered-", ".db")
         val orphanPath = Files.createTempFile("ledger-data-v18-v19-rg12-orphan-", ".db")
         val legitPath = Files.createTempFile("ledger-data-v18-v19-rg12-legit-", ".db")
+
         // Shared setup: migrate a fresh v1 baseline to v18 and open the eligible asset
         // leg (posting-bank-existing) for rg12 state. Returns the two current-state
         // guard texts as stored at v18 (the rollback oracle).
@@ -1674,25 +1818,29 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             database.ledgerQueries.insertTransaction("transaction-purchase-v16", "ledger-a", "PREPAID_PURCHASE")
             database.ledgerQueries.insertTransaction("transaction-recognition-v16", "ledger-a", "PREPAID_RECOGNITION")
-            val stored = driver.executeQuery(
-                identifier = null,
-                sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
-                mapper = { cursor ->
-                    val rows = buildList {
-                        while (cursor.next().value) {
-                            add(
-                                listOf(
-                                    requireNotNull(cursor.getString(0)),
-                                    requireNotNull(cursor.getString(1)),
-                                    requireNotNull(cursor.getString(2)),
-                                ),
-                            )
-                        }
-                    }
-                    app.cash.sqldelight.db.QueryResult.Value(rows)
-                },
-                parameters = 0,
-            ).value
+            val stored =
+                driver
+                    .executeQuery(
+                        identifier = null,
+                        sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
+                        mapper = { cursor ->
+                            val rows =
+                                buildList {
+                                    while (cursor.next().value) {
+                                        add(
+                                            listOf(
+                                                requireNotNull(cursor.getString(0)),
+                                                requireNotNull(cursor.getString(1)),
+                                                requireNotNull(cursor.getString(2)),
+                                            ),
+                                        )
+                                    }
+                                }
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(rows)
+                        },
+                        parameters = 0,
+                    ).value
             assertEquals(
                 listOf(
                     listOf("transaction-purchase-v16", "EXPENSE", "PREPAID_PURCHASE"),
@@ -1705,27 +1853,27 @@ class LedgerDatabaseMigrationTest {
             driver.execute(
                 null,
                 """
-                    INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-v16', 'ledger-a')
+                INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('posting-set-v16', 'ledger-a')
                 """.trimIndent(),
                 0,
             )
             driver.execute(
                 null,
                 """
-                    INSERT INTO transaction_version(
-                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                      occurred_at, statistics_at, effective_at, note
-                    ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
-                      'posting-set-v16', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                      '2026-01-15T00:30:00Z', NULL)
+                INSERT INTO transaction_version(
+                  version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                  occurred_at, statistics_at, effective_at, note
+                ) VALUES ('version-recognition-v1', 'transaction-recognition-v16', 'ledger-a', 1,
+                  'posting-set-v16', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                  '2026-01-15T00:30:00Z', NULL)
                 """.trimIndent(),
                 0,
             )
             driver.execute(
                 null,
                 """
-                    INSERT INTO ledger_transaction_current_version
-                    VALUES ('transaction-recognition-v16', 'ledger-a', 'version-recognition-v1')
+                INSERT INTO ledger_transaction_current_version
+                VALUES ('transaction-recognition-v16', 'ledger-a', 'version-recognition-v1')
                 """.trimIndent(),
                 0,
             )
@@ -1733,8 +1881,8 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        UPDATE transaction_version SET confirmation_id = 'confirmation-smoke'
-                        WHERE version_id = 'version-recognition-v1'
+                    UPDATE transaction_version SET confirmation_id = 'confirmation-smoke'
+                    WHERE version_id = 'version-recognition-v1'
                     """.trimIndent(),
                     0,
                 )
@@ -1743,12 +1891,12 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO transaction_version(
-                          version_id, transaction_id, ledger_id, version_number, posting_set_id,
-                          occurred_at, statistics_at, effective_at, note, confirmation_id
-                        ) VALUES ('version-bad-v16', 'transaction-purchase-v16', 'ledger-a', 2,
-                          'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
-                          '2026-01-15T00:30:00Z', NULL, 'confirmation-bad-v16')
+                    INSERT INTO transaction_version(
+                      version_id, transaction_id, ledger_id, version_number, posting_set_id,
+                      occurred_at, statistics_at, effective_at, note, confirmation_id
+                    ) VALUES ('version-bad-v16', 'transaction-purchase-v16', 'ledger-a', 2,
+                      'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
+                      '2026-01-15T00:30:00Z', NULL, 'confirmation-bad-v16')
                     """.trimIndent(),
                     0,
                 )
@@ -1758,13 +1906,13 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg11_schedule(
-                          ledger_id, schedule_id, payment_transaction_id, prepaid_account_id,
-                          category_id, total_amount_minor, currency_code, currency_precision,
-                          cadence, start_at, anchor_kind, anchor_day
-                        ) VALUES ('ledger-a', 'schedule-bad-v16', 'transaction-recognition-v16',
-                          'prepaid-account', 'category', 10000, 'CNY', 2, 'MONTHLY',
-                          '2026-01-15T00:30:00Z', 'MONTH_END', NULL)
+                    INSERT INTO rg11_schedule(
+                      ledger_id, schedule_id, payment_transaction_id, prepaid_account_id,
+                      category_id, total_amount_minor, currency_code, currency_precision,
+                      cadence, start_at, anchor_kind, anchor_day
+                    ) VALUES ('ledger-a', 'schedule-bad-v16', 'transaction-recognition-v16',
+                      'prepaid-account', 'category', 10000, 'CNY', 2, 'MONTHLY',
+                      '2026-01-15T00:30:00Z', 'MONTH_END', NULL)
                     """.trimIndent(),
                     0,
                 )
@@ -1808,25 +1956,29 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             database.ledgerQueries.insertTransaction("transaction-lend-v15", "ledger-a", "LEND")
             database.ledgerQueries.insertTransaction("transaction-collect-v15", "ledger-a", "COLLECT")
-            val stored = driver.executeQuery(
-                identifier = null,
-                sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
-                mapper = { cursor ->
-                    val rows = buildList {
-                        while (cursor.next().value) {
-                            add(
-                                listOf(
-                                    requireNotNull(cursor.getString(0)),
-                                    requireNotNull(cursor.getString(1)),
-                                    requireNotNull(cursor.getString(2)),
-                                ),
-                            )
-                        }
-                    }
-                    app.cash.sqldelight.db.QueryResult.Value(rows)
-                },
-                parameters = 0,
-            ).value
+            val stored =
+                driver
+                    .executeQuery(
+                        identifier = null,
+                        sql = "SELECT transaction_id, kind, canonical_kind FROM ledger_transaction ORDER BY transaction_id",
+                        mapper = { cursor ->
+                            val rows =
+                                buildList {
+                                    while (cursor.next().value) {
+                                        add(
+                                            listOf(
+                                                requireNotNull(cursor.getString(0)),
+                                                requireNotNull(cursor.getString(1)),
+                                                requireNotNull(cursor.getString(2)),
+                                            ),
+                                        )
+                                    }
+                                }
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(rows)
+                        },
+                        parameters = 0,
+                    ).value
             assertEquals(
                 listOf(
                     listOf("transaction-collect-v15", "EXPENSE", "COLLECT"),
@@ -1838,23 +1990,23 @@ class LedgerDatabaseMigrationTest {
             driver.execute(
                 null,
                 """
-                    INSERT INTO rg08_position(
-                      ledger_id, position_id, counterparty_id, receivable_account_id,
-                      currency_code, currency_precision, principal_balance_minor,
-                      allocation_scope, contract_allocation_enabled
-                    ) VALUES ('ledger-a', 'position-smoke', 'counterparty-smoke', 'receivable-smoke',
-                      'CNY', 2, 10000, 'PERSON_LEVEL_NET_POSITION', 0)
+                INSERT INTO rg08_position(
+                  ledger_id, position_id, counterparty_id, receivable_account_id,
+                  currency_code, currency_precision, principal_balance_minor,
+                  allocation_scope, contract_allocation_enabled
+                ) VALUES ('ledger-a', 'position-smoke', 'counterparty-smoke', 'receivable-smoke',
+                  'CNY', 2, 10000, 'PERSON_LEVEL_NET_POSITION', 0)
                 """.trimIndent(),
                 0,
             )
             driver.execute(
                 null,
                 """
-                    INSERT INTO rg08_position_history(
-                      ledger_id, position_id, history_sequence, history_id, behavior_code,
-                      amount_minor, principal_balance_after_minor, transaction_id, occurred_at
-                    ) VALUES ('ledger-a', 'position-smoke', 1, 'history-smoke', 'LEND',
-                      10000, 10000, 'transaction-lend-v15', '2026-02-01T09:00:00+08:00')
+                INSERT INTO rg08_position_history(
+                  ledger_id, position_id, history_sequence, history_id, behavior_code,
+                  amount_minor, principal_balance_after_minor, transaction_id, occurred_at
+                ) VALUES ('ledger-a', 'position-smoke', 1, 'history-smoke', 'LEND',
+                  10000, 10000, 'transaction-lend-v15', '2026-02-01T09:00:00+08:00')
                 """.trimIndent(),
                 0,
             )
@@ -1871,11 +2023,11 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg08_position_history(
-                          ledger_id, position_id, history_sequence, history_id, behavior_code,
-                          amount_minor, principal_balance_after_minor, transaction_id, occurred_at
-                        ) VALUES ('ledger-a', 'position-smoke', 3, 'history-gap', 'COLLECT',
-                          -1000, 9000, 'transaction-collect-v15', '2026-02-02T09:00:00+08:00')
+                    INSERT INTO rg08_position_history(
+                      ledger_id, position_id, history_sequence, history_id, behavior_code,
+                      amount_minor, principal_balance_after_minor, transaction_id, occurred_at
+                    ) VALUES ('ledger-a', 'position-smoke', 3, 'history-gap', 'COLLECT',
+                      -1000, 9000, 'transaction-collect-v15', '2026-02-02T09:00:00+08:00')
                     """.trimIndent(),
                     0,
                 )
@@ -1885,11 +2037,11 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg08_position_history(
-                          ledger_id, position_id, history_sequence, history_id, behavior_code,
-                          amount_minor, principal_balance_after_minor, transaction_id, occurred_at
-                        ) VALUES ('ledger-a', 'position-smoke', 2, 'history-direction', 'LEND',
-                          -1000, 9000, 'transaction-lend-v15', '2026-02-02T09:00:00+08:00')
+                    INSERT INTO rg08_position_history(
+                      ledger_id, position_id, history_sequence, history_id, behavior_code,
+                      amount_minor, principal_balance_after_minor, transaction_id, occurred_at
+                    ) VALUES ('ledger-a', 'position-smoke', 2, 'history-direction', 'LEND',
+                      -1000, 9000, 'transaction-lend-v15', '2026-02-02T09:00:00+08:00')
                     """.trimIndent(),
                     0,
                 )
@@ -1961,8 +2113,8 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
-                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                        WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
                         """.trimIndent(),
                     ),
                 )
@@ -1974,24 +2126,24 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*)
-                            FROM rg09_balance_adjustment AS adjustment
-                            JOIN rg09_adjustment_history AS history
-                              ON history.ledger_id = adjustment.ledger_id
-                             AND history.adjustment_id = adjustment.adjustment_id
-                            WHERE adjustment.adjustment_id = 'adjustment-v13'
-                              AND adjustment.transaction_id = 'transaction-adjustment-v13'
-                              AND adjustment.observation_id = 'observation-v13'
-                              AND adjustment.original_delta_minor = 3000
-                              AND history.history_id = 'history-v13'
-                              AND history.remaining_amount_minor = 2000
-                              AND history.state = 'PARTIALLY_EXPLAINED'
-                              AND 1000 = (
-                                SELECT SUM(allocation.amount_minor)
-                                FROM rg09_allocation AS allocation
-                                WHERE allocation.ledger_id = adjustment.ledger_id
-                                  AND allocation.adjustment_id = adjustment.adjustment_id
-                              )
+                        SELECT count(*)
+                        FROM rg09_balance_adjustment AS adjustment
+                        JOIN rg09_adjustment_history AS history
+                          ON history.ledger_id = adjustment.ledger_id
+                         AND history.adjustment_id = adjustment.adjustment_id
+                        WHERE adjustment.adjustment_id = 'adjustment-v13'
+                          AND adjustment.transaction_id = 'transaction-adjustment-v13'
+                          AND adjustment.observation_id = 'observation-v13'
+                          AND adjustment.original_delta_minor = 3000
+                          AND history.history_id = 'history-v13'
+                          AND history.remaining_amount_minor = 2000
+                          AND history.state = 'PARTIALLY_EXPLAINED'
+                          AND 1000 = (
+                            SELECT SUM(allocation.amount_minor)
+                            FROM rg09_allocation AS allocation
+                            WHERE allocation.ledger_id = adjustment.ledger_id
+                              AND allocation.adjustment_id = adjustment.adjustment_id
+                          )
                         """.trimIndent(),
                     ),
                 )
@@ -2027,8 +2179,8 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
-                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                        WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
                         """.trimIndent(),
                     ),
                 )
@@ -2079,8 +2231,8 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
-                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                        WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
                         """.trimIndent(),
                     ),
                 )
@@ -2129,8 +2281,8 @@ class LedgerDatabaseMigrationTest {
                     queryCount(
                         driver,
                         """
-                            SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
-                            WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
+                        SELECT count(*) FROM pragma_table_info('rg09_balance_adjustment')
+                        WHERE name IN ('explained_amount_minor', 'remaining_amount_minor', 'state')
                         """.trimIndent(),
                     ),
                 )
@@ -2181,9 +2333,9 @@ class LedgerDatabaseMigrationTest {
                     reopened.execute(
                         null,
                         """
-                            UPDATE ledger_transaction_current_version
-                            SET current_version_id = 'version-missing'
-                            WHERE transaction_id = 'tx-existing' AND ledger_id = 'ledger-a'
+                        UPDATE ledger_transaction_current_version
+                        SET current_version_id = 'version-missing'
+                        WHERE transaction_id = 'tx-existing' AND ledger_id = 'ledger-a'
                         """.trimIndent(),
                         0,
                     )
@@ -2191,10 +2343,10 @@ class LedgerDatabaseMigrationTest {
                 reopened.execute(
                     null,
                     """
-                        INSERT INTO transaction_note_update_request(
-                          ledger_id, request_id, transaction_id, note, confirmation_marker
-                        ) VALUES ('ledger-a', 'note-request-invalid-baseline', 'tx-existing',
-                          'changed', 'explicit_manual_save')
+                    INSERT INTO transaction_note_update_request(
+                      ledger_id, request_id, transaction_id, note, confirmation_marker
+                    ) VALUES ('ledger-a', 'note-request-invalid-baseline', 'tx-existing',
+                      'changed', 'explicit_manual_save')
                     """.trimIndent(),
                     0,
                 )
@@ -2202,12 +2354,12 @@ class LedgerDatabaseMigrationTest {
                     reopened.execute(
                         null,
                         """
-                            INSERT INTO confirmed_transaction_note_update_receipt(
-                              ledger_id, request_id, confirmation_id, transaction_id, version_id,
-                              expected_current_version_id
-                            ) VALUES ('ledger-a', 'note-request-invalid-baseline',
-                              'confirmation-note-invalid-baseline', 'tx-existing',
-                              'version-existing-v1', 'version-missing')
+                        INSERT INTO confirmed_transaction_note_update_receipt(
+                          ledger_id, request_id, confirmation_id, transaction_id, version_id,
+                          expected_current_version_id
+                        ) VALUES ('ledger-a', 'note-request-invalid-baseline',
+                          'confirmation-note-invalid-baseline', 'tx-existing',
+                          'version-existing-v1', 'version-missing')
                         """.trimIndent(),
                         0,
                     )
@@ -2215,11 +2367,11 @@ class LedgerDatabaseMigrationTest {
                 reopened.execute(
                     null,
                     """
-                        INSERT INTO manual_expense_request(
-                          ledger_id, request_id, amount_minor, currency_code, currency_precision,
-                          category_id, payment_account_id, occurred_at, note, confirmation_marker
-                        ) VALUES ('ledger-other', 'request-other', 1, 'CNY', 2,
-                          'category', 'asset', '2026-01-15T00:30:00Z', '', 'explicit_manual_save')
+                    INSERT INTO manual_expense_request(
+                      ledger_id, request_id, amount_minor, currency_code, currency_precision,
+                      category_id, payment_account_id, occurred_at, note, confirmation_marker
+                    ) VALUES ('ledger-other', 'request-other', 1, 'CNY', 2,
+                      'category', 'asset', '2026-01-15T00:30:00Z', '', 'explicit_manual_save')
                     """.trimIndent(),
                     0,
                 )
@@ -2227,9 +2379,9 @@ class LedgerDatabaseMigrationTest {
                     reopened.execute(
                         null,
                         """
-                            INSERT INTO confirmed_expense_receipt(
-                              ledger_id, request_id, confirmation_id, transaction_id
-                            ) VALUES ('ledger-other', 'request-other', 'confirmation-other', 'tx-existing')
+                        INSERT INTO confirmed_expense_receipt(
+                          ledger_id, request_id, confirmation_id, transaction_id
+                        ) VALUES ('ledger-other', 'request-other', 'confirmation-other', 'tx-existing')
                         """.trimIndent(),
                         0,
                     )
@@ -2307,16 +2459,17 @@ class LedgerDatabaseMigrationTest {
             // TP-16 full two-sided equivalence: the seven v23-era shared tables plus
             // the rebuilt snapshot/evidence_link (all columns) and the projection
             // table compare row-for-row between migrated and fresh-equivalent worlds.
-            val tableSelects = listOf(
-                "reconciliation_request",
-                "reconciliation_request_snapshot",
-                "evidence_link",
-                "evidence_link_history",
-                "posting_reconciliation",
-                "posting_reconciliation_history",
-                "reconciliation_receipt",
-                "evidence_projection",
-            )
+            val tableSelects =
+                listOf(
+                    "reconciliation_request",
+                    "reconciliation_request_snapshot",
+                    "evidence_link",
+                    "evidence_link_history",
+                    "posting_reconciliation",
+                    "posting_reconciliation_history",
+                    "reconciliation_receipt",
+                    "evidence_projection",
+                )
             val migratedRows = tableSelects.associateWith { selectRowsFlat(migratedUrl, it) }
             val freshRows = tableSelects.associateWith { selectRowsFlat("jdbc:sqlite:${freshPath.absolutePathString()}", it) }
             tableSelects.forEach { table ->
@@ -2360,6 +2513,7 @@ class LedgerDatabaseMigrationTest {
             Files.deleteIfExists(path)
         }
     }
+
     @Test
     fun freshSchemaAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
@@ -2396,46 +2550,70 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 3)
-                driver.execute(null, """
+                driver.execute(
+                    null,
+                    """
                     INSERT INTO manual_expense_request(
                       ledger_id, request_id, amount_minor, currency_code, currency_precision,
                       category_id, payment_account_id, occurred_at, note, confirmation_marker
                     ) VALUES ('ledger-a', 'request-expense-existing', 3580, 'CNY', 2,
                       'expense-category-breakfast', 'asset-bank-a', '2026-01-15T00:30:00Z', '',
                       'explicit_manual_save')
-                """.trimIndent(), 0)
-                driver.execute(null, """
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
                     INSERT INTO confirmed_expense_receipt(
                       ledger_id, request_id, confirmation_id, transaction_id
                     ) VALUES ('ledger-a', 'request-expense-existing',
                       'confirmation-expense-existing', 'tx-existing')
-                """.trimIndent(), 0)
-                driver.execute(null, """
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
                     INSERT INTO transaction_version(
                       version_id, transaction_id, ledger_id, version_number, posting_set_id,
                       occurred_at, statistics_at, effective_at, note
                     ) VALUES ('version-existing-v2', 'tx-existing', 'ledger-a', 2,
                       'posting-set-existing', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z',
                       '2026-01-15T00:30:00Z', 'replacement note')
-                """.trimIndent(), 0)
-                driver.execute(null, """
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
                     UPDATE ledger_transaction_current_version
                     SET current_version_id = 'version-existing-v2'
                     WHERE transaction_id = 'tx-existing' AND ledger_id = 'ledger-a'
-                """.trimIndent(), 0)
-                driver.execute(null, """
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
                     INSERT INTO transaction_note_update_request(
                       ledger_id, request_id, transaction_id, note, confirmation_marker
                     ) VALUES ('ledger-a', 'request-note-existing', 'tx-existing',
                       'replacement note', 'explicit_manual_save')
-                """.trimIndent(), 0)
-                driver.execute(null, """
+                    """.trimIndent(),
+                    0,
+                )
+                driver.execute(
+                    null,
+                    """
                     INSERT INTO confirmed_transaction_note_update_receipt(
                       ledger_id, request_id, confirmation_id, transaction_id, version_id,
                       expected_current_version_id
                     ) VALUES ('ledger-a', 'request-note-existing', 'confirmation-note-existing',
                       'tx-existing', 'version-existing-v2', 'version-existing-v1')
-                """.trimIndent(), 0)
+                    """.trimIndent(),
+                    0,
+                )
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, oldVersion = 3, newVersion = 5)
@@ -2449,7 +2627,13 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
                 assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
                 assertEquals("version-existing-v2", database.ledgerQueries.selectCurrentVersionId().executeAsOne())
-                assertEquals("replacement note", database.ledgerQueries.selectCurrentNote().executeAsOne().note)
+                assertEquals(
+                    "replacement note",
+                    database.ledgerQueries
+                        .selectCurrentNote()
+                        .executeAsOne()
+                        .note,
+                )
                 assertEquals(0, database.ledgerQueries.countManualIncomeRequests().executeAsOne())
                 assertEquals(0, database.ledgerQueries.countIncomeReceipts().executeAsOne())
             }
@@ -2486,32 +2670,32 @@ class LedgerDatabaseMigrationTest {
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg09_source(
-                          ledger_id, source_id, source_type, observed_at, observed_at_text,
-                          account_id, amount_minor, currency_code, currency_precision,
-                          counter_account_id, actual_at, actual_at_text, booking_at,
-                          booking_at_text, immutable_payload_digest
-                        ) VALUES (
-                          'ledger-a', 'src-09-001', 'imported_transfer_candidate',
-                          '2026-01-16T11:00:00Z', '2026-01-16T11:00:00Z',
-                          'asset-bank-a', 1000, 'CNY', 2, NULL, NULL, NULL, NULL, NULL,
-                          'digest-09-001'
-                        )
+                    INSERT INTO rg09_source(
+                      ledger_id, source_id, source_type, observed_at, observed_at_text,
+                      account_id, amount_minor, currency_code, currency_precision,
+                      counter_account_id, actual_at, actual_at_text, booking_at,
+                      booking_at_text, immutable_payload_digest
+                    ) VALUES (
+                      'ledger-a', 'src-09-001', 'imported_transfer_candidate',
+                      '2026-01-16T11:00:00Z', '2026-01-16T11:00:00Z',
+                      'asset-bank-a', 1000, 'CNY', 2, NULL, NULL, NULL, NULL, NULL,
+                      'digest-09-001'
+                    )
                     """.trimIndent(),
                     0,
                 )
                 driver.execute(
                     null,
                     """
-                        INSERT INTO rg10_source(
-                          ledger_id, source_id, source_type, observed_at, observed_at_text,
-                          account_id, amount_minor, lot_id, currency_code, currency_precision,
-                          immutable_payload_digest
-                        ) VALUES (
-                          'ledger-a', 'src-10-001', 'bank_recharge',
-                          '2026-01-17T12:00:00Z', '2026-01-17T12:00:00Z',
-                          'asset-stored-value', 1000, NULL, 'CNY', 2, 'digest-10-001'
-                        )
+                    INSERT INTO rg10_source(
+                      ledger_id, source_id, source_type, observed_at, observed_at_text,
+                      account_id, amount_minor, lot_id, currency_code, currency_precision,
+                      immutable_payload_digest
+                    ) VALUES (
+                      'ledger-a', 'src-10-001', 'bank_recharge',
+                      '2026-01-17T12:00:00Z', '2026-01-17T12:00:00Z',
+                      'asset-stored-value', 1000, NULL, 'CNY', 2, 'digest-10-001'
+                    )
                     """.trimIndent(),
                     0,
                 )
@@ -2577,19 +2761,24 @@ class LedgerDatabaseMigrationTest {
                     queryCount(driver, "SELECT count(*) FROM rg10_formal_transaction_metadata WHERE transaction_id = 'tx-rg10' AND source_record_id = 'src-10-001'"),
                 )
                 // statistics_at_text equals the pre-migration source columns row by row.
-                val statisticsByTransaction = driver.executeQuery(
-                    null,
-                    "SELECT transaction_id, statistics_at_text FROM formal_transaction_metadata ORDER BY transaction_id",
-                    { cursor ->
-                        val rows = buildList {
-                            while (cursor.next().value) {
-                                add(requireNotNull(cursor.getString(0)) to requireNotNull(cursor.getString(1)))
-                            }
-                        }
-                        app.cash.sqldelight.db.QueryResult.Value(rows)
-                    },
-                    0,
-                ).value.toMap()
+                val statisticsByTransaction =
+                    driver
+                        .executeQuery(
+                            null,
+                            "SELECT transaction_id, statistics_at_text FROM formal_transaction_metadata ORDER BY transaction_id",
+                            { cursor ->
+                                val rows =
+                                    buildList {
+                                        while (cursor.next().value) {
+                                            add(requireNotNull(cursor.getString(0)) to requireNotNull(cursor.getString(1)))
+                                        }
+                                    }
+                                app.cash.sqldelight.db.QueryResult
+                                    .Value(rows)
+                            },
+                            0,
+                        ).value
+                        .toMap()
                 assertEquals(
                     mapOf(
                         "tx-rg08" to "2026-01-15T10:00:00Z",
@@ -2686,15 +2875,18 @@ class LedgerDatabaseMigrationTest {
                     0,
                 )
                 // The v19 trigger set is the rollback oracle for the guard texts.
-                v19TriggerSql = driver.executeQuery(
-                    null,
-                    "SELECT sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
-                    { cursor ->
-                        val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                        app.cash.sqldelight.db.QueryResult.Value(rows)
-                    },
-                    0,
-                ).value
+                v19TriggerSql =
+                    driver
+                        .executeQuery(
+                            null,
+                            "SELECT sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+                            { cursor ->
+                                val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                                app.cash.sqldelight.db.QueryResult
+                                    .Value(rows)
+                            },
+                            0,
+                        ).value
                 driver.execute(null, "CREATE TABLE formal_transaction_metadata (dummy TEXT)", 0)
                 assertFailsWith<SQLException> {
                     LedgerDatabase(driver).transaction {
@@ -2709,15 +2901,18 @@ class LedgerDatabaseMigrationTest {
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg10_formal_transaction_metadata"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg11_formal_transaction_metadata"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM rg12_formal_transaction_metadata"))
-                val afterTriggerSql = driver.executeQuery(
-                    null,
-                    "SELECT sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
-                    { cursor ->
-                        val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                        app.cash.sqldelight.db.QueryResult.Value(rows)
-                    },
-                    0,
-                ).value
+                val afterTriggerSql =
+                    driver
+                        .executeQuery(
+                            null,
+                            "SELECT sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+                            { cursor ->
+                                val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                                app.cash.sqldelight.db.QueryResult
+                                    .Value(rows)
+                            },
+                            0,
+                        ).value
                 assertEquals(v19TriggerSql.map(::normalizeTriggerText), afterTriggerSql.map(::normalizeTriggerText))
                 // No stage table survived and the blocker is still the only object
                 // named formal_transaction_metadata (the aborted CREATE rolled back).
@@ -2740,56 +2935,56 @@ private fun insertVersionThirteenAdjustment(
     driver.execute(
         null,
         """
-            INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES
-              ('transaction-adjustment-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT'),
-              ('transaction-real-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'ACCOUNT_TRANSFER'),
-              ('transaction-reversal-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT_REVERSAL')
+        INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES
+          ('transaction-adjustment-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT'),
+          ('transaction-real-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'ACCOUNT_TRANSFER'),
+          ('transaction-reversal-v13', 'ledger-v13', 'ACCOUNT_TRANSFER', 'BALANCE_ADJUSTMENT_REVERSAL')
         """.trimIndent(),
         0,
     )
     driver.execute(
         null,
         """
-            INSERT INTO rg09_source(
-              ledger_id, source_id, source_type, observed_at, observed_at_text, account_id,
-              amount_minor, currency_code, currency_precision, immutable_payload_digest
-            ) VALUES (
-              'ledger-v13', 'source-v13', 'BALANCE_OBSERVATION', '2026-01-31T15:59:59Z',
-              '2026-01-31T23:59:59+08:00', 'asset-v13', 13000, 'CNY', 2, 'digest-v13'
-            )
+        INSERT INTO rg09_source(
+          ledger_id, source_id, source_type, observed_at, observed_at_text, account_id,
+          amount_minor, currency_code, currency_precision, immutable_payload_digest
+        ) VALUES (
+          'ledger-v13', 'source-v13', 'BALANCE_OBSERVATION', '2026-01-31T15:59:59Z',
+          '2026-01-31T23:59:59+08:00', 'asset-v13', 13000, 'CNY', 2, 'digest-v13'
+        )
         """.trimIndent(),
         0,
     )
     driver.execute(
         null,
         """
-            INSERT INTO rg09_observation(
-              ledger_id, observation_id, source_id, account_id, target_amount_minor,
-              currency_code, currency_precision, target_observed_at, target_observed_at_text,
-              saved_at, saved_at_text
-            ) VALUES (
-              'ledger-v13', 'observation-v13', 'source-v13', 'asset-v13', 13000, 'CNY', 2,
-              '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00',
-              '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00'
-            )
+        INSERT INTO rg09_observation(
+          ledger_id, observation_id, source_id, account_id, target_amount_minor,
+          currency_code, currency_precision, target_observed_at, target_observed_at_text,
+          saved_at, saved_at_text
+        ) VALUES (
+          'ledger-v13', 'observation-v13', 'source-v13', 'asset-v13', 13000, 'CNY', 2,
+          '2026-01-31T15:59:59Z', '2026-01-31T23:59:59+08:00',
+          '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00'
+        )
         """.trimIndent(),
         0,
     )
     driver.execute(
         null,
         """
-            INSERT INTO rg09_balance_adjustment(
-              ledger_id, adjustment_id, transaction_id, observation_id, target_account_id,
-              equity_account_id, currency_code, currency_precision, target_observed_at,
-              target_observed_at_text, replayed_amount_minor, target_amount_minor,
-              original_delta_minor, explained_amount_minor, remaining_amount_minor, state
-            ) VALUES (
-              'ledger-v13', 'adjustment-v13', 'transaction-adjustment-v13', 'observation-v13',
-              'asset-v13', 'equity-v13', 'CNY', 2, '2026-01-31T15:59:59Z',
-              '2026-01-31T23:59:59+08:00', 10000, 13000, 3000, $explainedAmountMinor,
-              ${3_000 - explainedAmountMinor},
-              '${if (explainedAmountMinor == 0L) "OPEN" else "PARTIALLY_EXPLAINED"}'
-            )
+        INSERT INTO rg09_balance_adjustment(
+          ledger_id, adjustment_id, transaction_id, observation_id, target_account_id,
+          equity_account_id, currency_code, currency_precision, target_observed_at,
+          target_observed_at_text, replayed_amount_minor, target_amount_minor,
+          original_delta_minor, explained_amount_minor, remaining_amount_minor, state
+        ) VALUES (
+          'ledger-v13', 'adjustment-v13', 'transaction-adjustment-v13', 'observation-v13',
+          'asset-v13', 'equity-v13', 'CNY', 2, '2026-01-31T15:59:59Z',
+          '2026-01-31T23:59:59+08:00', 10000, 13000, 3000, $explainedAmountMinor,
+          ${3_000 - explainedAmountMinor},
+          '${if (explainedAmountMinor == 0L) "OPEN" else "PARTIALLY_EXPLAINED"}'
+        )
         """.trimIndent(),
         0,
     )
@@ -2797,16 +2992,16 @@ private fun insertVersionThirteenAdjustment(
         driver.execute(
             null,
             """
-                INSERT INTO rg09_adjustment_history(
-                  ledger_id, adjustment_id, history_sequence, history_id, state, occurred_at,
-                  occurred_at_text, created_at, created_at_text, allocation_id, remaining_amount_minor
-                ) VALUES (
-                  'ledger-v13', 'adjustment-v13', 1, 'history-v13',
-                  '$historyState',
-                  '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
-                  '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
-                  'allocation-v13', $historyRemainingAmountMinor
-                )
+            INSERT INTO rg09_adjustment_history(
+              ledger_id, adjustment_id, history_sequence, history_id, state, occurred_at,
+              occurred_at_text, created_at, created_at_text, allocation_id, remaining_amount_minor
+            ) VALUES (
+              'ledger-v13', 'adjustment-v13', 1, 'history-v13',
+              '$historyState',
+              '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
+              '2026-02-01T00:00:00Z', '2026-02-01T08:00:00+08:00',
+              'allocation-v13', $historyRemainingAmountMinor
+            )
             """.trimIndent(),
             0,
         )
@@ -2814,18 +3009,18 @@ private fun insertVersionThirteenAdjustment(
     driver.execute(
         null,
         """
-            INSERT INTO rg09_allocation(
-              ledger_id, allocation_id, adjustment_id, target_account_id, amount_minor,
-              currency_code, currency_precision, real_transaction_id, reversal_transaction_id,
-              confirmed_at, discovered_at, discovered_at_text, confirmed_at_text,
-              created_at, created_at_text
-            ) VALUES (
-              'ledger-v13', 'allocation-v13', 'adjustment-v13', 'asset-v13', 1000, 'CNY', 2,
-              'transaction-real-v13', 'transaction-reversal-v13', '2026-02-01T00:00:00Z',
-              '2026-01-30T00:00:00Z', '2026-01-30T08:00:00+08:00',
-              '2026-02-01T08:00:00+08:00', '2026-02-01T00:00:00Z',
-              '2026-02-01T08:00:00+08:00'
-            )
+        INSERT INTO rg09_allocation(
+          ledger_id, allocation_id, adjustment_id, target_account_id, amount_minor,
+          currency_code, currency_precision, real_transaction_id, reversal_transaction_id,
+          confirmed_at, discovered_at, discovered_at_text, confirmed_at_text,
+          created_at, created_at_text
+        ) VALUES (
+          'ledger-v13', 'allocation-v13', 'adjustment-v13', 'asset-v13', 1000, 'CNY', 2,
+          'transaction-real-v13', 'transaction-reversal-v13', '2026-02-01T00:00:00Z',
+          '2026-01-30T00:00:00Z', '2026-01-30T08:00:00+08:00',
+          '2026-02-01T08:00:00+08:00', '2026-02-01T00:00:00Z',
+          '2026-02-01T08:00:00+08:00'
+        )
         """.trimIndent(),
         0,
     )
@@ -2840,45 +3035,69 @@ private fun migrationRepositoryFile(relative: String): Path {
     error("repository root not found")
 }
 
-private fun queryCount(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-    null,
-    sql,
-    { cursor ->
-        check(cursor.next().value)
-        app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
-    },
-    0,
-).value
+private fun queryCount(
+    driver: JdbcSqliteDriver,
+    sql: String,
+): Long =
+    driver
+        .executeQuery(
+            null,
+            sql,
+            { cursor ->
+                check(cursor.next().value)
+                app.cash.sqldelight.db.QueryResult
+                    .Value(requireNotNull(cursor.getLong(0)))
+            },
+            0,
+        ).value
 
-private fun triggerSql(driver: JdbcSqliteDriver, name: String): String = driver.executeQuery(
-    null,
-    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '$name'",
-    { cursor ->
-        check(cursor.next().value)
-        app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getString(0)))
-    },
-    0,
-).value
+private fun triggerSql(
+    driver: JdbcSqliteDriver,
+    name: String,
+): String =
+    driver
+        .executeQuery(
+            null,
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '$name'",
+            { cursor ->
+                check(cursor.next().value)
+                app.cash.sqldelight.db.QueryResult
+                    .Value(requireNotNull(cursor.getString(0)))
+            },
+            0,
+        ).value
 
-private fun tableSql(driver: JdbcSqliteDriver, name: String): String = driver.executeQuery(
-    null,
-    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '$name'",
-    { cursor ->
-        check(cursor.next().value)
-        app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getString(0)))
-    },
-    0,
-).value
+private fun tableSql(
+    driver: JdbcSqliteDriver,
+    name: String,
+): String =
+    driver
+        .executeQuery(
+            null,
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '$name'",
+            { cursor ->
+                check(cursor.next().value)
+                app.cash.sqldelight.db.QueryResult
+                    .Value(requireNotNull(cursor.getString(0)))
+            },
+            0,
+        ).value
 
-private fun tableColumnNames(driver: JdbcSqliteDriver, table: String): List<String> = driver.executeQuery(
-    null,
-    "SELECT name FROM pragma_table_info('$table') ORDER BY cid",
-    { cursor ->
-        val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-        app.cash.sqldelight.db.QueryResult.Value(names)
-    },
-    0,
-).value
+private fun tableColumnNames(
+    driver: JdbcSqliteDriver,
+    table: String,
+): List<String> =
+    driver
+        .executeQuery(
+            null,
+            "SELECT name FROM pragma_table_info('$table') ORDER BY cid",
+            { cursor ->
+                val names = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
+                app.cash.sqldelight.db.QueryResult
+                    .Value(names)
+            },
+            0,
+        ).value
 
 private data class SchemaMetadata(
     val objects: List<String>,
@@ -2888,93 +3107,105 @@ private data class SchemaMetadata(
 
 private fun schemaMetadata(url: String): SchemaMetadata =
     DriverManager.getConnection(url).use { connection ->
-        val objects = buildList {
-            connection.createStatement().use { statement ->
-                statement.executeQuery(
-                    """
-                        SELECT type, name, tbl_name, sql
-                        FROM sqlite_master
-                        WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-                        ORDER BY type, name
-                    """.trimIndent(),
-                ).use { rows ->
-                    while (rows.next()) {
-                        add(
-                            listOf(
-                                rows.getString("type"),
-                                rows.getString("name"),
-                                rows.getString("tbl_name"),
-                                normalizeSql(rows.getString("sql")),
-                            ).joinToString("|"),
-                        )
-                    }
+        val objects =
+            buildList {
+                connection.createStatement().use { statement ->
+                    statement
+                        .executeQuery(
+                            """
+                            SELECT type, name, tbl_name, sql
+                            FROM sqlite_master
+                            WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+                            ORDER BY type, name
+                            """.trimIndent(),
+                        ).use { rows ->
+                            while (rows.next()) {
+                                add(
+                                    listOf(
+                                        rows.getString("type"),
+                                        rows.getString("name"),
+                                        rows.getString("tbl_name"),
+                                        normalizeSql(rows.getString("sql")),
+                                    ).joinToString("|"),
+                                )
+                            }
+                        }
                 }
             }
-        }
-        val tableNames = objects.asSequence()
-            .filter { it.startsWith("table|") }
-            .map { it.substringAfter('|').substringBefore('|') }
-            .toList()
-        val foreignKeys = buildList {
-            tableNames.forEach { table ->
-                connection.createStatement().use { statement ->
-                    statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
-                        while (rows.next()) {
-                            add(
-                                listOf(
-                                    table,
-                                    rows.getInt("id"),
-                                    rows.getInt("seq"),
-                                    rows.getString("table"),
-                                    rows.getString("from"),
-                                    rows.getString("to"),
-                                    rows.getString("on_update"),
-                                    rows.getString("on_delete"),
-                                    rows.getString("match"),
-                                ).joinToString("|"),
-                            )
+        val tableNames =
+            objects
+                .asSequence()
+                .filter { it.startsWith("table|") }
+                .map { it.substringAfter('|').substringBefore('|') }
+                .toList()
+        val foreignKeys =
+            buildList {
+                tableNames.forEach { table ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("PRAGMA foreign_key_list('$table')").use { rows ->
+                            while (rows.next()) {
+                                add(
+                                    listOf(
+                                        table,
+                                        rows.getInt("id"),
+                                        rows.getInt("seq"),
+                                        rows.getString("table"),
+                                        rows.getString("from"),
+                                        rows.getString("to"),
+                                        rows.getString("on_update"),
+                                        rows.getString("on_delete"),
+                                        rows.getString("match"),
+                                    ).joinToString("|"),
+                                )
+                            }
                         }
                     }
                 }
-            }
-        }.sorted()
-        val indexes = buildList {
-            tableNames.forEach { table ->
-                connection.createStatement().use { statement ->
-                    statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
-                        while (rows.next()) {
-                            add(
-                                listOf(
-                                    table,
-                                    rows.getString("name"),
-                                    rows.getInt("unique"),
-                                    rows.getString("origin"),
-                                    rows.getInt("partial"),
-                                ).joinToString("|"),
-                            )
+            }.sorted()
+        val indexes =
+            buildList {
+                tableNames.forEach { table ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("PRAGMA index_list('$table')").use { rows ->
+                            while (rows.next()) {
+                                add(
+                                    listOf(
+                                        table,
+                                        rows.getString("name"),
+                                        rows.getInt("unique"),
+                                        rows.getString("origin"),
+                                        rows.getInt("partial"),
+                                    ).joinToString("|"),
+                                )
+                            }
                         }
                     }
                 }
-            }
-        }.sorted()
+            }.sorted()
         SchemaMetadata(objects, foreignKeys, indexes)
     }
 
 private fun normalizeSql(sql: String): String =
-    sql.replace(Regex("\\s+"), " ").trim().replace("( ", "(").replace(" )", ")")
+    sql
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .replace("( ", "(")
+        .replace(" )", ")")
         .replace("\"rg07_operation\"", "rg07_operation")
 
 // sqlite_master.sql stores CREATE TRIGGER text without the trailing statement
 // semicolon; drop it before comparing against the source text.
 private fun normalizeTriggerText(sql: String): String = normalizeSql(sql).removeSuffix(";")
 
-private fun migrationSqliteProperties(): Properties = Properties().apply {
-    setProperty("foreign_keys", "true")
-    setProperty("busy_timeout", "5000")
-}
+private fun migrationSqliteProperties(): Properties =
+    Properties().apply {
+        setProperty("foreign_keys", "true")
+        setProperty("busy_timeout", "5000")
+    }
 
 // The v19 CREATE TRIGGER texts (byte-identical to 18.sqm; compared normalized).
-private val V19_MATCH_GUARD_SQL = """
+private val V19_MATCH_GUARD_SQL =
+    """
     CREATE TRIGGER rg12_match_current_guard_insert BEFORE INSERT ON rg12_reconciliation_match BEGIN
       SELECT CASE WHEN NOT EXISTS (
         SELECT 1 FROM rg12_posting_semantic AS semantic
@@ -2989,9 +3220,10 @@ private val V19_MATCH_GUARD_SQL = """
         WHERE fact.ledger_id = new.ledger_id AND fact.posting_id = new.posting_id
       ) THEN RAISE(ABORT, 'rg12 match current ownership') END;
     END;
-""".trimIndent()
+    """.trimIndent()
 
-private val V19_FACT_GUARD_SQL = """
+private val V19_FACT_GUARD_SQL =
+    """
     CREATE TRIGGER rg12_reconciliation_current_guard_insert BEFORE INSERT ON rg12_posting_reconciliation BEGIN
       SELECT CASE WHEN NOT EXISTS (
         SELECT 1 FROM rg12_posting_semantic AS semantic
@@ -3035,9 +3267,10 @@ private val V19_FACT_GUARD_SQL = """
       ) THEN RAISE(ABORT, 'rg12 reconciliation current ownership')
       END;
     END;
-""".trimIndent()
+    """.trimIndent()
 
-private val V19_HISTORY_GUARD_SQL = """
+private val V19_HISTORY_GUARD_SQL =
+    """
     CREATE TRIGGER rg12_match_history_fact_consistency BEFORE INSERT ON rg12_reconciliation_match_history BEGIN
       SELECT CASE WHEN new.status = 'MATCHED' AND EXISTS (
         SELECT 1 FROM rg12_reconciliation_match AS match_row
@@ -3047,25 +3280,26 @@ private val V19_HISTORY_GUARD_SQL = """
           AND fact.status = 'PENDING'
       ) THEN RAISE(ABORT, 'rg12 match history fact consistency') END;
     END;
-""".trimIndent()
+    """.trimIndent()
 
-internal val VERSION_ONE_STATEMENTS = listOf(
-    """
+internal val VERSION_ONE_STATEMENTS =
+    listOf(
+        """
         CREATE TABLE ledger_transaction (
           transaction_id TEXT NOT NULL PRIMARY KEY,
           ledger_id TEXT NOT NULL,
           kind TEXT NOT NULL CHECK (kind IN ('OPENING_BALANCE', 'EXPENSE')),
           UNIQUE (transaction_id, ledger_id)
         )
-    """.trimIndent(),
-    """
+        """.trimIndent(),
+        """
         CREATE TABLE posting_set (
           posting_set_id TEXT NOT NULL PRIMARY KEY,
           ledger_id TEXT NOT NULL,
           UNIQUE (posting_set_id, ledger_id)
         )
-    """.trimIndent(),
-    """
+        """.trimIndent(),
+        """
         CREATE TABLE transaction_version (
           version_id TEXT NOT NULL PRIMARY KEY,
           transaction_id TEXT NOT NULL,
@@ -3085,8 +3319,8 @@ internal val VERSION_ONE_STATEMENTS = listOf(
             REFERENCES posting_set(posting_set_id, ledger_id)
             DEFERRABLE INITIALLY DEFERRED
         )
-    """.trimIndent(),
-    """
+        """.trimIndent(),
+        """
         CREATE TABLE posting (
           posting_id TEXT NOT NULL PRIMARY KEY,
           posting_set_id TEXT NOT NULL,
@@ -3101,8 +3335,8 @@ internal val VERSION_ONE_STATEMENTS = listOf(
             REFERENCES posting_set(posting_set_id, ledger_id)
             DEFERRABLE INITIALLY DEFERRED
         )
-    """.trimIndent(),
-    """
+        """.trimIndent(),
+        """
         CREATE TABLE ledger_transaction_current_version (
           transaction_id TEXT NOT NULL,
           ledger_id TEXT NOT NULL,
@@ -3115,31 +3349,34 @@ internal val VERSION_ONE_STATEMENTS = listOf(
             REFERENCES transaction_version(transaction_id, version_id, ledger_id)
             DEFERRABLE INITIALLY DEFERRED
         )
-    """.trimIndent(),
-    "INSERT INTO posting_set VALUES ('posting-set-existing', 'ledger-a')",
-    "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-existing', 'ledger-a', 'EXPENSE')",
-    """
+        """.trimIndent(),
+        "INSERT INTO posting_set VALUES ('posting-set-existing', 'ledger-a')",
+        "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-existing', 'ledger-a', 'EXPENSE')",
+        """
         INSERT INTO transaction_version VALUES (
           'version-existing-v1', 'tx-existing', 'ledger-a', 1, 'posting-set-existing',
           '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z', '2026-01-15T00:30:00Z', NULL
         )
-    """.trimIndent(),
-    "INSERT INTO ledger_transaction_current_version VALUES ('tx-existing', 'ledger-a', 'version-existing-v1')",
-    """
+        """.trimIndent(),
+        "INSERT INTO ledger_transaction_current_version VALUES ('tx-existing', 'ledger-a', 'version-existing-v1')",
+        """
         INSERT INTO posting VALUES (
           'posting-expense-existing', 'posting-set-existing', 'ledger-a', 0,
           'expense-account-breakfast', 3580, 'CNY', 2
         )
-    """.trimIndent(),
-    """
+        """.trimIndent(),
+        """
         INSERT INTO posting VALUES (
           'posting-bank-existing', 'posting-set-existing', 'ledger-a', 1,
           'asset-bank-a', -3580, 'CNY', 2
         )
-    """.trimIndent(),
-)
+        """.trimIndent(),
+    )
 
-private fun selectRowsFlat(url: String, table: String): List<List<String?>> =
+private fun selectRowsFlat(
+    url: String,
+    table: String,
+): List<List<String?>> =
     DriverManager.getConnection(url).use { connection ->
         connection.createStatement().use { statement ->
             statement.executeQuery("SELECT * FROM $table ORDER BY 1,2,3,4").use { rows ->
@@ -3153,7 +3390,10 @@ private fun selectRowsFlat(url: String, table: String): List<List<String?>> =
         }
     }
 
-private fun selectRaw(url: String, sql: String): List<String> =
+private fun selectRaw(
+    url: String,
+    sql: String,
+): List<String> =
     DriverManager.getConnection(url).use { connection ->
         connection.createStatement().use { statement ->
             statement.executeQuery(sql).use { rows ->

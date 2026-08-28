@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.Rg10AllocationCommitIds
 import com.unifiedledger.application.Rg10AllocationId
 import com.unifiedledger.application.Rg10ConsumptionId
@@ -12,7 +13,6 @@ import com.unifiedledger.application.Rg10LotAllocationInput
 import com.unifiedledger.application.Rg10MerchantAllocationInput
 import com.unifiedledger.application.Rg10Operation
 import com.unifiedledger.application.Rg10Snapshot
-import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.adaptRg10Fixture
 import com.unifiedledger.application.parseRg10FixtureInputs
 import com.unifiedledger.data.db.LedgerDatabase
@@ -52,9 +52,30 @@ class SqlDelightRg10StoreTest {
                 expectedSnapshot = store.snapshot(fixture.ledgerId)
                 assertEquals(4L, database.ledgerQueries.countRg10FormalTransactions(fixture.ledgerId.value).executeAsOne())
                 assertEquals(4L, database.ledgerQueries.countRg10Operations(fixture.ledgerId.value).executeAsOne())
-                assertEquals(1L, database.ledgerQueries.selectRg10AllLots(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(3L, database.ledgerQueries.selectRg10AllLotHistory(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(4L, database.ledgerQueries.selectRg10AllPostingReconciliations(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg10AllLots(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg10AllLotHistory(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    4L,
+                    database.ledgerQueries
+                        .selectRg10AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -88,23 +109,31 @@ class SqlDelightRg10StoreTest {
                 fixture.operations.forEach { item ->
                     assertIs<Rg10ExecutionResult.Accepted>(store.commit(item.operation), item.id)
                 }
-                val merchant = fixture.allOperations.first {
-                    it.operation is Rg10Operation.ReconcileMerchantCredit
-                }
+                val merchant =
+                    fixture.allOperations.first {
+                        it.operation is Rg10Operation.ReconcileMerchantCredit
+                    }
                 assertIs<Rg10ExecutionResult.Accepted>(store.commit(merchant.operation))
-                val current = database.ledgerQueries.selectRg10AllPostingReconciliations(fixture.ledgerId.value)
-                    .executeAsList().single { it.posting_id == "posting-stored-recharge-rg10" }
+                val current =
+                    database.ledgerQueries
+                        .selectRg10AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.posting_id == "posting-stored-recharge-rg10" }
                 assertEquals("MATCHED", current.status)
                 assertEquals(2L, current.latest_sequence)
                 assertEquals(
                     listOf("PENDING", "MATCHED"),
-                    database.ledgerQueries.selectRg10AllReconciliationHistory(fixture.ledgerId.value)
+                    database.ledgerQueries
+                        .selectRg10AllReconciliationHistory(fixture.ledgerId.value)
                         .executeAsList()
                         .filter { it.posting_id == "posting-stored-recharge-rg10" }
                         .map { it.status },
                 )
-                val link = database.ledgerQueries.selectRg10AllEvidenceLinks(fixture.ledgerId.value)
-                    .executeAsList().single { it.link_id == "evidence-link-merchant-recharge-rg10" }
+                val link =
+                    database.ledgerQueries
+                        .selectRg10AllEvidenceLinks(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.link_id == "evidence-link-merchant-recharge-rg10" }
                 assertEquals("MATCHED", link.status)
                 expectedSnapshot = store.snapshot(fixture.ledgerId)
                 assertEquals("matched", expectedSnapshot.reconciliation["posting-stored-recharge-rg10"])
@@ -114,8 +143,11 @@ class SqlDelightRg10StoreTest {
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
                 assertPersistedSnapshotEquals(expectedSnapshot, store.snapshot(fixture.ledgerId))
-                val current = database.ledgerQueries.selectRg10AllPostingReconciliations(fixture.ledgerId.value)
-                    .executeAsList().single { it.posting_id == "posting-stored-recharge-rg10" }
+                val current =
+                    database.ledgerQueries
+                        .selectRg10AllPostingReconciliations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single { it.posting_id == "posting-stored-recharge-rg10" }
                 assertEquals("MATCHED", current.status)
                 assertEquals(2L, current.latest_sequence)
             }
@@ -135,23 +167,37 @@ class SqlDelightRg10StoreTest {
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
-                val ingestRecharge = fixture.allOperations.first {
-                    it.operation is Rg10Operation.IngestStoredValueRechargeCandidate
-                }
+                val ingestRecharge =
+                    fixture.allOperations.first {
+                        it.operation is Rg10Operation.IngestStoredValueRechargeCandidate
+                    }
                 assertIs<Rg10ExecutionResult.Accepted>(store.commit(ingestRecharge.operation))
-                val activation = fixture.allOperations.first {
-                    it.operation is Rg10Operation.ConfirmStoredValueActivationBalance
-                }
+                val activation =
+                    fixture.allOperations.first {
+                        it.operation is Rg10Operation.ConfirmStoredValueActivationBalance
+                    }
                 assertIs<Rg10ExecutionResult.Accepted>(store.commit(activation.operation))
                 expectedSnapshot = store.snapshot(fixture.ledgerId)
                 assertEquals(1, expectedSnapshot.candidates.size)
                 assertEquals("pending_confirmation", expectedSnapshot.candidates.single().status)
                 assertEquals(1, expectedSnapshot.reconstructions.size)
                 assertEquals(1, expectedSnapshot.auditLinks.size)
-                assertEquals(1L, database.ledgerQueries.selectRg10AllReconstructions(fixture.ledgerId.value)
-                    .executeAsList().size.toLong())
-                assertEquals(1L, database.ledgerQueries.selectRg10AllReconstructionHistory(fixture.ledgerId.value)
-                    .executeAsList().size.toLong())
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg10AllReconstructions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg10AllReconstructionHistory(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -160,8 +206,11 @@ class SqlDelightRg10StoreTest {
                 assertPersistedSnapshotEquals(expectedSnapshot, store.snapshot(fixture.ledgerId))
                 assertEquals(
                     "PENDING_CONFIRMATION",
-                    database.ledgerQueries.selectRg10AllCandidates(fixture.ledgerId.value)
-                        .executeAsList().single().status,
+                    database.ledgerQueries
+                        .selectRg10AllCandidates(fixture.ledgerId.value)
+                        .executeAsList()
+                        .single()
+                        .status,
                 )
             }
         } finally {
@@ -179,32 +228,52 @@ class SqlDelightRg10StoreTest {
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
-                val invalidItem = fixture.allOperations.first {
-                    it.operation is Rg10Operation.InvalidInput && it.id == "spend-over-balance"
-                }
+                val invalidItem =
+                    fixture.allOperations.first {
+                        it.operation is Rg10Operation.InvalidInput && it.id == "spend-over-balance"
+                    }
                 val invalid = invalidItem.operation as Rg10Operation.InvalidInput
                 val result = store.commit(invalidItem.operation)
                 val rejected = assertIs<Rg10ExecutionResult.Rejected>(result)
                 assertEquals("insufficient_effective_stored_balance", rejected.reason.code)
-                val saved = database.ledgerQueries.selectRg10Operation(
-                    fixture.ledgerId.value,
-                    invalidItem.operation.identity.value,
-                ).executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg10Operation(
+                            fixture.ledgerId.value,
+                            invalidItem.operation.identity.value,
+                        ).executeAsOne()
                 assertEquals("REJECTED", saved.outcome)
                 assertEquals("insufficient_effective_stored_balance", saved.reason_code)
                 assertEquals(1L, database.ledgerQueries.countRg10FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllLots(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllSources(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllLots(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllSources(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
 
                 // Replay of the same rejected input is stable.
                 assertEquals(rejected, store.commit(invalidItem.operation))
                 // A changed fingerprint on the same identity is a conflict.
-                val changed = invalid.copy(
-                    input = invalid.input.copy(
-                        attemptedInput = invalid.input.attemptedInput +
-                            (com.unifiedledger.application.Rg10FieldPath.ATTEMPTED_AMOUNT.value to "1.00"),
-                    ),
-                )
+                val changed =
+                    invalid.copy(
+                        input =
+                            invalid.input.copy(
+                                attemptedInput =
+                                    invalid.input.attemptedInput +
+                                        (com.unifiedledger.application.Rg10FieldPath.ATTEMPTED_AMOUNT.value to "1.00"),
+                            ),
+                    )
                 assertEquals(Rg10ExecutionResult.RequestIdentityConflict, store.commit(changed))
             }
         } finally {
@@ -221,24 +290,53 @@ class SqlDelightRg10StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val failing = store(
-                    database,
-                    driver,
-                    fixture,
-                    Rg10FailureInjector { point ->
-                        if (point == Rg10FailurePoint.AFTER_DELTA) error("injected RG-10 rollback")
-                    },
-                )
+                val failing =
+                    store(
+                        database,
+                        driver,
+                        fixture,
+                        Rg10FailureInjector { point ->
+                            if (point == Rg10FailurePoint.AFTER_DELTA) error("injected RG-10 rollback")
+                        },
+                    )
                 val recharge = fixture.operations.first().operation
                 assertFailsWith<IllegalStateException> {
                     failing.commit(recharge)
                 }
                 assertEquals(0L, database.ledgerQueries.countRg10Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg10FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllLots(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllSources(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllEvidenceLinks(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg10AllPostingSemantics(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllLots(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllSources(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllEvidenceLinks(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg10AllPostingSemantics(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -316,7 +414,14 @@ class SqlDelightRg10StoreTest {
                         0,
                     )
                 }
-                assertEquals(3L, database.ledgerQueries.selectRg10AllLotHistory(ledger).executeAsList().size.toLong())
+                assertEquals(
+                    3L,
+                    database.ledgerQueries
+                        .selectRg10AllLotHistory(ledger)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
         } finally {
             Files.deleteIfExists(path)
@@ -355,7 +460,8 @@ class SqlDelightRg10StoreTest {
                         null,
                         lot.compositionStatus.uppercase(),
                         lot.faceValue.currency.code,
-                        lot.faceValue.currency.precision.toLong(),
+                        lot.faceValue.currency.precision
+                            .toLong(),
                         null,
                     )
                 }
@@ -370,7 +476,10 @@ class SqlDelightRg10StoreTest {
                         source.amount?.minorUnits,
                         null,
                         source.amount?.currency?.code,
-                        source.amount?.currency?.precision?.toLong(),
+                        source.amount
+                            ?.currency
+                            ?.precision
+                            ?.toLong(),
                         source.immutablePayloadDigest,
                     )
                 }
@@ -384,16 +493,38 @@ class SqlDelightRg10StoreTest {
                         item.observedAtText,
                     )
                 }
-                val allocation = fixture.allOperations.first {
-                    it.operation is Rg10Operation.ApplyMerchantLotAllocation
-                }
+                val allocation =
+                    fixture.allOperations.first {
+                        it.operation is Rg10Operation.ApplyMerchantLotAllocation
+                    }
                 assertIs<Rg10ExecutionResult.Accepted>(store.commit(allocation.operation))
                 expectedSnapshot = store.snapshot(fixture.ledgerId)
                 assertEquals(1, expectedSnapshot.allocations.size)
                 assertEquals(1, expectedSnapshot.consumptions.size)
-                assertEquals(4L, database.ledgerQueries.selectRg10AllLots(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(1L, database.ledgerQueries.selectRg10AllAllocations(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(1L, database.ledgerQueries.selectRg10AllConsumptions(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    4L,
+                    database.ledgerQueries
+                        .selectRg10AllLots(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg10AllAllocations(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    1L,
+                    database.ledgerQueries
+                        .selectRg10AllConsumptions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -458,32 +589,46 @@ class SqlDelightRg10StoreTest {
                     "2026-01-20T12:01:00+08:00",
                     "2026-01-20T12:01:00+08:00",
                 )
-                fun allocationOp(requestId: String, allocationId: String, consumptionId: String) =
-                    Rg10Operation.ApplyMerchantLotAllocation(
-                        ledgerId = fixture.ledgerId,
-                        input = Rg10MerchantAllocationInput(
+
+                fun allocationOp(
+                    requestId: String,
+                    allocationId: String,
+                    consumptionId: String,
+                ) = Rg10Operation.ApplyMerchantLotAllocation(
+                    ledgerId = fixture.ledgerId,
+                    input =
+                        Rg10MerchantAllocationInput(
                             requestId = RequestId(requestId),
                             amount = Money.ofMinor(10_000L, cny),
                             merchantAllocationProvided = true,
                             merchantEvidenceId = Rg10EvidenceId("evidence-merchant-allocation-rg10"),
-                            allocations = listOf(
-                                Rg10LotAllocationInput(
-                                    StoredValueLotId("lot-rg10-expiring-first"),
-                                    Money.ofMinor(10_000L, cny),
+                            allocations =
+                                listOf(
+                                    Rg10LotAllocationInput(
+                                        StoredValueLotId("lot-rg10-expiring-first"),
+                                        Money.ofMinor(10_000L, cny),
+                                    ),
                                 ),
-                            ),
                             explicitConfirmation = true,
                         ),
-                        ids = Rg10AllocationCommitIds(
+                    ids =
+                        Rg10AllocationCommitIds(
                             allocationId = Rg10AllocationId(allocationId),
                             consumptionId = Rg10ConsumptionId(consumptionId),
                         ),
-                    )
+                )
 
                 assertIs<Rg10ExecutionResult.Accepted>(
                     store.commit(allocationOp("request-dup-a-rg10", "allocation-dup-a-rg10", "consumption-dup-a-rg10")),
                 )
-                assertEquals(40_000L, store.snapshot(fixture.ledgerId).lots.single().remainingFaceValue.minorUnits)
+                assertEquals(
+                    40_000L,
+                    store
+                        .snapshot(fixture.ledgerId)
+                        .lots
+                        .single()
+                        .remainingFaceValue.minorUnits,
+                )
 
                 // Deducting the same 10_000 again with no new consumption row must abort:
                 // the recorded resulting remaining never matches a repeated deduction.
@@ -494,16 +639,32 @@ class SqlDelightRg10StoreTest {
                         0,
                     )
                 }
-                assertEquals(40_000L, store.snapshot(fixture.ledgerId).lots.single().remainingFaceValue.minorUnits)
+                assertEquals(
+                    40_000L,
+                    store
+                        .snapshot(fixture.ledgerId)
+                        .lots
+                        .single()
+                        .remainingFaceValue.minorUnits,
+                )
 
                 // A fresh consumption row still supports the same deduction amount exactly once.
                 assertIs<Rg10ExecutionResult.Accepted>(
                     store.commit(allocationOp("request-dup-b-rg10", "allocation-dup-b-rg10", "consumption-dup-b-rg10")),
                 )
-                assertEquals(30_000L, store.snapshot(fixture.ledgerId).lots.single().remainingFaceValue.minorUnits)
+                assertEquals(
+                    30_000L,
+                    store
+                        .snapshot(fixture.ledgerId)
+                        .lots
+                        .single()
+                        .remainingFaceValue.minorUnits,
+                )
                 assertEquals(
                     listOf(40_000L, 30_000L),
-                    database.ledgerQueries.selectRg10AllConsumptions(ledger).executeAsList()
+                    database.ledgerQueries
+                        .selectRg10AllConsumptions(ledger)
+                        .executeAsList()
                         .map { it.resulting_remaining_face_value_minor },
                 )
             }
@@ -512,31 +673,33 @@ class SqlDelightRg10StoreTest {
         }
     }
 
-    private fun stableIdValue(id: com.unifiedledger.application.Rg10ReturnedId): String = when (id) {
-        is com.unifiedledger.application.Rg10ReturnedId.Transaction -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Version -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Lot -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Confirmation -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Candidate -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.EvidenceLink -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Allocation -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Consumption -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Adjustment -> id.id.value
-        is com.unifiedledger.application.Rg10ReturnedId.Request -> id.id
-    }
+    private fun stableIdValue(id: com.unifiedledger.application.Rg10ReturnedId): String =
+        when (id) {
+            is com.unifiedledger.application.Rg10ReturnedId.Transaction -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Version -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Lot -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Confirmation -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Candidate -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.EvidenceLink -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Allocation -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Consumption -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Adjustment -> id.id.value
+            is com.unifiedledger.application.Rg10ReturnedId.Request -> id.id
+        }
 
     private fun store(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         fixture: Rg10FixtureCase,
         failureInjector: Rg10FailureInjector = Rg10FailureInjector { },
-    ): SqlDelightRg10Store = SqlDelightRg10Store(
-        database,
-        driver,
-        fixture.catalog,
-        fixture.openingTransactions,
-        failureInjector,
-    )
+    ): SqlDelightRg10Store =
+        SqlDelightRg10Store(
+            database,
+            driver,
+            fixture.catalog,
+            fixture.openingTransactions,
+            failureInjector,
+        )
 
     /**
      * Structural comparison of a snapshot taken before and after a database reopen.
@@ -568,17 +731,19 @@ class SqlDelightRg10StoreTest {
         assertEquals(expected.reconciliation, actual.reconciliation)
     }
 
-    private fun formalProjection(record: Rg10FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map {
-            PostingSetProjection(it.id, it.postings)
-        },
-        createdAt = record.createdAt,
-        sourceRecordId = record.sourceRecordId?.value,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection(record: Rg10FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets =
+                record.formalTransaction.postingSets.map {
+                    PostingSetProjection(it.id, it.postings)
+                },
+            createdAt = record.createdAt,
+            sourceRecordId = record.sourceRecordId?.value,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
     private data class FormalRecordProjection(
         val transaction: Transaction,
@@ -601,8 +766,7 @@ class SqlDelightRg10StoreTest {
             loadRuntimeInputs(),
         )
 
-    private fun loadRuntimeInputs() =
-        parseRg10FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg10-runtime-input.json")))
+    private fun loadRuntimeInputs() = parseRg10FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg10-runtime-input.json")))
 
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
@@ -613,7 +777,8 @@ class SqlDelightRg10StoreTest {
         error("repository root not found")
     }
 
-    private fun sqliteProperties() = Properties().apply {
-        setProperty("foreign_keys", "true")
-    }
+    private fun sqliteProperties() =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+        }
 }

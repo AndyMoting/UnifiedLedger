@@ -40,31 +40,41 @@ sealed interface CorrectTransactionVersionViolation : DomainViolation {
     }
 
     /** reason `duplicate_source_posting_id` (reject-3, reported at the second occurrence index). */
-    data class DuplicateSourcePostingId(val index: Int) : CorrectTransactionVersionViolation {
+    data class DuplicateSourcePostingId(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "duplicate_source_posting_id"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index].source_posting_id"
     }
 
     /** reason `known_account_required` (reject-4: account not in the catalog). */
-    data class KnownAccountRequired(val index: Int) : CorrectTransactionVersionViolation {
+    data class KnownAccountRequired(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "known_account_required"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index].account_id"
     }
 
     /** reason `owned_account_required` (reject-5: not owned and not an expense pseudo-account). */
-    data class OwnedAccountRequired(val index: Int) : CorrectTransactionVersionViolation {
+    data class OwnedAccountRequired(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "owned_account_required"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index].account_id"
     }
 
     /** reason `account_currency_mismatch` (reject-6: account currency differs from the input currency). */
-    data class AccountCurrencyMismatch(val index: Int) : CorrectTransactionVersionViolation {
+    data class AccountCurrencyMismatch(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "account_currency_mismatch"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index].account_id"
     }
 
     /** reason `matched_unaffected_posting_must_be_preserved` (reject-7, whole item of the changed matched asset leg). */
-    data class MatchedUnaffectedPostingMustBePreserved(val index: Int) : CorrectTransactionVersionViolation {
+    data class MatchedUnaffectedPostingMustBePreserved(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "matched_unaffected_posting_must_be_preserved"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index]"
     }
@@ -76,7 +86,9 @@ sealed interface CorrectTransactionVersionViolation : DomainViolation {
     }
 
     /** reason `exact_decimal_string_required` (reject-9, first amount that is not an exact decimal string). */
-    data class ExactDecimalStringRequired(val index: Int) : CorrectTransactionVersionViolation {
+    data class ExactDecimalStringRequired(
+        val index: Int,
+    ) : CorrectTransactionVersionViolation {
         override val reasonCode: String? = "exact_decimal_string_required"
         override val fieldPath: String = "$.attempted_input.replacement_postings[$index].amount"
     }

@@ -26,7 +26,7 @@ class Rg06SchemaV9Test {
                 LedgerDatabase.Schema.migrate(driver, 1, 8)
                 driver.execute(null, "INSERT INTO rg05_operation_request VALUES ('ledger-a','existing','MANUAL_MERGED_PAYMENT')", 0)
             }
-                JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 12) }
+            JdbcSqliteDriver(url, properties).use { driver -> LedgerDatabase.Schema.migrate(driver, 8, 12) }
             JdbcSqliteDriver(url, properties).use { driver ->
                 val database = LedgerDatabase(driver)
                 assertEquals(27, LedgerDatabase.Schema.version)
@@ -55,10 +55,16 @@ class Rg06SchemaV9Test {
                 driver.execute(null, "SELECT 1", 0)
             }
             JdbcSqliteDriver(url, properties).use { driver ->
-                assertEquals(0L, driver.executeQuery(null, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg07%'", { cursor ->
-                    cursor.next()
-                    app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0))
-                }, 0).value)
+                assertEquals(
+                    0L,
+                    driver
+                        .executeQuery(null, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'rg07%'", { cursor ->
+                            cursor.next()
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(cursor.getLong(0))
+                        }, 0)
+                        .value,
+                )
                 LedgerDatabase.Schema.migrate(driver, 9, 10)
             }
             DriverManager.getConnection(url).use { connection ->
@@ -191,16 +197,17 @@ class Rg06SchemaV9Test {
     @Test
     fun operationSchemaForcesUnusedActionFieldsNull() {
         freshSchema { driver ->
-            val cases = listOf(
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,category_id,amount_minor,currency_code,currency_precision,occurred_at,source_id) VALUES ('ledger-a','bad-create','create_staged_payment','bad-create','expense-service',30000,'CNY',2,'2026-04-20T01:00:00Z','unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,payment_role,funding_account_id,amount_minor,currency_code,currency_precision,occurred_at,candidate_id) VALUES ('ledger-a','bad-record','record_staged_payment_installment','bad-record','relation-a','DEPOSIT','asset-bank',8000,'CNY',2,'2026-04-28T02:00:00Z','unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,fulfillment_status,occurred_at,amount_minor) VALUES ('ledger-a','bad-fulfillment','change_staged_payment_fulfillment','bad-fulfillment','relation-a','FULFILLED','2026-04-29T02:00:00Z',1)",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,confirmed,occurred_at,payment_id) VALUES ('ledger-a','bad-completion','confirm_staged_payment_completion','bad-completion','relation-a',1,'2026-05-04T02:00:00Z','unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,payment_id,posting_id,request_id) VALUES ('ledger-a','bad-link','link_staged_payment_evidence','source-a','evidence-a','payment-a','posting-a-asset','unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,amount_minor,currency_code,currency_precision,occurred_at,occurred_at_text,relation_id) VALUES ('ledger-a','bad-ingest','ingest_staged_payment_bank_fact','source-a','evidence-a',-8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,candidate_id,relation_id,category_id,funding_account_id,payment_role,exact_binding_confirmed,source_id) VALUES ('ledger-a','bad-candidate','confirm_staged_payment_candidate','bad-candidate','candidate-a','relation-a','expense-service','asset-bank','DEPOSIT',1,'unused')",
-                "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,payment_id,posting_id,amount_minor,currency_code,currency_precision,occurred_at,occurred_at_text,candidate_id) VALUES ('ledger-a','bad-mirror','merge_staged_payment_mirror_evidence','source-a','evidence-a','payment-a','posting-a-asset',8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','unused')",
-            )
+            val cases =
+                listOf(
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,category_id,amount_minor,currency_code,currency_precision,occurred_at,source_id) VALUES ('ledger-a','bad-create','create_staged_payment','bad-create','expense-service',30000,'CNY',2,'2026-04-20T01:00:00Z','unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,payment_role,funding_account_id,amount_minor,currency_code,currency_precision,occurred_at,candidate_id) VALUES ('ledger-a','bad-record','record_staged_payment_installment','bad-record','relation-a','DEPOSIT','asset-bank',8000,'CNY',2,'2026-04-28T02:00:00Z','unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,fulfillment_status,occurred_at,amount_minor) VALUES ('ledger-a','bad-fulfillment','change_staged_payment_fulfillment','bad-fulfillment','relation-a','FULFILLED','2026-04-29T02:00:00Z',1)",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,relation_id,confirmed,occurred_at,payment_id) VALUES ('ledger-a','bad-completion','confirm_staged_payment_completion','bad-completion','relation-a',1,'2026-05-04T02:00:00Z','unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,payment_id,posting_id,request_id) VALUES ('ledger-a','bad-link','link_staged_payment_evidence','source-a','evidence-a','payment-a','posting-a-asset','unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,amount_minor,currency_code,currency_precision,occurred_at,occurred_at_text,relation_id) VALUES ('ledger-a','bad-ingest','ingest_staged_payment_bank_fact','source-a','evidence-a',-8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,request_id,candidate_id,relation_id,category_id,funding_account_id,payment_role,exact_binding_confirmed,source_id) VALUES ('ledger-a','bad-candidate','confirm_staged_payment_candidate','bad-candidate','candidate-a','relation-a','expense-service','asset-bank','DEPOSIT',1,'unused')",
+                    "INSERT INTO rg06_operation(ledger_id,identity_value,action_type,source_id,evidence_id,payment_id,posting_id,amount_minor,currency_code,currency_precision,occurred_at,occurred_at_text,candidate_id) VALUES ('ledger-a','bad-mirror','merge_staged_payment_mirror_evidence','source-a','evidence-a','payment-a','posting-a-asset',8000,'CNY',2,'2026-04-28T02:00:00Z','2026-04-28T10:00:00+08:00','unused')",
+                )
 
             cases.forEach { sql -> assertSqlRejected(driver, sql) }
             assertEquals(0L, queryLong(driver, "SELECT count(*) FROM rg06_operation"))
@@ -209,10 +216,11 @@ class Rg06SchemaV9Test {
 
     @Test
     fun acceptedInstallmentRejectsIncompatibleRepointMutationDeletionAndAliasing() {
-        fun accepted(block: (JdbcSqliteDriver) -> Unit) = freshSchema { driver ->
-            seedAcceptedRg06Graph(driver)
-            block(driver)
-        }
+        fun accepted(block: (JdbcSqliteDriver) -> Unit) =
+            freshSchema { driver ->
+                seedAcceptedRg06Graph(driver)
+                block(driver)
+            }
 
         accepted { driver ->
             driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-incompatible','ledger-a')", 0)
@@ -238,15 +246,16 @@ class Rg06SchemaV9Test {
 
     @Test
     fun acceptedCandidateReceiptRequiresExactRoleConfidenceAndRequirementProvenance() {
-        fun rejected(mutator: (JdbcSqliteDriver) -> Unit) = freshSchema { driver ->
-            seedRg06Graph(driver)
-            mutator(driver)
-            insertCandidateReceiptsUntilFinal(driver)
-            assertIncompleteAcceptedOperationRejected(
-                driver,
-                "INSERT INTO rg06_operation_receipt VALUES ('ledger-a','confirm-a',3,'EVIDENCE_LINK','link-a')",
-            )
-        }
+        fun rejected(mutator: (JdbcSqliteDriver) -> Unit) =
+            freshSchema { driver ->
+                seedRg06Graph(driver)
+                mutator(driver)
+                insertCandidateReceiptsUntilFinal(driver)
+                assertIncompleteAcceptedOperationRejected(
+                    driver,
+                    "INSERT INTO rg06_operation_receipt VALUES ('ledger-a','confirm-a',3,'EVIDENCE_LINK','link-a')",
+                )
+            }
 
         rejected { driver ->
             driver.execute(null, "DROP TRIGGER rg06_candidate_guard_update", 0)
@@ -357,27 +366,42 @@ class Rg06SchemaV9Test {
         driver.execute(null, "INSERT INTO posting VALUES ('posting-b-asset','posting-set-b','ledger-b',0,'asset-bank',-8000,'CNY',2)", 0)
     }
 
-    private fun assertSqlRejected(driver: JdbcSqliteDriver, sql: String) {
+    private fun assertSqlRejected(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ) {
         assertFailsWith<SQLException>(sql) { driver.execute(null, sql, 0) }
     }
 
-    private fun assertIncompleteAcceptedOperationRejected(driver: JdbcSqliteDriver, sql: String) {
+    private fun assertIncompleteAcceptedOperationRejected(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ) {
         val failure = assertFailsWith<SQLException>(sql) { driver.execute(null, sql, 0) }
         assertTrue(failure.message.orEmpty().contains("rg06 incomplete accepted operation"), failure.message)
     }
 
-    private fun assertAcceptedAggregateRejected(driver: JdbcSqliteDriver, sql: String) {
+    private fun assertAcceptedAggregateRejected(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ) {
         val failure = assertFailsWith<SQLException>(sql) { driver.execute(null, sql, 0) }
         assertTrue(failure.message.orEmpty().contains("invalid accepted RG06 aggregate"), failure.message)
     }
 
-    private fun queryLong(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
-        identifier = null,
-        sql = sql,
-        mapper = { cursor ->
-            check(cursor.next().value)
-            app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
-        },
-        parameters = 0,
-    ).value
+    private fun queryLong(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                identifier = null,
+                sql = sql,
+                mapper = { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                parameters = 0,
+            ).value
 }

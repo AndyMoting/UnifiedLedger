@@ -6,7 +6,9 @@ package com.unifiedledger.domain
  * `$.attempted_input.amount`) so the application layer can recompute stable rejection output
  * without remapping.
  */
-enum class PeriodicAllocationField(val jsonName: String) {
+enum class PeriodicAllocationField(
+    val jsonName: String,
+) {
     AMOUNT("amount"),
     CURRENCY("currency"),
     ANCHOR("anchor"),

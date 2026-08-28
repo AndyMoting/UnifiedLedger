@@ -68,6 +68,12 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat check --rerun-tasks --warning-mode all
 ```
 
+运行 ktlint 对三个模块的全部跟踪 Kotlin 源（.kt）与模块构建脚本检查（与 CI 的 Ktlint check 步骤一致）：
+
+```powershell
+.\gradlew.bat ktlintCheck --stacktrace --rerun-tasks --warning-mode all
+```
+
 ## 完整 Python 测试
 
 从仓库根目录执行：

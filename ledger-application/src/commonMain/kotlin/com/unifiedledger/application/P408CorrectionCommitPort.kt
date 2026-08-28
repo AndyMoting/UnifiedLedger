@@ -18,7 +18,9 @@ package com.unifiedledger.application
  * conflict. The correction family is v2-only by construction (the snapshot
  * basis_version is frozen to 2).
  */
-enum class P408CorrectionReason(val storageValue: String) {
+enum class P408CorrectionReason(
+    val storageValue: String,
+) {
     /** Manual correction / re-match after supplementary material / wrong-match fix. */
     CORRECTED("corrected"),
 
@@ -27,7 +29,9 @@ enum class P408CorrectionReason(val storageValue: String) {
 }
 
 /** Resulting posting-reconciliation state a correction writes (V-D-A). */
-enum class P408CorrectionResultState(val storageValue: String) {
+enum class P408CorrectionResultState(
+    val storageValue: String,
+) {
     CHECKED("CHECKED"),
     MISSING("MISSING"),
     DIFFERENCE("DIFFERENCE"),
@@ -97,8 +101,14 @@ data class P408CorrectLinkRequest(
             require(affectedPostingId == successor.postingId)
         } else {
             require(successor == null) { "MISSING/DIFFERENCE correction carries no successor facts" }
-            require(projectionId == null && projectionRuleId == null && projectionRuleVersion == null &&
-                normalizedAmountMinor == null && rawAmountMinor == null && rawCurrencyPrecision == null)
+            require(
+                projectionId == null &&
+                    projectionRuleId == null &&
+                    projectionRuleVersion == null &&
+                    normalizedAmountMinor == null &&
+                    rawAmountMinor == null &&
+                    rawCurrencyPrecision == null,
+            )
             require(successorLinkId == null && successorCreatedAt == null)
             require(!reconciliationId.isNullOrBlank())
         }
@@ -118,38 +128,39 @@ data class P408CorrectLinkRequest(
      * the confirm family by its prefix; set-valued basis tokens are sorted and
      * deduplicated. Output/generated ids are never part of this string.
      */
-    fun fingerprint(): String = buildString {
-        append("p408-correct-v2|")
-        append("ledger=").append(ledgerId).append('|')
-        append("evidence=").append(evidenceId).append('|')
-        append("previous_link=").append(previousLinkId).append('|')
-        append("reason=").append(reason.storageValue).append('|')
-        append("affected_posting=").append(affectedPostingId).append('|')
-        append("result_state=").append(resultState.storageValue)
-        if (resultState == P408CorrectionResultState.CHECKED) {
-            val s = requireNotNull(successor)
-            append("|posting=").append(s.postingId)
-            append("|transaction=").append(s.transactionId)
-            append("|amount_minor=").append(s.amountMinor)
-            append("|currency=").append(s.currencyCode)
-            append("|precision=").append(s.currencyPrecision)
-            append("|direction=").append(s.direction)
-            append("|account=").append(s.accountId)
-            append("|responsibility=").append(s.responsibility.storageValue)
-            append("|candidate=").append(s.candidateId)
-            append("|basis=").append(s.matchBasis.toSortedSet().joinToString(","))
-            append("|window_days=").append(s.windowDays)
-            append("|natural_day_distance=").append(s.naturalDayDistance)
-            append("|source_occurred_at=").append(s.sourceOccurredAt)
-            append("|projection_id=").append(projectionId)
-            append("|projection_rule_id=").append(projectionRuleId)
-            append("|projection_rule_version=").append(projectionRuleVersion)
-            append("|normalized_amount_minor=").append(normalizedAmountMinor)
-            append("|raw_amount_minor=").append(rawAmountMinor)
-            append("|raw_currency_precision=").append(rawCurrencyPrecision)
+    fun fingerprint(): String =
+        buildString {
+            append("p408-correct-v2|")
+            append("ledger=").append(ledgerId).append('|')
+            append("evidence=").append(evidenceId).append('|')
+            append("previous_link=").append(previousLinkId).append('|')
+            append("reason=").append(reason.storageValue).append('|')
+            append("affected_posting=").append(affectedPostingId).append('|')
+            append("result_state=").append(resultState.storageValue)
+            if (resultState == P408CorrectionResultState.CHECKED) {
+                val s = requireNotNull(successor)
+                append("|posting=").append(s.postingId)
+                append("|transaction=").append(s.transactionId)
+                append("|amount_minor=").append(s.amountMinor)
+                append("|currency=").append(s.currencyCode)
+                append("|precision=").append(s.currencyPrecision)
+                append("|direction=").append(s.direction)
+                append("|account=").append(s.accountId)
+                append("|responsibility=").append(s.responsibility.storageValue)
+                append("|candidate=").append(s.candidateId)
+                append("|basis=").append(s.matchBasis.toSortedSet().joinToString(","))
+                append("|window_days=").append(s.windowDays)
+                append("|natural_day_distance=").append(s.naturalDayDistance)
+                append("|source_occurred_at=").append(s.sourceOccurredAt)
+                append("|projection_id=").append(projectionId)
+                append("|projection_rule_id=").append(projectionRuleId)
+                append("|projection_rule_version=").append(projectionRuleVersion)
+                append("|normalized_amount_minor=").append(normalizedAmountMinor)
+                append("|raw_amount_minor=").append(rawAmountMinor)
+                append("|raw_currency_precision=").append(rawCurrencyPrecision)
+            }
+            append("|confirmed_at=").append(confirmedAt)
         }
-        append("|confirmed_at=").append(confirmedAt)
-    }
 }
 
 /**

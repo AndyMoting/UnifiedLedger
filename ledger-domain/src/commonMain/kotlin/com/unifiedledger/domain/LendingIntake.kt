@@ -12,7 +12,9 @@ enum class LendingCandidateStatus {
  * every one of these six economic facts is explicitly confirmed; proposed values or name/bank
  * evidence never auto-confirm a gate. [reasonCode] is the frozen operation rejection reason.
  */
-enum class LendingConfirmationGateField(val reasonCode: String) {
+enum class LendingConfirmationGateField(
+    val reasonCode: String,
+) {
     BEHAVIOR_CODE("behavior_confirmation_required"),
     COUNTERPARTY_ID("counterparty_confirmation_required"),
     DESTINATION_ACCOUNT_ID("destination_confirmation_required"),
@@ -123,10 +125,12 @@ fun createLendingCandidate(
         if (proposedSplit.any { it!! < 0L }) {
             return DomainResult.Failure(LendingViolation.ComponentMustBeNonnegative)
         }
-        val principalPlusInterest = checkedAdd(proposedPrincipalAmountMinor!!, proposedInterestAmountMinor!!)
-            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-        val composed = checkedAdd(principalPlusInterest, proposedFeeAmountMinor!!)
-            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+        val principalPlusInterest =
+            checkedAdd(proposedPrincipalAmountMinor!!, proposedInterestAmountMinor!!)
+                ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+        val composed =
+            checkedAdd(principalPlusInterest, proposedFeeAmountMinor!!)
+                ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
         if (composed != proposedTotalReceivedMinor) {
             return DomainResult.Failure(LendingViolation.ComponentsMustEqualTotal)
         }
@@ -198,17 +202,21 @@ fun confirmLendingCandidate(
         candidate.copy(
             status = LendingCandidateStatus.CONFIRMED,
             requiresConfirmation = emptyList(),
-            statusHistory = candidate.statusHistory + LendingCandidateStatusHistoryEntry(
-                id = historyId,
-                status = LendingCandidateStatus.CONFIRMED,
-                occurredAt = confirmedAt,
-                formalEffectCount = formalEffectCount,
-            ),
+            statusHistory =
+                candidate.statusHistory +
+                    LendingCandidateStatusHistoryEntry(
+                        id = historyId,
+                        status = LendingCandidateStatus.CONFIRMED,
+                        occurredAt = confirmedAt,
+                        formalEffectCount = formalEffectCount,
+                    ),
         ),
     )
 }
 
-enum class LendingSourceKind(val code: String) {
+enum class LendingSourceKind(
+    val code: String,
+) {
     BANK_DEBIT("bank_debit"),
     BANK_CREDIT("bank_credit"),
     BANK_CREDIT_MIRROR("bank_credit_mirror"),
@@ -217,8 +225,7 @@ enum class LendingSourceKind(val code: String) {
     ;
 
     companion object {
-        fun fromCode(code: String): LendingSourceKind? =
-            entries.firstOrNull { it.code == code }
+        fun fromCode(code: String): LendingSourceKind? = entries.firstOrNull { it.code == code }
     }
 }
 
@@ -320,14 +327,15 @@ fun createLendingSourceRecord(
     )
 }
 
-enum class LendingConfirmationRole(val code: String) {
+enum class LendingConfirmationRole(
+    val code: String,
+) {
     LENDING_EVENT_CONFIRMATION("lending_event_confirmation"),
     LENDING_SETTLEMENT_CONFIRMATION("lending_settlement_confirmation"),
     ;
 
     companion object {
-        fun fromCode(code: String): LendingConfirmationRole? =
-            entries.firstOrNull { it.code == code }
+        fun fromCode(code: String): LendingConfirmationRole? = entries.firstOrNull { it.code == code }
     }
 }
 

@@ -2,18 +2,30 @@ package com.unifiedledger.domain
 
 import kotlin.time.Instant
 
-data class StagedPaymentRelationId(val value: String)
+data class StagedPaymentRelationId(
+    val value: String,
+)
 
-data class StagedPaymentLifecycleId(val value: String)
+data class StagedPaymentLifecycleId(
+    val value: String,
+)
 
-data class InstallmentPaymentId(val value: String)
+data class InstallmentPaymentId(
+    val value: String,
+)
 
-data class StagedPaymentHistoryId(val value: String)
+data class StagedPaymentHistoryId(
+    val value: String,
+)
 
 sealed interface StagedPaymentResult<out T> {
-    data class Success<out T>(val value: T) : StagedPaymentResult<T>
+    data class Success<out T>(
+        val value: T,
+    ) : StagedPaymentResult<T>
 
-    data class Failure(val violation: StagedPaymentViolation) : StagedPaymentResult<Nothing>
+    data class Failure(
+        val violation: StagedPaymentViolation,
+    ) : StagedPaymentResult<Nothing>
 }
 
 @ConsistentCopyVisibility
@@ -33,11 +45,12 @@ data class StagedPaymentSourceTime private constructor(
             if (!STRICT_RFC3339_PATTERN.matches(text)) {
                 return StagedPaymentResult.Failure(StagedPaymentViolation.InvalidSourcePaymentTimestamp)
             }
-            val parsed = try {
-                Instant.parse(text)
-            } catch (_: IllegalArgumentException) {
-                return StagedPaymentResult.Failure(StagedPaymentViolation.InvalidSourcePaymentTimestamp)
-            }
+            val parsed =
+                try {
+                    Instant.parse(text)
+                } catch (_: IllegalArgumentException) {
+                    return StagedPaymentResult.Failure(StagedPaymentViolation.InvalidSourcePaymentTimestamp)
+                }
             if (parsed != instant) {
                 return StagedPaymentResult.Failure(StagedPaymentViolation.SourcePaymentTimeTextMismatch)
             }
@@ -54,11 +67,12 @@ data class StagedPaymentSourceTime private constructor(
             text: String,
         ): StagedPaymentSourceTime? {
             if (!STRICT_RFC3339_PATTERN.matches(text)) return null
-            val parsed = try {
-                Instant.parse(text)
-            } catch (_: IllegalArgumentException) {
-                return null
-            }
+            val parsed =
+                try {
+                    Instant.parse(text)
+                } catch (_: IllegalArgumentException) {
+                    return null
+                }
             return if (parsed == instant) StagedPaymentSourceTime(instant, text) else null
         }
     }
@@ -106,9 +120,13 @@ enum class StagedPaymentEvent {
 }
 
 sealed interface StagedPaymentMemberRef {
-    data class Lifecycle(val id: StagedPaymentLifecycleId) : StagedPaymentMemberRef
+    data class Lifecycle(
+        val id: StagedPaymentLifecycleId,
+    ) : StagedPaymentMemberRef
 
-    data class Installment(val id: InstallmentPaymentId) : StagedPaymentMemberRef
+    data class Installment(
+        val id: InstallmentPaymentId,
+    ) : StagedPaymentMemberRef
 }
 
 class StagedPaymentRelation private constructor(
@@ -136,8 +154,7 @@ class StagedPaymentRelation private constructor(
                 memberRefs = setOf(StagedPaymentMemberRef.Lifecycle(lifecycleId)),
             )
 
-        internal fun rehydrate(snapshot: StagedPaymentRelationSnapshot): StagedPaymentRelation =
-            StagedPaymentRelation(snapshot.id, snapshot.memberRefs.toSet())
+        internal fun rehydrate(snapshot: StagedPaymentRelationSnapshot): StagedPaymentRelation = StagedPaymentRelation(snapshot.id, snapshot.memberRefs.toSet())
     }
 }
 
@@ -187,18 +204,20 @@ class StagedPaymentLifecycle private constructor(
             dueAmount = dueAmount,
             currency = currency,
             categoryId = categoryId,
-            stateHistory = stateHistory + StagedPaymentHistoryEntry(
-                id = historyId,
-                sequence = stateHistory.size + 1,
-                event = event,
-                occurredAt = occurredAt,
-                totalAmount = totalAmount,
-                paidAmount = paidAmount,
-                dueAmount = dueAmount,
-                paymentId = paymentId,
-                paymentProgress = paymentProgress,
-                fulfillmentStatus = fulfillmentStatus,
-            ),
+            stateHistory =
+                stateHistory +
+                    StagedPaymentHistoryEntry(
+                        id = historyId,
+                        sequence = stateHistory.size + 1,
+                        event = event,
+                        occurredAt = occurredAt,
+                        totalAmount = totalAmount,
+                        paidAmount = paidAmount,
+                        dueAmount = dueAmount,
+                        paymentId = paymentId,
+                        paymentProgress = paymentProgress,
+                        fulfillmentStatus = fulfillmentStatus,
+                    ),
         )
 
     companion object {
@@ -217,20 +236,21 @@ class StagedPaymentLifecycle private constructor(
                 dueAmount = totalAmount,
                 currency = totalAmount.currency,
                 categoryId = categoryId,
-                stateHistory = listOf(
-                    StagedPaymentHistoryEntry(
-                        id = historyId,
-                        sequence = 1,
-                        event = StagedPaymentEvent.GROUP_CREATED,
-                        occurredAt = createdAt,
-                        totalAmount = totalAmount,
-                        paidAmount = zero,
-                        dueAmount = totalAmount,
-                        paymentId = null,
-                        paymentProgress = StagedPaymentProgress.UNPAID,
-                        fulfillmentStatus = StagedPaymentFulfillment.IN_PROGRESS,
+                stateHistory =
+                    listOf(
+                        StagedPaymentHistoryEntry(
+                            id = historyId,
+                            sequence = 1,
+                            event = StagedPaymentEvent.GROUP_CREATED,
+                            occurredAt = createdAt,
+                            totalAmount = totalAmount,
+                            paidAmount = zero,
+                            dueAmount = totalAmount,
+                            paymentId = null,
+                            paymentProgress = StagedPaymentProgress.UNPAID,
+                            fulfillmentStatus = StagedPaymentFulfillment.IN_PROGRESS,
+                        ),
                     ),
-                ),
             )
         }
 
@@ -279,8 +299,7 @@ class StagedPaymentRelationSnapshot(
         memberRefs: Collection<StagedPaymentMemberRef> = this.memberRefs,
     ): StagedPaymentRelationSnapshot = StagedPaymentRelationSnapshot(id, memberRefs)
 
-    override fun equals(other: Any?): Boolean =
-        other is StagedPaymentRelationSnapshot && id == other.id && memberRefSnapshot == other.memberRefSnapshot
+    override fun equals(other: Any?): Boolean = other is StagedPaymentRelationSnapshot && id == other.id && memberRefSnapshot == other.memberRefSnapshot
 
     override fun hashCode(): Int = 31 * id.hashCode() + memberRefSnapshot.hashCode()
 }
@@ -305,18 +324,28 @@ class StagedPaymentLifecycleSnapshot(
         currency: CurrencyUnit = this.currency,
         categoryId: CategoryId = this.categoryId,
         stateHistory: Collection<StagedPaymentHistoryEntry> = this.stateHistory,
-    ): StagedPaymentLifecycleSnapshot = StagedPaymentLifecycleSnapshot(
-        id, totalAmount, paidAmount, dueAmount, currency, categoryId, stateHistory,
-    )
+    ): StagedPaymentLifecycleSnapshot =
+        StagedPaymentLifecycleSnapshot(
+            id,
+            totalAmount,
+            paidAmount,
+            dueAmount,
+            currency,
+            categoryId,
+            stateHistory,
+        )
 
     override fun equals(other: Any?): Boolean =
         other is StagedPaymentLifecycleSnapshot &&
-            id == other.id && totalAmount == other.totalAmount && paidAmount == other.paidAmount &&
-            dueAmount == other.dueAmount && currency == other.currency && categoryId == other.categoryId &&
+            id == other.id &&
+            totalAmount == other.totalAmount &&
+            paidAmount == other.paidAmount &&
+            dueAmount == other.dueAmount &&
+            currency == other.currency &&
+            categoryId == other.categoryId &&
             historySnapshot == other.historySnapshot
 
-    override fun hashCode(): Int =
-        arrayOf(id, totalAmount, paidAmount, dueAmount, currency, categoryId, historySnapshot).contentHashCode()
+    override fun hashCode(): Int = arrayOf(id, totalAmount, paidAmount, dueAmount, currency, categoryId, historySnapshot).contentHashCode()
 }
 
 data class StagedPaymentInstallmentSnapshot(
@@ -368,8 +397,7 @@ class StagedPaymentPostingSetSnapshot(
         postings: Collection<StagedPaymentPostingSnapshot> = this.postings,
     ): StagedPaymentPostingSetSnapshot = StagedPaymentPostingSetSnapshot(id, postings)
 
-    override fun equals(other: Any?): Boolean =
-        other is StagedPaymentPostingSetSnapshot && id == other.id && postingSnapshot == other.postingSnapshot
+    override fun equals(other: Any?): Boolean = other is StagedPaymentPostingSetSnapshot && id == other.id && postingSnapshot == other.postingSnapshot
 
     override fun hashCode(): Int = 31 * id.hashCode() + postingSnapshot.hashCode()
 }
@@ -390,13 +418,17 @@ class StagedPaymentFormalTransactionSnapshot(
         transaction: StagedPaymentTransactionSnapshot = this.transaction,
         versions: Collection<StagedPaymentTransactionVersionSnapshot> = this.versions,
         postingSets: Collection<StagedPaymentPostingSetSnapshot> = this.postingSets,
-    ): StagedPaymentFormalTransactionSnapshot = StagedPaymentFormalTransactionSnapshot(
-        transaction.copy(), versions, postingSets,
-    )
+    ): StagedPaymentFormalTransactionSnapshot =
+        StagedPaymentFormalTransactionSnapshot(
+            transaction.copy(),
+            versions,
+            postingSets,
+        )
 
     override fun equals(other: Any?): Boolean =
         other is StagedPaymentFormalTransactionSnapshot &&
-            transaction == other.transaction && versionSnapshot == other.versionSnapshot &&
+            transaction == other.transaction &&
+            versionSnapshot == other.versionSnapshot &&
             postingSetSnapshot == other.postingSetSnapshot
 
     override fun hashCode(): Int = arrayOf(transaction, versionSnapshot, postingSetSnapshot).contentHashCode()
@@ -404,61 +436,16 @@ class StagedPaymentFormalTransactionSnapshot(
 
 private fun FormalTransaction.toStagedPaymentSnapshot(): StagedPaymentFormalTransactionSnapshot =
     StagedPaymentFormalTransactionSnapshot(
-        transaction = StagedPaymentTransactionSnapshot(
-            transaction.id,
-            transaction.ledgerId,
-            transaction.kind,
-            transaction.currentVersionId,
-        ),
-        versions = versions.map { version ->
-            StagedPaymentTransactionVersionSnapshot(
-                version.id,
-                version.transactionId,
-                version.versionNumber,
-                version.postingSetId,
-                version.times.copy(),
-                version.note,
-            )
-        },
-        postingSets = postingSets.map { postingSet ->
-            StagedPaymentPostingSetSnapshot(
-                postingSet.id,
-                postingSet.postings.map { posting ->
-                    StagedPaymentPostingSnapshot(posting.id, posting.accountId, posting.amount)
-                },
-            )
-        },
-    )
-
-private fun StagedPaymentFormalTransactionSnapshot.toFormalTransactionOrNull(): FormalTransaction? {
-    val restoredPostingSets = mutableListOf<PostingSet>()
-    for (postingSet in postingSets) {
-        val restored = try {
-            PostingSet.create(
-                postingSet.id,
-                postingSet.postings.map { posting ->
-                    Posting(posting.id, posting.accountId, posting.amount)
-                },
-            )
-        } catch (_: IllegalArgumentException) {
-            return null
-        }
-        when (restored) {
-            is DomainResult.Success -> restoredPostingSets += restored.value
-            is DomainResult.Failure -> return null
-        }
-    }
-
-    val restored = try {
-        FormalTransaction.create(
-            transaction = Transaction(
+        transaction =
+            StagedPaymentTransactionSnapshot(
                 transaction.id,
                 transaction.ledgerId,
                 transaction.kind,
                 transaction.currentVersionId,
             ),
-            versions = versions.map { version ->
-                TransactionVersion(
+        versions =
+            versions.map { version ->
+                StagedPaymentTransactionVersionSnapshot(
                     version.id,
                     version.transactionId,
                     version.versionNumber,
@@ -467,19 +454,70 @@ private fun StagedPaymentFormalTransactionSnapshot.toFormalTransactionOrNull(): 
                     version.note,
                 )
             },
-            postingSets = restoredPostingSets,
-        )
-    } catch (_: IllegalArgumentException) {
-        return null
+        postingSets =
+            postingSets.map { postingSet ->
+                StagedPaymentPostingSetSnapshot(
+                    postingSet.id,
+                    postingSet.postings.map { posting ->
+                        StagedPaymentPostingSnapshot(posting.id, posting.accountId, posting.amount)
+                    },
+                )
+            },
+    )
+
+private fun StagedPaymentFormalTransactionSnapshot.toFormalTransactionOrNull(): FormalTransaction? {
+    val restoredPostingSets = mutableListOf<PostingSet>()
+    for (postingSet in postingSets) {
+        val restored =
+            try {
+                PostingSet.create(
+                    postingSet.id,
+                    postingSet.postings.map { posting ->
+                        Posting(posting.id, posting.accountId, posting.amount)
+                    },
+                )
+            } catch (_: IllegalArgumentException) {
+                return null
+            }
+        when (restored) {
+            is DomainResult.Success -> restoredPostingSets += restored.value
+            is DomainResult.Failure -> return null
+        }
     }
+
+    val restored =
+        try {
+            FormalTransaction.create(
+                transaction =
+                    Transaction(
+                        transaction.id,
+                        transaction.ledgerId,
+                        transaction.kind,
+                        transaction.currentVersionId,
+                    ),
+                versions =
+                    versions.map { version ->
+                        TransactionVersion(
+                            version.id,
+                            version.transactionId,
+                            version.versionNumber,
+                            version.postingSetId,
+                            version.times.copy(),
+                            version.note,
+                        )
+                    },
+                postingSets = restoredPostingSets,
+            )
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
     return when (restored) {
         is DomainResult.Success -> restored.value
         is DomainResult.Failure -> null
     }
 }
 
-private fun copyFormalTransaction(formalTransaction: FormalTransaction): FormalTransaction =
-    checkNotNull(formalTransaction.toStagedPaymentSnapshot().toFormalTransactionOrNull())
+private fun copyFormalTransaction(formalTransaction: FormalTransaction): FormalTransaction = checkNotNull(formalTransaction.toStagedPaymentSnapshot().toFormalTransactionOrNull())
 
 class StagedPaymentSnapshot(
     val ledgerId: LedgerId,
@@ -500,9 +538,14 @@ class StagedPaymentSnapshot(
         lifecycle: StagedPaymentLifecycleSnapshot = this.lifecycle,
         installments: Collection<StagedPaymentInstallmentSnapshot> = this.installments,
         formalTransactions: Collection<StagedPaymentFormalTransactionSnapshot> = this.formalTransactions,
-    ): StagedPaymentSnapshot = StagedPaymentSnapshot(
-        ledgerId, relation, lifecycle, installments, formalTransactions,
-    )
+    ): StagedPaymentSnapshot =
+        StagedPaymentSnapshot(
+            ledgerId,
+            relation,
+            lifecycle,
+            installments,
+            formalTransactions,
+        )
 }
 
 data class CreateStagedPaymentCommand(
@@ -534,38 +577,71 @@ data class StagedPaymentInstallmentIds(
 
 sealed interface StagedPaymentViolation {
     data object TotalAmountMustBePositive : StagedPaymentViolation
+
     data object PaymentAmountMustBePositive : StagedPaymentViolation
+
     data object SecondaryCategoryRequired : StagedPaymentViolation
+
     data object CategoryInactive : StagedPaymentViolation
+
     data object ExpenseCategoryRequired : StagedPaymentViolation
+
     data object SingleCurrencyRequired : StagedPaymentViolation
+
     data object UnknownRealAccount : StagedPaymentViolation
+
     data object RealFinancialAccountRequired : StagedPaymentViolation
+
     data object OwnedAccountRequired : StagedPaymentViolation
+
     data object AssetAccountRequired : StagedPaymentViolation
-    data class DuplicateRole(val role: StagedPaymentRole) : StagedPaymentViolation
+
+    data class DuplicateRole(
+        val role: StagedPaymentRole,
+    ) : StagedPaymentViolation
+
     data object DuplicateIdentity : StagedPaymentViolation
+
     data object DepositRequired : StagedPaymentViolation
+
     data object DepositMustBeLessThanTotal : StagedPaymentViolation
+
     data object PaymentExceedsDue : StagedPaymentViolation
+
     data object FinalMustEqualRemainingDue : StagedPaymentViolation
+
     data object FinalPaymentMustBeLaterThanDeposit : StagedPaymentViolation
+
     data object FinalSourcePaymentMustBeLaterThanDeposit : StagedPaymentViolation
+
     data object InvalidSourcePaymentOffset : StagedPaymentViolation
+
     data object InvalidSourcePaymentTimestamp : StagedPaymentViolation
+
     data object SourcePaymentTimeTextMismatch : StagedPaymentViolation
+
     data object SourcePaymentOffsetMismatch : StagedPaymentViolation
+
     data object HistoryTimeMustIncrease : StagedPaymentViolation
+
     data object InvalidFulfillmentTransition : StagedPaymentViolation
+
     data object FulfillmentAlreadySet : StagedPaymentViolation
+
     data object CompletionRequiresPaidInFull : StagedPaymentViolation
+
     data object CompletionAlreadyConfirmed : StagedPaymentViolation
+
     data object ConflictingReconciliationFacts : StagedPaymentViolation
+
     data class InvalidSnapshot(
         val problem: StagedPaymentSnapshotProblem,
         val index: Int?,
     ) : StagedPaymentViolation
-    data class DependencyViolation(val cause: DomainViolation) : StagedPaymentViolation
+
+    data class DependencyViolation(
+        val cause: DomainViolation,
+    ) : StagedPaymentViolation
 }
 
 enum class StagedPaymentSnapshotProblem {
@@ -598,36 +674,39 @@ class StagedPayment private constructor(
     val fulfillmentStatus: StagedPaymentFulfillment
         get() = lifecycle.stateHistory.last().fulfillmentStatus
 
-    fun snapshot(): StagedPaymentSnapshot = StagedPaymentSnapshot(
-        ledgerId = ledgerId,
-        relation = StagedPaymentRelationSnapshot(relation.id, relation.memberRefs),
-        lifecycle = StagedPaymentLifecycleSnapshot(
-            lifecycle.id,
-            lifecycle.totalAmount,
-            lifecycle.paidAmount,
-            lifecycle.dueAmount,
-            lifecycle.currency,
-            lifecycle.categoryId,
-            lifecycle.stateHistory,
-        ),
-        installments = installments.map { payment ->
-            StagedPaymentInstallmentSnapshot(
-                payment.id,
-                payment.role,
-                payment.amount,
-                payment.currency,
-                payment.fundingAccountId,
-                payment.transactionId,
-                payment.expensePostingId,
-                payment.assetPostingId,
-                payment.actualPaymentAt,
-                payment.statisticsAt,
-                payment.sourcePaymentAt,
-                payment.sourcePaymentAtText,
-            )
-        },
-        formalTransactions = formalTransactionSnapshot.map(FormalTransaction::toStagedPaymentSnapshot),
-    )
+    fun snapshot(): StagedPaymentSnapshot =
+        StagedPaymentSnapshot(
+            ledgerId = ledgerId,
+            relation = StagedPaymentRelationSnapshot(relation.id, relation.memberRefs),
+            lifecycle =
+                StagedPaymentLifecycleSnapshot(
+                    lifecycle.id,
+                    lifecycle.totalAmount,
+                    lifecycle.paidAmount,
+                    lifecycle.dueAmount,
+                    lifecycle.currency,
+                    lifecycle.categoryId,
+                    lifecycle.stateHistory,
+                ),
+            installments =
+                installments.map { payment ->
+                    StagedPaymentInstallmentSnapshot(
+                        payment.id,
+                        payment.role,
+                        payment.amount,
+                        payment.currency,
+                        payment.fundingAccountId,
+                        payment.transactionId,
+                        payment.expensePostingId,
+                        payment.assetPostingId,
+                        payment.actualPaymentAt,
+                        payment.statisticsAt,
+                        payment.sourcePaymentAt,
+                        payment.sourcePaymentAtText,
+                    )
+                },
+            formalTransactions = formalTransactionSnapshot.map(FormalTransaction::toStagedPaymentSnapshot),
+        )
 
     fun recordInstallment(
         catalog: LedgerCatalog,
@@ -668,8 +747,9 @@ class StagedPayment private constructor(
             }
         }
 
-        val fundingAccount = catalog.account(command.fundingAccountId)
-            ?: return StagedPaymentResult.Failure(StagedPaymentViolation.UnknownRealAccount)
+        val fundingAccount =
+            catalog.account(command.fundingAccountId)
+                ?: return StagedPaymentResult.Failure(StagedPaymentViolation.UnknownRealAccount)
         if (!fundingAccount.realAccount) {
             return StagedPaymentResult.Failure(StagedPaymentViolation.RealFinancialAccountRequired)
         }
@@ -706,74 +786,83 @@ class StagedPayment private constructor(
             return StagedPaymentResult.Failure(StagedPaymentViolation.FinalSourcePaymentMustBeLaterThanDeposit)
         }
 
-        val paidMinor = checkedAdd(lifecycle.paidAmount.minorUnits, command.amount.minorUnits)
-            ?: return StagedPaymentResult.Failure(
-                StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
-            )
-        val negativePayment = checkedNegate(command.amount.minorUnits)
-            ?: return StagedPaymentResult.Failure(
-                StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
-            )
-        val dueMinor = checkedAdd(lifecycle.dueAmount.minorUnits, negativePayment)
-            ?: return StagedPaymentResult.Failure(
-                StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
-            )
+        val paidMinor =
+            checkedAdd(lifecycle.paidAmount.minorUnits, command.amount.minorUnits)
+                ?: return StagedPaymentResult.Failure(
+                    StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
+                )
+        val negativePayment =
+            checkedNegate(command.amount.minorUnits)
+                ?: return StagedPaymentResult.Failure(
+                    StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
+                )
+        val dueMinor =
+            checkedAdd(lifecycle.dueAmount.minorUnits, negativePayment)
+                ?: return StagedPaymentResult.Failure(
+                    StagedPaymentViolation.DependencyViolation(DomainViolation.ArithmeticOverflow),
+                )
         if (dueMinor < 0L) {
             return StagedPaymentResult.Failure(StagedPaymentViolation.PaymentExceedsDue)
         }
 
-        val times = TransactionTimes(
-            occurredAt = command.actualPaymentAt,
-            statisticsAt = command.actualPaymentAt,
-            effectiveAt = command.actualPaymentAt,
-        )
-        val formalTransaction = when (
-            val result = createAssetPaidOrdinaryExpense(
-                catalog = catalog,
-                command = AssetPaidOrdinaryExpenseCommand(
-                    ledgerId = ledgerId,
-                    amount = command.amount,
-                    categoryId = lifecycle.categoryId,
-                    paymentAccountId = command.fundingAccountId,
-                    times = times,
-                ),
-                ids = ids.expenseIds,
+        val times =
+            TransactionTimes(
+                occurredAt = command.actualPaymentAt,
+                statisticsAt = command.actualPaymentAt,
+                effectiveAt = command.actualPaymentAt,
             )
-        ) {
-            is DomainResult.Success -> result.value
-            is DomainResult.Failure -> {
-                return StagedPaymentResult.Failure(
-                    StagedPaymentViolation.DependencyViolation(result.violation),
-                )
+        val formalTransaction =
+            when (
+                val result =
+                    createAssetPaidOrdinaryExpense(
+                        catalog = catalog,
+                        command =
+                            AssetPaidOrdinaryExpenseCommand(
+                                ledgerId = ledgerId,
+                                amount = command.amount,
+                                categoryId = lifecycle.categoryId,
+                                paymentAccountId = command.fundingAccountId,
+                                times = times,
+                            ),
+                        ids = ids.expenseIds,
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> {
+                    return StagedPaymentResult.Failure(
+                        StagedPaymentViolation.DependencyViolation(result.violation),
+                    )
+                }
             }
-        }
 
         val paidAmount = Money.ofMinor(paidMinor, lifecycle.currency)
         val dueAmount = Money.ofMinor(dueMinor, lifecycle.currency)
-        val installment = InstallmentPayment(
-            id = ids.paymentId,
-            role = command.role,
-            amount = command.amount,
-            currency = lifecycle.currency,
-            fundingAccountId = command.fundingAccountId,
-            transactionId = ids.expenseIds.transactionId,
-            expensePostingId = ids.expenseIds.expensePostingId,
-            assetPostingId = ids.expenseIds.paymentPostingId,
-            actualPaymentAt = command.actualPaymentAt,
-            statisticsAt = command.actualPaymentAt,
-            sourceTime = command.sourceTime,
-        )
+        val installment =
+            InstallmentPayment(
+                id = ids.paymentId,
+                role = command.role,
+                amount = command.amount,
+                currency = lifecycle.currency,
+                fundingAccountId = command.fundingAccountId,
+                transactionId = ids.expenseIds.transactionId,
+                expensePostingId = ids.expenseIds.expensePostingId,
+                assetPostingId = ids.expenseIds.paymentPostingId,
+                actualPaymentAt = command.actualPaymentAt,
+                statisticsAt = command.actualPaymentAt,
+                sourceTime = command.sourceTime,
+            )
         val progress = progressFor(paidMinor, dueMinor)
-        val nextLifecycle = lifecycle.append(
-            historyId = ids.historyId,
-            event = StagedPaymentEvent.PAYMENT_CONFIRMED,
-            occurredAt = command.actualPaymentAt,
-            paidAmount = paidAmount,
-            dueAmount = dueAmount,
-            paymentId = ids.paymentId,
-            paymentProgress = progress,
-            fulfillmentStatus = fulfillmentStatus,
-        )
+        val nextLifecycle =
+            lifecycle.append(
+                historyId = ids.historyId,
+                event = StagedPaymentEvent.PAYMENT_CONFIRMED,
+                occurredAt = command.actualPaymentAt,
+                paidAmount = paidAmount,
+                dueAmount = dueAmount,
+                paymentId = ids.paymentId,
+                paymentProgress = progress,
+                fulfillmentStatus = fulfillmentStatus,
+            )
         return StagedPaymentResult.Success(
             StagedPayment(
                 ledgerId = ledgerId,
@@ -798,16 +887,17 @@ class StagedPayment private constructor(
         if (fulfillment == fulfillmentStatus) {
             return StagedPaymentResult.Failure(StagedPaymentViolation.FulfillmentAlreadySet)
         }
-        val nextLifecycle = lifecycle.append(
-            historyId = historyId,
-            event = StagedPaymentEvent.FULFILLMENT_CHANGED,
-            occurredAt = occurredAt,
-            paidAmount = lifecycle.paidAmount,
-            dueAmount = lifecycle.dueAmount,
-            paymentId = null,
-            paymentProgress = paymentProgress,
-            fulfillmentStatus = fulfillment,
-        )
+        val nextLifecycle =
+            lifecycle.append(
+                historyId = historyId,
+                event = StagedPaymentEvent.FULFILLMENT_CHANGED,
+                occurredAt = occurredAt,
+                paidAmount = lifecycle.paidAmount,
+                dueAmount = lifecycle.dueAmount,
+                paymentId = null,
+                paymentProgress = paymentProgress,
+                fulfillmentStatus = fulfillment,
+            )
         return StagedPaymentResult.Success(copyWithLifecycle(nextLifecycle))
     }
 
@@ -823,16 +913,17 @@ class StagedPayment private constructor(
         }
         val identityFailure = validateStateHistoryAppend(historyId, occurredAt)
         if (identityFailure != null) return StagedPaymentResult.Failure(identityFailure)
-        val nextLifecycle = lifecycle.append(
-            historyId = historyId,
-            event = StagedPaymentEvent.COMPLETION_CONFIRMED,
-            occurredAt = occurredAt,
-            paidAmount = lifecycle.paidAmount,
-            dueAmount = lifecycle.dueAmount,
-            paymentId = null,
-            paymentProgress = paymentProgress,
-            fulfillmentStatus = fulfillmentStatus,
-        )
+        val nextLifecycle =
+            lifecycle.append(
+                historyId = historyId,
+                event = StagedPaymentEvent.COMPLETION_CONFIRMED,
+                occurredAt = occurredAt,
+                paidAmount = lifecycle.paidAmount,
+                dueAmount = lifecycle.dueAmount,
+                paymentId = null,
+                paymentProgress = paymentProgress,
+                fulfillmentStatus = fulfillmentStatus,
+            )
         return StagedPaymentResult.Success(copyWithLifecycle(nextLifecycle))
     }
 
@@ -849,16 +940,18 @@ class StagedPayment private constructor(
         }
 
         val ownedPaymentAssetPostingIds = installments.mapTo(mutableSetOf()) { it.assetPostingId }
-        val matchedInstallmentCount = factsByPosting.values.count {
-            it.postingId in ownedPaymentAssetPostingIds &&
-                it.eligible &&
-                it.status == StagedPaymentReconciliationStatus.MATCHED
-        }
-        val status = when {
-            installments.isEmpty() || matchedInstallmentCount == 0 -> StagedPaymentReconciliation.PENDING
-            matchedInstallmentCount < installments.size -> StagedPaymentReconciliation.PARTIAL
-            else -> StagedPaymentReconciliation.COMPLETE
-        }
+        val matchedInstallmentCount =
+            factsByPosting.values.count {
+                it.postingId in ownedPaymentAssetPostingIds &&
+                    it.eligible &&
+                    it.status == StagedPaymentReconciliationStatus.MATCHED
+            }
+        val status =
+            when {
+                installments.isEmpty() || matchedInstallmentCount == 0 -> StagedPaymentReconciliation.PENDING
+                matchedInstallmentCount < installments.size -> StagedPaymentReconciliation.PARTIAL
+                else -> StagedPaymentReconciliation.COMPLETE
+            }
         return StagedPaymentResult.Success(status)
     }
 
@@ -876,9 +969,10 @@ class StagedPayment private constructor(
         if (installments.any { it.id == ids.paymentId } || lifecycle.stateHistory.any { it.id == ids.historyId }) {
             return true
         }
-        val existingPostingIds = formalTransactions.flatMapTo(mutableSetOf()) { formal ->
-            formal.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
-        }
+        val existingPostingIds =
+            formalTransactions.flatMapTo(mutableSetOf()) { formal ->
+                formal.postingSets.flatMap { postingSet -> postingSet.postings.map { it.id } }
+            }
         if (
             ids.expenseIds.expensePostingId == ids.expenseIds.paymentPostingId ||
             ids.expenseIds.expensePostingId in existingPostingIds ||
@@ -888,10 +982,11 @@ class StagedPayment private constructor(
         }
         return installments.any { payment ->
             payment.transactionId == ids.expenseIds.transactionId
-        } || formalTransactions.any { formal ->
-            formal.versions.any { it.id == ids.expenseIds.versionId } ||
-                formal.postingSets.any { it.id == ids.expenseIds.postingSetId }
-        }
+        } ||
+            formalTransactions.any { formal ->
+                formal.versions.any { it.id == ids.expenseIds.versionId } ||
+                    formal.postingSets.any { it.id == ids.expenseIds.postingSetId }
+            }
     }
 
     private fun copyWithLifecycle(nextLifecycle: StagedPaymentLifecycle): StagedPayment =
@@ -923,13 +1018,14 @@ class StagedPayment private constructor(
             lifecycle: StagedPaymentLifecycle,
             installments: List<InstallmentPayment>,
             formalTransactions: List<FormalTransaction>,
-        ): StagedPayment = StagedPayment(
-            ledgerId,
-            relation,
-            lifecycle,
-            installments,
-            formalTransactions,
-        )
+        ): StagedPayment =
+            StagedPayment(
+                ledgerId,
+                relation,
+                lifecycle,
+                installments,
+                formalTransactions,
+            )
     }
 }
 
@@ -941,8 +1037,10 @@ class StagedPayment private constructor(
  * this boundary.
  */
 fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult<StagedPayment> {
-    fun invalid(problem: StagedPaymentSnapshotProblem, index: Int? = null) =
-        StagedPaymentResult.Failure(StagedPaymentViolation.InvalidSnapshot(problem, index))
+    fun invalid(
+        problem: StagedPaymentSnapshotProblem,
+        index: Int? = null,
+    ) = StagedPaymentResult.Failure(StagedPaymentViolation.InvalidSnapshot(problem, index))
 
     val installmentSnapshots = snapshot.installments
     val formalSnapshots = snapshot.formalTransactions
@@ -953,10 +1051,11 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
             return invalid(StagedPaymentSnapshotProblem.RELATION_MEMBERSHIP, index)
         }
     }
-    val expectedMembers = buildSet {
-        add(StagedPaymentMemberRef.Lifecycle(snapshot.lifecycle.id))
-        installmentSnapshots.forEach { add(StagedPaymentMemberRef.Installment(it.id)) }
-    }
+    val expectedMembers =
+        buildSet {
+            add(StagedPaymentMemberRef.Lifecycle(snapshot.lifecycle.id))
+            installmentSnapshots.forEach { add(StagedPaymentMemberRef.Installment(it.id)) }
+        }
     if (relationMembers != expectedMembers) {
         return invalid(StagedPaymentSnapshotProblem.RELATION_MEMBERSHIP)
     }
@@ -997,24 +1096,32 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
             return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
         }
         when (entry.event) {
-            StagedPaymentEvent.GROUP_CREATED -> if (
-                index != 0 || entry.paymentId != null || entry.paidAmount.minorUnits != 0L ||
-                entry.dueAmount != lifecycle.totalAmount ||
-                entry.fulfillmentStatus != StagedPaymentFulfillment.IN_PROGRESS
-            ) {
-                return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
-            }
+            StagedPaymentEvent.GROUP_CREATED ->
+                if (
+                    index != 0 ||
+                    entry.paymentId != null ||
+                    entry.paidAmount.minorUnits != 0L ||
+                    entry.dueAmount != lifecycle.totalAmount ||
+                    entry.fulfillmentStatus != StagedPaymentFulfillment.IN_PROGRESS
+                ) {
+                    return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
+                }
 
             StagedPaymentEvent.PAYMENT_CONFIRMED -> {
-                val payment = installmentSnapshots.getOrNull(paymentIndex)
-                    ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
-                val nextPaid = checkedAdd(expectedPaid, payment.amount.minorUnits)
-                    ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
-                val nextDue = checkedAdd(lifecycle.totalAmount.minorUnits, checkedNegate(nextPaid) ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index))
-                    ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
+                val payment =
+                    installmentSnapshots.getOrNull(paymentIndex)
+                        ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
+                val nextPaid =
+                    checkedAdd(expectedPaid, payment.amount.minorUnits)
+                        ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
+                val nextDue =
+                    checkedAdd(lifecycle.totalAmount.minorUnits, checkedNegate(nextPaid) ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index))
+                        ?: return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
                 if (
-                    entry.paymentId != payment.id || entry.occurredAt != payment.actualPaymentAt ||
-                    entry.paidAmount.minorUnits != nextPaid || entry.dueAmount.minorUnits != nextDue ||
+                    entry.paymentId != payment.id ||
+                    entry.occurredAt != payment.actualPaymentAt ||
+                    entry.paidAmount.minorUnits != nextPaid ||
+                    entry.dueAmount.minorUnits != nextDue ||
                     entry.fulfillmentStatus != fulfillment
                 ) {
                     return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
@@ -1025,7 +1132,8 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
 
             StagedPaymentEvent.FULFILLMENT_CHANGED -> {
                 if (
-                    entry.paymentId != null || fulfillmentChanged ||
+                    entry.paymentId != null ||
+                    fulfillmentChanged ||
                     entry.paidAmount.minorUnits != expectedPaid ||
                     entry.dueAmount.minorUnits != lifecycle.totalAmount.minorUnits - expectedPaid ||
                     fulfillment != StagedPaymentFulfillment.IN_PROGRESS ||
@@ -1039,9 +1147,12 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
 
             StagedPaymentEvent.COMPLETION_CONFIRMED -> {
                 if (
-                    entry.paymentId != null || completionConfirmed ||
-                    entry.paidAmount.minorUnits != expectedPaid || entry.dueAmount.minorUnits != 0L ||
-                    expectedPaid != lifecycle.totalAmount.minorUnits || entry.fulfillmentStatus != fulfillment
+                    entry.paymentId != null ||
+                    completionConfirmed ||
+                    entry.paidAmount.minorUnits != expectedPaid ||
+                    entry.dueAmount.minorUnits != 0L ||
+                    expectedPaid != lifecycle.totalAmount.minorUnits ||
+                    entry.fulfillmentStatus != fulfillment
                 ) {
                     return invalid(StagedPaymentSnapshotProblem.HISTORY, index)
                 }
@@ -1052,22 +1163,26 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
     val latest = history.last()
     if (
         paymentIndex != installmentSnapshots.size ||
-        latest.paidAmount != lifecycle.paidAmount || latest.dueAmount != lifecycle.dueAmount ||
+        latest.paidAmount != lifecycle.paidAmount ||
+        latest.dueAmount != lifecycle.dueAmount ||
         latest.fulfillmentStatus != fulfillment
     ) {
         return invalid(StagedPaymentSnapshotProblem.HISTORY, history.lastIndex)
     }
 
-    val expectedRoles = when (installmentSnapshots.size) {
-        0 -> emptyList()
-        1 -> listOf(StagedPaymentRole.DEPOSIT)
-        2 -> listOf(StagedPaymentRole.DEPOSIT, StagedPaymentRole.FINAL)
-        else -> return invalid(StagedPaymentSnapshotProblem.INSTALLMENT, 2)
-    }
+    val expectedRoles =
+        when (installmentSnapshots.size) {
+            0 -> emptyList()
+            1 -> listOf(StagedPaymentRole.DEPOSIT)
+            2 -> listOf(StagedPaymentRole.DEPOSIT, StagedPaymentRole.FINAL)
+            else -> return invalid(StagedPaymentSnapshotProblem.INSTALLMENT, 2)
+        }
     installmentSnapshots.forEachIndexed { index, payment ->
         if (
-            payment.role != expectedRoles[index] || payment.amount.minorUnits <= 0L ||
-            payment.amount.currency != lifecycle.currency || payment.currency != lifecycle.currency ||
+            payment.role != expectedRoles[index] ||
+            payment.amount.minorUnits <= 0L ||
+            payment.amount.currency != lifecycle.currency ||
+            payment.currency != lifecycle.currency ||
             payment.statisticsAt != payment.actualPaymentAt
         ) {
             return invalid(StagedPaymentSnapshotProblem.INSTALLMENT, index)
@@ -1133,7 +1248,9 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
             return invalid(StagedPaymentSnapshotProblem.SOURCE_TIME, index)
         }
         if (
-            index == 1 && sourceInstant != null && installmentSnapshots[0].sourcePaymentAt != null &&
+            index == 1 &&
+            sourceInstant != null &&
+            installmentSnapshots[0].sourcePaymentAt != null &&
             sourceInstant <= installmentSnapshots[0].sourcePaymentAt!!
         ) {
             return invalid(StagedPaymentSnapshotProblem.SOURCE_TIME, index)
@@ -1142,8 +1259,9 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
 
     val restoredFormals = mutableListOf<FormalTransaction>()
     formalSnapshots.forEachIndexed { index, formal ->
-        val restored = formal.toFormalTransactionOrNull()
-            ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, index)
+        val restored =
+            formal.toFormalTransactionOrNull()
+                ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_TRANSACTION, index)
         restoredFormals += restored
     }
     if (restoredFormals.size != installmentSnapshots.size) {
@@ -1154,10 +1272,12 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
         if (formal.transaction.id != payment.transactionId) {
             return invalid(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, index)
         }
-        val currentVersion = formal.versions.singleOrNull { it.id == formal.transaction.currentVersionId }
-            ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, index)
-        val currentSet = formal.postingSets.singleOrNull { it.id == currentVersion.postingSetId }
-            ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, index)
+        val currentVersion =
+            formal.versions.singleOrNull { it.id == formal.transaction.currentVersionId }
+                ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, index)
+        val currentSet =
+            formal.postingSets.singleOrNull { it.id == currentVersion.postingSetId }
+                ?: return invalid(StagedPaymentSnapshotProblem.FORMAL_LINKAGE, index)
         if (
             formal.transaction.ledgerId != snapshot.ledgerId ||
             formal.transaction.kind != TransactionKind.EXPENSE ||
@@ -1185,23 +1305,24 @@ fun rehydrateStagedPayment(snapshot: StagedPaymentSnapshot): StagedPaymentResult
         }
     }
 
-    val restoredInstallments = installmentSnapshots.map { payment ->
-        InstallmentPayment(
-            payment.id,
-            payment.role,
-            payment.amount,
-            payment.currency,
-            payment.fundingAccountId,
-            payment.transactionId,
-            payment.expensePostingId,
-            payment.assetPostingId,
-            payment.actualPaymentAt,
-            payment.statisticsAt,
-            payment.sourcePaymentAt?.let { instant ->
-                StagedPaymentSourceTime.restoreStructural(instant, checkNotNull(payment.sourcePaymentAtText))
-            },
-        )
-    }
+    val restoredInstallments =
+        installmentSnapshots.map { payment ->
+            InstallmentPayment(
+                payment.id,
+                payment.role,
+                payment.amount,
+                payment.currency,
+                payment.fundingAccountId,
+                payment.transactionId,
+                payment.expensePostingId,
+                payment.assetPostingId,
+                payment.actualPaymentAt,
+                payment.statisticsAt,
+                payment.sourcePaymentAt?.let { instant ->
+                    StagedPaymentSourceTime.restoreStructural(instant, checkNotNull(payment.sourcePaymentAtText))
+                },
+            )
+        }
     return StagedPaymentResult.Success(
         StagedPayment.rehydrate(
             snapshot.ledgerId,
@@ -1221,12 +1342,15 @@ fun createStagedPayment(
     if (command.totalAmount.minorUnits <= 0L) {
         return StagedPaymentResult.Failure(StagedPaymentViolation.TotalAmountMustBePositive)
     }
-    val category = catalog.category(command.categoryId)
-        ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
-    val parentId = category.parentId
-        ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
-    val parent = catalog.category(parentId)
-        ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
+    val category =
+        catalog.category(command.categoryId)
+            ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
+    val parentId =
+        category.parentId
+            ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
+    val parent =
+        catalog.category(parentId)
+            ?: return StagedPaymentResult.Failure(StagedPaymentViolation.SecondaryCategoryRequired)
     if (
         category.ledgerId != command.ledgerId ||
         parent.ledgerId != command.ledgerId ||
@@ -1240,8 +1364,9 @@ fun createStagedPayment(
     if (category.kind != CategoryKind.EXPENSE || parent.kind != CategoryKind.EXPENSE) {
         return StagedPaymentResult.Failure(StagedPaymentViolation.ExpenseCategoryRequired)
     }
-    val expenseAccount = category.postingAccountId?.let(catalog::account)
-        ?: return StagedPaymentResult.Failure(StagedPaymentViolation.ExpenseCategoryRequired)
+    val expenseAccount =
+        category.postingAccountId?.let(catalog::account)
+            ?: return StagedPaymentResult.Failure(StagedPaymentViolation.ExpenseCategoryRequired)
     if (
         expenseAccount.ledgerId != command.ledgerId ||
         expenseAccount.kind != AccountKind.EXPENSE ||
@@ -1253,13 +1378,14 @@ fun createStagedPayment(
         return StagedPaymentResult.Failure(StagedPaymentViolation.SingleCurrencyRequired)
     }
 
-    val lifecycle = StagedPaymentLifecycle.create(
-        id = ids.lifecycleId,
-        totalAmount = command.totalAmount,
-        categoryId = command.categoryId,
-        historyId = ids.historyId,
-        createdAt = command.createdAt,
-    )
+    val lifecycle =
+        StagedPaymentLifecycle.create(
+            id = ids.lifecycleId,
+            totalAmount = command.totalAmount,
+            categoryId = command.categoryId,
+            historyId = ids.historyId,
+            createdAt = command.createdAt,
+        )
     return StagedPaymentResult.Success(
         StagedPayment.create(
             ledgerId = command.ledgerId,
@@ -1269,22 +1395,26 @@ fun createStagedPayment(
     )
 }
 
-private fun progressFor(paidMinor: Long, dueMinor: Long): StagedPaymentProgress =
+private fun progressFor(
+    paidMinor: Long,
+    dueMinor: Long,
+): StagedPaymentProgress =
     when {
         paidMinor == 0L -> StagedPaymentProgress.UNPAID
         dueMinor == 0L -> StagedPaymentProgress.PAID_IN_FULL
         else -> StagedPaymentProgress.PARTIALLY_PAID
     }
 
-private val SOURCE_OFFSET_PATTERN = Regex(
-    "^(?:Z|\\+(?:[01][0-9]|2[0-3]):[0-5][0-9]|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
-)
+private val SOURCE_OFFSET_PATTERN =
+    Regex(
+        "^(?:Z|\\+(?:[01][0-9]|2[0-3]):[0-5][0-9]|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+    )
 
-private val STRICT_RFC3339_PATTERN = Regex(
-    "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" +
-        "(?:\\.[0-9]+)?(?:Z|\\+(?:[01][0-9]|2[0-3]):[0-5][0-9]" +
-        "|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
-)
+private val STRICT_RFC3339_PATTERN =
+    Regex(
+        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" +
+            "(?:\\.[0-9]+)?(?:Z|\\+(?:[01][0-9]|2[0-3]):[0-5][0-9]" +
+            "|-(?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+    )
 
-private fun normalizeZeroOffset(offsetText: String): String =
-    if (offsetText == "Z") "+00:00" else offsetText
+private fun normalizeZeroOffset(offsetText: String): String = if (offsetText == "Z") "+00:00" else offsetText

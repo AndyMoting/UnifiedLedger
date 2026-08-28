@@ -7,10 +7,12 @@ import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateFormalFactory
+import com.unifiedledger.application.ImportCandidateFormalizationInput
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCandidateRejectRequest
 import com.unifiedledger.application.ImportCommitIds
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportConfirmDecisionFields
 import com.unifiedledger.application.ImportConfirmationId
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
@@ -23,13 +25,11 @@ import com.unifiedledger.application.ImportIntakeIds
 import com.unifiedledger.application.ImportIntakeRequest
 import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportReceipt
+import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportReturnedId
 import com.unifiedledger.application.ImportReturnedIdKind
-import com.unifiedledger.application.ImportCandidateFormalizationInput
-import com.unifiedledger.application.ImportConfirmDecisionFields
-import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.ImportStatusIdSource
@@ -42,26 +42,17 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
-import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
-import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
-import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import java.nio.charset.Charset
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -74,7 +65,6 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Instant
 
 /**
  * P4-05 spine end-to-end oracle (frozen spec docs/specs/2026-08-17-p4-05-alipay-ordinary-flows-design.md,
@@ -103,8 +93,7 @@ class ImportSpineAlipayEndToEndTest {
     // exactly two tabs (fields 9/10 trailing tabs) or one tab when the merchant order
     // number is empty. All values are synthetic and provider-neutral.
 
-    private fun metadataLines(): List<String> =
-        (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
+    private fun metadataLines(): List<String> = (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
 
     private fun headerLine(): String = AlipaySourceTokens.HEADER_TOKENS.joinToString(",") + ","
 
@@ -115,46 +104,64 @@ class ImportSpineAlipayEndToEndTest {
         status: String,
         time: String,
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
-    ): String = listOf(
-        time, category, "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        "SYN-SECRET-PRODUCT", direction, amount, "", status,
-        "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
-    ).joinToString(",") + ","
+    ): String =
+        listOf(
+            time,
+            category,
+            "SYN-SECRET-COUNTERPARTY",
+            "SYN-SECRET-ACCOUNT",
+            "SYN-SECRET-PRODUCT",
+            direction,
+            amount,
+            "",
+            status,
+            "SYN-SECRET-TXNO\t",
+            merchOrderNo?.let { "$it\t" } ?: "",
+            "SYN-SECRET-NOTE",
+        ).joinToString(",") + ","
 
     /** Frozen source record rows A-01..A-16 (spec section 1.2), batch-p405-a data area. */
-    private fun batchARows(): List<String> = listOf(
-        recordRow("网上支付", "支出", "128.50", "交易成功", "2026-08-01 12:30:45"),
-        recordRow("扫码支付", "支出", "12.50", "交易成功", "2026-08-05 09:00:00"),
-        recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
-        recordRow("网上支付", "不计收支", "45.60", "交易成功", "2026-08-09 21:15:30"),
-        recordRow("网上支付", "支出", "20.00", "交易关闭", "2026-08-10 09:30:00"),
-        recordRow("其他", "支出", "0.00", "交易成功", "2026-08-10 08:00:20"),
-        recordRow("账户存取", "不计收支", "100.00", "交易成功", "2026-08-10 10:00:00"),
-        recordRow("转账红包", "收入", "8.80", "交易成功", "2026-08-11 09:09:09"),
-        recordRow("网上支付", "不计收支", "128.50", "退款成功", "2026-08-11 11:00:00"),
-        recordRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:00:00"),
-        recordRow("亲友代付", "支出", "66.00", "代付成功", "2026-08-11 13:00:00"),
-        recordRow("神秘交易分类", "支出", "9.90", "交易成功", "2026-08-12 08:45:00"),
-        recordRow("网上支付", "支出", "abc", "交易成功", "2026-08-12 07:30:00"),
-        recordRow("网上支付", "支出", "10.00", "交易成功", "不是时间"),
-        recordRow("网上支付", "支出", "-10.00", "交易成功", "2026-08-12 09:15:00"),
-        recordRow("网上支付", "支出", "10.5", "交易成功", "2026-08-12 09:20:00"),
-    )
+    private fun batchARows(): List<String> =
+        listOf(
+            recordRow("网上支付", "支出", "128.50", "交易成功", "2026-08-01 12:30:45"),
+            recordRow("扫码支付", "支出", "12.50", "交易成功", "2026-08-05 09:00:00"),
+            recordRow("其他", "收入", "88.00", "交易成功", "2026-08-06 18:45:15", merchOrderNo = null),
+            recordRow("网上支付", "不计收支", "45.60", "交易成功", "2026-08-09 21:15:30"),
+            recordRow("网上支付", "支出", "20.00", "交易关闭", "2026-08-10 09:30:00"),
+            recordRow("其他", "支出", "0.00", "交易成功", "2026-08-10 08:00:20"),
+            recordRow("账户存取", "不计收支", "100.00", "交易成功", "2026-08-10 10:00:00"),
+            recordRow("转账红包", "收入", "8.80", "交易成功", "2026-08-11 09:09:09"),
+            recordRow("网上支付", "不计收支", "128.50", "退款成功", "2026-08-11 11:00:00"),
+            recordRow("信用借还", "不计收支", "500.00", "还款", "2026-08-11 12:00:00"),
+            recordRow("亲友代付", "支出", "66.00", "代付成功", "2026-08-11 13:00:00"),
+            recordRow("神秘交易分类", "支出", "9.90", "交易成功", "2026-08-12 08:45:00"),
+            recordRow("网上支付", "支出", "abc", "交易成功", "2026-08-12 07:30:00"),
+            recordRow("网上支付", "支出", "10.00", "交易成功", "不是时间"),
+            recordRow("网上支付", "支出", "-10.00", "交易成功", "2026-08-12 09:15:00"),
+            recordRow("网上支付", "支出", "10.5", "交易成功", "2026-08-12 09:20:00"),
+        )
 
-    private fun csvBytes(dataRows: List<String>): ByteArray = buildString {
-        metadataLines().forEach { append(it).append("\r\n") }
-        append(headerLine()).append("\n")
-        dataRows.forEach { append(it).append("\n") }
-    }.toByteArray(gb18030)
+    private fun csvBytes(dataRows: List<String>): ByteArray =
+        buildString {
+            metadataLines().forEach { append(it).append("\r\n") }
+            append(headerLine()).append("\n")
+            dataRows.forEach { append(it).append("\n") }
+        }.toByteArray(gb18030)
 
     // ---- Assembly helpers (P4-02/P4-03 pattern) ----
 
-    private fun accepted(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Accepted {
+    private fun accepted(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Accepted {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Accepted>(row)
     }
 
-    private fun intakeIds(prefix: String, statusId: String) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        statusId: String,
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
@@ -171,16 +178,20 @@ class ImportSpineAlipayEndToEndTest {
     ) = ImportCommitIds(
         confirmationId = ImportConfirmationId(confirmation),
         statusHistoryId = ImportStatusHistoryId(statusId),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId(tx),
-            versionId = TransactionVersionId(version),
-            postingSetId = PostingSetId(postingSet),
-            postingIds = postingIds.map(::PostingId),
-        ),
+        formalIds =
+            ImportFormalIds(
+                transactionId = TransactionId(tx),
+                versionId = TransactionVersionId(version),
+                postingSetId = PostingSetId(postingSet),
+                postingIds = postingIds.map(::PostingId),
+            ),
     )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -188,8 +199,11 @@ class ImportSpineAlipayEndToEndTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -197,8 +211,11 @@ class ImportSpineAlipayEndToEndTest {
         }
     }
 
-    private class BatchStatusIdSource(private val batches: List<ImportStatusHistoryId>) : ImportStatusIdSource {
+    private class BatchStatusIdSource(
+        private val batches: List<ImportStatusHistoryId>,
+    ) : ImportStatusIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportStatusHistoryId {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "status id batch exhausted" }
@@ -214,28 +231,34 @@ class ImportSpineAlipayEndToEndTest {
     ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
-    private fun catalog(ledgerId: LedgerId): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
-                Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("alipay e2e catalog failure: ${result.violation}")
-    }
+    private fun catalog(ledgerId: LedgerId): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("income-account-salary"), ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-salary"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(CategoryId("category-salary"), ledgerId, parentId = CategoryId("category-primary-salary"), postingAccountId = AccountId("income-account-salary"), active = true, kind = CategoryKind.INCOME),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("alipay e2e catalog failure: ${result.violation}")
+        }
 
     private class Executor(
         val database: LedgerDatabase,
@@ -248,18 +271,17 @@ class ImportSpineAlipayEndToEndTest {
     ) {
         val store = SqlDelightImportSpineStore(database, driver)
 
-        fun intake(request: ImportIntakeRequest): ImportIntakeResult =
-            ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
+        fun intake(request: ImportIntakeRequest): ImportIntakeResult = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
         fun confirm(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
             ConfirmImportCandidate(
-                store, commitIds,
+                store,
+                commitIds,
                 OrdinaryFlowFormalFactory(catalog, ledgerId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).categoryId, (request.decisionFields as ImportConfirmDecisionFields.OrdinaryFlow).fundingAccountId),
                 catalog,
             ).execute(request)
 
-        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult =
-            RejectImportCandidate(store, statusIds).execute(request)
+        fun reject(request: ImportCandidateRejectRequest): ImportCandidateDecisionResult = RejectImportCandidate(store, statusIds).execute(request)
     }
 
     private fun intakeRequest(
@@ -293,10 +315,11 @@ class ImportSpineAlipayEndToEndTest {
         candidateId = ImportCandidateId(candidate),
         expectedContentHash = hash,
         explicitConfirmedAt = confirmedAt,
-        decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(
-            categoryId = CategoryId(category),
-            fundingAccountId = AccountId(funding),
-        ),
+        decisionFields =
+            ImportConfirmDecisionFields.OrdinaryFlow(
+                categoryId = CategoryId(category),
+                fundingAccountId = AccountId(funding),
+            ),
     )
 
     private fun rejectRequest(
@@ -309,41 +332,63 @@ class ImportSpineAlipayEndToEndTest {
         expectedContentHash = hash,
     )
 
-    private fun spineCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countImportRequests().executeAsOne(),
-        database.ledgerQueries.countImportSourceRecords().executeAsOne(),
-        database.ledgerQueries.countImportEvidence().executeAsOne(),
-        database.ledgerQueries.countImportCandidates().executeAsOne(),
-        database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
-        database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
-        database.ledgerQueries.countImportConfirmations().executeAsOne(),
-        database.ledgerQueries.countImportReceipts().executeAsOne(),
-    )
+    private fun spineCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countImportRequests().executeAsOne(),
+            database.ledgerQueries.countImportSourceRecords().executeAsOne(),
+            database.ledgerQueries.countImportEvidence().executeAsOne(),
+            database.ledgerQueries.countImportCandidates().executeAsOne(),
+            database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
+            database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
+            database.ledgerQueries.countImportConfirmations().executeAsOne(),
+            database.ledgerQueries.countImportReceipts().executeAsOne(),
+        )
 
-    private fun formalCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countTransactions().executeAsOne(),
-        database.ledgerQueries.countVersions().executeAsOne(),
-        database.ledgerQueries.countPostings().executeAsOne(),
-    )
+    private fun formalCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countTransactions().executeAsOne(),
+            database.ledgerQueries.countVersions().executeAsOne(),
+            database.ledgerQueries.countPostings().executeAsOne(),
+        )
 
-    private fun scalarText(driver: JdbcSqliteDriver, sql: String): String = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            cursor.next()
-            app.cash.sqldelight.db.QueryResult.Value(cursor.getString(0)!!)
-        },
-        0,
-    ).value
+    private fun scalarText(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): String =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getString(0)!!)
+                },
+                0,
+            ).value
 
     // ---- Case manifest (spec sections 1.3/6) ----
 
     private val frozenECaseIds: List<String> = (1..14).map { "E-%02d".format(it) }
 
     // Each E case registers exactly once, in frozen order, at the test method that owns it.
-    private val registeredECaseIds: List<String> = listOf(
-        "E-01", "E-02", "E-03", "E-04", "E-05", "E-06", "E-07",
-        "E-08", "E-09", "E-10", "E-11", "E-12", "E-13", "E-14",
-    )
+    private val registeredECaseIds: List<String> =
+        listOf(
+            "E-01",
+            "E-02",
+            "E-03",
+            "E-04",
+            "E-05",
+            "E-06",
+            "E-07",
+            "E-08",
+            "E-09",
+            "E-10",
+            "E-11",
+            "E-12",
+            "E-13",
+            "E-14",
+        )
 
     // ---- E-01..E-08, E-10, E-11 ----
 
@@ -359,21 +404,31 @@ class ImportSpineAlipayEndToEndTest {
             val a03 = accepted(rows, 2)
             val a06 = accepted(rows, 5)
             val catalog = catalog(ledgerId)
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("a", "status-a-1"), intakeIds("b", "status-b-1"),
-                    intakeIds("c", "status-c-1"), intakeIds("d", "status-d-1"),
-                ),
-            )
-            val executor = Executor(
-                database, driver, ledgerId, catalog, intakeIds,
-                BatchCommitIdSource(emptyList()), BatchStatusIdSource(emptyList()),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("a", "status-a-1"),
+                        intakeIds("b", "status-b-1"),
+                        intakeIds("c", "status-c-1"),
+                        intakeIds("d", "status-d-1"),
+                    ),
+                )
+            val executor =
+                Executor(
+                    database,
+                    driver,
+                    ledgerId,
+                    catalog,
+                    intakeIds,
+                    BatchCommitIdSource(emptyList()),
+                    BatchStatusIdSource(emptyList()),
+                )
 
             // E-01: parser output drives the intake of A-01 (C1 pending_confirmation).
-            val e01 = assertIs<ImportIntakeResult.Accepted>(
-                executor.intake(intakeRequest(ledgerId, "req-a-intake", 0, a01.facts, a01.completeness)),
-            )
+            val e01 =
+                assertIs<ImportIntakeResult.Accepted>(
+                    executor.intake(intakeRequest(ledgerId, "req-a-intake", 0, a01.facts, a01.completeness)),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.SOURCE, "source-a"),
@@ -401,24 +456,33 @@ class ImportSpineAlipayEndToEndTest {
                         "FROM import_candidate WHERE ledger_id = '${ledgerId.value}' AND candidate_id = 'candidate-a'",
                 ),
             )
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-a").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-a")
+                    .executeAsOne()
+                    .status,
+            )
 
             // E-02: same-request equivalent replay.
-            val e02 = assertIs<ImportIntakeResult.NoChange>(
-                executor.intake(intakeRequest(ledgerId, "req-a-intake", 0, a01.facts, a01.completeness)),
-            )
+            val e02 =
+                assertIs<ImportIntakeResult.NoChange>(
+                    executor.intake(intakeRequest(ledgerId, "req-a-intake", 0, a01.facts, a01.completeness)),
+                )
             assertEquals(e01.receipt, e02.receipt)
             assertEquals("equivalent_replay", e02.reasonCode)
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
             // E-03: confirm C1 -> formal expense transaction with the exact A-01 amount.
-            val commitIdsA = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
+            val commitIdsA =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
             val executorWithCommit = Executor(database, driver, ledgerId, catalog, intakeIds, commitIdsA, BatchStatusIdSource(emptyList()))
-            val e03 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
-            )
+            val e03 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-a"),
@@ -448,17 +512,19 @@ class ImportSpineAlipayEndToEndTest {
             )
 
             // E-04: same-request confirm replay.
-            val e04 = assertIs<ImportCandidateDecisionResult.NoChange>(
-                executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
-            )
+            val e04 =
+                assertIs<ImportCandidateDecisionResult.NoChange>(
+                    executorWithCommit.confirm(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
+                )
             assertEquals(e03.receipt, e04.receipt)
             assertEquals("equivalent_replay", e04.reasonCode)
             assertEquals(1, commitIdsA.calls.get())
 
             // E-05: re-confirm with a new request.
-            val e05 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                executorWithCommit.confirm(confirmRequest(requestId = "req-a-confirm-2", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
-            )
+            val e05 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    executorWithCommit.confirm(confirmRequest(requestId = "req-a-confirm-2", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", e05.diagnostic.code)
             assertEquals(listOf(2L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
 
@@ -471,9 +537,10 @@ class ImportSpineAlipayEndToEndTest {
             // E-07: reject C2 (manual disposition; no confirmation, formal 0/0/0).
             val statusIds = BatchStatusIdSource(listOf(ImportStatusHistoryId("status-b-2")))
             val executorWithReject = Executor(database, driver, ledgerId, catalog, intakeIds, commitIdsA, statusIds)
-            val e07 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                executorWithReject.reject(rejectRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a02.facts))),
-            )
+            val e07 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    executorWithReject.reject(rejectRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a02.facts))),
+                )
             assertEquals(listOf(ImportReturnedId(ImportReturnedIdKind.CANDIDATE, "candidate-b")), e07.returnedIds)
             assertEquals(
                 ImportReceipt(ImportRequestId("req-b-reject"), null, null, ImportCandidateId("candidate-b"), null, null),
@@ -484,83 +551,120 @@ class ImportSpineAlipayEndToEndTest {
 
             // E-08: A-01' intake-level fixture with the same raw identity but a different
             // amount: hard identity collision with zero writes and no ID consumption.
-            val e08 = assertIs<ImportIntakeResult.Rejected>(
-                executor.intake(intakeRequest(ledgerId, "req-a-intake-3", 0, a01.facts.copy(amountMinor = 12851), a01.completeness)),
-            )
+            val e08 =
+                assertIs<ImportIntakeResult.Rejected>(
+                    executor.intake(intakeRequest(ledgerId, "req-a-intake-3", 0, a01.facts.copy(amountMinor = 12851), a01.completeness)),
+                )
             assertEquals("SPINE_IDENTITY_COLLISION", e08.diagnostic.code)
             assertEquals(listOf(6L, 4L, 4L, 4L, 6L, 2L, 1L, 6L), spineCounts(database))
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
 
             // E-10: confirm domain failures, two independent sub-vectors, both zero residue.
             // (a) C3 (A-03 income candidate) with an unknown category.
-            val attemptC = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-c-attempt-1", "status-c-2-attempt-1", "tx-c-attempt-1",
-                        "version-c-attempt-1-v1", "posting-set-c-attempt-1",
-                        listOf("posting-asset-c-attempt-1", "posting-income-c-attempt-1"),
+            val attemptC =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-c-attempt-1",
+                            "status-c-2-attempt-1",
+                            "tx-c-attempt-1",
+                            "version-c-attempt-1-v1",
+                            "posting-set-c-attempt-1",
+                            listOf("posting-asset-c-attempt-1", "posting-income-c-attempt-1"),
+                        ),
                     ),
-                ),
-            )
-            val e10a = assertIs<ImportCandidateDecisionResult.Rejected>(
-                Executor(database, driver, ledgerId, catalog, intakeIds, attemptC, statusIds).confirm(
-                    confirmRequest(
-                        requestId = "req-c-confirm", candidate = "candidate-c", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a03.facts),
-                        category = "category-unknown", confirmedAt = "2026-08-17T11:00:00+08:00",
+                )
+            val e10a =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    Executor(database, driver, ledgerId, catalog, intakeIds, attemptC, statusIds).confirm(
+                        confirmRequest(
+                            requestId = "req-c-confirm",
+                            candidate = "candidate-c",
+                            hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a03.facts),
+                            category = "category-unknown",
+                            confirmedAt = "2026-08-17T11:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e10a.diagnostic.code)
             assertEquals(1, attemptC.calls.get())
             assertEquals(listOf(6L, 4L, 4L, 4L, 6L, 2L, 1L, 6L), spineCounts(database))
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
             // Claim rolled back: C3 stays pending and the request identity stays available.
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-c").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-c")
+                    .executeAsOne()
+                    .status,
+            )
 
             // (b) C4 (A-06 zero-amount candidate): the domain positive-amount invariant
             // fires before any category validation.
-            val attemptD = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-d-attempt-1", "status-d-2-attempt-1", "tx-d-attempt-1",
-                        "version-d-attempt-1-v1", "posting-set-d-attempt-1",
-                        listOf("posting-expense-d-attempt-1", "posting-asset-d-attempt-1"),
+            val attemptD =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-d-attempt-1",
+                            "status-d-2-attempt-1",
+                            "tx-d-attempt-1",
+                            "version-d-attempt-1-v1",
+                            "posting-set-d-attempt-1",
+                            listOf("posting-expense-d-attempt-1", "posting-asset-d-attempt-1"),
+                        ),
                     ),
-                ),
-            )
-            val e10b = assertIs<ImportCandidateDecisionResult.Rejected>(
-                Executor(database, driver, ledgerId, catalog, intakeIds, attemptD, statusIds).confirm(
-                    confirmRequest(
-                        requestId = "req-d-confirm", candidate = "candidate-d", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a06.facts),
-                        category = "category-food", confirmedAt = "2026-08-17T11:30:00+08:00",
+                )
+            val e10b =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    Executor(database, driver, ledgerId, catalog, intakeIds, attemptD, statusIds).confirm(
+                        confirmRequest(
+                            requestId = "req-d-confirm",
+                            candidate = "candidate-d",
+                            hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a06.facts),
+                            category = "category-food",
+                            confirmedAt = "2026-08-17T11:30:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_DOMAIN_VALIDATION_FAILED", e10b.diagnostic.code)
             assertEquals(1, attemptD.calls.get())
             assertEquals(listOf(6L, 4L, 4L, 4L, 6L, 2L, 1L, 6L), spineCounts(database))
             assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-d").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-d")
+                    .executeAsOne()
+                    .status,
+            )
 
             // E-11: corrected retry on the same request identity -> accepted income with the
             // exact A-03 amount (asset +88.00, hidden income account -88.00).
-            val batch2 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-c", "status-c-2", "tx-c",
-                        "version-c-v1", "posting-set-c",
-                        listOf("posting-asset-c", "posting-income-c"),
+            val batch2 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-c",
+                            "status-c-2",
+                            "tx-c",
+                            "version-c-v1",
+                            "posting-set-c",
+                            listOf("posting-asset-c", "posting-income-c"),
+                        ),
                     ),
-                ),
-            )
-            val e11 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                Executor(database, driver, ledgerId, catalog, intakeIds, batch2, statusIds).confirm(
-                    confirmRequest(
-                        requestId = "req-c-confirm", candidate = "candidate-c", hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a03.facts),
-                        category = "category-salary", confirmedAt = "2026-08-17T11:00:00+08:00",
+                )
+            val e11 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    Executor(database, driver, ledgerId, catalog, intakeIds, batch2, statusIds).confirm(
+                        confirmRequest(
+                            requestId = "req-c-confirm",
+                            candidate = "candidate-c",
+                            hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a03.facts),
+                            category = "category-salary",
+                            confirmedAt = "2026-08-17T11:00:00+08:00",
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals(
                 listOf(
                     ImportReturnedId(ImportReturnedIdKind.CONFIRMATION, "confirmation-c"),
@@ -596,13 +700,14 @@ class ImportSpineAlipayEndToEndTest {
             // The shared ID source must be consumed exactly once: only the winning first
             // request allocates IDs; the loser leaves zero residue and consumes nothing.
             val sharedIds = BatchIntakeIdSource(listOf(intakeIds("a", "status-a-1")))
-            val results = concurrentExecute(
-                url,
-                listOf(
-                    { intakeOn(url, sharedIds, a01) },
-                    { intakeOn(url, sharedIds, a01) },
-                ),
-            )
+            val results =
+                concurrentExecute(
+                    url,
+                    listOf(
+                        { intakeOn(url, sharedIds, a01) },
+                        { intakeOn(url, sharedIds, a01) },
+                    ),
+                )
             assertEquals(1, results.count { it is ImportIntakeResult.Accepted })
             assertEquals(1, results.count { it is ImportIntakeResult.NoChange })
             assertEquals(1, sharedIds.calls.get())
@@ -632,9 +737,10 @@ class ImportSpineAlipayEndToEndTest {
 
             // The parse diagnostic multiset is the frozen P-17 11-entry set (message is
             // never compared, D-097:1459); diagnostics never reach any persistence.
-            val multiset = result.rows
-                .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
-                .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
+            val multiset =
+                result.rows
+                    .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
+                    .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
             assertEquals(
                 listOf(
                     Triple("REQUIRED_FACT_UNRESOLVED", 3, "direction"),
@@ -655,16 +761,27 @@ class ImportSpineAlipayEndToEndTest {
             // Seven intakes in workbook order under the D-series naming; the ID source holds
             // exactly seven batches, so any rejected-row intake would exhaust it and fail.
             val batches = acceptedRows.mapIndexed { index, _ -> intakeIds("d${index + 1}", "status-d${index + 1}-1") }
-            val executor = Executor(
-                database, driver, batchLedgerId, catalog(batchLedgerId),
-                BatchIntakeIdSource(batches), BatchCommitIdSource(emptyList()), BatchStatusIdSource(emptyList()),
-            )
+            val executor =
+                Executor(
+                    database,
+                    driver,
+                    batchLedgerId,
+                    catalog(batchLedgerId),
+                    BatchIntakeIdSource(batches),
+                    BatchCommitIdSource(emptyList()),
+                    BatchStatusIdSource(emptyList()),
+                )
             acceptedRows.forEach { row ->
                 assertIs<ImportIntakeResult.Accepted>(
                     executor.intake(
                         intakeRequest(
-                            batchLedgerId, "req-batch-${row.recordOrdinal}", row.recordOrdinal, row.facts, row.completeness,
-                            row.recordKind, row.paymentProfile,
+                            batchLedgerId,
+                            "req-batch-${row.recordOrdinal}",
+                            row.recordOrdinal,
+                            row.facts,
+                            row.completeness,
+                            row.recordKind,
+                            row.paymentProfile,
                         ),
                     ),
                 )
@@ -712,12 +829,13 @@ class ImportSpineAlipayEndToEndTest {
             // Privacy: the metadata area and the non-persisted columns (交易对方/对方账号/商品说明/
             // 收/付款方式/交易订单号/商家订单号/备注 — the real layout has no 交易号 column, spec §9.2)
             // never reach any persisted column.
-            val leaked = scalarText(
-                driver,
-                "SELECT COUNT(*) FROM import_source_record WHERE ledger_id = '${batchLedgerId.value}' AND (" +
-                    "input_ref LIKE '%SYN-%' OR content_hash LIKE '%SYN-%' OR currency_code LIKE '%SYN-%' OR " +
-                    "occurred_at LIKE '%SYN-%' OR direction_token LIKE '%SYN-%' OR status_token LIKE '%SYN-%')",
-            )
+            val leaked =
+                scalarText(
+                    driver,
+                    "SELECT COUNT(*) FROM import_source_record WHERE ledger_id = '${batchLedgerId.value}' AND (" +
+                        "input_ref LIKE '%SYN-%' OR content_hash LIKE '%SYN-%' OR currency_code LIKE '%SYN-%' OR " +
+                        "occurred_at LIKE '%SYN-%' OR direction_token LIKE '%SYN-%' OR status_token LIKE '%SYN-%')",
+                )
             assertEquals("0", leaked)
             assertTrue(rejectedRows.all { row -> row.diagnostics.all { it.inputRef == inputRef } })
         } finally {
@@ -737,10 +855,12 @@ class ImportSpineAlipayEndToEndTest {
             val a01 = accepted(AlipayCsvParser.parse(inputRef, csvBytes(batchARows())).rows, 0)
 
             // E-13: intake failure after the candidate insert.
-            val failingStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
-            )
+            val failingStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
+                )
             val batch1 = BatchIntakeIdSource(listOf(intakeIds("a-attempt-1", "status-a-1-attempt-1")))
             assertFailsWith<IllegalStateException> {
                 ExecuteImportIntake(failingStore, batch1, ImportContentFingerprint()).execute(
@@ -758,22 +878,29 @@ class ImportSpineAlipayEndToEndTest {
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
             // E-14: confirm failure after the formal persist.
-            val failingConfirmStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
-            )
-            val attempt1 = BatchCommitIdSource(
-                listOf(
-                    commitIds(
-                        "confirmation-a-attempt-1", "status-a-2-attempt-1", "tx-a-attempt-1",
-                        "version-a-attempt-1-v1", "posting-set-a-attempt-1",
-                        listOf("posting-expense-a-attempt-1", "posting-asset-a-attempt-1"),
+            val failingConfirmStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+                )
+            val attempt1 =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds(
+                            "confirmation-a-attempt-1",
+                            "status-a-2-attempt-1",
+                            "tx-a-attempt-1",
+                            "version-a-attempt-1-v1",
+                            "posting-set-a-attempt-1",
+                            listOf("posting-expense-a-attempt-1", "posting-asset-a-attempt-1"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertFailsWith<IllegalStateException> {
                 ConfirmImportCandidate(
-                    failingConfirmStore, attempt1,
+                    failingConfirmStore,
+                    attempt1,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
                     catalog,
                 ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts)))
@@ -781,12 +908,14 @@ class ImportSpineAlipayEndToEndTest {
             assertEquals(1, attempt1.calls.get())
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
-            val confirmBatch2 = BatchCommitIdSource(
-                listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
-            )
+            val confirmBatch2 =
+                BatchCommitIdSource(
+                    listOf(commitIds("confirmation-a", "status-a-2", "tx-a", "version-a-v1", "posting-set-a", listOf("posting-expense-a", "posting-asset-a"))),
+                )
             assertIs<ImportCandidateDecisionResult.Accepted>(
                 ConfirmImportCandidate(
-                    SqlDelightImportSpineStore(database, driver), confirmBatch2,
+                    SqlDelightImportSpineStore(database, driver),
+                    confirmBatch2,
                     OrdinaryFlowFormalFactory(catalog, ledgerId, CategoryId("category-food"), AccountId("account-asset-a")),
                     catalog,
                 ).execute(confirmRequest(hash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, a01.facts))),
@@ -832,7 +961,11 @@ class ImportSpineAlipayEndToEndTest {
 
     // ---- Concurrency plumbing (P4-02 test pattern) ----
 
-    private fun intakeOn(url: String, ids: ImportIntakeIdSource, row: AlipayRowResult.Accepted): ImportIntakeResult =
+    private fun intakeOn(
+        url: String,
+        ids: ImportIntakeIdSource,
+        row: AlipayRowResult.Accepted,
+    ): ImportIntakeResult =
         JdbcSqliteDriver(url).use { driver ->
             val database = LedgerDatabase(driver)
             ExecuteImportIntake(
@@ -842,18 +975,22 @@ class ImportSpineAlipayEndToEndTest {
             ).execute(intakeRequest(ledgerId, "req-a-intake", row.recordOrdinal, row.facts, row.completeness))
         }
 
-    private fun concurrentExecute(url: String, operations: List<() -> Any>): List<Any> {
+    private fun concurrentExecute(
+        url: String,
+        operations: List<() -> Any>,
+    ): List<Any> {
         val pool = Executors.newFixedThreadPool(operations.size)
         val ready = CountDownLatch(operations.size)
         val start = CountDownLatch(1)
         return try {
-            val futures = operations.map { operation ->
-                pool.submit<Any> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    operation()
+            val futures =
+                operations.map { operation ->
+                    pool.submit<Any> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        operation()
+                    }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(10, TimeUnit.SECONDS) }

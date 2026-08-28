@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.Rg08ExecutionResult
 import com.unifiedledger.application.Rg08FixtureCase
 import com.unifiedledger.application.Rg08Operation
@@ -20,9 +21,7 @@ import com.unifiedledger.application.Rg11Operation
 import com.unifiedledger.application.Rg11Snapshot
 import com.unifiedledger.application.Rg12ExecutionResult
 import com.unifiedledger.application.Rg12FixtureCase
-import com.unifiedledger.application.Rg12Operation
 import com.unifiedledger.application.Rg12Snapshot
-import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.adaptRg08Fixture
 import com.unifiedledger.application.adaptRg09Fixture
 import com.unifiedledger.application.adaptRg10Fixture
@@ -76,7 +75,6 @@ import kotlin.time.Instant
  * RG-12 stays on its frozen fixture ledger (`ledger-rg-12`).
  */
 class MultiRgStoreCoexistenceTest {
-
     @Test
     fun testMultiRgCoexistence_commitReopenSnapshotEquality() {
         val path = Files.createTempFile("ledger-data-multirg-coexistence-", ".db")
@@ -106,18 +104,22 @@ class MultiRgStoreCoexistenceTest {
                 // ops carry no fingerprint gate and follow in the same uninterrupted run.
                 val fixture09 = loadFixture09()
                 val store09 = store09(database, driver, fixture09)
-                val preview09 = fixture09.operations
-                    .first { it.operation is Rg09Operation.PreviewTargetBalance }
-                    .operation as Rg09Operation.PreviewTargetBalance
-                val confirm09 = fixture09.operations
-                    .first { it.operation is Rg09Operation.ConfirmBalanceAdjustment }
-                    .operation as Rg09Operation.ConfirmBalanceAdjustment
-                val transfer09 = fixture09.operations
-                    .first { it.operation is Rg09Operation.ConfirmRealTransfer }
-                    .operation as Rg09Operation.ConfirmRealTransfer
-                val allocation09 = fixture09.operations
-                    .first { it.operation is Rg09Operation.ConfirmExplanationAllocation }
-                    .operation as Rg09Operation.ConfirmExplanationAllocation
+                val preview09 =
+                    fixture09.operations
+                        .first { it.operation is Rg09Operation.PreviewTargetBalance }
+                        .operation as Rg09Operation.PreviewTargetBalance
+                val confirm09 =
+                    fixture09.operations
+                        .first { it.operation is Rg09Operation.ConfirmBalanceAdjustment }
+                        .operation as Rg09Operation.ConfirmBalanceAdjustment
+                val transfer09 =
+                    fixture09.operations
+                        .first { it.operation is Rg09Operation.ConfirmRealTransfer }
+                        .operation as Rg09Operation.ConfirmRealTransfer
+                val allocation09 =
+                    fixture09.operations
+                        .first { it.operation is Rg09Operation.ConfirmExplanationAllocation }
+                        .operation as Rg09Operation.ConfirmExplanationAllocation
                 val opening09 = fixture09.openingTransactions.single()
                 expectedStatistics.getOrPut(fixture09.ledgerId) { mutableMapOf() }.apply {
                     put(opening09.formalTransaction.transaction.id.value, opening09.statisticsAtText)
@@ -141,7 +143,10 @@ class MultiRgStoreCoexistenceTest {
                     put(
                         opening08.formalTransaction.transaction.id.value,
                         opening08.statisticsAtText
-                            ?: opening08.formalTransaction.versions.last().times.statisticsAt.toString(),
+                            ?: opening08.formalTransaction.versions
+                                .last()
+                                .times.statisticsAt
+                                .toString(),
                     )
                     put(lendOperation.ids.transactionId.value, lendOperation.input.actualAtText)
                 }
@@ -150,15 +155,18 @@ class MultiRgStoreCoexistenceTest {
                 // RG-10: the main path (recharge, spend, expiry reminder, expiry).
                 val fixture10 = loadFixture10()
                 val store10 = store10(database, driver, fixture10)
-                val recharge10 = fixture10.operations
-                    .first { it.operation is Rg10Operation.ConfirmStoredValueRecharge }
-                    .operation as Rg10Operation.ConfirmStoredValueRecharge
-                val spend10 = fixture10.operations
-                    .first { it.operation is Rg10Operation.ConfirmStoredValueSpend }
-                    .operation as Rg10Operation.ConfirmStoredValueSpend
-                val expiryLoss10 = fixture10.operations
-                    .first { it.operation is Rg10Operation.ConfirmStoredValueExpiryLoss }
-                    .operation as Rg10Operation.ConfirmStoredValueExpiryLoss
+                val recharge10 =
+                    fixture10.operations
+                        .first { it.operation is Rg10Operation.ConfirmStoredValueRecharge }
+                        .operation as Rg10Operation.ConfirmStoredValueRecharge
+                val spend10 =
+                    fixture10.operations
+                        .first { it.operation is Rg10Operation.ConfirmStoredValueSpend }
+                        .operation as Rg10Operation.ConfirmStoredValueSpend
+                val expiryLoss10 =
+                    fixture10.operations
+                        .first { it.operation is Rg10Operation.ConfirmStoredValueExpiryLoss }
+                        .operation as Rg10Operation.ConfirmStoredValueExpiryLoss
                 val opening10 = fixture10.openingTransactions.single()
                 expectedStatistics.getOrPut(fixture10.ledgerId) { mutableMapOf() }.apply {
                     put(opening10.formalTransaction.transaction.id.value, opening10.statisticsAtText)
@@ -173,7 +181,8 @@ class MultiRgStoreCoexistenceTest {
                 // RG-11: create the periodic allocation.
                 val store11 = SqlDelightRg11Store(database, driver, rg11Catalog())
                 val create11 = createOperation11()
-                expectedStatistics.getOrPut(LEDGER_A) { mutableMapOf() }
+                expectedStatistics
+                    .getOrPut(LEDGER_A) { mutableMapOf() }
                     .put(TX_1_11.value, create11.input.occurredAtText)
                 assertIs<Rg11ExecutionResult.Accepted>(
                     store11.commit(create11),
@@ -185,8 +194,13 @@ class MultiRgStoreCoexistenceTest {
                 val fixture12 = loadFixture12()
                 val store12 = store12(database, driver, fixture12, "root-correction")
                 val correct = fixture12.operations.single { it.id == "root-correction-correct" }
-                val opening12 = fixture12.baselines.getValue("root-correction").formalTransactions.single()
-                expectedStatistics.getOrPut(fixture12.ledgerId) { mutableMapOf() }
+                val opening12 =
+                    fixture12.baselines
+                        .getValue("root-correction")
+                        .formalTransactions
+                        .single()
+                expectedStatistics
+                    .getOrPut(fixture12.ledgerId) { mutableMapOf() }
                     .put("root-correction-transaction", opening12.statisticsAtText)
                 assertIs<Rg12ExecutionResult.Accepted>(
                     store12.commit(correct.operation),
@@ -203,10 +217,18 @@ class MultiRgStoreCoexistenceTest {
 
                 // (a) The shared table holds a metadata row for every loaded transaction
                 // and all five RGs contributed at least one row.
-                val sharedLedgerA = database.ledgerQueries.selectFormalTransactionMetadata(LEDGER_A.value)
-                    .executeAsList().map { it.transaction_id }.toSet()
-                val sharedLedger12 = database.ledgerQueries.selectFormalTransactionMetadata(LEDGER_12.value)
-                    .executeAsList().map { it.transaction_id }.toSet()
+                val sharedLedgerA =
+                    database.ledgerQueries
+                        .selectFormalTransactionMetadata(LEDGER_A.value)
+                        .executeAsList()
+                        .map { it.transaction_id }
+                        .toSet()
+                val sharedLedger12 =
+                    database.ledgerQueries
+                        .selectFormalTransactionMetadata(LEDGER_12.value)
+                        .executeAsList()
+                        .map { it.transaction_id }
+                        .toSet()
                 assertTrue(
                     sharedLedgerA.containsAll(snapshot08.formalTransactions.map { it.formalTransaction.transaction.id.value }),
                 )
@@ -266,14 +288,20 @@ class MultiRgStoreCoexistenceTest {
         ledger: LedgerId,
         expected: Map<String, String?>,
     ) {
-        val shared = database.ledgerQueries.selectFormalTransactionMetadata(ledger.value)
-            .executeAsList().associate { it.transaction_id to it.statistics_at_text }
+        val shared =
+            database.ledgerQueries
+                .selectFormalTransactionMetadata(ledger.value)
+                .executeAsList()
+                .associate { it.transaction_id to it.statistics_at_text }
         expected.forEach { (transactionId, statisticsAtText) ->
             assertEquals(statisticsAtText, shared[transactionId], "shared statistics_at_text for $transactionId")
         }
     }
 
-    private fun assertPersistedSnapshotEquals08(expected: Rg08Snapshot, actual: Rg08Snapshot) {
+    private fun assertPersistedSnapshotEquals08(
+        expected: Rg08Snapshot,
+        actual: Rg08Snapshot,
+    ) {
         assertEquals(expected.formalTransactions.map(::formalProjection08), actual.formalTransactions.map(::formalProjection08))
         assertEquals(expected.positions, actual.positions)
         assertEquals(expected.settlements, actual.settlements)
@@ -290,7 +318,10 @@ class MultiRgStoreCoexistenceTest {
         assertEquals(expected.counterpartyNames, actual.counterpartyNames)
     }
 
-    private fun assertPersistedSnapshotEquals09(expected: Rg09Snapshot, actual: Rg09Snapshot) {
+    private fun assertPersistedSnapshotEquals09(
+        expected: Rg09Snapshot,
+        actual: Rg09Snapshot,
+    ) {
         assertEquals(expected.formalTransactions.map(::formalProjection09), actual.formalTransactions.map(::formalProjection09))
         assertEquals(expected.observations, actual.observations)
         assertEquals(expected.candidates, actual.candidates)
@@ -306,7 +337,10 @@ class MultiRgStoreCoexistenceTest {
         assertEquals(expected.reconciliation, actual.reconciliation)
     }
 
-    private fun assertPersistedSnapshotEquals10(expected: Rg10Snapshot, actual: Rg10Snapshot) {
+    private fun assertPersistedSnapshotEquals10(
+        expected: Rg10Snapshot,
+        actual: Rg10Snapshot,
+    ) {
         assertEquals(expected.formalTransactions.map(::formalProjection10), actual.formalTransactions.map(::formalProjection10))
         assertEquals(expected.lots, actual.lots)
         assertEquals(expected.consumptions, actual.consumptions)
@@ -325,7 +359,10 @@ class MultiRgStoreCoexistenceTest {
         assertEquals(expected.reconciliation, actual.reconciliation)
     }
 
-    private fun assertPersistedSnapshotEquals11(expected: Rg11Snapshot, actual: Rg11Snapshot) {
+    private fun assertPersistedSnapshotEquals11(
+        expected: Rg11Snapshot,
+        actual: Rg11Snapshot,
+    ) {
         assertEquals(expected.formalTransactions.map(::formalProjection11), actual.formalTransactions.map(::formalProjection11))
         assertEquals(expected.schedules, actual.schedules)
         assertEquals(expected.revisions, actual.revisions)
@@ -339,7 +376,10 @@ class MultiRgStoreCoexistenceTest {
         assertEquals(expected.derivedStatuses, actual.derivedStatuses)
     }
 
-    private fun assertPersistedSnapshotEquals12(expected: Rg12Snapshot, actual: Rg12Snapshot) {
+    private fun assertPersistedSnapshotEquals12(
+        expected: Rg12Snapshot,
+        actual: Rg12Snapshot,
+    ) {
         assertEquals(expected.formalTransactions.map(::formalProjection12), actual.formalTransactions.map(::formalProjection12))
         assertEquals(expected.postingSemantics, actual.postingSemantics)
         assertEquals(expected.reconciliationMatches, actual.reconciliationMatches)
@@ -354,53 +394,58 @@ class MultiRgStoreCoexistenceTest {
         assertEquals(expected.reportPeriods, actual.reportPeriods)
     }
 
-    private fun formalProjection08(record: com.unifiedledger.application.Rg08FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection08(record: com.unifiedledger.application.Rg08FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
-    private fun formalProjection09(record: com.unifiedledger.application.Rg09FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection09(record: com.unifiedledger.application.Rg09FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
-    private fun formalProjection10(record: com.unifiedledger.application.Rg10FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection10(record: com.unifiedledger.application.Rg10FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
-    private fun formalProjection11(record: com.unifiedledger.application.Rg11FormalTransactionRecord) = FormalRecordProjection11(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-        versionConfirmationIds = record.versionConfirmationIds,
-    )
+    private fun formalProjection11(record: com.unifiedledger.application.Rg11FormalTransactionRecord) =
+        FormalRecordProjection11(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+            versionConfirmationIds = record.versionConfirmationIds,
+        )
 
-    private fun formalProjection12(record: com.unifiedledger.application.Rg12FormalTransactionRecord) = FormalRecordProjection12(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-        versionCreatedAtTexts = record.versionCreatedAtTexts,
-        versionConfirmationIds = record.versionConfirmationIds,
-    )
+    private fun formalProjection12(record: com.unifiedledger.application.Rg12FormalTransactionRecord) =
+        FormalRecordProjection12(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets = record.formalTransaction.postingSets.map { PostingSetProjection(it.id, it.postings) },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+            versionCreatedAtTexts = record.versionCreatedAtTexts,
+            versionConfirmationIds = record.versionConfirmationIds,
+        )
 
     private data class FormalRecordProjection(
         val transaction: Transaction,
@@ -441,89 +486,98 @@ class MultiRgStoreCoexistenceTest {
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         fixture: Rg08FixtureCase,
-    ): SqlDelightRg08Store = SqlDelightRg08Store(
-        database,
-        driver,
-        fixture.catalog,
-        fixture.lendingCatalog,
-        fixture.openingTransactions,
-    )
+    ): SqlDelightRg08Store =
+        SqlDelightRg08Store(
+            database,
+            driver,
+            fixture.catalog,
+            fixture.lendingCatalog,
+            fixture.openingTransactions,
+        )
 
     private fun store09(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         fixture: Rg09FixtureCase,
-    ): SqlDelightRg09Store = SqlDelightRg09Store(
-        database,
-        driver,
-        fixture.catalog,
-        fixture.openingTransactions,
-    )
+    ): SqlDelightRg09Store =
+        SqlDelightRg09Store(
+            database,
+            driver,
+            fixture.catalog,
+            fixture.openingTransactions,
+        )
 
     private fun store10(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         fixture: Rg10FixtureCase,
-    ): SqlDelightRg10Store = SqlDelightRg10Store(
-        database,
-        driver,
-        fixture.catalog,
-        fixture.openingTransactions,
-    )
+    ): SqlDelightRg10Store =
+        SqlDelightRg10Store(
+            database,
+            driver,
+            fixture.catalog,
+            fixture.openingTransactions,
+        )
 
     private fun store12(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
         fixture: Rg12FixtureCase,
         rootId: String,
-    ): SqlDelightRg12Store = SqlDelightRg12Store(
-        database,
-        driver,
-        fixture.catalogs.getValue(rootId),
-        fixture.baselines.getValue(rootId),
-    )
+    ): SqlDelightRg12Store =
+        SqlDelightRg12Store(
+            database,
+            driver,
+            fixture.catalogs.getValue(rootId),
+            fixture.baselines.getValue(rootId),
+        )
 
     private fun rg11Catalog(): LedgerCatalog {
-        val accounts = listOf(
-            Account(PAYMENT_ACCOUNT, LEDGER_A, AccountKind.ASSET, CNY, ownedByUser = true, realAccount = true),
-            Account(PREPAID_ACCOUNT, LEDGER_A, AccountKind.ASSET, CNY, ownedByUser = true, realAccount = false),
-            Account(EXPENSE_ACCOUNT, LEDGER_A, AccountKind.EXPENSE, CNY, ownedByUser = false, realAccount = false),
-        )
-        val categories = listOf(
-            Category(CATEGORY, LEDGER_A, parentId = CategoryId("root"), postingAccountId = EXPENSE_ACCOUNT, active = true),
-        )
+        val accounts =
+            listOf(
+                Account(PAYMENT_ACCOUNT, LEDGER_A, AccountKind.ASSET, CNY, ownedByUser = true, realAccount = true),
+                Account(PREPAID_ACCOUNT, LEDGER_A, AccountKind.ASSET, CNY, ownedByUser = true, realAccount = false),
+                Account(EXPENSE_ACCOUNT, LEDGER_A, AccountKind.EXPENSE, CNY, ownedByUser = false, realAccount = false),
+            )
+        val categories =
+            listOf(
+                Category(CATEGORY, LEDGER_A, parentId = CategoryId("root"), postingAccountId = EXPENSE_ACCOUNT, active = true),
+            )
         return when (val created = LedgerCatalog.create(accounts, categories)) {
             is DomainResult.Success -> created.value
             is DomainResult.Failure -> error("invalid test catalog")
         }
     }
 
-    private fun createOperation11(): Rg11Operation.CreatePeriodicAllocation = Rg11Operation.CreatePeriodicAllocation(
-        ledgerId = LEDGER_A,
-        input = Rg11CreateInput(
-            requestId = REQUEST_CREATE,
-            paymentAccountId = PAYMENT_ACCOUNT,
-            prepaidAccountId = PREPAID_ACCOUNT,
-            categoryId = CATEGORY,
-            amount = Money.ofMinor(10_000L, CNY),
-            currency = CNY,
-            startAt = START_AT,
-            anchor = PeriodicAllocationAnchor.MonthEnd,
-            explicitConfirmation = true,
-            occurredAt = START_AT,
-            installmentCount = 3,
-        ),
-        ids = Rg11CreateIds(
-            transactionId = TX_1_11,
-            versionId = TransactionVersionId("version-purchase-1"),
-            postingSetId = PostingSetId("posting-set-1"),
-            paymentPostingId = PostingId("payment-posting-1"),
-            prepaidPostingId = PostingId("prepaid-posting-1"),
-            scheduleId = "schedule-1",
-            revisionId = "revision-1",
-            installmentIds = listOf("installment-1", "installment-2", "installment-3"),
-        ),
-    )
+    private fun createOperation11(): Rg11Operation.CreatePeriodicAllocation =
+        Rg11Operation.CreatePeriodicAllocation(
+            ledgerId = LEDGER_A,
+            input =
+                Rg11CreateInput(
+                    requestId = REQUEST_CREATE,
+                    paymentAccountId = PAYMENT_ACCOUNT,
+                    prepaidAccountId = PREPAID_ACCOUNT,
+                    categoryId = CATEGORY,
+                    amount = Money.ofMinor(10_000L, CNY),
+                    currency = CNY,
+                    startAt = START_AT,
+                    anchor = PeriodicAllocationAnchor.MonthEnd,
+                    explicitConfirmation = true,
+                    occurredAt = START_AT,
+                    installmentCount = 3,
+                ),
+            ids =
+                Rg11CreateIds(
+                    transactionId = TX_1_11,
+                    versionId = TransactionVersionId("version-purchase-1"),
+                    postingSetId = PostingSetId("posting-set-1"),
+                    paymentPostingId = PostingId("payment-posting-1"),
+                    prepaidPostingId = PostingId("prepaid-posting-1"),
+                    scheduleId = "schedule-1",
+                    revisionId = "revision-1",
+                    installmentIds = listOf("installment-1", "installment-2", "installment-3"),
+                ),
+        )
 
     private fun loadFixture08(): Rg08FixtureCase =
         adaptRg08Fixture(
@@ -558,10 +612,11 @@ class MultiRgStoreCoexistenceTest {
         error("repository root not found")
     }
 
-    private fun sqliteProperties(): Properties = Properties().apply {
-        setProperty("foreign_keys", "true")
-        setProperty("busy_timeout", "5000")
-    }
+    private fun sqliteProperties(): Properties =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+            setProperty("busy_timeout", "5000")
+        }
 
     private companion object {
         val CNY = CurrencyUnit("CNY", 2)
@@ -571,6 +626,7 @@ class MultiRgStoreCoexistenceTest {
         val PREPAID_ACCOUNT = AccountId("prepaid-account-a")
         val EXPENSE_ACCOUNT = AccountId("expense-account-a")
         val CATEGORY = CategoryId("category-a")
+
         // 2026-01-31T00:00:00+08:00 is the month-end anchor of January 2026.
         val START_AT = Instant.parse("2026-01-30T16:00:00Z")
         val REQUEST_CREATE = RequestId("request-create-1")

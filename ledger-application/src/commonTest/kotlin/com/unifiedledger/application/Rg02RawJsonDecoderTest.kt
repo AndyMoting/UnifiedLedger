@@ -14,9 +14,24 @@ class Rg02RawJsonDecoderTest {
         assertEquals("request-create", decoded.retryRequestId)
         assertEquals(Rg02JsonField.Value(true), decoded.create.input.explicitConfirmation)
         assertEquals(true, decoded.create.expected.effective)
-        assertEquals(AccountKind.ASSET, decoded.catalog.accounts.single().kind)
-        assertEquals(true, decoded.catalog.accounts.single().ownedByUser)
-        assertEquals(CategoryKind.INCOME, decoded.catalog.categories.single().kind)
+        assertEquals(
+            AccountKind.ASSET,
+            decoded.catalog.accounts
+                .single()
+                .kind,
+        )
+        assertEquals(
+            true,
+            decoded.catalog.accounts
+                .single()
+                .ownedByUser,
+        )
+        assertEquals(
+            CategoryKind.INCOME,
+            decoded.catalog.categories
+                .single()
+                .kind,
+        )
     }
 
     @Test
@@ -55,12 +70,13 @@ class Rg02RawJsonDecoderTest {
 
     @Test
     fun `case metadata is frozen even when request and case values change together`() {
-        val mutations = listOf(
-            validRaw().replace("\"currency\":\"CNY\"", "\"currency\":\"USD\"") to "$.case.currency",
-            validRaw().replace("\"precision\":2", "\"precision\":3") to "$.case.precision",
-            validRaw().replace("\"timezone\":\"Asia/Shanghai\"", "\"timezone\":\"Etc/UTC\"") to "$.case.timezone",
-            validRaw().replace("\"ledger_id\":\"ledger-a\"", "\"ledger_id\":\"ledger-b\"") to "$.case.ledger_id",
-        )
+        val mutations =
+            listOf(
+                validRaw().replace("\"currency\":\"CNY\"", "\"currency\":\"USD\"") to "$.case.currency",
+                validRaw().replace("\"precision\":2", "\"precision\":3") to "$.case.precision",
+                validRaw().replace("\"timezone\":\"Asia/Shanghai\"", "\"timezone\":\"Etc/UTC\"") to "$.case.timezone",
+                validRaw().replace("\"ledger_id\":\"ledger-a\"", "\"ledger_id\":\"ledger-b\"") to "$.case.ledger_id",
+            )
 
         mutations.forEach { (raw, path) ->
             val error = assertIs<Rg02RawJsonDecodeResult.Invalid>(decodeRg02RawJson(raw)).error
@@ -71,14 +87,16 @@ class Rg02RawJsonDecoderTest {
 
     @Test
     fun `duplicate ids and invalid catalog references are typed invalid values`() {
-        val duplicateAccount = validRaw().replace(
-            "],\"categories\"",
-            ",{\"id\":\"asset\",\"name\":\"Duplicate\",\"kind\":\"asset\",\"real_account\":true}],\"categories\"",
-        )
-        val invalidPostingReference = validRaw().replace(
-            "\"posting_account_id\":null",
-            "\"posting_account_id\":\"missing-income-account\"",
-        )
+        val duplicateAccount =
+            validRaw().replace(
+                "],\"categories\"",
+                ",{\"id\":\"asset\",\"name\":\"Duplicate\",\"kind\":\"asset\",\"real_account\":true}],\"categories\"",
+            )
+        val invalidPostingReference =
+            validRaw().replace(
+                "\"posting_account_id\":null",
+                "\"posting_account_id\":\"missing-income-account\"",
+            )
 
         listOf(duplicateAccount, invalidPostingReference).forEach { raw ->
             val error = assertIs<Rg02RawJsonDecodeResult.Invalid>(decodeRg02RawJson(raw)).error
@@ -87,7 +105,8 @@ class Rg02RawJsonDecoderTest {
     }
 }
 
-private fun validRaw() = """{
+private fun validRaw() =
+    """{
   "schema_version":1,
   "case":{"id":"RG-02","level":"core_required","rule_version":1,"timezone":"Asia/Shanghai","currency":"CNY","precision":2,"ledger_id":"ledger-a"},
   "catalog":{"accounts":[{"id":"asset","name":"Asset","kind":"asset","real_account":true}],"categories":[{"id":"income-child","name":"Income","kind":"income","parent_id":null,"posting_account_id":null,"active":true}]},

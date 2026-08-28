@@ -10,13 +10,17 @@ package com.unifiedledger.domain
  * ([validatePostingFactsCorrection]) and the RG-12 application layer ([com.unifiedledger.application.Rg12Operations]),
  * which previously carried byte-identical private copies.
  */
-fun parseExactDecimal(text: String, precision: Int): Long? {
+fun parseExactDecimal(
+    text: String,
+    precision: Int,
+): Long? {
     if (precision < 0 || precision > 18) return null
-    val pattern = if (precision == 0) {
-        Regex("^-?(?:0|[1-9][0-9]*)$")
-    } else {
-        Regex("^-?(?:0|[1-9][0-9]*)\\.[0-9]{$precision}$")
-    }
+    val pattern =
+        if (precision == 0) {
+            Regex("^-?(?:0|[1-9][0-9]*)$")
+        } else {
+            Regex("^-?(?:0|[1-9][0-9]*)\\.[0-9]{$precision}$")
+        }
     if (!pattern.matches(text)) return null
     val negative = text.startsWith("-")
     val unsigned = if (negative) text.substring(1) else text

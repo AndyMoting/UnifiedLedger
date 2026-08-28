@@ -14,7 +14,10 @@ internal object P408Computation {
     const val SECONDS_PER_DAY: Long = 24 * 60 * 60
 
     /** Absolute-to-signed: out = negative, in = positive; null on invalid direction. */
-    fun signedAmount(amountMinor: Long, direction: String): Long? {
+    fun signedAmount(
+        amountMinor: Long,
+        direction: String,
+    ): Long? {
         if (amountMinor == Long.MIN_VALUE) return null
         val absolute = abs(amountMinor)
         return when (direction) {
@@ -24,7 +27,10 @@ internal object P408Computation {
         }
     }
 
-    fun naturalDayDistance(source: String, posting: String): Int? {
+    fun naturalDayDistance(
+        source: String,
+        posting: String,
+    ): Int? {
         if (!temporalComparableRaw(source, posting)) return null
         val sourceInstant = runCatching { Instant.parse(source) }.getOrNull() ?: return null
         val postingInstant = runCatching { Instant.parse(posting) }.getOrNull() ?: return null
@@ -35,19 +41,24 @@ internal object P408Computation {
         return distance.takeIf { it <= Int.MAX_VALUE.toLong() }?.toInt()
     }
 
-    fun temporalComparableRaw(source: String, posting: String): Boolean {
+    fun temporalComparableRaw(
+        source: String,
+        posting: String,
+    ): Boolean {
         val sourceHasOffset = hasExplicitOffset(source)
         val postingHasOffset = hasExplicitOffset(posting)
         if (!sourceHasOffset || !postingHasOffset) return false
         return temporalShape(source) == temporalShape(posting)
     }
 
-    fun hasExplicitOffset(value: String): Boolean = value.endsWith('Z') ||
-        (value.length >= 6 && value[value.length - 6] in setOf('+', '-') && value[value.length - 3] == ':')
+    fun hasExplicitOffset(value: String): Boolean =
+        value.endsWith('Z') ||
+            (value.length >= 6 && value[value.length - 6] in setOf('+', '-') && value[value.length - 3] == ':')
 
-    fun temporalShape(value: String): String = buildString(value.length) {
-        value.forEach { append(if (it in '0'..'9') '#' else it) }
-    }
+    fun temporalShape(value: String): String =
+        buildString(value.length) {
+            value.forEach { append(if (it in '0'..'9') '#' else it) }
+        }
 
     fun floorDivEpochSeconds(value: Long): Long {
         val quotient = value / SECONDS_PER_DAY

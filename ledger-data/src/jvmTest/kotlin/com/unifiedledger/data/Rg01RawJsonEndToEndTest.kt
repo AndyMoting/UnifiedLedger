@@ -10,7 +10,6 @@ import com.unifiedledger.application.ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateCommitPort
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
-import com.unifiedledger.application.ConfirmedTransactionNoteUpdateResult
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteConfirmedTransactionNoteUpdate
 import com.unifiedledger.application.ExecuteManualExpenseSave
@@ -27,8 +26,6 @@ import com.unifiedledger.application.Rg01ProjectionResult
 import com.unifiedledger.application.Rg01RawJsonCase
 import com.unifiedledger.application.Rg01RawJsonDecodeResult
 import com.unifiedledger.application.Rg01ReturnedId
-import com.unifiedledger.application.TransactionNoteUpdateRequestIdentity
-import com.unifiedledger.application.TransactionNoteUpdateRequestSnapshot
 import com.unifiedledger.application.decodeRg01RawJson
 import com.unifiedledger.application.evaluateRg01AttemptedManualExpense
 import com.unifiedledger.application.goldenV2MigrationId
@@ -47,7 +44,6 @@ import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -76,7 +72,8 @@ class Rg01RawJsonEndToEndTest {
             assertEquals("91540692-0a89-5644-985b-bf2ba4a3f98a", rg01ConfirmationId("$.distinct_reentry.request", "request-rg01-distinct-create"))
 
             val created = harness.routeStrict(decoded.create.input)
-            v1DrivenOutcomes += decoded.create.input.requestId.required() to created
+            v1DrivenOutcomes += decoded.create.input.requestId
+                .required() to created
             assertEquals(decoded.create.expected.transactionId, created.returnedIds.single { it.kind == "transaction" }.value)
             assertEquals(E2eStorageCounts(1, 1, 1, 1, 1, 2), database.counts())
             assertEquals(
@@ -113,19 +110,21 @@ class Rg01RawJsonEndToEndTest {
             assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
             assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateReceipts().executeAsOne())
 
-            val conflict = harness.routeNoteUpdate(
-                decoded.noteUpdate.copy(input = decoded.noteUpdate.input.copy(note = "changed")),
-            )
+            val conflict =
+                harness.routeNoteUpdate(
+                    decoded.noteUpdate.copy(input = decoded.noteUpdate.input.copy(note = "changed")),
+                )
             assertEquals(Rg01OutcomeStatus.REJECTED, conflict.status)
             assertEquals("request_identity_conflict", conflict.reasonCode)
             assertEquals(countsBeforeNote.copy(versions = 2), database.counts())
 
-            val stale = harness.routeNoteUpdate(
-                decoded.noteUpdate.copy(
-                    input = decoded.noteUpdate.input.copy(requestId = "request-rg01-note-stale"),
-                    expected = decoded.noteUpdate.expected.copy(versionId = "version-expense-rg01-v3"),
-                ),
-            )
+            val stale =
+                harness.routeNoteUpdate(
+                    decoded.noteUpdate.copy(
+                        input = decoded.noteUpdate.input.copy(requestId = "request-rg01-note-stale"),
+                        expected = decoded.noteUpdate.expected.copy(versionId = "version-expense-rg01-v3"),
+                    ),
+                )
             assertEquals(Rg01OutcomeStatus.REJECTED, stale.status)
             assertEquals("stale_current_version", stale.reasonCode)
             assertEquals(1, database.ledgerQueries.countTransactionNoteUpdateRequests().executeAsOne())
@@ -133,12 +132,14 @@ class Rg01RawJsonEndToEndTest {
             assertEquals(countsBeforeNote.copy(versions = 2), database.counts())
 
             val replay = harness.routeStrict(decoded.retry.input)
-            v1DrivenOutcomes += decoded.retry.input.requestId.required() to replay
+            v1DrivenOutcomes += decoded.retry.input.requestId
+                .required() to replay
             assertEquals(created.returnedIds, replay.returnedIds)
             assertEquals(E2eStorageCounts(1, 1, 1, 2, 1, 2), database.counts())
 
             val distinct = harness.routeStrict(decoded.distinct.input)
-            v1DrivenOutcomes += decoded.distinct.input.requestId.required() to distinct
+            v1DrivenOutcomes += decoded.distinct.input.requestId
+                .required() to distinct
             assertEquals(decoded.distinct.expected.transactionId, distinct.returnedIds.single { it.kind == "transaction" }.value)
             assertEquals(E2eStorageCounts(2, 2, 2, 3, 2, 4), database.counts())
 
@@ -178,45 +179,57 @@ private class ExecutionHarness(
         private set
     var commitCalls = 0
         private set
-    private val transactionIds = mapOf(
-        decoded.create.input.requestId.required() to checkNotNull(decoded.create.expected.transactionId),
-        decoded.distinct.input.requestId.required() to checkNotNull(decoded.distinct.expected.transactionId),
-    )
-    private val commitPort = ConfirmedManualExpenseCommitPort { identity, snapshot, callback ->
-        commitCalls += 1
-        SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, callback)
-    }
-    private val noteCommitPort = ConfirmedTransactionNoteUpdateCommitPort { identity, snapshot, callback ->
-        SqlDelightConfirmedTransactionNoteUpdateCommitPort(database, driver).commitOnce(identity, snapshot, callback)
-    }
-    private val execute = ExecuteManualExpenseSave(
-        ExecuteConfirmedManualExpense(
-            commitPort,
-            ConfirmedManualExpenseIdSource {
-                val transactionId = checkNotNull(transactionIds[activeRequestId])
-                val locator = if (transactionId.endsWith("-distinct")) "$.distinct_reentry.request" else "$.create.request"
-                val confirmationId = rg01ConfirmationId(locator, activeRequestId)
-                val suffix = if (transactionId.endsWith("-distinct")) "rg01-distinct" else "rg01"
-                ConfirmedManualExpenseCommitIds(
-                    ConfirmationId(confirmationId),
-                    AssetPaidOrdinaryExpenseIds(
-                        TransactionId(transactionId), TransactionVersionId("version-expense-$suffix-v1"),
-                        PostingSetId("posting-set-expense-$suffix"), PostingId("posting-expense-$suffix"), PostingId("posting-bank-$suffix"),
-                    ),
-                )
-            },
-            ConfirmedExpenseTransactionFactory { request, ids ->
-                when (val created = createAssetPaidOrdinaryExpense(
-                    context.catalog!!,
-                    AssetPaidOrdinaryExpenseCommand(request.ledgerId, request.amount, request.categoryId, request.paymentAccountId, TransactionTimes.collapsed(request.occurredAt)),
-                    ids.expenseIds,
-                )) {
-                    is DomainResult.Failure -> created
-                    is DomainResult.Success -> DomainResult.Success(ConfirmedManualExpenseCommit(ids.confirmationId, created.value))
-                }
-            },
-        ),
-    )
+    private val transactionIds =
+        mapOf(
+            decoded.create.input.requestId
+                .required() to checkNotNull(decoded.create.expected.transactionId),
+            decoded.distinct.input.requestId
+                .required() to checkNotNull(decoded.distinct.expected.transactionId),
+        )
+    private val commitPort =
+        ConfirmedManualExpenseCommitPort { identity, snapshot, callback ->
+            commitCalls += 1
+            SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, callback)
+        }
+    private val noteCommitPort =
+        ConfirmedTransactionNoteUpdateCommitPort { identity, snapshot, callback ->
+            SqlDelightConfirmedTransactionNoteUpdateCommitPort(database, driver).commitOnce(identity, snapshot, callback)
+        }
+    private val execute =
+        ExecuteManualExpenseSave(
+            ExecuteConfirmedManualExpense(
+                commitPort,
+                ConfirmedManualExpenseIdSource {
+                    val transactionId = checkNotNull(transactionIds[activeRequestId])
+                    val locator = if (transactionId.endsWith("-distinct")) "$.distinct_reentry.request" else "$.create.request"
+                    val confirmationId = rg01ConfirmationId(locator, activeRequestId)
+                    val suffix = if (transactionId.endsWith("-distinct")) "rg01-distinct" else "rg01"
+                    ConfirmedManualExpenseCommitIds(
+                        ConfirmationId(confirmationId),
+                        AssetPaidOrdinaryExpenseIds(
+                            TransactionId(transactionId),
+                            TransactionVersionId("version-expense-$suffix-v1"),
+                            PostingSetId("posting-set-expense-$suffix"),
+                            PostingId("posting-expense-$suffix"),
+                            PostingId("posting-bank-$suffix"),
+                        ),
+                    )
+                },
+                ConfirmedExpenseTransactionFactory { request, ids ->
+                    when (
+                        val created =
+                            createAssetPaidOrdinaryExpense(
+                                context.catalog!!,
+                                AssetPaidOrdinaryExpenseCommand(request.ledgerId, request.amount, request.categoryId, request.paymentAccountId, TransactionTimes.collapsed(request.occurredAt)),
+                                ids.expenseIds,
+                            )
+                    ) {
+                        is DomainResult.Failure -> created
+                        is DomainResult.Success -> DomainResult.Success(ConfirmedManualExpenseCommit(ids.confirmationId, created.value))
+                    }
+                },
+            ),
+        )
 
     fun routeStrict(input: Rg01DecodedManualExpenseInput): Rg01OutcomeProjection {
         strictApplicationCalls += 1
@@ -225,7 +238,10 @@ private class ExecutionHarness(
         return assertIs<Rg01ProjectionResult.Mapped>(projectRg01ManualExpenseResult(execute.execute(parsed.saveInput))).projection
     }
 
-    fun routeSparse(input: Rg01DecodedManualExpenseInput, requestId: String): Rg01OutcomeProjection =
+    fun routeSparse(
+        input: Rg01DecodedManualExpenseInput,
+        requestId: String,
+    ): Rg01OutcomeProjection =
         assertIs<Rg01AttemptedExpenseResult.Mapped>(
             evaluateRg01AttemptedManualExpense(
                 context,
@@ -234,21 +250,25 @@ private class ExecutionHarness(
         ).projection
 
     fun routeNoteUpdate(operation: com.unifiedledger.application.Rg01DecodedNoteUpdateOperation): Rg01OutcomeProjection {
-        val execute = ExecuteConfirmedTransactionNoteUpdate(
-            noteCommitPort,
-            ConfirmedTransactionNoteUpdateIdSource {
-                ConfirmedTransactionNoteUpdateIds(
-                    ConfirmationId(rg01ConfirmationId(operation.source.locator, operation.input.requestId)),
-                    com.unifiedledger.domain.TransactionNoteUpdateIds(TransactionVersionId(checkNotNull(operation.expected.versionId))),
-                    TransactionVersionId(checkNotNull(decoded.create.expected.versionId)),
-                )
-            },
-        )
+        val execute =
+            ExecuteConfirmedTransactionNoteUpdate(
+                noteCommitPort,
+                ConfirmedTransactionNoteUpdateIdSource {
+                    ConfirmedTransactionNoteUpdateIds(
+                        ConfirmationId(rg01ConfirmationId(operation.source.locator, operation.input.requestId)),
+                        com.unifiedledger.domain.TransactionNoteUpdateIds(TransactionVersionId(checkNotNull(operation.expected.versionId))),
+                        TransactionVersionId(checkNotNull(decoded.create.expected.versionId)),
+                    )
+                },
+            )
         return projectRg01TransactionNoteUpdateResult(
             execute.execute(
                 ExplicitlyConfirmedTransactionNoteUpdate(
-                    context.ledgerId, RequestId(operation.input.requestId), TransactionId(operation.input.transactionId),
-                    operation.input.note, ExplicitManualSave,
+                    context.ledgerId,
+                    RequestId(operation.input.requestId),
+                    TransactionId(operation.input.transactionId),
+                    operation.input.note,
+                    ExplicitManualSave,
                 ),
             ),
         )
@@ -263,54 +283,73 @@ private data class ApprovedOutcome(
     val returnedIds: Set<Rg01ReturnedId>,
 )
 
-private class ApprovedOutcomes private constructor(private val values: List<ApprovedOutcome>) {
-    fun byRequest(requestId: String, status: Rg01OutcomeStatus): ApprovedOutcome =
-        values.single { it.requestId == requestId && it.status == status }
+private class ApprovedOutcomes private constructor(
+    private val values: List<ApprovedOutcome>,
+) {
+    fun byRequest(
+        requestId: String,
+        status: Rg01OutcomeStatus,
+    ): ApprovedOutcome = values.single { it.requestId == requestId && it.status == status }
 
     companion object {
         fun decode(raw: String): ApprovedOutcomes {
             val root = Json.parseToJsonElement(raw).jsonObject
-            require(root.getValue("case").jsonObject.getValue("approval_status").jsonPrimitive.content == "approved")
-            val values = root.getValue("operations").jsonArray.mapNotNull { element ->
-                val operation = element.jsonObject
-                if (operation.getValue("action_type").jsonPrimitive.content !in setOf("manual_expense", "transaction_note_update")) return@mapNotNull null
-                val input = operation["input"]?.jsonObject
-                val attempted = operation["attempted_input"]?.jsonObject
-                val outcome = operation.getValue("outcome").jsonObject
-                ApprovedOutcome(
-                    requestId = (input ?: attempted)!!.getValue("request_id").jsonPrimitive.content,
-                    status = when (outcome.getValue("status").jsonPrimitive.content) {
-                        "accepted" -> Rg01OutcomeStatus.ACCEPTED
-                        "no_change" -> Rg01OutcomeStatus.NO_CHANGE
-                        "rejected" -> Rg01OutcomeStatus.REJECTED
-                        else -> error("unsupported approved outcome")
-                    },
-                    reasonCode = outcome["reason_code"]?.jsonPrimitive?.contentOrNull,
-                    fieldPath = outcome["field_path"]?.jsonPrimitive?.contentOrNull,
-                    returnedIds = operation.getValue("returned_ids").jsonArray.map { returned ->
-                        val value = returned.jsonObject
-                        Rg01ReturnedId(value.getValue("kind").jsonPrimitive.content, value.getValue("id").jsonPrimitive.content)
-                    }.toSet(),
-                )
-            }
+            require(
+                root
+                    .getValue("case")
+                    .jsonObject
+                    .getValue("approval_status")
+                    .jsonPrimitive.content == "approved",
+            )
+            val values =
+                root.getValue("operations").jsonArray.mapNotNull { element ->
+                    val operation = element.jsonObject
+                    if (operation.getValue("action_type").jsonPrimitive.content !in setOf("manual_expense", "transaction_note_update")) return@mapNotNull null
+                    val input = operation["input"]?.jsonObject
+                    val attempted = operation["attempted_input"]?.jsonObject
+                    val outcome = operation.getValue("outcome").jsonObject
+                    ApprovedOutcome(
+                        requestId = (input ?: attempted)!!.getValue("request_id").jsonPrimitive.content,
+                        status =
+                            when (outcome.getValue("status").jsonPrimitive.content) {
+                                "accepted" -> Rg01OutcomeStatus.ACCEPTED
+                                "no_change" -> Rg01OutcomeStatus.NO_CHANGE
+                                "rejected" -> Rg01OutcomeStatus.REJECTED
+                                else -> error("unsupported approved outcome")
+                            },
+                        reasonCode = outcome["reason_code"]?.jsonPrimitive?.contentOrNull,
+                        fieldPath = outcome["field_path"]?.jsonPrimitive?.contentOrNull,
+                        returnedIds =
+                            operation
+                                .getValue("returned_ids")
+                                .jsonArray
+                                .map { returned ->
+                                    val value = returned.jsonObject
+                                    Rg01ReturnedId(value.getValue("kind").jsonPrimitive.content, value.getValue("id").jsonPrimitive.content)
+                                }.toSet(),
+                    )
+                }
             return ApprovedOutcomes(values)
         }
     }
 }
 
-private val EXPECTED_INVALID_REQUEST_IDS = mapOf(
-    "missing-amount" to "27c403a9-cf8b-5f0a-9bee-ab62ac2bccab",
-    "missing-payment-account" to "85fad5da-31b0-5dbf-b408-008451dfaa99",
-    "missing-secondary-category" to "4b02fef7-4dfc-54bb-bd16-f4279333dafa",
-    "zero-amount" to "abb2750a-c8f1-5bbb-862e-3735a99fa23e",
-    "negative-amount" to "e41f87e8-d46a-5667-bd97-a09ff3799400",
-    "primary-category" to "6ecbbf3a-ec7f-5916-8716-47a8b8c6e8a5",
-    "inactive-secondary-category" to "2e224810-3357-594e-8040-de138a63790a",
-)
+private val EXPECTED_INVALID_REQUEST_IDS =
+    mapOf(
+        "missing-amount" to "27c403a9-cf8b-5f0a-9bee-ab62ac2bccab",
+        "missing-payment-account" to "85fad5da-31b0-5dbf-b408-008451dfaa99",
+        "missing-secondary-category" to "4b02fef7-4dfc-54bb-bd16-f4279333dafa",
+        "zero-amount" to "abb2750a-c8f1-5bbb-862e-3735a99fa23e",
+        "negative-amount" to "e41f87e8-d46a-5667-bd97-a09ff3799400",
+        "primary-category" to "6ecbbf3a-ec7f-5916-8716-47a8b8c6e8a5",
+        "inactive-secondary-category" to "2e224810-3357-594e-8040-de138a63790a",
+    )
 private val RG01_MAIN_ROOT_ID: String = goldenV2RootId("RG-01", "$.case.id", "RG-01")
 
-private fun rg01ConfirmationId(locator: String, requestId: String): String =
-    goldenV2MigrationId("RG-01", RG01_MAIN_ROOT_ID, "confirmation", locator, requestId)
+private fun rg01ConfirmationId(
+    locator: String,
+    requestId: String,
+): String = goldenV2MigrationId("RG-01", RG01_MAIN_ROOT_ID, "confirmation", locator, requestId)
 
 private fun rg01InvalidRequestId(sourceId: String): String =
     goldenV2MigrationId(
@@ -320,36 +359,78 @@ private fun rg01InvalidRequestId(sourceId: String): String =
         "$.invalid_inputs[*].id",
         sourceId,
     )
+
 private fun <T> Rg01JsonField<T>.required(): T = assertIs<Rg01JsonField.Value<T>>(this).value
-private fun assertProjection(expected: ApprovedOutcome, actual: Rg01OutcomeProjection) {
+
+private fun assertProjection(
+    expected: ApprovedOutcome,
+    actual: Rg01OutcomeProjection,
+) {
     assertEquals(expected.status, actual.status)
     assertEquals(expected.reasonCode, actual.reasonCode)
     assertEquals(expected.fieldPath, actual.fieldPath)
     assertEquals(expected.returnedIds, actual.returnedIds)
 }
 
-private data class E2eStorageCounts(val requests: Long, val receipts: Long, val transactions: Long, val versions: Long, val postingSets: Long, val postings: Long)
-private fun LedgerDatabase.counts() = E2eStorageCounts(
-    ledgerQueries.countRequests().executeAsOne(), ledgerQueries.countReceipts().executeAsOne(),
-    ledgerQueries.countTransactions().executeAsOne(), ledgerQueries.countVersions().executeAsOne(),
-    ledgerQueries.countPostingSets().executeAsOne(), ledgerQueries.countPostings().executeAsOne(),
+private data class E2eStorageCounts(
+    val requests: Long,
+    val receipts: Long,
+    val transactions: Long,
+    val versions: Long,
+    val postingSets: Long,
+    val postings: Long,
 )
-private fun LedgerDatabase.persistedRequestValues(): List<String> = ledgerQueries.selectPersistedRequest {
-        ledgerId, requestId, amountMinor, currencyCode, currencyPrecision, categoryId,
-        paymentAccountId, occurredAt, note, _, _, _ ->
-    listOf(ledgerId, requestId, amountMinor.toString(), currencyCode, currencyPrecision.toString(), categoryId, paymentAccountId, occurredAt, note)
-}.executeAsOne()
-private fun LedgerDatabase.persistedPostingValues(): Set<List<String>> = ledgerQueries.selectPersistedPostings {
-        postingId, _, accountId, amountMinor, currencyCode, currencyPrecision ->
-    listOf(postingId, accountId, amountMinor.toString(), currencyCode, currencyPrecision.toString())
-}.executeAsList().toSet()
-private fun LedgerDatabase.persistedVersionValues(): List<List<String>> = ledgerQueries.selectPersistedVersions {
-        versionId, transactionId, versionNumber, postingSetId, occurredAt, statisticsAt, effectiveAt, note ->
-    listOf(versionId, transactionId, versionNumber.toString(), postingSetId, occurredAt, statisticsAt, effectiveAt, note.orEmpty())
-}.executeAsList()
-private fun LedgerDatabase.persistedBalances(): Map<String, Long> = ledgerQueries.selectPersistedPostings {
-        _, _, accountId, amountMinor, _, _ -> accountId to amountMinor
-}.executeAsList().groupingBy { it.first }.fold(0L) { sum, (_, amount) -> sum + amount }
+
+private fun LedgerDatabase.counts() =
+    E2eStorageCounts(
+        ledgerQueries.countRequests().executeAsOne(),
+        ledgerQueries.countReceipts().executeAsOne(),
+        ledgerQueries.countTransactions().executeAsOne(),
+        ledgerQueries.countVersions().executeAsOne(),
+        ledgerQueries.countPostingSets().executeAsOne(),
+        ledgerQueries.countPostings().executeAsOne(),
+    )
+
+private fun LedgerDatabase.persistedRequestValues(): List<String> =
+    ledgerQueries
+        .selectPersistedRequest {
+            ledgerId,
+            requestId,
+            amountMinor,
+            currencyCode,
+            currencyPrecision,
+            categoryId,
+            paymentAccountId,
+            occurredAt,
+            note,
+            _,
+            _,
+            _,
+            ->
+            listOf(ledgerId, requestId, amountMinor.toString(), currencyCode, currencyPrecision.toString(), categoryId, paymentAccountId, occurredAt, note)
+        }.executeAsOne()
+
+private fun LedgerDatabase.persistedPostingValues(): Set<List<String>> =
+    ledgerQueries
+        .selectPersistedPostings { postingId, _, accountId, amountMinor, currencyCode, currencyPrecision ->
+            listOf(postingId, accountId, amountMinor.toString(), currencyCode, currencyPrecision.toString())
+        }.executeAsList()
+        .toSet()
+
+private fun LedgerDatabase.persistedVersionValues(): List<List<String>> =
+    ledgerQueries
+        .selectPersistedVersions { versionId, transactionId, versionNumber, postingSetId, occurredAt, statisticsAt, effectiveAt, note ->
+            listOf(versionId, transactionId, versionNumber.toString(), postingSetId, occurredAt, statisticsAt, effectiveAt, note.orEmpty())
+        }.executeAsList()
+
+private fun LedgerDatabase.persistedBalances(): Map<String, Long> =
+    ledgerQueries
+        .selectPersistedPostings { _, _, accountId, amountMinor, _, _ ->
+            accountId to amountMinor
+        }.executeAsList()
+        .groupingBy { it.first }
+        .fold(0L) { sum, (_, amount) -> sum + amount }
+
 private fun repoFile(relative: String): Path {
     var candidate = Path.of(System.getProperty("user.dir"))
     repeat(6) {
@@ -360,4 +441,9 @@ private fun repoFile(relative: String): Path {
     }
     error("repository root not found")
 }
-private fun sqliteProperties() = Properties().apply { setProperty("foreign_keys", "true"); setProperty("busy_timeout", "5000") }
+
+private fun sqliteProperties() =
+    Properties().apply {
+        setProperty("foreign_keys", "true")
+        setProperty("busy_timeout", "5000")
+    }

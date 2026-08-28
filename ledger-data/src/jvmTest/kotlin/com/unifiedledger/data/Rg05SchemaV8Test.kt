@@ -32,6 +32,8 @@ class Rg05SchemaV8Test {
                 assertEquals(0L, database.ledgerQueries.countRg05Candidates().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countRg05PostingReconciliations().executeAsOne())
             }
-        } finally { Files.deleteIfExists(path) }
+        } finally {
+            Files.deleteIfExists(path)
+        }
     }
 }

@@ -29,14 +29,15 @@ fun createLendingEvidence(
     source: LendingSourceRecord,
     observedAt: Instant = source.observedAt,
 ): DomainResult<LendingEvidence> {
-    val type = when (source.kind) {
-        LendingSourceKind.BANK_DEBIT -> LendingEvidenceType.ASSET_DEBIT
-        LendingSourceKind.BANK_CREDIT -> LendingEvidenceType.ASSET_CREDIT
-        LendingSourceKind.BANK_CREDIT_MIRROR -> LendingEvidenceType.ASSET_CREDIT_MIRROR
-        LendingSourceKind.LENDING_AGREEMENT -> LendingEvidenceType.LENDING_AGREEMENT
-        LendingSourceKind.EXPLICIT_MANUAL_LENDING_CONFIRMATION ->
-            return DomainResult.Failure(LendingViolation.InvalidEvidenceSourceType)
-    }
+    val type =
+        when (source.kind) {
+            LendingSourceKind.BANK_DEBIT -> LendingEvidenceType.ASSET_DEBIT
+            LendingSourceKind.BANK_CREDIT -> LendingEvidenceType.ASSET_CREDIT
+            LendingSourceKind.BANK_CREDIT_MIRROR -> LendingEvidenceType.ASSET_CREDIT_MIRROR
+            LendingSourceKind.LENDING_AGREEMENT -> LendingEvidenceType.LENDING_AGREEMENT
+            LendingSourceKind.EXPLICIT_MANUAL_LENDING_CONFIRMATION ->
+                return DomainResult.Failure(LendingViolation.InvalidEvidenceSourceType)
+        }
     return DomainResult.Success(
         LendingEvidence(
             id = id,
@@ -157,38 +158,40 @@ fun createLendingEvidenceLink(
         }
     }
     val targetId = targetPostingId?.value ?: targetPositionId!!
-    val auditLinks = buildList {
-        if (mirrorOfEvidenceId != null) {
-            add(
-                LendingAuditLink(
-                    id = "$id-mirror-of-evidence",
-                    kind = LendingAuditLinkKind.MIRROR_OF_EVIDENCE,
-                    fromId = evidenceId,
-                    toId = mirrorOfEvidenceId,
-                ),
-            )
+    val auditLinks =
+        buildList {
+            if (mirrorOfEvidenceId != null) {
+                add(
+                    LendingAuditLink(
+                        id = "$id-mirror-of-evidence",
+                        kind = LendingAuditLinkKind.MIRROR_OF_EVIDENCE,
+                        fromId = evidenceId,
+                        toId = mirrorOfEvidenceId,
+                    ),
+                )
+            }
+            if (mergedIntoEvidenceLinkId != null) {
+                add(
+                    LendingAuditLink(
+                        id = "$id-merged-into-evidence-link",
+                        kind = LendingAuditLinkKind.MERGED_INTO_EVIDENCE_LINK,
+                        fromId = id,
+                        toId = mergedIntoEvidenceLinkId,
+                    ),
+                )
+            }
         }
-        if (mergedIntoEvidenceLinkId != null) {
-            add(
-                LendingAuditLink(
-                    id = "$id-merged-into-evidence-link",
-                    kind = LendingAuditLinkKind.MERGED_INTO_EVIDENCE_LINK,
-                    fromId = id,
-                    toId = mergedIntoEvidenceLinkId,
-                ),
-            )
-        }
-    }
     return DomainResult.Success(
         LendingEvidenceLinkResult(
-            link = LendingEvidenceLink(
-                id = id,
-                sourceId = sourceId,
-                evidenceId = evidenceId,
-                role = role,
-                targetId = targetId,
-                status = status,
-            ),
+            link =
+                LendingEvidenceLink(
+                    id = id,
+                    sourceId = sourceId,
+                    evidenceId = evidenceId,
+                    role = role,
+                    targetId = targetId,
+                    status = status,
+                ),
             auditLinks = auditLinks,
         ),
     )

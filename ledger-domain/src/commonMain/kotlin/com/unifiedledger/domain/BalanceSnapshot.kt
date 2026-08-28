@@ -1,6 +1,8 @@
 package com.unifiedledger.domain
 
-class BalanceSnapshot internal constructor(balances: Map<AccountId, Money>) {
+class BalanceSnapshot internal constructor(
+    balances: Map<AccountId, Money>,
+) {
     val balances: Map<AccountId, Money> = balances.toMap()
 }
 
@@ -16,8 +18,9 @@ fun replayBalances(
 
     for (formal in transactions) {
         for (posting in formal.currentPostingSet().postings) {
-            val account = catalog.account(posting.accountId)
-                ?: return DomainResult.Failure(DomainViolation.InvalidBalanceReplay)
+            val account =
+                catalog.account(posting.accountId)
+                    ?: return DomainResult.Failure(DomainViolation.InvalidBalanceReplay)
             if (
                 account.ledgerId != formal.transaction.ledgerId ||
                 account.currency != posting.amount.currency
@@ -25,17 +28,20 @@ fun replayBalances(
                 return DomainResult.Failure(DomainViolation.InvalidBalanceReplay)
             }
 
-            totals.getOrPut(account.id, ::ExactLongAccumulator)
+            totals
+                .getOrPut(account.id, ::ExactLongAccumulator)
                 .add(posting.amount.minorUnits)
         }
     }
 
     val balances = mutableMapOf<AccountId, Money>()
     for ((accountId, accumulator) in totals) {
-        val minorUnits = accumulator.exactLongOrNull()
-            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-        val account = catalog.account(accountId)
-            ?: return DomainResult.Failure(DomainViolation.InvalidBalanceReplay)
+        val minorUnits =
+            accumulator.exactLongOrNull()
+                ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+        val account =
+            catalog.account(accountId)
+                ?: return DomainResult.Failure(DomainViolation.InvalidBalanceReplay)
         balances[accountId] = Money.ofMinor(minorUnits, account.currency)
     }
     return DomainResult.Success(BalanceSnapshot(balances))

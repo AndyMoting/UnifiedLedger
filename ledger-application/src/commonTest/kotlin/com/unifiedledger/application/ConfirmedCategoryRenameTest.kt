@@ -31,19 +31,22 @@ class ConfirmedCategoryRenameTest {
     fun `execute forwards the identity and new name and returns the accepted change`() {
         var observedIdentity: CategoryRenameIdentity? = null
         var observedName: String? = null
-        val port = ConfirmedCategoryRenameCommitPort { identity, newName, applyRename ->
-            observedIdentity = identity
-            observedName = newName
-            val change = assertIs<DomainResult.Success<CategoryRenameChange>>(
-                applyRename(CategoryNameVersion(categoryId, 1, "工资", CategoryNameVersionStatus.CURRENT)),
-            ).value
-            ConfirmedCategoryRenameResult.Accepted(change)
-        }
+        val port =
+            ConfirmedCategoryRenameCommitPort { identity, newName, applyRename ->
+                observedIdentity = identity
+                observedName = newName
+                val change =
+                    assertIs<DomainResult.Success<CategoryRenameChange>>(
+                        applyRename(CategoryNameVersion(categoryId, 1, "工资", CategoryNameVersionStatus.CURRENT)),
+                    ).value
+                ConfirmedCategoryRenameResult.Accepted(change)
+            }
         val executor = ExecuteConfirmedCategoryRename(port, RenameTestCatalog.catalog)
 
-        val result = executor.execute(
-            ExplicitlyConfirmedCategoryRename(ledgerId, categoryId, "薪资", ExplicitManualSave),
-        )
+        val result =
+            executor.execute(
+                ExplicitlyConfirmedCategoryRename(ledgerId, categoryId, "薪资", ExplicitManualSave),
+            )
 
         assertEquals(CategoryRenameIdentity(ledgerId, categoryId), observedIdentity)
         assertEquals("薪资", observedName)
@@ -54,15 +57,17 @@ class ConfirmedCategoryRenameTest {
 
     @Test
     fun `domain rejection is mapped to a rejected result`() {
-        val port = ConfirmedCategoryRenameCommitPort { _, _, applyRename ->
-            val failure = assertIs<DomainResult.Failure>(applyRename(null))
-            ConfirmedCategoryRenameResult.Rejected(failure.violation as CategoryRenameViolation)
-        }
+        val port =
+            ConfirmedCategoryRenameCommitPort { _, _, applyRename ->
+                val failure = assertIs<DomainResult.Failure>(applyRename(null))
+                ConfirmedCategoryRenameResult.Rejected(failure.violation as CategoryRenameViolation)
+            }
         val executor = ExecuteConfirmedCategoryRename(port, RenameTestCatalog.catalog)
 
-        val result = executor.execute(
-            ExplicitlyConfirmedCategoryRename(ledgerId, categoryId, "薪资", ExplicitManualSave),
-        )
+        val result =
+            executor.execute(
+                ExplicitlyConfirmedCategoryRename(ledgerId, categoryId, "薪资", ExplicitManualSave),
+            )
 
         assertEquals(
             CategoryRenameViolation.CurrentNameVersionMissing,
@@ -73,31 +78,46 @@ class ConfirmedCategoryRenameTest {
 
 private object RenameTestCatalog {
     val ledgerId = LedgerId("ledger-a")
-    val catalog: LedgerCatalog = LedgerCatalog.create(
-        accounts = listOf(
-            Account(
-                AccountId("income-account-salary"), ledgerId,
-                AccountKind.INCOME, CurrencyUnit("CNY", 2),
-                ownedByUser = false, realAccount = false,
-            ),
-            Account(
-                AccountId("asset-bank-a"), ledgerId,
-                AccountKind.ASSET, CurrencyUnit("CNY", 2),
-                ownedByUser = true, realAccount = true,
-            ),
-        ),
-        categories = listOf(
-            Category(
-                CategoryId("income-category-work"), ledgerId,
-                parentId = null, postingAccountId = null, active = true,
-                kind = CategoryKind.INCOME,
-            ),
-            Category(
-                CategoryId("income-category-salary"), ledgerId,
-                parentId = CategoryId("income-category-work"),
-                postingAccountId = AccountId("income-account-salary"),
-                active = true, kind = CategoryKind.INCOME,
-            ),
-        ),
-    ).let { assertIs<DomainResult.Success<LedgerCatalog>>(it).value }
+    val catalog: LedgerCatalog =
+        LedgerCatalog
+            .create(
+                accounts =
+                    listOf(
+                        Account(
+                            AccountId("income-account-salary"),
+                            ledgerId,
+                            AccountKind.INCOME,
+                            CurrencyUnit("CNY", 2),
+                            ownedByUser = false,
+                            realAccount = false,
+                        ),
+                        Account(
+                            AccountId("asset-bank-a"),
+                            ledgerId,
+                            AccountKind.ASSET,
+                            CurrencyUnit("CNY", 2),
+                            ownedByUser = true,
+                            realAccount = true,
+                        ),
+                    ),
+                categories =
+                    listOf(
+                        Category(
+                            CategoryId("income-category-work"),
+                            ledgerId,
+                            parentId = null,
+                            postingAccountId = null,
+                            active = true,
+                            kind = CategoryKind.INCOME,
+                        ),
+                        Category(
+                            CategoryId("income-category-salary"),
+                            ledgerId,
+                            parentId = CategoryId("income-category-work"),
+                            postingAccountId = AccountId("income-account-salary"),
+                            active = true,
+                            kind = CategoryKind.INCOME,
+                        ),
+                    ),
+            ).let { assertIs<DomainResult.Success<LedgerCatalog>>(it).value }
 }

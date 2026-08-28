@@ -24,12 +24,12 @@ import com.unifiedledger.domain.StagedPaymentFulfillment
 import com.unifiedledger.domain.StagedPaymentHistoryId
 import com.unifiedledger.domain.StagedPaymentInstallmentIds
 import com.unifiedledger.domain.StagedPaymentLifecycleId
-import com.unifiedledger.domain.StagedPaymentRelationId
 import com.unifiedledger.domain.StagedPaymentReconciliation
 import com.unifiedledger.domain.StagedPaymentReconciliationFact
 import com.unifiedledger.domain.StagedPaymentReconciliationStatus
-import com.unifiedledger.domain.StagedPaymentRole
+import com.unifiedledger.domain.StagedPaymentRelationId
 import com.unifiedledger.domain.StagedPaymentResult
+import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.createStagedPayment
@@ -44,41 +44,69 @@ class Rg06OperationsTest {
     private val referenceModel = Rg06ApplicationReferenceConformanceModel(portFactory = { it.port() })
 
     @Test fun allEightActionsContract() = referenceModel.allEightActionsReturnOnlyFrozenIdsAndReplayDefensiveOriginalSnapshots()
+
     @Test fun canonicalIdentityContract() = referenceModel.ingestCanonicalIdentityUsesOnlyRawFactIncludingByteExactTimeText()
+
     @Test fun importedTimeContract() = referenceModel.importedSourceTimeUsesInjectedOffsetPolicyBeforeCommitAndRejectedIdentityIsReusable()
+
     @Test fun signedMirrorContract() = referenceModel.signedFactsUseCheckedMagnitudeAndMirrorsSupportBothDirectionsWithoutNewLinks()
+
     @Test fun candidateSetOnceContract() = referenceModel.candidateAndEvidenceTransitionsAreClosedRoleCheckedSetOnceAndSourceImmutable()
+
     @Test fun reconciliationActionContract() = referenceModel.reconciliationStatusIsCreatedByTheAuthoritativeActionOnly()
+
     @Test fun manualProvenanceContract() = referenceModel.manualEvidenceResolvesImmutableIntakeObservationWithoutFormalPaymentSynthesis()
+
     @Test fun manualRejectionContract() = referenceModel.manualEvidenceMissingAmountCurrencyAndPostingMismatchRejectAtomicallyAndReserveNothing()
+
     @Test fun typedFactoryContract() = referenceModel.typedFactoriesCloseTimeCandidateConfidenceMagnitudeAndMirrorLineageStates()
+
     @Test fun duplicateCandidateStatusContract() = referenceModel.candidateConfirmationRejectsDuplicateStatusIdentityWithoutChangingCandidate()
+
     @Test fun frozenRejectionContract() = referenceModel.frozenEighteenRejectionsUseExactReasonPathPrecedenceZeroWritesAndReusableIdentity()
+
     @Test fun ownershipAndCollisionContract() = referenceModel.generatedIdentityCollisionsAndCrossLedgerOwnershipRejectAtomically()
+
     @Test fun allGeneratedIdentityKindsContract() = referenceModel.everyGeneratedIdentityCategoryCollisionIsAtomic()
+
     @Test fun semanticPrecedenceContract() = referenceModel.frozenSemanticFailurePrecedesOccupiedProposalIdentityAndCorrectionReusesIdentity()
+
     @Test fun prePortGuardContract() = referenceModel.explicitGuardsRemainSeparateFromFrozenRejectionsAndNeverCallPort()
 }
 
 /** Inspection surface used only by the application reference model. */
 private interface Rg06ApplicationReferenceProbe : Rg06CommitPort {
     fun snapshot(): Any
+
     fun source(id: Rg06SourceId): Rg06StagedPaymentBankSource
+
     fun evidence(id: Rg06EvidenceId): Rg06StagedPaymentEvidence
+
     fun candidate(id: Rg06CandidateId): Rg06StagedPaymentCandidate
+
     fun payment(id: InstallmentPaymentId): InstallmentPayment
+
     fun linkCount(): Int
+
     fun reconciliationState(): Any
+
     fun aggregateReconciliation(id: StagedPaymentRelationId): StagedPaymentReconciliation
-    fun occupyGeneratedIdentity(kind: String, value: String)
-    fun stageManualObservation(key: Rg06ManualObservationKey, observation: Rg06ManualBankObservation)
+
+    fun occupyGeneratedIdentity(
+        kind: String,
+        value: String,
+    )
+
+    fun stageManualObservation(
+        key: Rg06ManualObservationKey,
+        observation: Rg06ManualBankObservation,
+    )
 }
 
 /** Application-internal conformance model for the in-memory reference port only. */
 private class Rg06ApplicationReferenceConformanceModel(
     val portFactory: (Rg06Fixture) -> Rg06ApplicationReferenceProbe,
 ) {
-
     fun allEightActionsReturnOnlyFrozenIdsAndReplayDefensiveOriginalSnapshots() {
         val cases = exactActionCases()
         assertEquals(Rg06Action.entries, cases.map { it.operation.action })
@@ -125,26 +153,29 @@ private class Rg06ApplicationReferenceConformanceModel(
             Rg06ExecutionResult.NoChange(accepted.returnedIds),
             executor.execute(
                 ingest.copy(
-                    ids = Rg06IngestCommitIds(
-                        Rg06CandidateId("candidate-proposal-other"),
-                        Rg06CandidateStatusId("candidate-status-proposal-other"),
-                    ),
+                    ids =
+                        Rg06IngestCommitIds(
+                            Rg06CandidateId("candidate-proposal-other"),
+                            Rg06CandidateStatusId("candidate-status-proposal-other"),
+                        ),
                 ),
             ),
         )
         assertEquals(originalState, port.snapshot())
 
-        val sameInstantDifferentText = ingest.copy(
-            input = ingest.input.copy(sourcePaymentAtText = "2026-04-28T10:00:00.0+08:00"),
-        )
+        val sameInstantDifferentText =
+            ingest.copy(
+                input = ingest.input.copy(sourcePaymentAtText = "2026-04-28T10:00:00.0+08:00"),
+            )
         assertEquals(Rg06ExecutionResult.RequestIdentityConflict, executor.execute(sameInstantDifferentText))
         assertEquals(
             Rg06ExecutionResult.RequestIdentityConflict,
             executor.execute(ingest.copy(input = ingest.input.copy(amount = Money.ofMinor(-8_001, fixture.cny)))),
         )
-        val changedAction = fixture.linkDepositEvidence().copy(
-            input = fixture.linkDepositEvidence().input.copy(sourceId = ingest.input.sourceId),
-        )
+        val changedAction =
+            fixture.linkDepositEvidence().copy(
+                input = fixture.linkDepositEvidence().input.copy(sourceId = ingest.input.sourceId),
+            )
         assertEquals(Rg06ExecutionResult.RequestIdentityConflict, executor.execute(changedAction))
         assertEquals(originalState, port.snapshot())
     }
@@ -154,9 +185,10 @@ private class Rg06ApplicationReferenceConformanceModel(
         val port = portFactory(fixture)
         val executor = ExecuteRg06Operation(port)
         val valid = fixture.ingestDeposit()
-        val invalid = valid.copy(
-            input = valid.input.copy(sourcePaymentAtText = "2026-04-28T02:00:00Z"),
-        )
+        val invalid =
+            valid.copy(
+                input = valid.input.copy(sourcePaymentAtText = "2026-04-28T02:00:00Z"),
+            )
         val before = port.snapshot()
 
         assertEquals(
@@ -170,7 +202,9 @@ private class Rg06ApplicationReferenceConformanceModel(
         assertIs<Rg06ExecutionResult.Accepted>(executor.execute(valid))
         assertEquals(
             "2026-04-28T10:00:00+08:00",
-            port.source(valid.input.sourceId).payload.observedTime.text,
+            port
+                .source(valid.input.sourceId)
+                .payload.observedTime.text,
         )
     }
 
@@ -185,7 +219,12 @@ private class Rg06ApplicationReferenceConformanceModel(
             assertIs<Rg06ExecutionResult.Accepted>(executor.execute(fixture.confirmDepositCandidate()))
             val payment = port.payment(fixture.depositPaymentId)
             assertEquals(8_000L, payment.amount.minorUnits)
-            assertEquals(original, port.source(ingest.input.sourceId).payload.amount.minorUnits)
+            assertEquals(
+                original,
+                port
+                    .source(ingest.input.sourceId)
+                    .payload.amount.minorUnits,
+            )
             val linkCount = port.linkCount()
             val reconciliationBefore = port.reconciliationState()
             val mirrorOperation = fixture.mergeDepositMirror(amountMinor = mirror)
@@ -198,9 +237,10 @@ private class Rg06ApplicationReferenceConformanceModel(
             )
             assertEquals(linkCount, port.linkCount())
             assertEquals(reconciliationBefore, port.reconciliationState())
-            val mirrorEvidence = assertIs<Rg06BoundStagedPaymentEvidence>(
-                port.evidence(mirrorOperation.input.evidenceId),
-            )
+            val mirrorEvidence =
+                assertIs<Rg06BoundStagedPaymentEvidence>(
+                    port.evidence(mirrorOperation.input.evidenceId),
+                )
             assertEquals(fixture.depositPaymentId, mirrorEvidence.paymentId)
             assertEquals(ingest.input.evidenceId, mirrorEvidence.mirrorOfEvidenceId)
             assertEquals(fixture.importDepositLinkId, mirrorEvidence.mergedIntoEvidenceLinkId)
@@ -237,9 +277,10 @@ private class Rg06ApplicationReferenceConformanceModel(
 
         val sourceBefore = port.source(ingest.input.sourceId)
         val candidateBefore = port.candidate(fixture.depositCandidateId)
-        val pendingEvidence = assertIs<Rg06PendingStagedPaymentEvidence>(
-            port.evidence(ingest.input.evidenceId),
-        )
+        val pendingEvidence =
+            assertIs<Rg06PendingStagedPaymentEvidence>(
+                port.evidence(ingest.input.evidenceId),
+            )
         assertEquals(Rg06CandidateRoleFact.Known(StagedPaymentRole.DEPOSIT), candidateBefore.payload.roleFact)
         assertEquals(Rg06CandidateConfidence.CERTAIN, candidateBefore.confidence)
         assertEquals(1, candidateBefore.payload.ruleVersion)
@@ -247,9 +288,10 @@ private class Rg06ApplicationReferenceConformanceModel(
         assertEquals(listOf(Rg06CandidateStatus.PENDING_CONFIRMATION), candidateBefore.statusHistory.map { it.status })
         assertEquals(ingest.input.sourcePaymentAtText, pendingEvidence.observedTime.text)
 
-        val mismatched = fixture.confirmDepositCandidate().copy(
-            input = fixture.confirmDepositCandidate().input.copy(paymentRole = StagedPaymentRole.FINAL),
-        )
+        val mismatched =
+            fixture.confirmDepositCandidate().copy(
+                input = fixture.confirmDepositCandidate().input.copy(paymentRole = StagedPaymentRole.FINAL),
+            )
         val beforeMismatch = port.snapshot()
         assertEquals(
             Rg06ExecutionResult.Rejected(
@@ -340,9 +382,10 @@ private class Rg06ApplicationReferenceConformanceModel(
         val importedExecutor = ExecuteRg06Operation(importedPort)
         importedExecutor.execute(imported.create()).accepted()
         importedExecutor.execute(imported.ingestDeposit()).accepted()
-        val detachedConfirmed = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidate>>(
-            importedPort.candidate(imported.depositCandidateId).confirm(Rg06CandidateStatusId("detached-confirmed")),
-        ).value
+        val detachedConfirmed =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidate>>(
+                importedPort.candidate(imported.depositCandidateId).confirm(Rg06CandidateStatusId("detached-confirmed")),
+            ).value
         assertEquals(Rg06CandidateStatus.CONFIRMED, detachedConfirmed.statusHistory.last().status)
         assertEquals(emptyMap(), reconciliationMap(importedPort))
         assertEquals(StagedPaymentReconciliation.PENDING, importedPort.aggregateReconciliation(imported.relationId))
@@ -390,44 +433,45 @@ private class Rg06ApplicationReferenceConformanceModel(
             val operation: (Rg06Fixture) -> Rg06Operation.LinkStagedPaymentEvidence,
             val expected: Rg06ExecutionResult.Rejected,
         )
-        val cases = listOf(
-            ManualCase(
-                "missing",
-                { null },
-                { it.linkDepositEvidence() },
-                Rg06ExecutionResult.Rejected(
-                    Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
-                    Rg06FieldPath.INPUT_EVIDENCE_ID,
+        val cases =
+            listOf(
+                ManualCase(
+                    "missing",
+                    { null },
+                    { it.linkDepositEvidence() },
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
+                        Rg06FieldPath.INPUT_EVIDENCE_ID,
+                    ),
                 ),
-            ),
-            ManualCase(
-                "amount",
-                { it.manualObservation(amount = Money.ofMinor(-8_001L, it.cny)) },
-                { it.linkDepositEvidence() },
-                Rg06ExecutionResult.Rejected(
-                    Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
-                    Rg06FieldPath.INPUT_PAYMENT_ID,
+                ManualCase(
+                    "amount",
+                    { it.manualObservation(amount = Money.ofMinor(-8_001L, it.cny)) },
+                    { it.linkDepositEvidence() },
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
+                        Rg06FieldPath.INPUT_PAYMENT_ID,
+                    ),
                 ),
-            ),
-            ManualCase(
-                "currency",
-                { it.manualObservation(amount = Money.ofMinor(-8_000L, it.usd)) },
-                { it.linkDepositEvidence() },
-                Rg06ExecutionResult.Rejected(
-                    Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
-                    Rg06FieldPath.INPUT_PAYMENT_ID,
+                ManualCase(
+                    "currency",
+                    { it.manualObservation(amount = Money.ofMinor(-8_000L, it.usd)) },
+                    { it.linkDepositEvidence() },
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
+                        Rg06FieldPath.INPUT_PAYMENT_ID,
+                    ),
                 ),
-            ),
-            ManualCase(
-                "posting",
-                { it.manualObservation() },
-                { f -> f.linkDepositEvidence().copy(input = f.linkDepositEvidence().input.copy(postingId = PostingId("wrong-posting"))) },
-                Rg06ExecutionResult.Rejected(
-                    Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
-                    Rg06FieldPath.INPUT_POSTING_ID,
+                ManualCase(
+                    "posting",
+                    { it.manualObservation() },
+                    { f -> f.linkDepositEvidence().copy(input = f.linkDepositEvidence().input.copy(postingId = PostingId("wrong-posting"))) },
+                    Rg06ExecutionResult.Rejected(
+                        Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH,
+                        Rg06FieldPath.INPUT_POSTING_ID,
+                    ),
                 ),
-            ),
-        )
+            )
 
         cases.forEach { case ->
             val fixture = Rg06Fixture("manual-${case.name}")
@@ -449,13 +493,14 @@ private class Rg06ApplicationReferenceConformanceModel(
 
     fun typedFactoriesCloseTimeCandidateConfidenceMagnitudeAndMirrorLineageStates() {
         val fixture = Rg06Fixture("typed-factories")
-        val sourceTime = assertIs<Rg06TypedValueResult.Success<Rg06SourcePaymentAt>>(
-            Rg06SourcePaymentAt.create(
-                Instant.parse("2026-04-28T02:00:00Z"),
-                "2026-04-28T10:00:00+08:00",
-                fixture.expectedOffsetText,
-            ),
-        ).value
+        val sourceTime =
+            assertIs<Rg06TypedValueResult.Success<Rg06SourcePaymentAt>>(
+                Rg06SourcePaymentAt.create(
+                    Instant.parse("2026-04-28T02:00:00Z"),
+                    "2026-04-28T10:00:00+08:00",
+                    fixture.expectedOffsetText,
+                ),
+            ).value
         assertEquals(
             Rg06TypedValueResult.Failure(Rg06TypedValueFailure.INVALID_TIME),
             Rg06SourcePaymentAt.create(
@@ -473,26 +518,28 @@ private class Rg06ApplicationReferenceConformanceModel(
             ),
         )
 
-        val known = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidatePayload>>(
-            Rg06StagedPaymentCandidatePayload.known(
-                StagedPaymentRole.DEPOSIT,
-                Money.ofMinor(-8_000L, fixture.cny),
-                sourceTime,
-                fixture.importDepositEvidenceId,
-            ),
-        ).value
+        val known =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidatePayload>>(
+                Rg06StagedPaymentCandidatePayload.known(
+                    StagedPaymentRole.DEPOSIT,
+                    Money.ofMinor(-8_000L, fixture.cny),
+                    sourceTime,
+                    fixture.importDepositEvidenceId,
+                ),
+            ).value
         assertEquals(Rg06CandidateRoleFact.Known(StagedPaymentRole.DEPOSIT), known.roleFact)
         assertEquals(Rg06CandidateConfidence.CERTAIN, known.confidence)
         assertEquals(8_000L, known.amount.minorUnits)
         assertEquals(1, known.ruleVersion)
         assertEquals(RG06_CONFIRMATION_REQUIREMENTS, known.confirmationRequirements)
-        val ambiguous = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidatePayload>>(
-            Rg06StagedPaymentCandidatePayload.ambiguous(
-                Money.ofMinor(8_000L, fixture.cny),
-                sourceTime,
-                fixture.importDepositEvidenceId,
-            ),
-        ).value
+        val ambiguous =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentCandidatePayload>>(
+                Rg06StagedPaymentCandidatePayload.ambiguous(
+                    Money.ofMinor(8_000L, fixture.cny),
+                    sourceTime,
+                    fixture.importDepositEvidenceId,
+                ),
+            ).value
         assertEquals(Rg06CandidateConfidence.AMBIGUOUS, ambiguous.confidence)
         listOf(0L, Long.MIN_VALUE).forEach { invalid ->
             assertEquals(
@@ -504,35 +551,38 @@ private class Rg06ApplicationReferenceConformanceModel(
                 ),
             )
         }
-        val candidate = Rg06StagedPaymentCandidate.pending(
-            fixture.ledgerId,
-            fixture.depositCandidateId,
-            fixture.importDepositSourceId,
-            known,
-            Rg06CandidateStatusId("pending"),
-        )
+        val candidate =
+            Rg06StagedPaymentCandidate.pending(
+                fixture.ledgerId,
+                fixture.depositCandidateId,
+                fixture.importDepositSourceId,
+                known,
+                Rg06CandidateStatusId("pending"),
+            )
         assertEquals(known.confidence, candidate.confidence)
 
-        val ordinary = Rg06BoundStagedPaymentEvidence.imported(
-            fixture.ledgerId,
-            fixture.importDepositEvidenceId,
-            fixture.importDepositSourceId,
-            sourceTime,
-            fixture.depositPaymentId,
-        )
-        assertNull(ordinary.mirrorOfEvidenceId)
-        assertNull(ordinary.mergedIntoEvidenceLinkId)
-        val mirror = assertIs<Rg06TypedValueResult.Success<Rg06BoundStagedPaymentEvidence>>(
-            Rg06BoundStagedPaymentEvidence.mirror(
+        val ordinary =
+            Rg06BoundStagedPaymentEvidence.imported(
                 fixture.ledgerId,
-                fixture.mirrorEvidenceId,
-                fixture.mirrorSourceId,
+                fixture.importDepositEvidenceId,
+                fixture.importDepositSourceId,
                 sourceTime,
                 fixture.depositPaymentId,
-                fixture.importDepositEvidenceId,
-                fixture.importDepositLinkId,
-            ),
-        ).value
+            )
+        assertNull(ordinary.mirrorOfEvidenceId)
+        assertNull(ordinary.mergedIntoEvidenceLinkId)
+        val mirror =
+            assertIs<Rg06TypedValueResult.Success<Rg06BoundStagedPaymentEvidence>>(
+                Rg06BoundStagedPaymentEvidence.mirror(
+                    fixture.ledgerId,
+                    fixture.mirrorEvidenceId,
+                    fixture.mirrorSourceId,
+                    sourceTime,
+                    fixture.depositPaymentId,
+                    fixture.importDepositEvidenceId,
+                    fixture.importDepositLinkId,
+                ),
+            ).value
         assertEquals(fixture.importDepositEvidenceId, mirror.mirrorOfEvidenceId)
         assertEquals(fixture.importDepositLinkId, mirror.mergedIntoEvidenceLinkId)
         assertEquals(
@@ -547,6 +597,7 @@ private class Rg06ApplicationReferenceConformanceModel(
                 fixture.importDepositLinkId,
             ),
         )
+
         fun mirrorEvidence(
             ledgerId: LedgerId = fixture.ledgerId,
             id: Rg06EvidenceId = fixture.mirrorEvidenceId,
@@ -555,7 +606,13 @@ private class Rg06ApplicationReferenceConformanceModel(
             mirrorOfEvidenceId: Rg06EvidenceId = fixture.importDepositEvidenceId,
             linkId: Rg06EvidenceLinkId = fixture.importDepositLinkId,
         ) = Rg06BoundStagedPaymentEvidence.mirror(
-            ledgerId, id, sourceId, sourceTime, paymentId, mirrorOfEvidenceId, linkId,
+            ledgerId,
+            id,
+            sourceId,
+            sourceTime,
+            paymentId,
+            mirrorOfEvidenceId,
+            linkId,
         )
         listOf(
             mirrorEvidence(ledgerId = LedgerId("")),
@@ -572,33 +629,36 @@ private class Rg06ApplicationReferenceConformanceModel(
         }
 
         val observedAt = fixture.manualObservation().observedAt
-        val manualSource = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
-            Rg06StagedPaymentBankSource.manual(
-                fixture.ledgerId,
-                fixture.manualSourceId,
-                Money.ofMinor(-8_000L, fixture.cny),
-                observedAt,
-            ),
-        ).value
+        val manualSource =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
+                Rg06StagedPaymentBankSource.manual(
+                    fixture.ledgerId,
+                    fixture.manualSourceId,
+                    Money.ofMinor(-8_000L, fixture.cny),
+                    observedAt,
+                ),
+            ).value
         assertNull(manualSource.mirrorOfSourceId)
-        val importedSource = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
-            Rg06StagedPaymentBankSource.importedOriginal(
-                fixture.ledgerId,
-                fixture.importDepositSourceId,
-                Money.ofMinor(-8_000L, fixture.cny),
-                sourceTime,
-            ),
-        ).value
+        val importedSource =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
+                Rg06StagedPaymentBankSource.importedOriginal(
+                    fixture.ledgerId,
+                    fixture.importDepositSourceId,
+                    Money.ofMinor(-8_000L, fixture.cny),
+                    sourceTime,
+                ),
+            ).value
         assertNull(importedSource.mirrorOfSourceId)
-        val typedMirrorSource = assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
-            Rg06StagedPaymentBankSource.mirror(
-                fixture.ledgerId,
-                fixture.mirrorSourceId,
-                Money.ofMinor(8_000L, fixture.cny),
-                sourceTime,
-                fixture.importDepositSourceId,
-            ),
-        ).value
+        val typedMirrorSource =
+            assertIs<Rg06TypedValueResult.Success<Rg06StagedPaymentBankSource>>(
+                Rg06StagedPaymentBankSource.mirror(
+                    fixture.ledgerId,
+                    fixture.mirrorSourceId,
+                    Money.ofMinor(8_000L, fixture.cny),
+                    sourceTime,
+                    fixture.importDepositSourceId,
+                ),
+            ).value
         assertEquals(fixture.importDepositSourceId, typedMirrorSource.mirrorOfSourceId)
         assertEquals(
             Rg06TypedValueResult.Failure(Rg06TypedValueFailure.INVALID_TIME_VARIANT),
@@ -673,14 +733,17 @@ private class Rg06ApplicationReferenceConformanceModel(
             ),
             candidateBefore.confirm(ingest.ids.pendingStatusId),
         )
-        val duplicate = fixture.confirmDepositCandidate().copy(
-            ids = fixture.confirmDepositCandidate().ids.copy(
-                confirmedStatusId = ingest.ids.pendingStatusId,
-            ),
-        )
-        val invalidFundingAndDuplicateStatus = duplicate.copy(
-            input = duplicate.input.copy(fundingAccountId = fixture.unknownAccountId),
-        )
+        val duplicate =
+            fixture.confirmDepositCandidate().copy(
+                ids =
+                    fixture.confirmDepositCandidate().ids.copy(
+                        confirmedStatusId = ingest.ids.pendingStatusId,
+                    ),
+            )
+        val invalidFundingAndDuplicateStatus =
+            duplicate.copy(
+                input = duplicate.input.copy(fundingAccountId = fixture.unknownAccountId),
+            )
 
         assertEquals(
             Rg06ExecutionResult.Rejected(
@@ -726,26 +789,30 @@ private class Rg06ApplicationReferenceConformanceModel(
         val port = portFactory(fixture)
         val executor = ExecuteRg06Operation(port)
         assertIs<Rg06ExecutionResult.Accepted>(executor.execute(fixture.create()))
-        val combined = listOf(
-            fixture.recordDeposit().copy(
-                input = fixture.recordDeposit().input.copy(
-                    paymentAmount = Money.ofMinor(0, fixture.cny),
-                    fundingAccountId = fixture.unknownAccountId,
-                ),
-            ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT),
-            fixture.recordDeposit().copy(
-                input = fixture.recordDeposit().input.copy(
-                    paymentAmount = Money.ofMinor(30_000, fixture.cny),
-                    fundingAccountId = fixture.unknownAccountId,
-                ),
-            ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.DEPOSIT_MUST_BE_LESS_THAN_TOTAL, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT),
-            fixture.recordDeposit().copy(
-                input = fixture.recordDeposit().input.copy(
-                    paymentAmount = Money.ofMinor(8_000, fixture.usd),
-                    fundingAccountId = fixture.unknownAccountId,
-                ),
-            ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.SINGLE_CURRENCY_REQUIRED, Rg06FieldPath.ATTEMPTED_CURRENCY),
-        )
+        val combined =
+            listOf(
+                fixture.recordDeposit().copy(
+                    input =
+                        fixture.recordDeposit().input.copy(
+                            paymentAmount = Money.ofMinor(0, fixture.cny),
+                            fundingAccountId = fixture.unknownAccountId,
+                        ),
+                ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT),
+                fixture.recordDeposit().copy(
+                    input =
+                        fixture.recordDeposit().input.copy(
+                            paymentAmount = Money.ofMinor(30_000, fixture.cny),
+                            fundingAccountId = fixture.unknownAccountId,
+                        ),
+                ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.DEPOSIT_MUST_BE_LESS_THAN_TOTAL, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT),
+                fixture.recordDeposit().copy(
+                    input =
+                        fixture.recordDeposit().input.copy(
+                            paymentAmount = Money.ofMinor(8_000, fixture.usd),
+                            fundingAccountId = fixture.unknownAccountId,
+                        ),
+                ) to Rg06ExecutionResult.Rejected(Rg06RejectionReason.SINGLE_CURRENCY_REQUIRED, Rg06FieldPath.ATTEMPTED_CURRENCY),
+            )
         combined.forEachIndexed { index, (operation, expected) ->
             val distinct = operation.copy(input = operation.input.copy(requestId = RequestId("combined-$index")))
             val before = port.snapshot()
@@ -768,9 +835,10 @@ private class Rg06ApplicationReferenceConformanceModel(
 
         assertIs<Rg06ExecutionResult.Accepted>(executor.execute(fixture.ingestDeposit()))
         val beforeCandidateCollision = port.snapshot()
-        val candidateCollision = fixture.ingestFinal().copy(
-            ids = fixture.ingestDeposit().ids,
-        )
+        val candidateCollision =
+            fixture.ingestFinal().copy(
+                ids = fixture.ingestDeposit().ids,
+            )
         assertEquals(
             Rg06ExecutionResult.Rejected(Rg06RejectionReason.IDENTITY_COLLISION, Rg06FieldPath.GENERATED_IDENTITY),
             executor.execute(candidateCollision),
@@ -787,7 +855,11 @@ private class Rg06ApplicationReferenceConformanceModel(
     }
 
     fun everyGeneratedIdentityCategoryCollisionIsAtomic() {
-        data class Occurrence(val field: String, val key: Pair<String, String>)
+        data class Occurrence(
+            val field: String,
+            val key: Pair<String, String>,
+        )
+
         data class Branch(
             val action: Rg06Action,
             val operation: (Rg06Fixture) -> Rg06Operation,
@@ -813,138 +885,156 @@ private class Rg06ApplicationReferenceConformanceModel(
             ingested(f, e)
             e.execute(f.confirmDepositCandidate()).accepted()
         }
-        fun paymentOccurrences(ids: StagedPaymentInstallmentIds) = listOf(
-            Occurrence("payment", "payment" to ids.paymentId.value),
-            Occurrence("history", "history" to ids.historyId.value),
-            Occurrence("transaction", "transaction" to ids.expenseIds.transactionId.value),
-            Occurrence("version", "version" to ids.expenseIds.versionId.value),
-            Occurrence("posting_set", "posting_set" to ids.expenseIds.postingSetId.value),
-            Occurrence("expense_posting", "posting" to ids.expenseIds.expensePostingId.value),
-            Occurrence("asset_posting", "posting" to ids.expenseIds.paymentPostingId.value),
-        )
-        fun correctedPayment(ids: StagedPaymentInstallmentIds, field: String): StagedPaymentInstallmentIds = when (field) {
-            "payment" -> ids.copy(paymentId = InstallmentPaymentId("${ids.paymentId.value}-corrected"))
-            "history" -> ids.copy(historyId = StagedPaymentHistoryId("${ids.historyId.value}-corrected"))
-            "transaction" -> ids.copy(expenseIds = ids.expenseIds.copy(transactionId = TransactionId("${ids.expenseIds.transactionId.value}-corrected")))
-            "version" -> ids.copy(expenseIds = ids.expenseIds.copy(versionId = TransactionVersionId("${ids.expenseIds.versionId.value}-corrected")))
-            "posting_set" -> ids.copy(expenseIds = ids.expenseIds.copy(postingSetId = PostingSetId("${ids.expenseIds.postingSetId.value}-corrected")))
-            "expense_posting" -> ids.copy(expenseIds = ids.expenseIds.copy(expensePostingId = PostingId("${ids.expenseIds.expensePostingId.value}-corrected")))
-            "asset_posting" -> ids.copy(expenseIds = ids.expenseIds.copy(paymentPostingId = PostingId("${ids.expenseIds.paymentPostingId.value}-corrected")))
-            else -> ids
-        }
-        val branches = listOf(
-            Branch(Rg06Action.CREATE_STAGED_PAYMENT, { it.create() }, none, { operation ->
-                val op = operation as Rg06Operation.CreateStagedPayment
-                listOf(
-                    Occurrence("relation", "relation" to op.ids.relationId.value),
-                    Occurrence("lifecycle", "lifecycle" to op.ids.lifecycleId.value),
-                    Occurrence("history", "history" to op.ids.historyId.value),
-                )
-            }, { operation, field ->
-                val op = operation as Rg06Operation.CreateStagedPayment
-                op.copy(ids = when (field) {
-                    "relation" -> op.ids.copy(relationId = StagedPaymentRelationId("${op.ids.relationId.value}-corrected"))
-                    "lifecycle" -> op.ids.copy(lifecycleId = StagedPaymentLifecycleId("${op.ids.lifecycleId.value}-corrected"))
-                    else -> op.ids.copy(historyId = StagedPaymentHistoryId("${op.ids.historyId.value}-corrected"))
-                })
-            }),
-            Branch(Rg06Action.RECORD_STAGED_PAYMENT_INSTALLMENT, { it.recordDeposit() }, created, { operation ->
-                val op = operation as Rg06Operation.RecordStagedPaymentInstallment
-                listOf(
-                    Occurrence("confirmation", "confirmation" to op.ids.confirmationId.value),
-                    Occurrence("reconciliation", "reconciliation" to op.ids.reconciliationId.value),
-                ) + paymentOccurrences(op.ids.paymentIds)
-            }, { operation, field ->
-                val op = operation as Rg06Operation.RecordStagedPaymentInstallment
-                op.copy(ids = when (field) {
-                    "confirmation" -> op.ids.copy(confirmationId = Rg06ConfirmationId("${op.ids.confirmationId.value}-corrected"))
-                    "reconciliation" -> op.ids.copy(reconciliationId = Rg06ReconciliationId("${op.ids.reconciliationId.value}-corrected"))
-                    else -> op.ids.copy(paymentIds = correctedPayment(op.ids.paymentIds, field))
-                })
-            }),
-            Branch(Rg06Action.CHANGE_STAGED_PAYMENT_FULFILLMENT, { it.fulfill() }, recorded, { operation ->
-                val op = operation as Rg06Operation.ChangeStagedPaymentFulfillment
-                listOf(Occurrence("history", "history" to op.historyId.value))
-            }, { operation, _ ->
-                val op = operation as Rg06Operation.ChangeStagedPaymentFulfillment
-                op.copy(historyId = StagedPaymentHistoryId("${op.historyId.value}-corrected"))
-            }),
-            Branch(Rg06Action.CONFIRM_STAGED_PAYMENT_COMPLETION, { it.complete() }, completed, { operation ->
-                val op = operation as Rg06Operation.ConfirmStagedPaymentCompletion
-                listOf(Occurrence("history", "history" to op.historyId.value))
-            }, { operation, _ ->
-                val op = operation as Rg06Operation.ConfirmStagedPaymentCompletion
-                op.copy(historyId = StagedPaymentHistoryId("${op.historyId.value}-corrected"))
-            }),
-            Branch(Rg06Action.LINK_STAGED_PAYMENT_EVIDENCE, { it.linkDepositEvidence() }, recorded, { operation ->
-                val op = operation as Rg06Operation.LinkStagedPaymentEvidence
-                listOf(
-                    Occurrence("source", "source" to op.input.sourceId.value),
-                    Occurrence("evidence", "evidence" to op.input.evidenceId.value),
-                    Occurrence("link", "link" to op.evidenceLinkId.value),
-                )
-            }, { operation, field ->
-                val op = operation as Rg06Operation.LinkStagedPaymentEvidence
-                when (field) {
-                    "source" -> op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
-                    "evidence" -> op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
-                    else -> op.copy(evidenceLinkId = Rg06EvidenceLinkId("${op.evidenceLinkId.value}-corrected"))
-                }
-            }),
-            Branch(Rg06Action.INGEST_STAGED_PAYMENT_BANK_FACT, { it.ingestDeposit() }, none, { operation ->
-                val op = operation as Rg06Operation.IngestStagedPaymentBankFact
-                listOf(
-                    Occurrence("source", "source" to op.input.sourceId.value),
-                    Occurrence("evidence", "evidence" to op.input.evidenceId.value),
-                    Occurrence("candidate", "candidate" to op.ids.candidateId.value),
-                    Occurrence("candidate_status", "candidate_status" to op.ids.pendingStatusId.value),
-                )
-            }, { operation, field ->
-                val op = operation as Rg06Operation.IngestStagedPaymentBankFact
-                when (field) {
-                    "source" -> op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
-                    "evidence" -> op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
-                    "candidate" -> op.copy(ids = op.ids.copy(candidateId = Rg06CandidateId("${op.ids.candidateId.value}-corrected")))
-                    else -> op.copy(ids = op.ids.copy(pendingStatusId = Rg06CandidateStatusId("${op.ids.pendingStatusId.value}-corrected")))
-                }
-            }),
-            Branch(Rg06Action.CONFIRM_STAGED_PAYMENT_CANDIDATE, { it.confirmDepositCandidate() }, ingested, { operation ->
-                val op = operation as Rg06Operation.ConfirmStagedPaymentCandidate
-                listOf(
-                    Occurrence("confirmation", "confirmation" to op.ids.confirmationId.value),
-                    Occurrence("link", "link" to op.ids.evidenceLinkId.value),
-                    Occurrence("candidate_status", "candidate_status" to op.ids.confirmedStatusId.value),
-                    Occurrence("reconciliation", "reconciliation" to op.ids.reconciliationId.value),
-                ) + paymentOccurrences(op.ids.paymentIds)
-            }, { operation, field ->
-                val op = operation as Rg06Operation.ConfirmStagedPaymentCandidate
-                op.copy(ids = when (field) {
-                    "confirmation" -> op.ids.copy(confirmationId = Rg06ConfirmationId("${op.ids.confirmationId.value}-corrected"))
-                    "link" -> op.ids.copy(evidenceLinkId = Rg06EvidenceLinkId("${op.ids.evidenceLinkId.value}-corrected"))
-                    "candidate_status" -> op.ids.copy(confirmedStatusId = Rg06CandidateStatusId("${op.ids.confirmedStatusId.value}-corrected"))
-                    "reconciliation" -> op.ids.copy(reconciliationId = Rg06ReconciliationId("${op.ids.reconciliationId.value}-corrected"))
-                    else -> op.ids.copy(paymentIds = correctedPayment(op.ids.paymentIds, field))
-                })
-            }),
-            Branch(Rg06Action.MERGE_STAGED_PAYMENT_MIRROR_EVIDENCE, { it.mergeDepositMirror() }, confirmed, { operation ->
-                val op = operation as Rg06Operation.MergeStagedPaymentMirrorEvidence
-                listOf(
-                    Occurrence("source", "source" to op.input.sourceId.value),
-                    Occurrence("evidence", "evidence" to op.input.evidenceId.value),
-                )
-            }, { operation, field ->
-                val op = operation as Rg06Operation.MergeStagedPaymentMirrorEvidence
-                if (field == "source") {
-                    op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
-                } else {
-                    op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
-                }
-            }),
-        )
+
+        fun paymentOccurrences(ids: StagedPaymentInstallmentIds) =
+            listOf(
+                Occurrence("payment", "payment" to ids.paymentId.value),
+                Occurrence("history", "history" to ids.historyId.value),
+                Occurrence("transaction", "transaction" to ids.expenseIds.transactionId.value),
+                Occurrence("version", "version" to ids.expenseIds.versionId.value),
+                Occurrence("posting_set", "posting_set" to ids.expenseIds.postingSetId.value),
+                Occurrence("expense_posting", "posting" to ids.expenseIds.expensePostingId.value),
+                Occurrence("asset_posting", "posting" to ids.expenseIds.paymentPostingId.value),
+            )
+
+        fun correctedPayment(
+            ids: StagedPaymentInstallmentIds,
+            field: String,
+        ): StagedPaymentInstallmentIds =
+            when (field) {
+                "payment" -> ids.copy(paymentId = InstallmentPaymentId("${ids.paymentId.value}-corrected"))
+                "history" -> ids.copy(historyId = StagedPaymentHistoryId("${ids.historyId.value}-corrected"))
+                "transaction" -> ids.copy(expenseIds = ids.expenseIds.copy(transactionId = TransactionId("${ids.expenseIds.transactionId.value}-corrected")))
+                "version" -> ids.copy(expenseIds = ids.expenseIds.copy(versionId = TransactionVersionId("${ids.expenseIds.versionId.value}-corrected")))
+                "posting_set" -> ids.copy(expenseIds = ids.expenseIds.copy(postingSetId = PostingSetId("${ids.expenseIds.postingSetId.value}-corrected")))
+                "expense_posting" -> ids.copy(expenseIds = ids.expenseIds.copy(expensePostingId = PostingId("${ids.expenseIds.expensePostingId.value}-corrected")))
+                "asset_posting" -> ids.copy(expenseIds = ids.expenseIds.copy(paymentPostingId = PostingId("${ids.expenseIds.paymentPostingId.value}-corrected")))
+                else -> ids
+            }
+        val branches =
+            listOf(
+                Branch(Rg06Action.CREATE_STAGED_PAYMENT, { it.create() }, none, { operation ->
+                    val op = operation as Rg06Operation.CreateStagedPayment
+                    listOf(
+                        Occurrence("relation", "relation" to op.ids.relationId.value),
+                        Occurrence("lifecycle", "lifecycle" to op.ids.lifecycleId.value),
+                        Occurrence("history", "history" to op.ids.historyId.value),
+                    )
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.CreateStagedPayment
+                    op.copy(
+                        ids =
+                            when (field) {
+                                "relation" -> op.ids.copy(relationId = StagedPaymentRelationId("${op.ids.relationId.value}-corrected"))
+                                "lifecycle" -> op.ids.copy(lifecycleId = StagedPaymentLifecycleId("${op.ids.lifecycleId.value}-corrected"))
+                                else -> op.ids.copy(historyId = StagedPaymentHistoryId("${op.ids.historyId.value}-corrected"))
+                            },
+                    )
+                }),
+                Branch(Rg06Action.RECORD_STAGED_PAYMENT_INSTALLMENT, { it.recordDeposit() }, created, { operation ->
+                    val op = operation as Rg06Operation.RecordStagedPaymentInstallment
+                    listOf(
+                        Occurrence("confirmation", "confirmation" to op.ids.confirmationId.value),
+                        Occurrence("reconciliation", "reconciliation" to op.ids.reconciliationId.value),
+                    ) + paymentOccurrences(op.ids.paymentIds)
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.RecordStagedPaymentInstallment
+                    op.copy(
+                        ids =
+                            when (field) {
+                                "confirmation" -> op.ids.copy(confirmationId = Rg06ConfirmationId("${op.ids.confirmationId.value}-corrected"))
+                                "reconciliation" -> op.ids.copy(reconciliationId = Rg06ReconciliationId("${op.ids.reconciliationId.value}-corrected"))
+                                else -> op.ids.copy(paymentIds = correctedPayment(op.ids.paymentIds, field))
+                            },
+                    )
+                }),
+                Branch(Rg06Action.CHANGE_STAGED_PAYMENT_FULFILLMENT, { it.fulfill() }, recorded, { operation ->
+                    val op = operation as Rg06Operation.ChangeStagedPaymentFulfillment
+                    listOf(Occurrence("history", "history" to op.historyId.value))
+                }, { operation, _ ->
+                    val op = operation as Rg06Operation.ChangeStagedPaymentFulfillment
+                    op.copy(historyId = StagedPaymentHistoryId("${op.historyId.value}-corrected"))
+                }),
+                Branch(Rg06Action.CONFIRM_STAGED_PAYMENT_COMPLETION, { it.complete() }, completed, { operation ->
+                    val op = operation as Rg06Operation.ConfirmStagedPaymentCompletion
+                    listOf(Occurrence("history", "history" to op.historyId.value))
+                }, { operation, _ ->
+                    val op = operation as Rg06Operation.ConfirmStagedPaymentCompletion
+                    op.copy(historyId = StagedPaymentHistoryId("${op.historyId.value}-corrected"))
+                }),
+                Branch(Rg06Action.LINK_STAGED_PAYMENT_EVIDENCE, { it.linkDepositEvidence() }, recorded, { operation ->
+                    val op = operation as Rg06Operation.LinkStagedPaymentEvidence
+                    listOf(
+                        Occurrence("source", "source" to op.input.sourceId.value),
+                        Occurrence("evidence", "evidence" to op.input.evidenceId.value),
+                        Occurrence("link", "link" to op.evidenceLinkId.value),
+                    )
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.LinkStagedPaymentEvidence
+                    when (field) {
+                        "source" -> op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
+                        "evidence" -> op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
+                        else -> op.copy(evidenceLinkId = Rg06EvidenceLinkId("${op.evidenceLinkId.value}-corrected"))
+                    }
+                }),
+                Branch(Rg06Action.INGEST_STAGED_PAYMENT_BANK_FACT, { it.ingestDeposit() }, none, { operation ->
+                    val op = operation as Rg06Operation.IngestStagedPaymentBankFact
+                    listOf(
+                        Occurrence("source", "source" to op.input.sourceId.value),
+                        Occurrence("evidence", "evidence" to op.input.evidenceId.value),
+                        Occurrence("candidate", "candidate" to op.ids.candidateId.value),
+                        Occurrence("candidate_status", "candidate_status" to op.ids.pendingStatusId.value),
+                    )
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.IngestStagedPaymentBankFact
+                    when (field) {
+                        "source" -> op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
+                        "evidence" -> op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
+                        "candidate" -> op.copy(ids = op.ids.copy(candidateId = Rg06CandidateId("${op.ids.candidateId.value}-corrected")))
+                        else -> op.copy(ids = op.ids.copy(pendingStatusId = Rg06CandidateStatusId("${op.ids.pendingStatusId.value}-corrected")))
+                    }
+                }),
+                Branch(Rg06Action.CONFIRM_STAGED_PAYMENT_CANDIDATE, { it.confirmDepositCandidate() }, ingested, { operation ->
+                    val op = operation as Rg06Operation.ConfirmStagedPaymentCandidate
+                    listOf(
+                        Occurrence("confirmation", "confirmation" to op.ids.confirmationId.value),
+                        Occurrence("link", "link" to op.ids.evidenceLinkId.value),
+                        Occurrence("candidate_status", "candidate_status" to op.ids.confirmedStatusId.value),
+                        Occurrence("reconciliation", "reconciliation" to op.ids.reconciliationId.value),
+                    ) + paymentOccurrences(op.ids.paymentIds)
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.ConfirmStagedPaymentCandidate
+                    op.copy(
+                        ids =
+                            when (field) {
+                                "confirmation" -> op.ids.copy(confirmationId = Rg06ConfirmationId("${op.ids.confirmationId.value}-corrected"))
+                                "link" -> op.ids.copy(evidenceLinkId = Rg06EvidenceLinkId("${op.ids.evidenceLinkId.value}-corrected"))
+                                "candidate_status" -> op.ids.copy(confirmedStatusId = Rg06CandidateStatusId("${op.ids.confirmedStatusId.value}-corrected"))
+                                "reconciliation" -> op.ids.copy(reconciliationId = Rg06ReconciliationId("${op.ids.reconciliationId.value}-corrected"))
+                                else -> op.ids.copy(paymentIds = correctedPayment(op.ids.paymentIds, field))
+                            },
+                    )
+                }),
+                Branch(Rg06Action.MERGE_STAGED_PAYMENT_MIRROR_EVIDENCE, { it.mergeDepositMirror() }, confirmed, { operation ->
+                    val op = operation as Rg06Operation.MergeStagedPaymentMirrorEvidence
+                    listOf(
+                        Occurrence("source", "source" to op.input.sourceId.value),
+                        Occurrence("evidence", "evidence" to op.input.evidenceId.value),
+                    )
+                }, { operation, field ->
+                    val op = operation as Rg06Operation.MergeStagedPaymentMirrorEvidence
+                    if (field == "source") {
+                        op.copy(input = op.input.copy(sourceId = Rg06SourceId("${op.input.sourceId.value}-corrected")))
+                    } else {
+                        op.copy(input = op.input.copy(evidenceId = Rg06EvidenceId("${op.input.evidenceId.value}-corrected")))
+                    }
+                }),
+            )
         assertEquals(Rg06Action.entries, branches.map { it.action })
-        val cases = branches.flatMap { branch ->
-            branch.occurrences(branch.operation(Rg06Fixture("registry-${branch.action.code}"))).map { branch to it }
-        }
+        val cases =
+            branches.flatMap { branch ->
+                branch.occurrences(branch.operation(Rg06Fixture("registry-${branch.action.code}"))).map { branch to it }
+            }
         assertEquals(34, cases.size)
         assertEquals(
             listOf(3, 9, 1, 1, 3, 4, 11, 2),
@@ -994,12 +1084,14 @@ private class Rg06ApplicationReferenceConformanceModel(
         val executor = ExecuteRg06Operation(port)
         executor.execute(fixture.create()).accepted()
         val requestId = RequestId("request-correctable")
-        val invalidWithOccupiedIds = fixture.create().copy(
-            input = fixture.create().input.copy(
-                requestId = requestId,
-                totalAmount = Money.ofMinor(0L, fixture.cny),
-            ),
-        )
+        val invalidWithOccupiedIds =
+            fixture.create().copy(
+                input =
+                    fixture.create().input.copy(
+                        requestId = requestId,
+                        totalAmount = Money.ofMinor(0L, fixture.cny),
+                    ),
+            )
         val before = port.snapshot()
 
         assertEquals(
@@ -1011,24 +1103,27 @@ private class Rg06ApplicationReferenceConformanceModel(
         )
         assertEquals(before, port.snapshot())
 
-        val corrected = invalidWithOccupiedIds.copy(
-            input = invalidWithOccupiedIds.input.copy(totalAmount = Money.ofMinor(30_000L, fixture.cny)),
-            ids = StagedPaymentCreationIds(
-                StagedPaymentRelationId("relation-corrected"),
-                StagedPaymentLifecycleId("lifecycle-corrected"),
-                StagedPaymentHistoryId("history-corrected"),
-            ),
-        )
+        val corrected =
+            invalidWithOccupiedIds.copy(
+                input = invalidWithOccupiedIds.input.copy(totalAmount = Money.ofMinor(30_000L, fixture.cny)),
+                ids =
+                    StagedPaymentCreationIds(
+                        StagedPaymentRelationId("relation-corrected"),
+                        StagedPaymentLifecycleId("lifecycle-corrected"),
+                        StagedPaymentHistoryId("history-corrected"),
+                    ),
+            )
         assertIs<Rg06ExecutionResult.Accepted>(executor.execute(corrected))
     }
 
     fun explicitGuardsRemainSeparateFromFrozenRejectionsAndNeverCallPort() {
         var calls = 0
         val fixture = Rg06Fixture()
-        val executor = ExecuteRg06Operation {
-            calls += 1
-            Rg06ExecutionResult.Accepted(emptyList())
-        }
+        val executor =
+            ExecuteRg06Operation {
+                calls += 1
+                Rg06ExecutionResult.Accepted(emptyList())
+            }
         assertEquals(
             Rg06ExecutionResult.Rejected(Rg06RejectionReason.EXPLICIT_CONFIRMATION_REQUIRED, Rg06FieldPath.INPUT_CONFIRMED),
             executor.execute(fixture.complete().copy(input = fixture.complete().input.copy(confirmed = false))),
@@ -1058,10 +1153,22 @@ private data class ExactActionCase(
 private fun exactActionCases(): List<ExactActionCase> {
     val none: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { _, _ -> }
     val create: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> e.execute(f.create()).accepted() }
-    val deposit: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> create(f, e); e.execute(f.recordDeposit()).accepted() }
-    val final: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> deposit(f, e); e.execute(f.recordFinal()).accepted() }
-    val ingest: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> create(f, e); e.execute(f.ingestDeposit()).accepted() }
-    val confirm: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> ingest(f, e); e.execute(f.confirmDepositCandidate()).accepted() }
+    val deposit: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e ->
+        create(f, e)
+        e.execute(f.recordDeposit()).accepted()
+    }
+    val final: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e ->
+        deposit(f, e)
+        e.execute(f.recordFinal()).accepted()
+    }
+    val ingest: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e ->
+        create(f, e)
+        e.execute(f.ingestDeposit()).accepted()
+    }
+    val confirm: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e ->
+        ingest(f, e)
+        e.execute(f.confirmDepositCandidate()).accepted()
+    }
     return listOf(
         ExactActionCase("create", { it.create() }, none, { listOf(Rg06ReturnedId.Relation(it.relationId), Rg06ReturnedId.Lifecycle(it.lifecycleId)) }, {
             (it as Rg06Operation.CreateStagedPayment).copy(ids = it.ids.copy(historyId = StagedPaymentHistoryId("proposal-history")))
@@ -1100,15 +1207,33 @@ private data class FrozenCase(
 private fun frozenRejectionCases(): List<FrozenCase> {
     val none: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { _, _ -> }
     val create: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> e.execute(f.create()).accepted() }
-    val deposited: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e -> create(f, e); e.execute(f.recordDeposit()).accepted() }
-    fun createCase(name: String, total: Long = 30_000, category: (Rg06Fixture) -> CategoryId?, reason: Rg06RejectionReason) =
-        FrozenCase(name, reason, if (reason == Rg06RejectionReason.MUST_BE_POSITIVE) Rg06FieldPath.ATTEMPTED_TOTAL_AMOUNT else Rg06FieldPath.ATTEMPTED_CATEGORY_ID, none, { f ->
-            f.create().copy(input = f.create().input.copy(requestId = RequestId("request-$name"), totalAmount = Money.ofMinor(total, f.cny), categoryId = category(f)))
-        }, { f, e, op -> e.execute(f.create().copy(input = f.create().input.copy(requestId = op.identity.requestId()))).accepted() })
-    fun depositCase(name: String, amount: (Rg06Fixture) -> Money, account: (Rg06Fixture) -> AccountId = { it.fundingAccountId }, reason: Rg06RejectionReason, path: Rg06FieldPath = Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT) =
-        FrozenCase(name, reason, path, create, { f -> f.recordDeposit().copy(input = f.recordDeposit().input.copy(requestId = RequestId("request-$name"), paymentAmount = amount(f), fundingAccountId = account(f))) }, { f, e, op -> e.execute(f.recordDeposit().copy(input = f.recordDeposit().input.copy(requestId = op.identity.requestId()))).accepted() })
-    fun finalCase(name: String, amount: Long, reason: Rg06RejectionReason) =
-        FrozenCase(name, reason, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT, deposited, { f -> f.recordFinal().copy(input = f.recordFinal().input.copy(requestId = RequestId("request-$name"), paymentAmount = Money.ofMinor(amount, f.cny))) }, { f, e, op -> e.execute(f.recordFinal().copy(input = f.recordFinal().input.copy(requestId = op.identity.requestId()))).accepted() })
+    val deposited: (Rg06Fixture, ExecuteRg06Operation) -> Unit = { f, e ->
+        create(f, e)
+        e.execute(f.recordDeposit()).accepted()
+    }
+
+    fun createCase(
+        name: String,
+        total: Long = 30_000,
+        category: (Rg06Fixture) -> CategoryId?,
+        reason: Rg06RejectionReason,
+    ) = FrozenCase(name, reason, if (reason == Rg06RejectionReason.MUST_BE_POSITIVE) Rg06FieldPath.ATTEMPTED_TOTAL_AMOUNT else Rg06FieldPath.ATTEMPTED_CATEGORY_ID, none, { f ->
+        f.create().copy(input = f.create().input.copy(requestId = RequestId("request-$name"), totalAmount = Money.ofMinor(total, f.cny), categoryId = category(f)))
+    }, { f, e, op -> e.execute(f.create().copy(input = f.create().input.copy(requestId = op.identity.requestId()))).accepted() })
+
+    fun depositCase(
+        name: String,
+        amount: (Rg06Fixture) -> Money,
+        account: (Rg06Fixture) -> AccountId = { it.fundingAccountId },
+        reason: Rg06RejectionReason,
+        path: Rg06FieldPath = Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT,
+    ) = FrozenCase(name, reason, path, create, { f -> f.recordDeposit().copy(input = f.recordDeposit().input.copy(requestId = RequestId("request-$name"), paymentAmount = amount(f), fundingAccountId = account(f))) }, { f, e, op -> e.execute(f.recordDeposit().copy(input = f.recordDeposit().input.copy(requestId = op.identity.requestId()))).accepted() })
+
+    fun finalCase(
+        name: String,
+        amount: Long,
+        reason: Rg06RejectionReason,
+    ) = FrozenCase(name, reason, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT, deposited, { f -> f.recordFinal().copy(input = f.recordFinal().input.copy(requestId = RequestId("request-$name"), paymentAmount = Money.ofMinor(amount, f.cny))) }, { f, e, op -> e.execute(f.recordFinal().copy(input = f.recordFinal().input.copy(requestId = op.identity.requestId()))).accepted() })
     return listOf(
         createCase("zero-total", 0, { it.categoryId }, Rg06RejectionReason.MUST_BE_POSITIVE),
         createCase("negative-total", -100, { it.categoryId }, Rg06RejectionReason.MUST_BE_POSITIVE),
@@ -1128,7 +1253,9 @@ private fun frozenRejectionCases(): List<FrozenCase> {
         depositCase("external", { Money.ofMinor(8_000, it.cny) }, { it.externalAccountId }, Rg06RejectionReason.OWNED_ACCOUNT_REQUIRED, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID),
         depositCase("liability", { Money.ofMinor(8_000, it.cny) }, { it.liabilityAccountId }, Rg06RejectionReason.ASSET_ACCOUNT_REQUIRED, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID),
         FrozenCase("due", Rg06RejectionReason.DUE_MUST_BE_ZERO, Rg06FieldPath.ATTEMPTED_PAYMENT_PROGRESS, create, { f -> f.complete().copy(input = f.complete().input.copy(requestId = RequestId("request-due"))) }, { f, e, op ->
-            e.execute(f.recordDeposit()).accepted(); e.execute(f.recordFinal()).accepted(); e.execute(f.complete().copy(input = f.complete().input.copy(requestId = op.identity.requestId()))).accepted()
+            e.execute(f.recordDeposit()).accepted()
+            e.execute(f.recordFinal()).accepted()
+            e.execute(f.complete().copy(input = f.complete().input.copy(requestId = op.identity.requestId()))).accepted()
         }),
     )
 }
@@ -1138,9 +1265,24 @@ private class Rg06ApplicationReferencePort(
     private val expectedSourceOffsetText: String,
     manualObservations: Map<Rg06ManualObservationKey, Rg06ManualBankObservation>,
 ) : Rg06ApplicationReferenceProbe {
-    private data class Receipt(val action: Rg06Action, val input: Any, val ids: List<Rg06ReturnedId>)
-    private data class Link(val id: Rg06EvidenceLinkId, val evidenceId: Rg06EvidenceId, val paymentId: InstallmentPaymentId, val postingId: PostingId)
-    private data class Reconciliation(val postingId: PostingId, val status: String)
+    private data class Receipt(
+        val action: Rg06Action,
+        val input: Any,
+        val ids: List<Rg06ReturnedId>,
+    )
+
+    private data class Link(
+        val id: Rg06EvidenceLinkId,
+        val evidenceId: Rg06EvidenceId,
+        val paymentId: InstallmentPaymentId,
+        val postingId: PostingId,
+    )
+
+    private data class Reconciliation(
+        val postingId: PostingId,
+        val status: String,
+    )
+
     data class Snapshot(
         val receiptCount: Int,
         val aggregates: Map<StagedPaymentRelationId, List<InstallmentPayment>>,
@@ -1166,7 +1308,9 @@ private class Rg06ApplicationReferencePort(
         receipts[operation.identity]?.let { receipt ->
             return if (receipt.action == operation.action && receipt.input == canonicalInput(operation)) {
                 Rg06ExecutionResult.NoChange(receipt.ids)
-            } else Rg06ExecutionResult.RequestIdentityConflict
+            } else {
+                Rg06ExecutionResult.RequestIdentityConflict
+            }
         }
         val aggregatesBefore = aggregates.toMap()
         val sourcesBefore = sources.toMap()
@@ -1174,6 +1318,7 @@ private class Rg06ApplicationReferencePort(
         val candidatesBefore = candidates.toMap()
         val linksBefore = links.toMap()
         val reconciliationsBefore = reconciliations.toMap()
+
         fun restoreAttemptState() {
             aggregates.replaceWith(aggregatesBefore)
             sources.replaceWith(sourcesBefore)
@@ -1182,16 +1327,17 @@ private class Rg06ApplicationReferencePort(
             links.replaceWith(linksBefore)
             reconciliations.replaceWith(reconciliationsBefore)
         }
-        val result = when (operation) {
-            is Rg06Operation.CreateStagedPayment -> create(operation)
-            is Rg06Operation.RecordStagedPaymentInstallment -> record(operation)
-            is Rg06Operation.ChangeStagedPaymentFulfillment -> fulfill(operation)
-            is Rg06Operation.ConfirmStagedPaymentCompletion -> complete(operation)
-            is Rg06Operation.LinkStagedPaymentEvidence -> link(operation)
-            is Rg06Operation.IngestStagedPaymentBankFact -> ingest(operation)
-            is Rg06Operation.ConfirmStagedPaymentCandidate -> confirm(operation)
-            is Rg06Operation.MergeStagedPaymentMirrorEvidence -> mirror(operation)
-        }
+        val result =
+            when (operation) {
+                is Rg06Operation.CreateStagedPayment -> create(operation)
+                is Rg06Operation.RecordStagedPaymentInstallment -> record(operation)
+                is Rg06Operation.ChangeStagedPaymentFulfillment -> fulfill(operation)
+                is Rg06Operation.ConfirmStagedPaymentCompletion -> complete(operation)
+                is Rg06Operation.LinkStagedPaymentEvidence -> link(operation)
+                is Rg06Operation.IngestStagedPaymentBankFact -> ingest(operation)
+                is Rg06Operation.ConfirmStagedPaymentCandidate -> confirm(operation)
+                is Rg06Operation.MergeStagedPaymentMirrorEvidence -> mirror(operation)
+            }
         if (result is Rg06ExecutionResult.Accepted) {
             val collision = generatedKeys(operation).firstOrNull { identities.containsKey(it) }
             if (collision != null) {
@@ -1206,39 +1352,57 @@ private class Rg06ApplicationReferencePort(
         return result
     }
 
-    override fun snapshot(): Any = Snapshot(
-        receipts.size,
-        aggregates.mapValues { it.value.installments },
-        sources.toMap(), evidence.toMap(), candidates.toMap(),
-        links.mapValues { it.value.evidenceId.value },
-        reconciliations.mapValues { it.value.postingId to it.value.status },
-        identities.keys.toSet(),
-    )
+    override fun snapshot(): Any =
+        Snapshot(
+            receipts.size,
+            aggregates.mapValues { it.value.installments },
+            sources.toMap(),
+            evidence.toMap(),
+            candidates.toMap(),
+            links.mapValues { it.value.evidenceId.value },
+            reconciliations.mapValues { it.value.postingId to it.value.status },
+            identities.keys.toSet(),
+        )
+
     override fun source(id: Rg06SourceId) = checkNotNull(sources[id])
+
     override fun evidence(id: Rg06EvidenceId) = checkNotNull(evidence[id])
+
     override fun candidate(id: Rg06CandidateId) = checkNotNull(candidates[id])
+
     override fun payment(id: InstallmentPaymentId) = aggregates.values.flatMap { it.installments }.single { it.id == id }
+
     override fun linkCount() = links.size
+
     override fun reconciliationState(): Any = reconciliations.mapValues { it.value.postingId to it.value.status }
+
     override fun aggregateReconciliation(id: StagedPaymentRelationId): StagedPaymentReconciliation {
         val aggregate = checkNotNull(aggregates[id])
-        return (aggregate.reconciliation(
-            reconciliations.values.map {
-                StagedPaymentReconciliationFact(
-                    postingId = it.postingId,
-                    eligible = true,
-                    status = when (it.status) {
-                        "matched" -> StagedPaymentReconciliationStatus.MATCHED
-                        "pending" -> StagedPaymentReconciliationStatus.PENDING
-                        else -> StagedPaymentReconciliationStatus.HAS_DIFFERENCE
-                    },
-                )
-            },
-        ) as StagedPaymentResult.Success).value
+        return (
+            aggregate.reconciliation(
+                reconciliations.values.map {
+                    StagedPaymentReconciliationFact(
+                        postingId = it.postingId,
+                        eligible = true,
+                        status =
+                            when (it.status) {
+                                "matched" -> StagedPaymentReconciliationStatus.MATCHED
+                                "pending" -> StagedPaymentReconciliationStatus.PENDING
+                                else -> StagedPaymentReconciliationStatus.HAS_DIFFERENCE
+                            },
+                    )
+                },
+            ) as StagedPaymentResult.Success
+        ).value
     }
-    override fun occupyGeneratedIdentity(kind: String, value: String) {
+
+    override fun occupyGeneratedIdentity(
+        kind: String,
+        value: String,
+    ) {
         identities[kind to value] = LedgerId("occupied")
     }
+
     override fun stageManualObservation(
         key: Rg06ManualObservationKey,
         observation: Rg06ManualBankObservation,
@@ -1256,17 +1420,19 @@ private class Rg06ApplicationReferencePort(
     }
 
     private fun record(op: Rg06Operation.RecordStagedPaymentInstallment): Rg06ExecutionResult {
-        val aggregate = aggregates[op.input.relationId]
-            ?: return rejected(Rg06RejectionReason.RELATION_NOT_FOUND, Rg06FieldPath.INPUT_RELATION_ID)
+        val aggregate =
+            aggregates[op.input.relationId]
+                ?: return rejected(Rg06RejectionReason.RELATION_NOT_FOUND, Rg06FieldPath.INPUT_RELATION_ID)
         if (aggregate.ledgerId != op.ledgerId) return rejected(Rg06RejectionReason.CROSS_LEDGER_REFERENCE, Rg06FieldPath.INPUT_RELATION_ID)
         validateInstallment(aggregate, op.input)?.let { return it }
         val result = aggregate.recordInstallment(catalog, RecordStagedPaymentInstallmentCommand(op.input.paymentRole, op.input.paymentAmount, op.input.fundingAccountId, op.input.actualPaymentAt), op.ids.paymentIds)
         val updated = (result as? StagedPaymentResult.Success)?.value ?: return rejected(Rg06RejectionReason.DOMAIN_REJECTED, Rg06FieldPath.GENERATED_IDENTITY)
         aggregates[op.input.relationId] = updated
-        reconciliations[op.ids.reconciliationId] = Reconciliation(
-            op.ids.paymentIds.expenseIds.paymentPostingId,
-            "pending",
-        )
+        reconciliations[op.ids.reconciliationId] =
+            Reconciliation(
+                op.ids.paymentIds.expenseIds.paymentPostingId,
+                "pending",
+            )
         return accepted(op)
     }
 
@@ -1290,21 +1456,34 @@ private class Rg06ApplicationReferencePort(
     private fun link(op: Rg06Operation.LinkStagedPaymentEvidence): Rg06ExecutionResult {
         val payment = findPayment(op.ledgerId, op.input.paymentId) ?: return rejected(Rg06RejectionReason.CROSS_LEDGER_REFERENCE, Rg06FieldPath.INPUT_PAYMENT_ID)
         if (payment.assetPostingId != op.input.postingId) return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_POSTING_ID)
-        val observation = manualObservations[Rg06ManualObservationKey(op.input.sourceId, op.input.evidenceId)]
-            ?: return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_EVIDENCE_ID)
-        val magnitude = positiveMagnitude(observation.amount)
-            ?: return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.INPUT_AMOUNT)
+        val observation =
+            manualObservations[Rg06ManualObservationKey(op.input.sourceId, op.input.evidenceId)]
+                ?: return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_EVIDENCE_ID)
+        val magnitude =
+            positiveMagnitude(observation.amount)
+                ?: return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.INPUT_AMOUNT)
         if (magnitude != payment.amount) {
             return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_PAYMENT_ID)
         }
-        val source = (Rg06StagedPaymentBankSource.manual(
-            op.ledgerId, op.input.sourceId, observation.amount, observation.observedAt,
-        ) as? Rg06TypedValueResult.Success)?.value
-            ?: return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_SOURCE_ID)
+        val source =
+            (
+                Rg06StagedPaymentBankSource.manual(
+                    op.ledgerId,
+                    op.input.sourceId,
+                    observation.amount,
+                    observation.observedAt,
+                ) as? Rg06TypedValueResult.Success
+            )?.value
+                ?: return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_SOURCE_ID)
         sources[op.input.sourceId] = source
-        evidence[op.input.evidenceId] = Rg06BoundStagedPaymentEvidence.manual(
-            op.ledgerId, op.input.evidenceId, op.input.sourceId, observation.observedAt, payment.id,
-        )
+        evidence[op.input.evidenceId] =
+            Rg06BoundStagedPaymentEvidence.manual(
+                op.ledgerId,
+                op.input.evidenceId,
+                op.input.sourceId,
+                observation.observedAt,
+                payment.id,
+            )
         links[op.evidenceLinkId] = Link(op.evidenceLinkId, op.input.evidenceId, payment.id, payment.assetPostingId)
         val target = reconciliations.entries.singleOrNull { it.value.postingId == payment.assetPostingId }
         if (target != null) reconciliations[target.key] = target.value.copy(status = "matched")
@@ -1312,24 +1491,38 @@ private class Rg06ApplicationReferencePort(
     }
 
     private fun ingest(op: Rg06Operation.IngestStagedPaymentBankFact): Rg06ExecutionResult {
-        val time = sourcePaymentAt(op.input.sourcePaymentAt, op.input.sourcePaymentAtText)
-            ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
-        val payloadResult = op.input.suggestedPaymentRole?.let {
-            Rg06StagedPaymentCandidatePayload.known(it, op.input.amount, time, op.input.evidenceId)
-        } ?: Rg06StagedPaymentCandidatePayload.ambiguous(op.input.amount, time, op.input.evidenceId)
-        val payload = (payloadResult as? Rg06TypedValueResult.Success)?.value
-            ?: return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.INPUT_AMOUNT)
-        val source = (Rg06StagedPaymentBankSource.importedOriginal(
-            op.ledgerId, op.input.sourceId, op.input.amount, time,
-        ) as? Rg06TypedValueResult.Success)?.value
-            ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
+        val time =
+            sourcePaymentAt(op.input.sourcePaymentAt, op.input.sourcePaymentAtText)
+                ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
+        val payloadResult =
+            op.input.suggestedPaymentRole?.let {
+                Rg06StagedPaymentCandidatePayload.known(it, op.input.amount, time, op.input.evidenceId)
+            } ?: Rg06StagedPaymentCandidatePayload.ambiguous(op.input.amount, time, op.input.evidenceId)
+        val payload =
+            (payloadResult as? Rg06TypedValueResult.Success)?.value
+                ?: return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.INPUT_AMOUNT)
+        val source =
+            (
+                Rg06StagedPaymentBankSource.importedOriginal(
+                    op.ledgerId,
+                    op.input.sourceId,
+                    op.input.amount,
+                    time,
+                ) as? Rg06TypedValueResult.Success
+            )?.value
+                ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
         val pendingEvidence = Rg06PendingStagedPaymentEvidence(op.ledgerId, op.input.evidenceId, op.input.sourceId, time)
-        val candidate = Rg06StagedPaymentCandidate.pending(
-            op.ledgerId, op.ids.candidateId, op.input.sourceId,
-            payload,
-            op.ids.pendingStatusId,
-        )
-        sources[source.id] = source; evidence[pendingEvidence.id] = pendingEvidence; candidates[candidate.id] = candidate
+        val candidate =
+            Rg06StagedPaymentCandidate.pending(
+                op.ledgerId,
+                op.ids.candidateId,
+                op.input.sourceId,
+                payload,
+                op.ids.pendingStatusId,
+            )
+        sources[source.id] = source
+        evidence[pendingEvidence.id] = pendingEvidence
+        candidates[candidate.id] = candidate
         return accepted(op)
     }
 
@@ -1341,37 +1534,40 @@ private class Rg06ApplicationReferencePort(
         if (known != null && known.role != op.input.paymentRole) return rejected(Rg06RejectionReason.CANDIDATE_ROLE_MISMATCH, Rg06FieldPath.INPUT_PAYMENT_ROLE)
         val aggregate = ownedAggregate(op.ledgerId, op.input.relationId) ?: return crossOrMissing(op.ledgerId, op.input.relationId)
         if (aggregate.lifecycle.categoryId != op.input.categoryId) return rejected(Rg06RejectionReason.CANDIDATE_TARGET_MISMATCH, Rg06FieldPath.INPUT_CATEGORY_ID)
-        val pending = evidence[candidate.payload.evidenceId] as? Rg06PendingStagedPaymentEvidence
-            ?: return rejected(Rg06RejectionReason.EVIDENCE_ALREADY_BOUND, Rg06FieldPath.INPUT_CANDIDATE_ID)
+        val pending =
+            evidence[candidate.payload.evidenceId] as? Rg06PendingStagedPaymentEvidence
+                ?: return rejected(Rg06RejectionReason.EVIDENCE_ALREADY_BOUND, Rg06FieldPath.INPUT_CANDIDATE_ID)
         val input = Rg06RecordStagedPaymentInstallmentInput(op.input.requestId, op.input.relationId, op.input.paymentRole, candidate.payload.amount, op.input.fundingAccountId, candidate.payload.sourcePaymentAt.instant)
         validateInstallment(aggregate, input)?.let { return it }
-        val result = aggregate.recordInstallment(
-            catalog,
-            RecordStagedPaymentInstallmentCommand(
-                op.input.paymentRole,
-                candidate.payload.amount,
-                op.input.fundingAccountId,
-                candidate.payload.sourcePaymentAt.instant,
-                candidate.payload.sourcePaymentAt.value,
-            ),
-            op.ids.paymentIds,
-        )
-        val updated = (result as? StagedPaymentResult.Success)?.value ?: return rejected(Rg06RejectionReason.DOMAIN_REJECTED, Rg06FieldPath.GENERATED_IDENTITY)
-        val confirmedCandidate = when (val transition = candidate.confirm(op.ids.confirmedStatusId)) {
-            is Rg06TypedValueResult.Success -> transition.value
-            is Rg06TypedValueResult.Failure -> return rejected(
-                if (transition.reason == Rg06TypedValueFailure.CANDIDATE_STATUS_IDENTITY_COLLISION) {
-                    Rg06RejectionReason.IDENTITY_COLLISION
-                } else {
-                    Rg06RejectionReason.CANDIDATE_NOT_PENDING
-                },
-                if (transition.reason == Rg06TypedValueFailure.CANDIDATE_STATUS_IDENTITY_COLLISION) {
-                    Rg06FieldPath.GENERATED_IDENTITY
-                } else {
-                    Rg06FieldPath.INPUT_CANDIDATE_ID
-                },
+        val result =
+            aggregate.recordInstallment(
+                catalog,
+                RecordStagedPaymentInstallmentCommand(
+                    op.input.paymentRole,
+                    candidate.payload.amount,
+                    op.input.fundingAccountId,
+                    candidate.payload.sourcePaymentAt.instant,
+                    candidate.payload.sourcePaymentAt.value,
+                ),
+                op.ids.paymentIds,
             )
-        }
+        val updated = (result as? StagedPaymentResult.Success)?.value ?: return rejected(Rg06RejectionReason.DOMAIN_REJECTED, Rg06FieldPath.GENERATED_IDENTITY)
+        val confirmedCandidate =
+            when (val transition = candidate.confirm(op.ids.confirmedStatusId)) {
+                is Rg06TypedValueResult.Success -> transition.value
+                is Rg06TypedValueResult.Failure -> return rejected(
+                    if (transition.reason == Rg06TypedValueFailure.CANDIDATE_STATUS_IDENTITY_COLLISION) {
+                        Rg06RejectionReason.IDENTITY_COLLISION
+                    } else {
+                        Rg06RejectionReason.CANDIDATE_NOT_PENDING
+                    },
+                    if (transition.reason == Rg06TypedValueFailure.CANDIDATE_STATUS_IDENTITY_COLLISION) {
+                        Rg06FieldPath.GENERATED_IDENTITY
+                    } else {
+                        Rg06FieldPath.INPUT_CANDIDATE_ID
+                    },
+                )
+            }
         if (generatedKeys(op).any { identities.containsKey(it) }) {
             return rejected(Rg06RejectionReason.IDENTITY_COLLISION, Rg06FieldPath.GENERATED_IDENTITY)
         }
@@ -1385,36 +1581,52 @@ private class Rg06ApplicationReferencePort(
     }
 
     private fun mirror(op: Rg06Operation.MergeStagedPaymentMirrorEvidence): Rg06ExecutionResult {
-        val time = sourcePaymentAt(op.input.sourcePaymentAt, op.input.sourcePaymentAtText)
-            ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
+        val time =
+            sourcePaymentAt(op.input.sourcePaymentAt, op.input.sourcePaymentAtText)
+                ?: return rejected(Rg06RejectionReason.INVALID_SOURCE_TIME, Rg06FieldPath.INPUT_SOURCE_PAYMENT_AT)
         if (op.input.amount.minorUnits == 0L || op.input.amount.minorUnits == Long.MIN_VALUE) return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.INPUT_AMOUNT)
         val payment = findPayment(op.ledgerId, op.input.paymentId) ?: return rejected(Rg06RejectionReason.CROSS_LEDGER_REFERENCE, Rg06FieldPath.INPUT_PAYMENT_ID)
         if (payment.assetPostingId != op.input.postingId) return rejected(Rg06RejectionReason.EVIDENCE_TARGET_MISMATCH, Rg06FieldPath.INPUT_POSTING_ID)
-        val originalLink = links.values.singleOrNull { it.paymentId == payment.id && it.postingId == payment.assetPostingId }
-            ?: return rejected(Rg06RejectionReason.MIRROR_TARGET_NOT_FOUND, Rg06FieldPath.INPUT_POSTING_ID)
+        val originalLink =
+            links.values.singleOrNull { it.paymentId == payment.id && it.postingId == payment.assetPostingId }
+                ?: return rejected(Rg06RejectionReason.MIRROR_TARGET_NOT_FOUND, Rg06FieldPath.INPUT_POSTING_ID)
         val originalEvidence = evidence[originalLink.evidenceId] ?: return rejected(Rg06RejectionReason.MIRROR_TARGET_NOT_FOUND, Rg06FieldPath.INPUT_POSTING_ID)
         val originalSource = sources[originalEvidence.sourceId] ?: return rejected(Rg06RejectionReason.MIRROR_TARGET_NOT_FOUND, Rg06FieldPath.INPUT_POSTING_ID)
         val originalMinor = originalSource.payload.amount.minorUnits
         if (originalMinor == Long.MIN_VALUE || op.input.amount.currency != originalSource.payload.amount.currency || op.input.amount.minorUnits != -originalMinor) {
             return rejected(Rg06RejectionReason.MIRROR_SOURCE_MISMATCH, Rg06FieldPath.INPUT_AMOUNT)
         }
-        val mirrorSource = (Rg06StagedPaymentBankSource.mirror(
-            op.ledgerId, op.input.sourceId, op.input.amount, time, originalSource.id,
-        ) as? Rg06TypedValueResult.Success)?.value
-            ?: return rejected(Rg06RejectionReason.MIRROR_SOURCE_MISMATCH, Rg06FieldPath.INPUT_SOURCE_ID)
+        val mirrorSource =
+            (
+                Rg06StagedPaymentBankSource.mirror(
+                    op.ledgerId,
+                    op.input.sourceId,
+                    op.input.amount,
+                    time,
+                    originalSource.id,
+                ) as? Rg06TypedValueResult.Success
+            )?.value
+                ?: return rejected(Rg06RejectionReason.MIRROR_SOURCE_MISMATCH, Rg06FieldPath.INPUT_SOURCE_ID)
         sources[op.input.sourceId] = mirrorSource
-        val mirrorEvidence = when (
-            val result = Rg06BoundStagedPaymentEvidence.mirror(
-                op.ledgerId, op.input.evidenceId, op.input.sourceId, time, payment.id,
-                originalEvidence.id, originalLink.id,
-            )
-        ) {
-            is Rg06TypedValueResult.Success -> result.value
-            is Rg06TypedValueResult.Failure -> return rejected(
-                Rg06RejectionReason.IDENTITY_COLLISION,
-                Rg06FieldPath.GENERATED_IDENTITY,
-            )
-        }
+        val mirrorEvidence =
+            when (
+                val result =
+                    Rg06BoundStagedPaymentEvidence.mirror(
+                        op.ledgerId,
+                        op.input.evidenceId,
+                        op.input.sourceId,
+                        time,
+                        payment.id,
+                        originalEvidence.id,
+                        originalLink.id,
+                    )
+            ) {
+                is Rg06TypedValueResult.Success -> result.value
+                is Rg06TypedValueResult.Failure -> return rejected(
+                    Rg06RejectionReason.IDENTITY_COLLISION,
+                    Rg06FieldPath.GENERATED_IDENTITY,
+                )
+            }
         evidence[op.input.evidenceId] = mirrorEvidence
         return accepted(op)
     }
@@ -1422,25 +1634,31 @@ private class Rg06ApplicationReferencePort(
     private fun validateCreate(op: Rg06Operation.CreateStagedPayment): Rg06ExecutionResult.Rejected? {
         if (op.input.totalAmount.minorUnits <= 0) return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.ATTEMPTED_TOTAL_AMOUNT)
         val id = op.input.categoryId ?: return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
-        val category = catalog.categories.singleOrNull { it.id == id }
-            ?: return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
-        val parent = category.parentId?.let { parentId -> catalog.categories.singleOrNull { it.id == parentId } }
-            ?: return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
+        val category =
+            catalog.categories.singleOrNull { it.id == id }
+                ?: return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
+        val parent =
+            category.parentId?.let { parentId -> catalog.categories.singleOrNull { it.id == parentId } }
+                ?: return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
         if (parent.parentId != null || category.ledgerId != op.ledgerId || parent.ledgerId != op.ledgerId) return rejected(Rg06RejectionReason.SECONDARY_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
         if (!category.active) return rejected(Rg06RejectionReason.CATEGORY_INACTIVE, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
         if (category.kind != CategoryKind.EXPENSE || parent.kind != CategoryKind.EXPENSE) return rejected(Rg06RejectionReason.EXPENSE_CATEGORY_REQUIRED, Rg06FieldPath.ATTEMPTED_CATEGORY_ID)
         return null
     }
 
-    private fun validateInstallment(aggregate: StagedPayment, input: Rg06RecordStagedPaymentInstallmentInput): Rg06ExecutionResult.Rejected? {
+    private fun validateInstallment(
+        aggregate: StagedPayment,
+        input: Rg06RecordStagedPaymentInstallmentInput,
+    ): Rg06ExecutionResult.Rejected? {
         val amount = input.paymentAmount.minorUnits
         if (amount <= 0) return rejected(Rg06RejectionReason.MUST_BE_POSITIVE, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT)
         if (input.paymentRole == StagedPaymentRole.DEPOSIT && amount >= aggregate.lifecycle.totalAmount.minorUnits) return rejected(Rg06RejectionReason.DEPOSIT_MUST_BE_LESS_THAN_TOTAL, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT)
         if (input.paymentRole == StagedPaymentRole.FINAL && amount > aggregate.lifecycle.dueAmount.minorUnits) return rejected(Rg06RejectionReason.PAYMENT_EXCEEDS_DUE, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT)
         if (input.paymentRole == StagedPaymentRole.FINAL && amount != aggregate.lifecycle.dueAmount.minorUnits) return rejected(Rg06RejectionReason.FINAL_MUST_EQUAL_REMAINING_DUE, Rg06FieldPath.ATTEMPTED_PAYMENT_AMOUNT)
         if (input.paymentAmount.currency != aggregate.lifecycle.currency) return rejected(Rg06RejectionReason.SINGLE_CURRENCY_REQUIRED, Rg06FieldPath.ATTEMPTED_CURRENCY)
-        val account = catalog.accounts.singleOrNull { it.id == input.fundingAccountId }
-            ?: return rejected(Rg06RejectionReason.UNKNOWN_REAL_ACCOUNT, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID)
+        val account =
+            catalog.accounts.singleOrNull { it.id == input.fundingAccountId }
+                ?: return rejected(Rg06RejectionReason.UNKNOWN_REAL_ACCOUNT, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID)
         if (!account.realAccount) return rejected(Rg06RejectionReason.REAL_FINANCIAL_ACCOUNT_REQUIRED, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID)
         if (!account.ownedByUser || account.ledgerId != aggregate.ledgerId) return rejected(Rg06RejectionReason.OWNED_ACCOUNT_REQUIRED, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID)
         if (account.kind != AccountKind.ASSET) return rejected(Rg06RejectionReason.ASSET_ACCOUNT_REQUIRED, Rg06FieldPath.ATTEMPTED_FUNDING_ACCOUNT_ID)
@@ -1448,37 +1666,79 @@ private class Rg06ApplicationReferencePort(
     }
 
     private fun accepted(op: Rg06Operation): Rg06ExecutionResult.Accepted {
-        val ids = when (op) {
-            is Rg06Operation.ChangeStagedPaymentFulfillment ->
-                listOf(Rg06ReturnedId.Lifecycle(checkNotNull(aggregates[op.input.relationId]).lifecycle.id))
-            is Rg06Operation.ConfirmStagedPaymentCompletion ->
-                listOf(Rg06ReturnedId.Lifecycle(checkNotNull(aggregates[op.input.relationId]).lifecycle.id))
-            else -> returnedIds(op)
-        }
+        val ids =
+            when (op) {
+                is Rg06Operation.ChangeStagedPaymentFulfillment ->
+                    listOf(Rg06ReturnedId.Lifecycle(checkNotNull(aggregates[op.input.relationId]).lifecycle.id))
+                is Rg06Operation.ConfirmStagedPaymentCompletion ->
+                    listOf(Rg06ReturnedId.Lifecycle(checkNotNull(aggregates[op.input.relationId]).lifecycle.id))
+                else -> returnedIds(op)
+            }
         return Rg06ExecutionResult.Accepted(ids)
     }
-    private fun rejected(reason: Rg06RejectionReason, path: Rg06FieldPath) = Rg06ExecutionResult.Rejected(reason, path)
-    private fun ownedAggregate(ledger: LedgerId, id: StagedPaymentRelationId) = aggregates[id]?.takeIf { it.ledgerId == ledger }
-    private fun crossOrMissing(ledger: LedgerId, id: StagedPaymentRelationId) = if (aggregates[id] == null) rejected(Rg06RejectionReason.RELATION_NOT_FOUND, Rg06FieldPath.INPUT_RELATION_ID) else rejected(Rg06RejectionReason.CROSS_LEDGER_REFERENCE, Rg06FieldPath.INPUT_RELATION_ID)
-    private fun findPayment(ledger: LedgerId, id: InstallmentPaymentId) = aggregates.values.filter { it.ledgerId == ledger }.flatMap { it.installments }.singleOrNull { it.id == id }
-    private fun sourcePaymentAt(instant: Instant, text: String): Rg06SourcePaymentAt? =
-        (Rg06SourcePaymentAt.create(instant, text, expectedSourceOffsetText) as? Rg06TypedValueResult.Success)?.value
-    private fun positiveMagnitude(money: Money): Money? = when (money.minorUnits) { 0L, Long.MIN_VALUE -> null; else -> Money.ofMinor(if (money.minorUnits < 0) -money.minorUnits else money.minorUnits, money.currency) }
 
-    private fun canonicalInput(op: Rg06Operation): Any = when (op) {
-        is Rg06Operation.CreateStagedPayment -> op.input; is Rg06Operation.RecordStagedPaymentInstallment -> op.input
-        is Rg06Operation.ChangeStagedPaymentFulfillment -> op.input; is Rg06Operation.ConfirmStagedPaymentCompletion -> op.input
-        is Rg06Operation.LinkStagedPaymentEvidence -> op.input; is Rg06Operation.IngestStagedPaymentBankFact -> op.input
-        is Rg06Operation.ConfirmStagedPaymentCandidate -> op.input; is Rg06Operation.MergeStagedPaymentMirrorEvidence -> op.input
-    }
+    private fun rejected(
+        reason: Rg06RejectionReason,
+        path: Rg06FieldPath,
+    ) = Rg06ExecutionResult.Rejected(reason, path)
+
+    private fun ownedAggregate(
+        ledger: LedgerId,
+        id: StagedPaymentRelationId,
+    ) = aggregates[id]?.takeIf { it.ledgerId == ledger }
+
+    private fun crossOrMissing(
+        ledger: LedgerId,
+        id: StagedPaymentRelationId,
+    ) = if (aggregates[id] == null) rejected(Rg06RejectionReason.RELATION_NOT_FOUND, Rg06FieldPath.INPUT_RELATION_ID) else rejected(Rg06RejectionReason.CROSS_LEDGER_REFERENCE, Rg06FieldPath.INPUT_RELATION_ID)
+
+    private fun findPayment(
+        ledger: LedgerId,
+        id: InstallmentPaymentId,
+    ) = aggregates.values
+        .filter { it.ledgerId == ledger }
+        .flatMap { it.installments }
+        .singleOrNull { it.id == id }
+
+    private fun sourcePaymentAt(
+        instant: Instant,
+        text: String,
+    ): Rg06SourcePaymentAt? = (Rg06SourcePaymentAt.create(instant, text, expectedSourceOffsetText) as? Rg06TypedValueResult.Success)?.value
+
+    private fun positiveMagnitude(money: Money): Money? =
+        when (money.minorUnits) {
+            0L, Long.MIN_VALUE -> null
+            else -> Money.ofMinor(if (money.minorUnits < 0) -money.minorUnits else money.minorUnits, money.currency)
+        }
+
+    private fun canonicalInput(op: Rg06Operation): Any =
+        when (op) {
+            is Rg06Operation.CreateStagedPayment -> op.input
+            is Rg06Operation.RecordStagedPaymentInstallment -> op.input
+            is Rg06Operation.ChangeStagedPaymentFulfillment -> op.input
+            is Rg06Operation.ConfirmStagedPaymentCompletion -> op.input
+            is Rg06Operation.LinkStagedPaymentEvidence -> op.input
+            is Rg06Operation.IngestStagedPaymentBankFact -> op.input
+            is Rg06Operation.ConfirmStagedPaymentCandidate -> op.input
+            is Rg06Operation.MergeStagedPaymentMirrorEvidence -> op.input
+        }
 
     private fun generatedKeys(op: Rg06Operation): Set<Pair<String, String>> {
-        fun key(kind: String, value: String) = kind to value
-        fun payment(ids: StagedPaymentInstallmentIds) = setOf(
-            key("payment", ids.paymentId.value), key("history", ids.historyId.value), key("transaction", ids.expenseIds.transactionId.value),
-            key("version", ids.expenseIds.versionId.value), key("posting_set", ids.expenseIds.postingSetId.value),
-            key("posting", ids.expenseIds.expensePostingId.value), key("posting", ids.expenseIds.paymentPostingId.value),
-        )
+        fun key(
+            kind: String,
+            value: String,
+        ) = kind to value
+
+        fun payment(ids: StagedPaymentInstallmentIds) =
+            setOf(
+                key("payment", ids.paymentId.value),
+                key("history", ids.historyId.value),
+                key("transaction", ids.expenseIds.transactionId.value),
+                key("version", ids.expenseIds.versionId.value),
+                key("posting_set", ids.expenseIds.postingSetId.value),
+                key("posting", ids.expenseIds.expensePostingId.value),
+                key("posting", ids.expenseIds.paymentPostingId.value),
+            )
         return when (op) {
             is Rg06Operation.CreateStagedPayment -> setOf(key("relation", op.ids.relationId.value), key("lifecycle", op.ids.lifecycleId.value), key("history", op.ids.historyId.value))
             is Rg06Operation.RecordStagedPaymentInstallment -> payment(op.ids.paymentIds) + key("confirmation", op.ids.confirmationId.value) + key("reconciliation", op.ids.reconciliationId.value)
@@ -1497,91 +1757,139 @@ private class Rg06ApplicationReferencePort(
     }
 }
 
-private class Rg06Fixture(private val suffix: String = "base") {
+private class Rg06Fixture(
+    private val suffix: String = "base",
+) {
     val expectedOffsetText = "+08:00"
     val ledgerId = LedgerId("ledger-$suffix")
-    val cny = CurrencyUnit("CNY", 2); val usd = CurrencyUnit("USD", 2)
-    val fundingAccountId = AccountId("asset-bank-$suffix"); val unknownAccountId = AccountId("asset-missing-$suffix")
-    val nonFinancialAccountId = AccountId("asset-nonfinancial-$suffix"); val externalAccountId = AccountId("asset-external-$suffix"); val liabilityAccountId = AccountId("liability-$suffix")
-    val primaryExpenseCategoryId = CategoryId("expense-root-$suffix"); val categoryId = CategoryId("expense-service-$suffix")
-    val inactiveCategoryId = CategoryId("expense-inactive-$suffix"); val incomeCategoryId = CategoryId("income-child-$suffix")
-    val relationId = StagedPaymentRelationId("relation-$suffix"); val lifecycleId = StagedPaymentLifecycleId("lifecycle-$suffix")
-    val depositPaymentId = InstallmentPaymentId("payment-deposit-$suffix"); val finalPaymentId = InstallmentPaymentId("payment-final-$suffix")
+    val cny = CurrencyUnit("CNY", 2)
+    val usd = CurrencyUnit("USD", 2)
+    val fundingAccountId = AccountId("asset-bank-$suffix")
+    val unknownAccountId = AccountId("asset-missing-$suffix")
+    val nonFinancialAccountId = AccountId("asset-nonfinancial-$suffix")
+    val externalAccountId = AccountId("asset-external-$suffix")
+    val liabilityAccountId = AccountId("liability-$suffix")
+    val primaryExpenseCategoryId = CategoryId("expense-root-$suffix")
+    val categoryId = CategoryId("expense-service-$suffix")
+    val inactiveCategoryId = CategoryId("expense-inactive-$suffix")
+    val incomeCategoryId = CategoryId("income-child-$suffix")
+    val relationId = StagedPaymentRelationId("relation-$suffix")
+    val lifecycleId = StagedPaymentLifecycleId("lifecycle-$suffix")
+    val depositPaymentId = InstallmentPaymentId("payment-deposit-$suffix")
+    val finalPaymentId = InstallmentPaymentId("payment-final-$suffix")
     val depositTransactionId = TransactionId("transaction-deposit-$suffix")
     val manualDepositConfirmationId = Rg06ConfirmationId("confirmation-manual-deposit-$suffix")
     val importDepositConfirmationId = Rg06ConfirmationId("confirmation-import-deposit-$suffix")
-    val importDepositSourceId = Rg06SourceId("source-import-deposit-$suffix"); val importDepositEvidenceId = Rg06EvidenceId("evidence-import-deposit-$suffix")
-    val depositCandidateId = Rg06CandidateId("candidate-deposit-$suffix"); val finalCandidateId = Rg06CandidateId("candidate-final-$suffix")
+    val importDepositSourceId = Rg06SourceId("source-import-deposit-$suffix")
+    val importDepositEvidenceId = Rg06EvidenceId("evidence-import-deposit-$suffix")
+    val depositCandidateId = Rg06CandidateId("candidate-deposit-$suffix")
+    val finalCandidateId = Rg06CandidateId("candidate-final-$suffix")
     val importDepositLinkId = Rg06EvidenceLinkId("link-import-deposit-$suffix")
-    val manualSourceId = Rg06SourceId("source-manual-$suffix"); val manualEvidenceId = Rg06EvidenceId("evidence-manual-$suffix"); val manualLinkId = Rg06EvidenceLinkId("link-manual-$suffix")
-    val mirrorSourceId = Rg06SourceId("source-mirror-$suffix"); val mirrorEvidenceId = Rg06EvidenceId("evidence-mirror-$suffix")
-    private val createdAt = Instant.parse("2026-04-20T09:00:00+08:00"); private val depositAt = Instant.parse("2026-04-28T10:00:00+08:00"); private val finalAt = Instant.parse("2026-05-03T16:30:00+08:00")
+    val manualSourceId = Rg06SourceId("source-manual-$suffix")
+    val manualEvidenceId = Rg06EvidenceId("evidence-manual-$suffix")
+    val manualLinkId = Rg06EvidenceLinkId("link-manual-$suffix")
+    val mirrorSourceId = Rg06SourceId("source-mirror-$suffix")
+    val mirrorEvidenceId = Rg06EvidenceId("evidence-mirror-$suffix")
+    private val createdAt = Instant.parse("2026-04-20T09:00:00+08:00")
+    private val depositAt = Instant.parse("2026-04-28T10:00:00+08:00")
+    private val finalAt = Instant.parse("2026-05-03T16:30:00+08:00")
 
-    val catalog = assertIs<DomainResult.Success<LedgerCatalog>>(LedgerCatalog.create(
-        listOf(
-            Account(fundingAccountId, ledgerId, AccountKind.ASSET, cny, true, true),
-            Account(nonFinancialAccountId, ledgerId, AccountKind.ASSET, cny, true, false),
-            Account(externalAccountId, ledgerId, AccountKind.ASSET, cny, false, true),
-            Account(liabilityAccountId, ledgerId, AccountKind.LIABILITY, cny, true, true),
-            Account(AccountId("expense-account-$suffix"), ledgerId, AccountKind.EXPENSE, cny, false, false),
-            Account(AccountId("income-account-$suffix"), ledgerId, AccountKind.INCOME, cny, false, false),
-        ),
-        listOf(
-            Category(primaryExpenseCategoryId, ledgerId, null, null, true),
-            Category(categoryId, ledgerId, primaryExpenseCategoryId, AccountId("expense-account-$suffix"), true),
-            Category(inactiveCategoryId, ledgerId, primaryExpenseCategoryId, AccountId("expense-account-$suffix"), false),
-            Category(CategoryId("income-root-$suffix"), ledgerId, null, null, true, CategoryKind.INCOME),
-            Category(incomeCategoryId, ledgerId, CategoryId("income-root-$suffix"), AccountId("income-account-$suffix"), true, CategoryKind.INCOME),
-        ),
-    )).value
+    val catalog =
+        assertIs<DomainResult.Success<LedgerCatalog>>(
+            LedgerCatalog.create(
+                listOf(
+                    Account(fundingAccountId, ledgerId, AccountKind.ASSET, cny, true, true),
+                    Account(nonFinancialAccountId, ledgerId, AccountKind.ASSET, cny, true, false),
+                    Account(externalAccountId, ledgerId, AccountKind.ASSET, cny, false, true),
+                    Account(liabilityAccountId, ledgerId, AccountKind.LIABILITY, cny, true, true),
+                    Account(AccountId("expense-account-$suffix"), ledgerId, AccountKind.EXPENSE, cny, false, false),
+                    Account(AccountId("income-account-$suffix"), ledgerId, AccountKind.INCOME, cny, false, false),
+                ),
+                listOf(
+                    Category(primaryExpenseCategoryId, ledgerId, null, null, true),
+                    Category(categoryId, ledgerId, primaryExpenseCategoryId, AccountId("expense-account-$suffix"), true),
+                    Category(inactiveCategoryId, ledgerId, primaryExpenseCategoryId, AccountId("expense-account-$suffix"), false),
+                    Category(CategoryId("income-root-$suffix"), ledgerId, null, null, true, CategoryKind.INCOME),
+                    Category(incomeCategoryId, ledgerId, CategoryId("income-root-$suffix"), AccountId("income-account-$suffix"), true, CategoryKind.INCOME),
+                ),
+            ),
+        ).value
 
     fun manualObservation(
         amount: Money = Money.ofMinor(-8_000L, cny),
         instant: Instant = Instant.parse("2026-04-27T10:15:00Z"),
         text: String = "2026-04-27T18:15:00+08:00",
-    ): Rg06ManualBankObservation = Rg06ManualBankObservation(
-        amount,
-        assertIs<Rg06TypedValueResult.Success<Rg06ObservedAt>>(
-            Rg06ObservedAt.create(instant, text, expectedOffsetText),
-        ).value,
-    )
+    ): Rg06ManualBankObservation =
+        Rg06ManualBankObservation(
+            amount,
+            assertIs<Rg06TypedValueResult.Success<Rg06ObservedAt>>(
+                Rg06ObservedAt.create(instant, text, expectedOffsetText),
+            ).value,
+        )
 
     fun observationMap(
         observation: Rg06ManualBankObservation = manualObservation(),
-    ): Map<Rg06ManualObservationKey, Rg06ManualBankObservation> = mapOf(
-        Rg06ManualObservationKey(manualSourceId, manualEvidenceId) to observation,
-    )
+    ): Map<Rg06ManualObservationKey, Rg06ManualBankObservation> =
+        mapOf(
+            Rg06ManualObservationKey(manualSourceId, manualEvidenceId) to observation,
+        )
 
     fun port(
         observations: Map<Rg06ManualObservationKey, Rg06ManualBankObservation> = observationMap(),
     ) = Rg06ApplicationReferencePort(catalog, expectedOffsetText, observations)
 
     fun create() = Rg06Operation.CreateStagedPayment(ledgerId, Rg06CreateStagedPaymentInput(RequestId("request-create-$suffix"), Money.ofMinor(30_000, cny), categoryId, createdAt), StagedPaymentCreationIds(relationId, lifecycleId, StagedPaymentHistoryId("history-create-$suffix")))
+
     fun recordDeposit() = Rg06Operation.RecordStagedPaymentInstallment(ledgerId, Rg06RecordStagedPaymentInstallmentInput(RequestId("request-record-deposit-$suffix"), relationId, StagedPaymentRole.DEPOSIT, Money.ofMinor(8_000, cny), fundingAccountId, depositAt), manualIds("deposit", depositPaymentId, manualDepositConfirmationId))
+
     fun recordFinal() = Rg06Operation.RecordStagedPaymentInstallment(ledgerId, Rg06RecordStagedPaymentInstallmentInput(RequestId("request-record-final-$suffix"), relationId, StagedPaymentRole.FINAL, Money.ofMinor(22_000, cny), fundingAccountId, finalAt), manualIds("final", finalPaymentId, Rg06ConfirmationId("confirmation-manual-final-$suffix")))
+
     fun fulfill() = Rg06Operation.ChangeStagedPaymentFulfillment(ledgerId, Rg06ChangeStagedPaymentFulfillmentInput(RequestId("request-fulfill-$suffix"), relationId, StagedPaymentFulfillment.FULFILLED, Instant.parse("2026-05-01T12:00:00+08:00")), StagedPaymentHistoryId("history-fulfill-$suffix"))
+
     fun complete() = Rg06Operation.ConfirmStagedPaymentCompletion(ledgerId, Rg06ConfirmStagedPaymentCompletionInput(RequestId("request-complete-$suffix"), relationId, true, Instant.parse("2026-05-04T09:00:00+08:00")), StagedPaymentHistoryId("history-complete-$suffix"))
+
     fun linkDepositEvidence() = Rg06Operation.LinkStagedPaymentEvidence(ledgerId, Rg06LinkStagedPaymentEvidenceInput(manualSourceId, manualEvidenceId, depositPaymentId, PostingId("posting-deposit-asset-$suffix")), manualLinkId)
+
     fun ingestDeposit(amountMinor: Long = -8_000L) = Rg06Operation.IngestStagedPaymentBankFact(ledgerId, Rg06IngestStagedPaymentBankFactInput(importDepositSourceId, importDepositEvidenceId, depositAt, "2026-04-28T10:00:00+08:00", Money.ofMinor(amountMinor, cny), StagedPaymentRole.DEPOSIT), Rg06IngestCommitIds(depositCandidateId, Rg06CandidateStatusId("status-deposit-pending-$suffix")))
+
     fun ingestFinal(suggestedRole: StagedPaymentRole? = StagedPaymentRole.FINAL) = Rg06Operation.IngestStagedPaymentBankFact(ledgerId, Rg06IngestStagedPaymentBankFactInput(Rg06SourceId("source-import-final-$suffix"), Rg06EvidenceId("evidence-import-final-$suffix"), finalAt, "2026-05-03T16:30:00+08:00", Money.ofMinor(-22_000, cny), suggestedRole), Rg06IngestCommitIds(finalCandidateId, Rg06CandidateStatusId("status-final-pending-$suffix")))
+
     fun confirmDepositCandidate() = Rg06Operation.ConfirmStagedPaymentCandidate(ledgerId, Rg06ConfirmStagedPaymentCandidateInput(RequestId("request-confirm-deposit-$suffix"), depositCandidateId, relationId, StagedPaymentRole.DEPOSIT, categoryId, fundingAccountId, true), confirmIds("deposit", depositPaymentId))
+
     fun confirmFinalCandidate(requestId: RequestId = RequestId("request-confirm-final-$suffix")) = Rg06Operation.ConfirmStagedPaymentCandidate(ledgerId, Rg06ConfirmStagedPaymentCandidateInput(requestId, finalCandidateId, relationId, StagedPaymentRole.FINAL, categoryId, fundingAccountId, true), confirmIds("final", finalPaymentId))
+
     fun mergeDepositMirror(amountMinor: Long = 8_000L) = Rg06Operation.MergeStagedPaymentMirrorEvidence(ledgerId, Rg06MergeStagedPaymentMirrorEvidenceInput(mirrorSourceId, mirrorEvidenceId, depositPaymentId, PostingId("posting-deposit-asset-$suffix"), Money.ofMinor(amountMinor, cny), depositAt, "2026-04-28T10:00:00+08:00"))
-    fun manualIds(label: String, paymentId: InstallmentPaymentId, confirmation: Rg06ConfirmationId) = Rg06ManualInstallmentCommitIds(confirmation, paymentIds(label, paymentId), Rg06ReconciliationId("reconciliation-$label-$suffix"))
-    fun confirmIds(label: String, paymentId: InstallmentPaymentId) = Rg06CandidateConfirmationCommitIds(if (label == "deposit") importDepositConfirmationId else Rg06ConfirmationId("confirmation-import-$label-$suffix"), paymentIds(label, paymentId), Rg06EvidenceLinkId("link-import-$label-$suffix"), Rg06CandidateStatusId("status-$label-confirmed-$suffix"), Rg06ReconciliationId("reconciliation-import-$label-$suffix"))
-    private fun paymentIds(label: String, paymentId: InstallmentPaymentId) = StagedPaymentInstallmentIds(paymentId, StagedPaymentHistoryId("history-$label-$suffix"), AssetPaidOrdinaryExpenseIds(TransactionId("transaction-$label-$suffix"), TransactionVersionId("version-$label-$suffix"), PostingSetId("posting-set-$label-$suffix"), PostingId("posting-$label-expense-$suffix"), PostingId("posting-$label-asset-$suffix")))
+
+    fun manualIds(
+        label: String,
+        paymentId: InstallmentPaymentId,
+        confirmation: Rg06ConfirmationId,
+    ) = Rg06ManualInstallmentCommitIds(confirmation, paymentIds(label, paymentId), Rg06ReconciliationId("reconciliation-$label-$suffix"))
+
+    fun confirmIds(
+        label: String,
+        paymentId: InstallmentPaymentId,
+    ) = Rg06CandidateConfirmationCommitIds(if (label == "deposit") importDepositConfirmationId else Rg06ConfirmationId("confirmation-import-$label-$suffix"), paymentIds(label, paymentId), Rg06EvidenceLinkId("link-import-$label-$suffix"), Rg06CandidateStatusId("status-$label-confirmed-$suffix"), Rg06ReconciliationId("reconciliation-import-$label-$suffix"))
+
+    private fun paymentIds(
+        label: String,
+        paymentId: InstallmentPaymentId,
+    ) = StagedPaymentInstallmentIds(paymentId, StagedPaymentHistoryId("history-$label-$suffix"), AssetPaidOrdinaryExpenseIds(TransactionId("transaction-$label-$suffix"), TransactionVersionId("version-$label-$suffix"), PostingSetId("posting-set-$label-$suffix"), PostingId("posting-$label-expense-$suffix"), PostingId("posting-$label-asset-$suffix")))
 }
 
-private fun returnedIds(op: Rg06Operation): List<Rg06ReturnedId> = when (op) {
-    is Rg06Operation.CreateStagedPayment -> listOf(Rg06ReturnedId.Relation(op.ids.relationId), Rg06ReturnedId.Lifecycle(op.ids.lifecycleId))
-    is Rg06Operation.RecordStagedPaymentInstallment -> listOf(Rg06ReturnedId.Confirmation(op.ids.confirmationId), Rg06ReturnedId.Transaction(op.ids.paymentIds.expenseIds.transactionId), Rg06ReturnedId.Payment(op.ids.paymentIds.paymentId))
-    is Rg06Operation.ChangeStagedPaymentFulfillment,
-    is Rg06Operation.ConfirmStagedPaymentCompletion -> error("status lifecycle identity is resolved by the port")
-    is Rg06Operation.LinkStagedPaymentEvidence -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId), Rg06ReturnedId.EvidenceLink(op.evidenceLinkId))
-    is Rg06Operation.IngestStagedPaymentBankFact -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId), Rg06ReturnedId.Candidate(op.ids.candidateId))
-    is Rg06Operation.ConfirmStagedPaymentCandidate -> listOf(Rg06ReturnedId.Confirmation(op.ids.confirmationId), Rg06ReturnedId.Transaction(op.ids.paymentIds.expenseIds.transactionId), Rg06ReturnedId.Payment(op.ids.paymentIds.paymentId), Rg06ReturnedId.EvidenceLink(op.ids.evidenceLinkId))
-    is Rg06Operation.MergeStagedPaymentMirrorEvidence -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId))
-}
+private fun returnedIds(op: Rg06Operation): List<Rg06ReturnedId> =
+    when (op) {
+        is Rg06Operation.CreateStagedPayment -> listOf(Rg06ReturnedId.Relation(op.ids.relationId), Rg06ReturnedId.Lifecycle(op.ids.lifecycleId))
+        is Rg06Operation.RecordStagedPaymentInstallment -> listOf(Rg06ReturnedId.Confirmation(op.ids.confirmationId), Rg06ReturnedId.Transaction(op.ids.paymentIds.expenseIds.transactionId), Rg06ReturnedId.Payment(op.ids.paymentIds.paymentId))
+        is Rg06Operation.ChangeStagedPaymentFulfillment,
+        is Rg06Operation.ConfirmStagedPaymentCompletion,
+        -> error("status lifecycle identity is resolved by the port")
+        is Rg06Operation.LinkStagedPaymentEvidence -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId), Rg06ReturnedId.EvidenceLink(op.evidenceLinkId))
+        is Rg06Operation.IngestStagedPaymentBankFact -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId), Rg06ReturnedId.Candidate(op.ids.candidateId))
+        is Rg06Operation.ConfirmStagedPaymentCandidate -> listOf(Rg06ReturnedId.Confirmation(op.ids.confirmationId), Rg06ReturnedId.Transaction(op.ids.paymentIds.expenseIds.transactionId), Rg06ReturnedId.Payment(op.ids.paymentIds.paymentId), Rg06ReturnedId.EvidenceLink(op.ids.evidenceLinkId))
+        is Rg06Operation.MergeStagedPaymentMirrorEvidence -> listOf(Rg06ReturnedId.Source(op.input.sourceId), Rg06ReturnedId.Evidence(op.input.evidenceId))
+    }
 
 private fun Rg06ExecutionResult.accepted() = assertIs<Rg06ExecutionResult.Accepted>(this)
+
 private fun Rg06OperationIdentity.requestId() = RequestId(value)

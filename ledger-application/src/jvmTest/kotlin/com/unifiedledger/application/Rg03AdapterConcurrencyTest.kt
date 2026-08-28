@@ -20,12 +20,13 @@ class Rg03AdapterConcurrencyTest {
         val expectedAmount = Rg03ContractError("$.input.source_debit_amount", Rg03ContractErrorReason.INVALID_DECIMAL)
         val pool = Executors.newFixedThreadPool(8)
         try {
-            val tasks = List(20_000) { index ->
-                Callable {
-                    val (operation, expected) = if (index % 2 == 0) invalidId to expectedId else invalidAmount to expectedAmount
-                    expected to assertIs<Rg03AdaptResult.Invalid>(adaptRg03Operation(context, operation)).error
+            val tasks =
+                List(20_000) { index ->
+                    Callable {
+                        val (operation, expected) = if (index % 2 == 0) invalidId to expectedId else invalidAmount to expectedAmount
+                        expected to assertIs<Rg03AdaptResult.Invalid>(adaptRg03Operation(context, operation)).error
+                    }
                 }
-            }
             pool.invokeAll(tasks).forEach { future ->
                 val (expected, actual) = future.get()
                 assertEquals(expected, actual)

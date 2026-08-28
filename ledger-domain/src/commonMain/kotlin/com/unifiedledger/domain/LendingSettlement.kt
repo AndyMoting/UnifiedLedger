@@ -94,8 +94,9 @@ fun createLendingSettlement(
     if (currency != position.currency) {
         return DomainResult.Failure(LendingViolation.SameCurrencyRequired)
     }
-    val destination = catalog.account(destinationAccountId)
-        ?: return DomainResult.Failure(LendingViolation.UnknownAccount)
+    val destination =
+        catalog.account(destinationAccountId)
+            ?: return DomainResult.Failure(LendingViolation.UnknownAccount)
     if (destination.kind != AccountKind.ASSET || !destination.ownedByUser) {
         return DomainResult.Failure(LendingViolation.OwnedAccountRequired)
     }
@@ -105,10 +106,12 @@ fun createLendingSettlement(
     if (destination.currency != currency) {
         return DomainResult.Failure(LendingViolation.SameCurrencyRequired)
     }
-    val interestCategory = catalog.category(interestCategoryId)
-        ?: return DomainResult.Failure(LendingViolation.ActiveExactInterestCategoryRequired)
-    val interestAccount = interestCategory.postingAccountId?.let(catalog::account)
-        ?: return DomainResult.Failure(LendingViolation.ActiveExactInterestCategoryRequired)
+    val interestCategory =
+        catalog.category(interestCategoryId)
+            ?: return DomainResult.Failure(LendingViolation.ActiveExactInterestCategoryRequired)
+    val interestAccount =
+        interestCategory.postingAccountId?.let(catalog::account)
+            ?: return DomainResult.Failure(LendingViolation.ActiveExactInterestCategoryRequired)
     if (
         interestCategory.kind != CategoryKind.INCOME ||
         !interestCategory.active ||
@@ -121,11 +124,12 @@ fun createLendingSettlement(
         return DomainResult.Failure(LendingViolation.TotalMustBePositive)
     }
     val componentSnapshot = components.toList()
-    val expectedKinds = listOf(
-        LendingComponentKind.PRINCIPAL,
-        LendingComponentKind.INTEREST,
-        LendingComponentKind.FEE,
-    )
+    val expectedKinds =
+        listOf(
+            LendingComponentKind.PRINCIPAL,
+            LendingComponentKind.INTEREST,
+            LendingComponentKind.FEE,
+        )
     if (
         componentSnapshot.size != expectedKinds.size ||
         componentSnapshot.map { it.id }.toSet().size != componentSnapshot.size ||
@@ -148,10 +152,12 @@ fun createLendingSettlement(
     if (principal.postingId == null || interest.postingId == null || fee.postingId != null) {
         return DomainResult.Failure(LendingViolation.ComponentPostingIdInvalid)
     }
-    val principalPlusInterest = checkedAdd(principal.amountMinor, interest.amountMinor)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val composed = checkedAdd(principalPlusInterest, fee.amountMinor)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val principalPlusInterest =
+        checkedAdd(principal.amountMinor, interest.amountMinor)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val composed =
+        checkedAdd(principalPlusInterest, fee.amountMinor)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
     if (composed != totalReceivedMinor) {
         return DomainResult.Failure(LendingViolation.ComponentsMustEqualTotal)
     }

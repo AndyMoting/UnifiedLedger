@@ -9,11 +9,20 @@ import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
-data class Rg04CandidateId(val value: String)
-data class Rg04SourceId(val value: String)
-data class Rg04EvidenceId(val value: String)
+data class Rg04CandidateId(
+    val value: String,
+)
+
+data class Rg04SourceId(
+    val value: String,
+)
+
+data class Rg04EvidenceId(
+    val value: String,
+)
 
 enum class Rg04ImportCompleteness { COMPLETE, MISSING_FUNDING_LEG }
+
 enum class Rg04ImportCandidateStatus { PENDING_CONFIRMATION, CONFIRMED }
 
 data class Rg04ImportFunding(
@@ -88,13 +97,25 @@ sealed interface Rg04DecodedImportOperation {
 }
 
 sealed interface Rg04PreparedImportOperation {
-    data class StoreSource(val snapshot: Rg04ImportSourceSnapshot) : Rg04PreparedImportOperation
-    data class ConfirmCandidate(val snapshot: Rg04ImportConfirmationSnapshot) : Rg04PreparedImportOperation
-    data class MergeMirror(val snapshot: Rg04ImportMirrorSnapshot) : Rg04PreparedImportOperation
+    data class StoreSource(
+        val snapshot: Rg04ImportSourceSnapshot,
+    ) : Rg04PreparedImportOperation
+
+    data class ConfirmCandidate(
+        val snapshot: Rg04ImportConfirmationSnapshot,
+    ) : Rg04PreparedImportOperation
+
+    data class MergeMirror(
+        val snapshot: Rg04ImportMirrorSnapshot,
+    ) : Rg04PreparedImportOperation
 }
 
 enum class Rg04ImportReturnedIdKind { SOURCE, EVIDENCE, CANDIDATE, CONFIRMATION, TRANSACTION, EVIDENCE_LINK }
-data class Rg04ImportReturnedId(val kind: Rg04ImportReturnedIdKind, val id: String)
+
+data class Rg04ImportReturnedId(
+    val kind: Rg04ImportReturnedIdKind,
+    val id: String,
+)
 
 enum class Rg04ImportExecutionError {
     EXPLICIT_CONFIRMATION_REQUIRED,
@@ -109,9 +130,19 @@ enum class Rg04ImportExecutionError {
 }
 
 sealed interface Rg04ImportExecutionResult {
-    data class Accepted(val returnedIds: List<Rg04ImportReturnedId>) : Rg04ImportExecutionResult
-    data class NoChange(val returnedIds: List<Rg04ImportReturnedId>) : Rg04ImportExecutionResult
-    data class Rejected(val error: Rg04ImportExecutionError, val field: String? = null) : Rg04ImportExecutionResult
+    data class Accepted(
+        val returnedIds: List<Rg04ImportReturnedId>,
+    ) : Rg04ImportExecutionResult
+
+    data class NoChange(
+        val returnedIds: List<Rg04ImportReturnedId>,
+    ) : Rg04ImportExecutionResult
+
+    data class Rejected(
+        val error: Rg04ImportExecutionError,
+        val field: String? = null,
+    ) : Rg04ImportExecutionResult
+
     data object RequestIdentityConflict : Rg04ImportExecutionResult
 }
 
@@ -119,16 +150,20 @@ fun interface Rg04ImportCommitPort {
     fun commit(operation: Rg04PreparedImportOperation): Rg04ImportExecutionResult
 }
 
-class ExecuteRg04ImportOperation(private val port: Rg04ImportCommitPort) {
-    fun execute(operation: Rg04DecodedImportOperation): Rg04ImportExecutionResult = when (operation) {
-        is Rg04DecodedImportOperation.Source -> port.commit(Rg04PreparedImportOperation.StoreSource(operation.snapshot))
-        is Rg04DecodedImportOperation.Confirm -> if (!operation.snapshot.confirmed) {
-            Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "confirmed")
-        } else {
-            port.commit(Rg04PreparedImportOperation.ConfirmCandidate(operation.snapshot))
+class ExecuteRg04ImportOperation(
+    private val port: Rg04ImportCommitPort,
+) {
+    fun execute(operation: Rg04DecodedImportOperation): Rg04ImportExecutionResult =
+        when (operation) {
+            is Rg04DecodedImportOperation.Source -> port.commit(Rg04PreparedImportOperation.StoreSource(operation.snapshot))
+            is Rg04DecodedImportOperation.Confirm ->
+                if (!operation.snapshot.confirmed) {
+                    Rg04ImportExecutionResult.Rejected(Rg04ImportExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "confirmed")
+                } else {
+                    port.commit(Rg04PreparedImportOperation.ConfirmCandidate(operation.snapshot))
+                }
+            is Rg04DecodedImportOperation.Mirror -> port.commit(Rg04PreparedImportOperation.MergeMirror(operation.snapshot))
         }
-        is Rg04DecodedImportOperation.Mirror -> port.commit(Rg04PreparedImportOperation.MergeMirror(operation.snapshot))
-    }
 }
 
 data class Rg04ImportTarget(

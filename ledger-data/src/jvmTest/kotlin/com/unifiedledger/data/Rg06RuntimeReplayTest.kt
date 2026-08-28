@@ -1,14 +1,12 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.Rg06EvidenceId
 import com.unifiedledger.application.Rg06ExecutionResult
-import com.unifiedledger.application.Rg06FixtureOperation
-import com.unifiedledger.application.Rg06FixtureReplaySummary
 import com.unifiedledger.application.Rg06ManualBankObservation
 import com.unifiedledger.application.Rg06ManualObservationKey
 import com.unifiedledger.application.Rg06ObservedAt
 import com.unifiedledger.application.Rg06SourceId
-import com.unifiedledger.application.Rg06EvidenceId
 import com.unifiedledger.application.Rg06TypedValueResult
 import com.unifiedledger.application.replayRg06Fixture
 import com.unifiedledger.data.db.LedgerDatabase
@@ -22,14 +20,6 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
-import java.math.BigDecimal
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.Properties
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -39,22 +29,33 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.math.BigDecimal
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.Properties
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.time.Instant
 
 /** Replays every frozen RG-06 operation through the real SQLDelight adapter. */
 class Rg06RuntimeReplayTest {
     @Test
     fun runtimeMatchesExpectedOutcomesStatesDeltasAndStatusChanges() {
-        val expected = Json.parseToJsonElement(
-            Files.readString(repositoryFile("docs/migrations/golden-v2/rg-06-expected.json")),
-        ).jsonObject
+        val expected =
+            Json
+                .parseToJsonElement(
+                    Files.readString(repositoryFile("docs/migrations/golden-v2/rg-06-expected.json")),
+                ).jsonObject
         val v1 = Files.readString(repositoryFile("golden/rules/rg-06.json"))
         val adapted = replayRg06Fixture(v1)
         val ledgerId = LedgerId(expected.getValue("case").jsonObject.string("ledger_id"))
         val catalog = buildCatalog(expected, ledgerId)
-        val states = expected.getValue("states").jsonArray.associateBy(
-            { it.jsonObject.string("id") },
-            { it.jsonObject },
-        )
+        val states =
+            expected.getValue("states").jsonArray.associateBy(
+                { it.jsonObject.string("id") },
+                { it.jsonObject },
+            )
         val operations = expected.getValue("operations").jsonArray.map { it.jsonObject }
         val adaptedById = adapted.operations.associateBy { it.id }
         val roots = expected.getValue("roots").jsonArray.map { it.jsonObject }
@@ -64,18 +65,20 @@ class Rg06RuntimeReplayTest {
             val rootId = root.string("id")
             val purpose = root.string("purpose")
             val rootOperations = operations.filter { it.string("root_id") == rootId }
-            val rootAdapted = rootOperations.map { operation ->
-                adaptedById.getValue(operation.string("id"))
-            }
+            val rootAdapted =
+                rootOperations.map { operation ->
+                    adaptedById.getValue(operation.string("id"))
+                }
             val operationIdsByIdentity = linkedMapOf<String, String>()
             rootAdapted.forEach { fixtureOperation ->
                 operationIdsByIdentity.putIfAbsent(fixtureOperation.operation.identity.value, fixtureOperation.id)
             }
 
-            val driver = JdbcSqliteDriver(
-                JdbcSqliteDriver.IN_MEMORY,
-                Properties().apply { setProperty("foreign_keys", "true") },
-            )
+            val driver =
+                JdbcSqliteDriver(
+                    JdbcSqliteDriver.IN_MEMORY,
+                    Properties().apply { setProperty("foreign_keys", "true") },
+                )
             try {
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
@@ -85,25 +88,27 @@ class Rg06RuntimeReplayTest {
                     states.getValue(root.string("initial_state_id")),
                     rootId,
                 )
-                val store = SqlDelightRg06Store(
-                    database,
-                    driver,
-                    catalog,
-                    "+08:00",
-                    manualObservations(expected),
-                )
-                val projector = Rg06StateProjector(
-                    driver,
-                    ledgerId.value,
-                    rootId,
-                    purpose,
-                    states.getValue(root.string("initial_state_id")).getValue("catalog").jsonObject,
-                    operationIdsByIdentity,
-                )
+                val store =
+                    SqlDelightRg06Store(
+                        database,
+                        driver,
+                        catalog,
+                        "+08:00",
+                        manualObservations(expected),
+                    )
+                val projector =
+                    Rg06StateProjector(
+                        driver,
+                        ledgerId.value,
+                        rootId,
+                        purpose,
+                        states.getValue(root.string("initial_state_id")).getValue("catalog").jsonObject,
+                        operationIdsByIdentity,
+                    )
                 assertState(
                     states.getValue(root.string("initial_state_id")),
                     projector.state(root.string("initial_state_id"), null),
-                    "${rootId} initial state",
+                    "$rootId initial state",
                 )
 
                 rootOperations.forEach { expectedOperation ->
@@ -146,139 +151,195 @@ class Rg06RuntimeReplayTest {
         assertEquals(18, adapted.rejected)
     }
 
-    private fun outcome(result: Rg06ExecutionResult): JsonObject = when (result) {
-        is Rg06ExecutionResult.Accepted -> obj("status" to JsonPrimitive("accepted"))
-        is Rg06ExecutionResult.NoChange -> obj(
-            "status" to JsonPrimitive("no_change"),
-            "reason_code" to JsonPrimitive("idempotent_replay"),
-        )
-        is Rg06ExecutionResult.Rejected -> obj(
-            "status" to JsonPrimitive("rejected"),
-            "reason_code" to JsonPrimitive(result.reason.code),
-            "field_path" to JsonPrimitive(result.fieldPath.value),
-        )
-        Rg06ExecutionResult.RequestIdentityConflict -> obj("status" to JsonPrimitive("conflict"))
-    }
+    private fun outcome(result: Rg06ExecutionResult): JsonObject =
+        when (result) {
+            is Rg06ExecutionResult.Accepted -> obj("status" to JsonPrimitive("accepted"))
+            is Rg06ExecutionResult.NoChange ->
+                obj(
+                    "status" to JsonPrimitive("no_change"),
+                    "reason_code" to JsonPrimitive("idempotent_replay"),
+                )
+            is Rg06ExecutionResult.Rejected ->
+                obj(
+                    "status" to JsonPrimitive("rejected"),
+                    "reason_code" to JsonPrimitive(result.reason.code),
+                    "field_path" to JsonPrimitive(result.fieldPath.value),
+                )
+            Rg06ExecutionResult.RequestIdentityConflict -> obj("status" to JsonPrimitive("conflict"))
+        }
 
     private fun returnedIds(result: Rg06ExecutionResult): JsonArray {
-        val ids = when (result) {
-            is Rg06ExecutionResult.Accepted -> result.returnedIds
-            is Rg06ExecutionResult.NoChange -> result.returnedIds
-            is Rg06ExecutionResult.Rejected, Rg06ExecutionResult.RequestIdentityConflict -> emptyList()
-        }
-        return JsonArray(ids.map { returned ->
-            when (returned) {
-                is com.unifiedledger.application.Rg06ReturnedId.Relation -> returnedJson("relation", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Lifecycle -> returnedJson("domain_entity", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Payment -> returnedJson("domain_entity", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Transaction -> returnedJson("transaction", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Source -> returnedJson("source", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Evidence -> returnedJson("evidence", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Candidate -> returnedJson("candidate", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.Confirmation -> returnedJson("confirmation", returned.id.value)
-                is com.unifiedledger.application.Rg06ReturnedId.EvidenceLink -> returnedJson("evidence_link", returned.id.value)
+        val ids =
+            when (result) {
+                is Rg06ExecutionResult.Accepted -> result.returnedIds
+                is Rg06ExecutionResult.NoChange -> result.returnedIds
+                is Rg06ExecutionResult.Rejected, Rg06ExecutionResult.RequestIdentityConflict -> emptyList()
             }
-        })
+        return JsonArray(
+            ids.map { returned ->
+                when (returned) {
+                    is com.unifiedledger.application.Rg06ReturnedId.Relation -> returnedJson("relation", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Lifecycle -> returnedJson("domain_entity", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Payment -> returnedJson("domain_entity", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Transaction -> returnedJson("transaction", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Source -> returnedJson("source", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Evidence -> returnedJson("evidence", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Candidate -> returnedJson("candidate", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.Confirmation -> returnedJson("confirmation", returned.id.value)
+                    is com.unifiedledger.application.Rg06ReturnedId.EvidenceLink -> returnedJson("evidence_link", returned.id.value)
+                }
+            },
+        )
     }
 
-    private fun returnedJson(kind: String, id: String): JsonObject = obj(
-        "kind" to JsonPrimitive(kind),
-        "id" to JsonPrimitive(id),
-    )
+    private fun returnedJson(
+        kind: String,
+        id: String,
+    ): JsonObject =
+        obj(
+            "kind" to JsonPrimitive(kind),
+            "id" to JsonPrimitive(id),
+        )
 
-    private fun assertState(expected: JsonObject, actual: JsonObject, label: String) {
+    private fun assertState(
+        expected: JsonObject,
+        actual: JsonObject,
+        label: String,
+    ) {
         assertEquals(comparableState(expected), comparableState(actual), label)
     }
 
     private fun comparableState(state: JsonObject): JsonObject {
         val payload = state.filterKeys { it !in setOf("id", "root_id", "as_of_operation_id") }.toMutableMap()
-        payload["derived_statuses"] = JsonArray(
-            state.getValue("derived_statuses").jsonArray.sortedBy { it.jsonObject.string("id") },
-        )
+        payload["derived_statuses"] =
+            JsonArray(
+                state.getValue("derived_statuses").jsonArray.sortedBy { it.jsonObject.string("id") },
+            )
         return JsonObject(payload)
     }
 
-    private fun buildCatalog(expected: JsonObject, ledgerId: LedgerId): LedgerCatalog {
-        val catalog = expected.getValue("states").jsonArray.first().jsonObject.getValue("catalog").jsonObject
-        val accounts = catalog.getValue("accounts").jsonArray.map { element ->
-            val account = element.jsonObject
-            Account(
-                AccountId(account.string("id")),
-                ledgerId,
-                when (account.string("kind")) {
-                    "asset" -> AccountKind.ASSET
-                    "liability" -> AccountKind.LIABILITY
-                    "equity" -> AccountKind.EQUITY
-                    "income" -> AccountKind.INCOME
-                    "expense" -> AccountKind.EXPENSE
-                    else -> error("unsupported RG-06 catalog account kind")
-                },
-                CurrencyUnit(account.string("currency"), 2),
-                account.getValue("owned_by_user").jsonPrimitive.content.toBooleanStrict(),
-                account.getValue("real_account").jsonPrimitive.content.toBooleanStrict(),
-            )
-        }
+    private fun buildCatalog(
+        expected: JsonObject,
+        ledgerId: LedgerId,
+    ): LedgerCatalog {
+        val catalog =
+            expected
+                .getValue("states")
+                .jsonArray
+                .first()
+                .jsonObject
+                .getValue("catalog")
+                .jsonObject
+        val accounts =
+            catalog.getValue("accounts").jsonArray.map { element ->
+                val account = element.jsonObject
+                Account(
+                    AccountId(account.string("id")),
+                    ledgerId,
+                    when (account.string("kind")) {
+                        "asset" -> AccountKind.ASSET
+                        "liability" -> AccountKind.LIABILITY
+                        "equity" -> AccountKind.EQUITY
+                        "income" -> AccountKind.INCOME
+                        "expense" -> AccountKind.EXPENSE
+                        else -> error("unsupported RG-06 catalog account kind")
+                    },
+                    CurrencyUnit(account.string("currency"), 2),
+                    account
+                        .getValue("owned_by_user")
+                        .jsonPrimitive.content
+                        .toBooleanStrict(),
+                    account
+                        .getValue("real_account")
+                        .jsonPrimitive.content
+                        .toBooleanStrict(),
+                )
+            }
         val categoryElements = catalog.getValue("categories").jsonArray.map { it.jsonObject }
         val accountKinds = accounts.associate { account -> account.id to account.kind }
-        val categories = categoryElements.map { category ->
-            val postingAccountId = category["posting_account_id"]
-                ?.takeUnless { it is JsonNull }
-                ?.jsonPrimitive
-                ?.content
-                ?.let(::AccountId)
-            val kindAccountId = postingAccountId ?: categoryElements
-                .firstOrNull { child ->
-                    child["parent_id"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content == category.string("id") &&
-                        child["posting_account_id"]?.takeUnless { it is JsonNull } is JsonPrimitive
-                }
-                ?.getValue("posting_account_id")
-                ?.jsonPrimitive
-                ?.content
-                ?.let(::AccountId)
-            Category(
-                CategoryId(category.string("id")),
-                ledgerId,
-                category["parent_id"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content?.let(::CategoryId),
-                postingAccountId,
-                category.getValue("active").jsonPrimitive.content.toBooleanStrict(),
-                when (accountKinds[kindAccountId]) {
-                    AccountKind.INCOME -> com.unifiedledger.domain.CategoryKind.INCOME
-                    else -> com.unifiedledger.domain.CategoryKind.EXPENSE
-                },
-            )
-        }
+        val categories =
+            categoryElements.map { category ->
+                val postingAccountId =
+                    category["posting_account_id"]
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive
+                        ?.content
+                        ?.let(::AccountId)
+                val kindAccountId =
+                    postingAccountId ?: categoryElements
+                        .firstOrNull { child ->
+                            child["parent_id"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content == category.string("id") &&
+                                child["posting_account_id"]?.takeUnless { it is JsonNull } is JsonPrimitive
+                        }?.getValue("posting_account_id")
+                        ?.jsonPrimitive
+                        ?.content
+                        ?.let(::AccountId)
+                Category(
+                    CategoryId(category.string("id")),
+                    ledgerId,
+                    category["parent_id"]
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive
+                        ?.content
+                        ?.let(::CategoryId),
+                    postingAccountId,
+                    category
+                        .getValue("active")
+                        .jsonPrimitive.content
+                        .toBooleanStrict(),
+                    when (accountKinds[kindAccountId]) {
+                        AccountKind.INCOME -> com.unifiedledger.domain.CategoryKind.INCOME
+                        else -> com.unifiedledger.domain.CategoryKind.EXPENSE
+                    },
+                )
+            }
         return assertIs<DomainResult.Success<LedgerCatalog>>(LedgerCatalog.create(accounts, categories)).value
     }
 
     private fun manualObservations(expected: JsonObject): Rg06ManualObservationSource {
-        val observations = buildMap<Rg06ManualObservationKey, Rg06ManualBankObservation> {
-            expected.getValue("states").jsonArray.forEach { stateElement ->
-                stateElement.jsonObject.getValue("sources").jsonArray.forEach { sourceElement ->
-                    val source = sourceElement.jsonObject
-                    val payload = source.getValue("payload").jsonObject
-                    val observedAt = payload["observed_at"]?.jsonPrimitive?.content ?: return@forEach
-                    if (!source.string("id").contains("manual")) return@forEach
-                    val amount = parseMoney(payload.string("amount"), payload.string("currency"))
-                    val time = assertIs<Rg06TypedValueResult.Success<Rg06ObservedAt>>(
-                        Rg06ObservedAt.create(Instant.parse(observedAt), observedAt, "+08:00"),
-                    ).value
-                    val evidence = source.getValue("payload").jsonObject
-                    val evidenceId = stateElement.jsonObject.getValue("evidence").jsonArray.firstOrNull {
-                        it.jsonObject.getValue("source_ids").jsonArray.any { sourceId -> sourceId.jsonPrimitive.content == source.string("id") }
-                    }?.jsonObject?.string("id") ?: return@forEach
-                    put(
-                        Rg06ManualObservationKey(Rg06SourceId(source.string("id")), Rg06EvidenceId(evidenceId)),
-                        Rg06ManualBankObservation(Money.ofMinor(-kotlin.math.abs(amount.minorUnits), amount.currency), time),
-                    )
+        val observations =
+            buildMap<Rg06ManualObservationKey, Rg06ManualBankObservation> {
+                expected.getValue("states").jsonArray.forEach { stateElement ->
+                    stateElement.jsonObject.getValue("sources").jsonArray.forEach { sourceElement ->
+                        val source = sourceElement.jsonObject
+                        val payload = source.getValue("payload").jsonObject
+                        val observedAt = payload["observed_at"]?.jsonPrimitive?.content ?: return@forEach
+                        if (!source.string("id").contains("manual")) return@forEach
+                        val amount = parseMoney(payload.string("amount"), payload.string("currency"))
+                        val time =
+                            assertIs<Rg06TypedValueResult.Success<Rg06ObservedAt>>(
+                                Rg06ObservedAt.create(Instant.parse(observedAt), observedAt, "+08:00"),
+                            ).value
+                        val evidence = source.getValue("payload").jsonObject
+                        val evidenceId =
+                            stateElement.jsonObject
+                                .getValue("evidence")
+                                .jsonArray
+                                .firstOrNull {
+                                    it.jsonObject
+                                        .getValue("source_ids")
+                                        .jsonArray
+                                        .any { sourceId -> sourceId.jsonPrimitive.content == source.string("id") }
+                                }?.jsonObject
+                                ?.string("id") ?: return@forEach
+                        put(
+                            Rg06ManualObservationKey(Rg06SourceId(source.string("id")), Rg06EvidenceId(evidenceId)),
+                            Rg06ManualBankObservation(Money.ofMinor(-kotlin.math.abs(amount.minorUnits), amount.currency), time),
+                        )
+                    }
                 }
             }
-        }
         return Rg06ManualObservationSource { sourceId, evidenceId ->
             observations[Rg06ManualObservationKey(sourceId, evidenceId)]
         }
     }
 
-    private fun seedBaseline(database: LedgerDatabase, ledgerId: LedgerId, state: JsonObject, rootId: String) {
+    private fun seedBaseline(
+        database: LedgerDatabase,
+        ledgerId: LedgerId,
+        state: JsonObject,
+        rootId: String,
+    ) {
         val transactions = state.getValue("transactions").jsonArray
         val postingSets = state.getValue("posting_sets").jsonArray
         val versions = state.getValue("transaction_versions").jsonArray
@@ -301,7 +362,10 @@ class Rg06RuntimeReplayTest {
                 version.string("id"),
                 version.string("transaction_id"),
                 ledgerId.value,
-                version.getValue("version_number").jsonPrimitive.content.toLong(),
+                version
+                    .getValue("version_number")
+                    .jsonPrimitive.content
+                    .toLong(),
                 version.string("posting_set_id"),
                 version.string("occurred_at"),
                 version.string("statistics_at"),
@@ -325,8 +389,14 @@ class Rg06RuntimeReplayTest {
             postingIndex[setId] = index + 1
             val money = parseMoney(posting.string("amount"), posting.string("currency"))
             database.ledgerQueries.insertPosting(
-                posting.string("id"), setId, ledgerId.value, index, posting.string("account_id"),
-                money.minorUnits, money.currency.code, money.currency.precision.toLong(),
+                posting.string("id"),
+                setId,
+                ledgerId.value,
+                index,
+                posting.string("account_id"),
+                money.minorUnits,
+                money.currency.code,
+                money.currency.precision.toLong(),
             )
         }
 
@@ -335,9 +405,10 @@ class Rg06RuntimeReplayTest {
         relations.forEach { relationElement ->
             val relation = relationElement.jsonObject
             val relationId = relation.string("id")
-            val lifecycleMember = relation.getValue("member_refs").jsonArray.firstOrNull { member ->
-                entities.getValue(member.jsonObject.string("id")).jsonObject.string("type") == "staged_payment_lifecycle"
-            } ?: return@forEach
+            val lifecycleMember =
+                relation.getValue("member_refs").jsonArray.firstOrNull { member ->
+                    entities.getValue(member.jsonObject.string("id")).jsonObject.string("type") == "staged_payment_lifecycle"
+                } ?: return@forEach
             val lifecycleEntity = entities.getValue(lifecycleMember.jsonObject.string("id")).jsonObject
             val payload = lifecycleEntity.getValue("payload").jsonObject
             val history = payload.getValue("state_history").jsonArray
@@ -347,9 +418,24 @@ class Rg06RuntimeReplayTest {
                 baselineIdentity,
                 "create_staged_payment",
                 baselineIdentity,
-                null, null, null, null, null, null, payload.string("category_id"), null, null, null,
-                null, null, parseMoney(payload.string("total_amount"), payload.string("currency")).minorUnits,
-                payload.string("currency"), 2L, history.first().jsonObject.string("occurred_at"), null, null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                payload.string("category_id"),
+                null,
+                null,
+                null,
+                null,
+                null,
+                parseMoney(payload.string("total_amount"), payload.string("currency")).minorUnits,
+                payload.string("currency"),
+                2L,
+                history.first().jsonObject.string("occurred_at"),
+                null,
+                null,
             )
             database.ledgerQueries.insertRg06Relation(ledgerId.value, relationId)
             val total = parseMoney(payload.string("total_amount"), payload.string("currency"))
@@ -374,7 +460,11 @@ class Rg06RuntimeReplayTest {
                 val entity = entities.getValue(member.string("id")).jsonObject
                 if (entity.string("type") == "staged_payment_lifecycle") {
                     database.ledgerQueries.insertRg06RelationMember(
-                        ledgerId.value, relationId, index.toLong(), "LIFECYCLE", entity.string("id"),
+                        ledgerId.value,
+                        relationId,
+                        index.toLong(),
+                        "LIFECYCLE",
+                        entity.string("id"),
                     )
                 } else {
                     paymentEntities += entity
@@ -385,7 +475,10 @@ class Rg06RuntimeReplayTest {
                 database.ledgerQueries.insertRg06History(
                     ledgerId.value,
                     lifecycleEntity.string("id"),
-                    item.getValue("sequence").jsonPrimitive.content.toLong(),
+                    item
+                        .getValue("sequence")
+                        .jsonPrimitive.content
+                        .toLong(),
                     item.string("id"),
                     baselineIdentity,
                     item.string("event").uppercase(),
@@ -396,7 +489,10 @@ class Rg06RuntimeReplayTest {
                     item["payment_id"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content,
                     item.string("payment_progress").uppercase(),
                     item.string("fulfillment_status").uppercase(),
-                    item.getValue("state_transition_effect_count").jsonPrimitive.content.toLong(),
+                    item
+                        .getValue("state_transition_effect_count")
+                        .jsonPrimitive.content
+                        .toLong(),
                 )
             }
             paymentEntities.forEachIndexed { paymentIndex, paymentEntity ->
@@ -426,7 +522,11 @@ class Rg06RuntimeReplayTest {
                     evidenceText,
                 )
                 database.ledgerQueries.insertRg06RelationMember(
-                    ledgerId.value, relationId, (paymentIndex + 1L), "INSTALLMENT", paymentEntity.string("id"),
+                    ledgerId.value,
+                    relationId,
+                    (paymentIndex + 1L),
+                    "INSTALLMENT",
+                    paymentEntity.string("id"),
                 )
                 database.ledgerQueries.insertRg06PostingSemantic(
                     ledgerId.value,
@@ -469,15 +569,30 @@ class Rg06RuntimeReplayTest {
         }
     }
 
-    private fun transactionVersionIdFor(transactionId: String, versions: JsonArray): String = versions.first {
-        it.jsonObject.string("transaction_id") == transactionId
-    }.jsonObject.string("id")
+    private fun transactionVersionIdFor(
+        transactionId: String,
+        versions: JsonArray,
+    ): String =
+        versions
+            .first {
+                it.jsonObject.string("transaction_id") == transactionId
+            }.jsonObject
+            .string("id")
 
-    private fun postingSetIdFor(transactionId: String, versions: JsonArray): String = versions.first {
-        it.jsonObject.string("transaction_id") == transactionId
-    }.jsonObject.string("posting_set_id")
+    private fun postingSetIdFor(
+        transactionId: String,
+        versions: JsonArray,
+    ): String =
+        versions
+            .first {
+                it.jsonObject.string("transaction_id") == transactionId
+            }.jsonObject
+            .string("posting_set_id")
 
-    private fun parseMoney(amount: String, currency: String): Money {
+    private fun parseMoney(
+        amount: String,
+        currency: String,
+    ): Money {
         val value = BigDecimal(amount)
         val precision = value.scale().coerceAtLeast(2)
         val minor = value.movePointRight(2).longValueExact()
@@ -496,5 +611,4 @@ class Rg06RuntimeReplayTest {
 
 private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
 
-private fun obj(vararg fields: Pair<String, JsonElement?>): JsonObject =
-    JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())
+private fun obj(vararg fields: Pair<String, JsonElement?>): JsonObject = JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())

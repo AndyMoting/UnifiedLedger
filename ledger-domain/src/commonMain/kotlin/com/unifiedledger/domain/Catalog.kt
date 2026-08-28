@@ -78,9 +78,7 @@ class LedgerCatalog private constructor(
         }
     }
 
-    internal fun account(id: AccountId): Account? =
-        accountsById[id]
+    internal fun account(id: AccountId): Account? = accountsById[id]
 
-    internal fun category(id: CategoryId): Category? =
-        categoriesById[id]
+    internal fun category(id: CategoryId): Category? = categoriesById[id]
 }

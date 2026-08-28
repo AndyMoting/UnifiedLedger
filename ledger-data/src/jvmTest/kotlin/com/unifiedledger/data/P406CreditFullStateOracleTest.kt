@@ -1,8 +1,8 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ConfirmImportCandidate
+import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -41,8 +41,6 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
@@ -51,14 +49,11 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,54 +89,90 @@ class P406CreditFullStateOracleTest {
     private val confirmedAt = "2026-08-22T10:00:00+08:00"
 
     // RL-05 anchors (anonymous representative values, D-106 section 7.1).
-    private val expenseFacts = ImportSourceFacts(
-        10000, "CNY", 2, "2026-08-01T12:00:00+08:00", "out", "settled",
-        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-    )
-    private val repaymentFacts = ImportSourceFacts(
-        5620, "CNY", 2, "2026-08-05T12:00:00+08:00", "out", "settled",
-        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-    )
-    private val refundFacts = ImportSourceFacts(
-        1535, "CNY", 2, "2026-08-08T12:00:00+08:00", "in", "refund_settled",
-        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-    )
+    private val expenseFacts =
+        ImportSourceFacts(
+            10000,
+            "CNY",
+            2,
+            "2026-08-01T12:00:00+08:00",
+            "out",
+            "settled",
+            ImportFundingState.SETTLED,
+            IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            1,
+        )
+    private val repaymentFacts =
+        ImportSourceFacts(
+            5620,
+            "CNY",
+            2,
+            "2026-08-05T12:00:00+08:00",
+            "out",
+            "settled",
+            ImportFundingState.SETTLED,
+            IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            1,
+        )
+    private val refundFacts =
+        ImportSourceFacts(
+            1535,
+            "CNY",
+            2,
+            "2026-08-08T12:00:00+08:00",
+            "in",
+            "refund_settled",
+            ImportFundingState.SETTLED,
+            IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            1,
+        )
     private val directProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "花呗")
     private val repaymentProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_REPAYMENT, "余额宝", null)
     private val refundProfile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_REFUND, null, "花呗")
 
     // RL-06 anchor (anonymous synthetic values, D-106 section 7.2 via D-108):
     // mixed 12.40 = 3.60 (asset) + 8.80 (credit liability).
-    private val mixedFacts = ImportSourceFacts(
-        1240, "CNY", 2, "2026-08-20T12:00:00+08:00", "out", "settled",
-        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-    )
+    private val mixedFacts =
+        ImportSourceFacts(
+            1240,
+            "CNY",
+            2,
+            "2026-08-20T12:00:00+08:00",
+            "out",
+            "settled",
+            ImportFundingState.SETTLED,
+            IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            1,
+        )
     private val mixedProfile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "余额宝", "花呗")
 
     /** The five original kinds of the legacy ledger_transaction.kind CHECK (insertTransaction mapping). */
     private val legacyTransactionKinds = setOf("OPENING_BALANCE", "EXPENSE", "INCOME", "ACCOUNT_TRANSFER", "CREDIT_REPAYMENT")
 
-    private fun catalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("account-credit-huabei"), ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("expense-account-clothes"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-                Account(AccountId("account-credit-usd"), ledgerId, AccountKind.LIABILITY, usd, ownedByUser = true, realAccount = true),
-                Account(AccountId("account-credit-other-ledger"), LedgerId("ledger-p406-other"), AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-primary-clothes"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-clothes"), ledgerId, parentId = CategoryId("category-primary-clothes"), postingAccountId = AccountId("expense-account-clothes"), active = true, kind = CategoryKind.EXPENSE),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("p406 oracle catalog failure: ${result.violation}")
-    }
+    private fun catalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("account-credit-huabei"), ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("expense-account-clothes"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            Account(AccountId("account-credit-usd"), ledgerId, AccountKind.LIABILITY, usd, ownedByUser = true, realAccount = true),
+                            Account(AccountId("account-credit-other-ledger"), LedgerId("ledger-p406-other"), AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-primary-clothes"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-clothes"), ledgerId, parentId = CategoryId("category-primary-clothes"), postingAccountId = AccountId("expense-account-clothes"), active = true, kind = CategoryKind.EXPENSE),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("p406 oracle catalog failure: ${result.violation}")
+        }
 
     private fun accounts(): List<Account> = catalog().accounts
 
@@ -163,41 +194,52 @@ class P406CreditFullStateOracleTest {
         paymentProfile = profile,
     )
 
-    private fun intakeIds(prefix: String, duplicates: List<Pair<String, String>> = emptyList()) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        duplicates: List<Pair<String, String>> = emptyList(),
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
         statusHistoryId = ImportStatusHistoryId("status-$prefix-1"),
-        duplicateIds = duplicates.map { (candidateId, historyId) ->
-            ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
-        },
+        duplicateIds =
+            duplicates.map { (candidateId, historyId) ->
+                ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
+            },
     )
 
-    private fun commitIds(prefix: String) = ImportCommitIds(
-        confirmationId = ImportConfirmationId("confirmation-$prefix"),
-        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId("tx-$prefix"),
-            versionId = TransactionVersionId("version-$prefix-v1"),
-            postingSetId = PostingSetId("posting-set-$prefix"),
-            postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1")),
-        ),
-    )
+    private fun commitIds(prefix: String) =
+        ImportCommitIds(
+            confirmationId = ImportConfirmationId("confirmation-$prefix"),
+            statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+            formalIds =
+                ImportFormalIds(
+                    transactionId = TransactionId("tx-$prefix"),
+                    versionId = TransactionVersionId("version-$prefix-v1"),
+                    postingSetId = PostingSetId("posting-set-$prefix"),
+                    postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1")),
+                ),
+        )
 
     /** P4-06 slice 2: the mixed-payment confirm allocates three posting ids. */
-    private fun commitIds3(prefix: String) = ImportCommitIds(
-        confirmationId = ImportConfirmationId("confirmation-$prefix"),
-        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId("tx-$prefix"),
-            versionId = TransactionVersionId("version-$prefix-v1"),
-            postingSetId = PostingSetId("posting-set-$prefix"),
-            postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1"), PostingId("posting-$prefix-2")),
-        ),
-    )
+    private fun commitIds3(prefix: String) =
+        ImportCommitIds(
+            confirmationId = ImportConfirmationId("confirmation-$prefix"),
+            statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+            formalIds =
+                ImportFormalIds(
+                    transactionId = TransactionId("tx-$prefix"),
+                    versionId = TransactionVersionId("version-$prefix-v1"),
+                    postingSetId = PostingSetId("posting-set-$prefix"),
+                    postingIds = listOf(PostingId("posting-$prefix-0"), PostingId("posting-$prefix-1"), PostingId("posting-$prefix-2")),
+                ),
+        )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -205,8 +247,11 @@ class P406CreditFullStateOracleTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -214,36 +259,48 @@ class P406CreditFullStateOracleTest {
         }
     }
 
-    private fun spineCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countImportRequests().executeAsOne(),
-        database.ledgerQueries.countImportSourceRecords().executeAsOne(),
-        database.ledgerQueries.countImportEvidence().executeAsOne(),
-        database.ledgerQueries.countImportCandidates().executeAsOne(),
-        database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne(),
-        database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
-        database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
-        database.ledgerQueries.countImportConfirmations().executeAsOne(),
-        database.ledgerQueries.countImportReceipts().executeAsOne(),
-    )
+    private fun spineCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countImportRequests().executeAsOne(),
+            database.ledgerQueries.countImportSourceRecords().executeAsOne(),
+            database.ledgerQueries.countImportEvidence().executeAsOne(),
+            database.ledgerQueries.countImportCandidates().executeAsOne(),
+            database.ledgerQueries.countImportCandidatePaymentProfiles().executeAsOne(),
+            database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne(),
+            database.ledgerQueries.countImportDecisionSnapshots().executeAsOne(),
+            database.ledgerQueries.countImportConfirmations().executeAsOne(),
+            database.ledgerQueries.countImportReceipts().executeAsOne(),
+        )
 
-    private fun formalCounts(database: LedgerDatabase) = listOf(
-        database.ledgerQueries.countTransactions().executeAsOne(),
-        database.ledgerQueries.countVersions().executeAsOne(),
-        database.ledgerQueries.countPostings().executeAsOne(),
-    )
+    private fun formalCounts(database: LedgerDatabase) =
+        listOf(
+            database.ledgerQueries.countTransactions().executeAsOne(),
+            database.ledgerQueries.countVersions().executeAsOne(),
+            database.ledgerQueries.countPostings().executeAsOne(),
+        )
 
     /** Ordinary v1 factory for the regression fixtures (USD original expense, §6.8). */
-    private class OrdinaryOutFactory(private val catalog: LedgerCatalog) : ImportCandidateFormalFactory {
+    private class OrdinaryOutFactory(
+        private val catalog: LedgerCatalog,
+    ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
     /** P4-06 slice 2: factory-call counter for the posting-count gate zero-call proof. */
-    private class CountingFactory(private val inner: ImportCandidateFormalFactory) : ImportCandidateFormalFactory {
+    private class CountingFactory(
+        private val inner: ImportCandidateFormalFactory,
+    ) : ImportCandidateFormalFactory {
         var calls = 0
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> {
+
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> {
             calls += 1
             return inner.create(input, ids)
         }
@@ -257,23 +314,28 @@ class P406CreditFullStateOracleTest {
      */
     private fun originalExpenseReader(driver: JdbcSqliteDriver): (TransactionId) -> CreditRefundOriginalExpense? {
         return fun(transactionId: TransactionId): CreditRefundOriginalExpense? {
-            val rows = selectRows(
-                driver,
-                "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
-                    "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
-                    "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
-                    "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
-                    "WHERE t.ledger_id = '${ledgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
-                listOf(false, false, false, false),
-            )
+            val rows =
+                selectRows(
+                    driver,
+                    "SELECT t.kind, t.ledger_id, p.account_id, p.currency_code FROM posting AS p " +
+                        "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id " +
+                        "JOIN ledger_transaction_current_version AS c ON c.transaction_id = t.transaction_id " +
+                        "AND c.ledger_id = t.ledger_id AND c.current_version_id = v.version_id " +
+                        "WHERE t.ledger_id = '${ledgerId.value}' AND t.transaction_id = '${transactionId.value}' AND p.amount_minor > 0",
+                    listOf(false, false, false, false),
+                )
             if (rows.size != 1) return null
             val kind = rows[0][0] as String
             val rowLedger = rows[0][1] as String
             val account = rows[0][2] as String
             val currency = rows[0][3] as String
             return CreditRefundOriginalExpense(
-                transactionId, LedgerId(rowLedger), TransactionKind.valueOf(kind), currency, AccountId(account),
+                transactionId,
+                LedgerId(rowLedger),
+                TransactionKind.valueOf(kind),
+                currency,
+                AccountId(account),
             )
         }
     }
@@ -288,21 +350,17 @@ class P406CreditFullStateOracleTest {
         val intakeIds: ImportIntakeIdSource,
         val commitIds: ImportIdSource,
     ) {
-        fun intake(request: ImportIntakeRequest): ImportIntakeResult =
-            ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
+        fun intake(request: ImportIntakeRequest): ImportIntakeResult = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint()).execute(request)
 
-        fun confirmCredit(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, creditFactory, catalog).execute(request)
+        fun confirmCredit(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult = ConfirmImportCandidate(store, commitIds, creditFactory, catalog).execute(request)
 
-        fun confirmMixed(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, mixedFactory, catalog).execute(request)
+        fun confirmMixed(request: ImportCandidateConfirmRequest): ImportCandidateDecisionResult = ConfirmImportCandidate(store, commitIds, mixedFactory, catalog).execute(request)
 
         fun confirmOrdinary(
             request: ImportCandidateConfirmRequest,
             factory: ImportCandidateFormalFactory,
             catalogOverride: LedgerCatalog = catalog,
-        ): ImportCandidateDecisionResult =
-            ConfirmImportCandidate(store, commitIds, factory, catalogOverride).execute(request)
+        ): ImportCandidateDecisionResult = ConfirmImportCandidate(store, commitIds, factory, catalogOverride).execute(request)
     }
 
     private fun executor(
@@ -314,11 +372,14 @@ class P406CreditFullStateOracleTest {
         val store = SqlDelightImportSpineStore(database, driver)
         val cat = catalog()
         return Executor(
-            database, driver, store,
+            database,
+            driver,
+            store,
             cat,
             CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
             MixedPaymentFlowFormalFactory(cat),
-            intakeIds, commitIds,
+            intakeIds,
+            commitIds,
         )
     }
 
@@ -332,11 +393,14 @@ class P406CreditFullStateOracleTest {
         val store = SqlDelightImportSpineStore(database, driver, failure)
         val cat = catalog()
         return Executor(
-            database, driver, store,
+            database,
+            driver,
+            store,
             cat,
             CreditFlowFormalFactory(cat, originalExpenseReader(driver)),
             MixedPaymentFlowFormalFactory(cat),
-            intakeIds, commitIds,
+            intakeIds,
+            commitIds,
         )
     }
 
@@ -398,9 +462,14 @@ class P406CreditFullStateOracleTest {
         candidateId = ImportCandidateId(candidate),
         expectedContentHash = hash,
         explicitConfirmedAt = confirmedAt,
-        decisionFields = ImportConfirmDecisionFields.MixedPaymentFlow(
-            CategoryId(category), AccountId(asset), AccountId(liability), assetLegMinor, creditLegMinor,
-        ),
+        decisionFields =
+            ImportConfirmDecisionFields.MixedPaymentFlow(
+                CategoryId(category),
+                AccountId(asset),
+                AccountId(liability),
+                assetLegMinor,
+                creditLegMinor,
+            ),
     )
 
     // ---------- canonical capture (every P4-06/P4-07/P4-02/P4-08 owner) ----------
@@ -412,7 +481,10 @@ class P406CreditFullStateOracleTest {
         val netWorthChangeMinor: Long,
     )
 
-    private data class ReportTx(val kind: String, val postings: List<Triple<String, Long, String>>)
+    private data class ReportTx(
+        val kind: String,
+        val postings: List<Triple<String, Long, String>>,
+    )
 
     private data class P406FullState(
         val importRequest: List<List<Any?>>,
@@ -438,101 +510,125 @@ class P406CreditFullStateOracleTest {
         val reconciliation: Map<String, List<List<Any?>>>,
     )
 
-    private val rowComparator = Comparator<List<Any?>> { left, right ->
-        val size = maxOf(left.size, right.size)
-        for (index in 0 until size) {
-            val l = left.getOrNull(index)
-            val r = right.getOrNull(index)
-            val compare = when {
-                l == null && r == null -> 0
-                l == null -> -1
-                r == null -> 1
-                else -> l.toString().compareTo(r.toString())
+    private val rowComparator =
+        Comparator<List<Any?>> { left, right ->
+            val size = maxOf(left.size, right.size)
+            for (index in 0 until size) {
+                val l = left.getOrNull(index)
+                val r = right.getOrNull(index)
+                val compare =
+                    when {
+                        l == null && r == null -> 0
+                        l == null -> -1
+                        r == null -> 1
+                        else -> l.toString().compareTo(r.toString())
+                    }
+                if (compare != 0) return@Comparator compare
             }
-            if (compare != 0) return@Comparator compare
+            0
         }
-        0
-    }
 
-    private fun selectRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
-                }
+    private fun selectRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
+
+    private fun captureFullState(
+        driver: JdbcSqliteDriver,
+        accounts: List<Account>,
+    ): P406FullState {
+        val formalJoin =
+            "FROM posting AS p " +
+                "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
+        val formalRows =
+            selectRows(
+                driver,
+                "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor, p.currency_code $formalJoin ORDER BY t.transaction_id, p.posting_index",
+                listOf(false, false, false, false, true, false),
+            )
+        val reportTxs =
+            formalRows.groupBy { it[0] as String }.map { (_, rows) ->
+                ReportTx(rows.first()[2] as String, rows.map { Triple(it[3] as String, it[4] as Long, it[5] as String) })
             }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
-
-    private fun captureFullState(driver: JdbcSqliteDriver, accounts: List<Account>): P406FullState {
-        val formalJoin = "FROM posting AS p " +
-            "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-            "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
-        val formalRows = selectRows(
-            driver,
-            "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor, p.currency_code $formalJoin ORDER BY t.transaction_id, p.posting_index",
-            listOf(false, false, false, false, true, false),
-        )
-        val reportTxs = formalRows.groupBy { it[0] as String }.map { (_, rows) ->
-            ReportTx(rows.first()[2] as String, rows.map { Triple(it[3] as String, it[4] as Long, it[5] as String) })
-        }
         val ledgerAccounts = accounts.filter { it.ledgerId == ledgerId }
         val accountKindById = ledgerAccounts.associate { it.id.value to it.kind }
         val report = reduceReport(reportTxs, ledgerAccounts, accountKindById)
         return P406FullState(
             importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
-            importSourceRecord = selectRows(
-                driver,
-                "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
-                listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
-            ).sortedWith(rowComparator),
+            importSourceRecord =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
+                    listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
+                ).sortedWith(rowComparator),
             importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
             importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
-            importCandidatePaymentProfile = selectRows(
-                driver,
-                "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile",
-                listOf(false, false, false, false, false),
-            ).sortedWith(rowComparator),
+            importCandidatePaymentProfile =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, candidate_id, variant, asset_leg_kind_token, credit_leg_kind_token FROM import_candidate_payment_profile",
+                    listOf(false, false, false, false, false),
+                ).sortedWith(rowComparator),
             importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
             importCandidateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class FROM import_candidate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
-            importCandidateDecisionSnapshot = selectRows(
-                driver,
-                "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
-                listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
-            ).sortedWith(rowComparator),
+            importCandidateDecisionSnapshot =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at FROM import_candidate_decision_snapshot",
+                    listOf(false, false, false, false, false, false, false, false, false, false, false, false, true, true, false),
+                ).sortedWith(rowComparator),
             importConfirmation = selectRows(driver, "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
             importReceipt = selectRows(driver, "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-            duplicateCandidate = selectRows(
-                driver,
-                "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
-                listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
-            ).sortedWith(rowComparator),
+            duplicateCandidate =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
+                    listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
+                ).sortedWith(rowComparator),
             duplicateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class FROM import_duplicate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
             ledgerTransaction = selectRows(driver, "SELECT transaction_id, ledger_id, kind, canonical_kind FROM ledger_transaction", listOf(false, false, false, false)).sortedWith(rowComparator),
             postingSet = selectRows(driver, "SELECT posting_set_id, ledger_id FROM posting_set", listOf(false, false)).sortedWith(rowComparator),
             transactionVersion = selectRows(driver, "SELECT version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note FROM transaction_version", listOf(false, false, false, true, false, false, false, false, false)).sortedWith(rowComparator),
             ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
             posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
-            mixedPaymentGroup = selectRows(
-                driver,
-                "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group",
-                listOf(false, false, false, false, false, true, false),
-            ).sortedWith(rowComparator),
-            mixedPaymentGroupLeg = selectRows(
-                driver,
-                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg",
-                listOf(false, false, true, false, false, true),
-            ).sortedWith(rowComparator),
+            mixedPaymentGroup =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at FROM mixed_payment_group",
+                    listOf(false, false, false, false, false, true, false),
+                ).sortedWith(rowComparator),
+            mixedPaymentGroupLeg =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor FROM mixed_payment_group_leg",
+                    listOf(false, false, true, false, false, true),
+                ).sortedWith(rowComparator),
             report = mapOf(ledgerId.value to report),
-            reconciliation = mapOf(
-                "reconciliation_request" to selectRows(driver, "SELECT ledger_id, request_id FROM reconciliation_request", listOf(false, false)),
-                "evidence_link" to selectRows(driver, "SELECT ledger_id, link_id FROM evidence_link", listOf(false, false)),
-                "posting_reconciliation" to selectRows(driver, "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
-            ),
+            reconciliation =
+                mapOf(
+                    "reconciliation_request" to selectRows(driver, "SELECT ledger_id, request_id FROM reconciliation_request", listOf(false, false)),
+                    "evidence_link" to selectRows(driver, "SELECT ledger_id, link_id FROM evidence_link", listOf(false, false)),
+                    "posting_reconciliation" to selectRows(driver, "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
+                ),
         )
     }
 
@@ -570,7 +666,11 @@ class P406CreditFullStateOracleTest {
         return CreditReportProjection(balances, consumption, cash, netWorth)
     }
 
-    private fun assertFullState(expected: P406FullState, actual: P406FullState, checkpoint: String) {
+    private fun assertFullState(
+        expected: P406FullState,
+        actual: P406FullState,
+        checkpoint: String,
+    ) {
         assertEquals(expected.importRequest, actual.importRequest, "$checkpoint: import_request")
         assertEquals(expected.importSourceRecord, actual.importSourceRecord, "$checkpoint: import_source_record")
         assertEquals(expected.importEvidence, actual.importEvidence, "$checkpoint: import_evidence")
@@ -602,12 +702,25 @@ class P406CreditFullStateOracleTest {
 
     // ---------- test-side expected builder (never reads the database under test) ----------
 
-    private fun tupleComparisonJson(subjectSourceId: String, existingSourceId: String, kind: ImportRecordKind, facts: ImportSourceFacts): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            ImportSourceId(subjectSourceId), ImportSourceId(existingSourceId), kind, kind.contractVersion,
-            facts.amountMinor, facts.currencyCode, facts.currencyPrecision, facts.occurredAt,
-            facts.directionToken, facts.statusToken,
-        )
+    private fun tupleComparisonJson(
+        subjectSourceId: String,
+        existingSourceId: String,
+        kind: ImportRecordKind,
+        facts: ImportSourceFacts,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                ImportSourceId(subjectSourceId),
+                ImportSourceId(existingSourceId),
+                kind,
+                kind.contractVersion,
+                facts.amountMinor,
+                facts.currencyCode,
+                facts.currencyPrecision,
+                facts.occurredAt,
+                facts.directionToken,
+                facts.statusToken,
+            )
         return "{\"possible_existing_source_id\":\"$existingSourceId\",\"subject_source_id\":\"$subjectSourceId\",\"tuple\":${comparisonFingerprint.canonicalJson(projection)}}"
     }
 
@@ -647,50 +760,94 @@ class P406CreditFullStateOracleTest {
             val settled = facts.fundingState == ImportFundingState.SETTLED
             val hash = fingerprint.digest(kind, facts, profile)
             requests += row(ledgerId.value, requestId, "intake")
-            sources += row(
-                ledgerId.value, "source-$prefix", requestId, inputRef, ordinal.toLong(), kind.storageValue,
-                hash, kind.contractVersion.toLong(), if (complete) "valid_complete" else "valid_incomplete",
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision.toLong(), facts.occurredAt,
-                facts.directionToken, facts.statusToken, facts.fundingState.name, facts.fundingRuleId,
-                facts.fundingRuleVersion.toLong(), generatedAt,
-            )
+            sources +=
+                row(
+                    ledgerId.value,
+                    "source-$prefix",
+                    requestId,
+                    inputRef,
+                    ordinal.toLong(),
+                    kind.storageValue,
+                    hash,
+                    kind.contractVersion.toLong(),
+                    if (complete) "valid_complete" else "valid_incomplete",
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision.toLong(),
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                    facts.fundingState.name,
+                    facts.fundingRuleId,
+                    facts.fundingRuleVersion.toLong(),
+                    generatedAt,
+                )
             evidence += row(ledgerId.value, "evidence-$prefix", "source-$prefix", "source_observation", facts.occurredAt)
-            val candidateKind = when (kind) {
-                ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
-                ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
-                ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
-                ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
-                ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
-                ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
-            }
+            val candidateKind =
+                when (kind) {
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE -> "ordinary_flow"
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE -> "transfer_flow"
+                    ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG -> "transfer_flow_missing_leg"
+                    ImportRecordKind.CREDIT_EXPENSE_SOURCE -> "credit_expense"
+                    ImportRecordKind.CREDIT_REPAYMENT_SOURCE -> "credit_repayment"
+                    ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
+                }
             candidates += row(ledgerId.value, "candidate-$prefix", "source-$prefix", candidateKind, if (complete) "1.00" else "0.50", kind.storageValue, 1L)
             if (profile != null) {
                 profiles += row(ledgerId.value, "candidate-$prefix", profile.variant.storageValue, profile.assetLegKindToken, profile.creditLegKindToken)
             }
             requirements += row(ledgerId.value, "candidate-$prefix", 0L, "formal_transaction_creation")
-            statusHistory += row(
-                ledgerId.value, "candidate-$prefix", 1L, "status-$prefix-1",
-                if (complete && settled) "pending_confirmation" else "incomplete", requestId, "creation",
-            )
+            statusHistory +=
+                row(
+                    ledgerId.value,
+                    "candidate-$prefix",
+                    1L,
+                    "status-$prefix-1",
+                    if (complete && settled) "pending_confirmation" else "incomplete",
+                    requestId,
+                    "creation",
+                )
             receipts += row(ledgerId.value, requestId, "accepted", "source-$prefix", "evidence-$prefix", "candidate-$prefix", null, null)
             duplicates.forEach { (duplicateCandidateId, historyId, existingSourceId) ->
-                duplicateCandidates += row(
-                    ledgerId.value, duplicateCandidateId, "source-$prefix", existingSourceId, "EXACT_BUSINESS_TUPLE",
-                    comparisonFingerprintDigest(kind, facts, "source-$prefix", existingSourceId),
-                    tupleComparisonJson("source-$prefix", existingSourceId, kind, facts),
-                    "source_declared + mechanical_decode + p407_exact_business_tuple_v1", "exact",
-                    "p407_exact_business_tuple_v1", 1L, generatedAt, requestId,
-                )
+                duplicateCandidates +=
+                    row(
+                        ledgerId.value,
+                        duplicateCandidateId,
+                        "source-$prefix",
+                        existingSourceId,
+                        "EXACT_BUSINESS_TUPLE",
+                        comparisonFingerprintDigest(kind, facts, "source-$prefix", existingSourceId),
+                        tupleComparisonJson("source-$prefix", existingSourceId, kind, facts),
+                        "source_declared + mechanical_decode + p407_exact_business_tuple_v1",
+                        "exact",
+                        "p407_exact_business_tuple_v1",
+                        1L,
+                        generatedAt,
+                        requestId,
+                    )
                 duplicateHistory += row(ledgerId.value, duplicateCandidateId, 1L, historyId, "DEFERRED", requestId, "creation")
             }
         }
 
-        private fun comparisonFingerprintDigest(kind: ImportRecordKind, facts: ImportSourceFacts, subjectSourceId: String, existingSourceId: String): String {
-            val projection = ImportDuplicateComparisonSnapshot(
-                ImportSourceId(subjectSourceId), ImportSourceId(existingSourceId), kind, kind.contractVersion,
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision, facts.occurredAt,
-                facts.directionToken, facts.statusToken,
-            )
+        private fun comparisonFingerprintDigest(
+            kind: ImportRecordKind,
+            facts: ImportSourceFacts,
+            subjectSourceId: String,
+            existingSourceId: String,
+        ): String {
+            val projection =
+                ImportDuplicateComparisonSnapshot(
+                    ImportSourceId(subjectSourceId),
+                    ImportSourceId(existingSourceId),
+                    kind,
+                    kind.contractVersion,
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision,
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                )
             return comparisonFingerprint.digest(projection)
         }
 
@@ -799,11 +956,12 @@ class P406CreditFullStateOracleTest {
                 // assertion that slice 1 keeps its scope, not a substitute for P4-08
                 // end-to-end oracle coverage (owned by P408ReconciliationStoreTest /
                 // P408ReconciliationCanonicalOracleTest).
-                reconciliation = mapOf(
-                    "reconciliation_request" to emptyList(),
-                    "evidence_link" to emptyList(),
-                    "posting_reconciliation" to emptyList(),
-                ),
+                reconciliation =
+                    mapOf(
+                        "reconciliation_request" to emptyList(),
+                        "evidence_link" to emptyList(),
+                        "posting_reconciliation" to emptyList(),
+                    ),
             )
         }
 
@@ -824,24 +982,41 @@ class P406CreditFullStateOracleTest {
             val hashRefund = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts, refundProfile)
 
             // Anchor 1: credit expense (installment-form method folded onto 花呗).
-            val e1 = assertIs<ImportIntakeResult.Accepted>(
-                executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("expense"))), BatchCommitIdSource(listOf(commitIds("expense")))).intake(
-                    intakeRequest("req-expense", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile),
-                ),
-            )
+            val e1 =
+                assertIs<ImportIntakeResult.Accepted>(
+                    executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("expense"))), BatchCommitIdSource(listOf(commitIds("expense")))).intake(
+                        intakeRequest("req-expense", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile),
+                    ),
+                )
             assertEquals(listOf("source-expense", "evidence-expense", "candidate-expense"), e1.returnedIds.map { it.id })
             val confirm1 = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("expense"))), BatchCommitIdSource(listOf(commitIds("expense"))))
-            val c1 = assertIs<ImportCandidateDecisionResult.Accepted>(
-                confirm1.confirmCredit(creditExpenseConfirmRequest("req-expense-confirm", "candidate-expense", hashExpense)),
-            )
+            val c1 =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    confirm1.confirmCredit(creditExpenseConfirmRequest("req-expense-confirm", "candidate-expense", hashExpense)),
+                )
             assertEquals("tx-expense", c1.receipt.transactionId?.value)
             expected.intake("req-expense", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "expense")
             expected.confirm(
-                "req-expense-confirm", "expense",
-                decisionRow = row(
-                    ledgerId.value, "req-expense-confirm", "confirm", "candidate-expense", hashExpense,
-                    "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
-                ),
+                "req-expense-confirm",
+                "expense",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-expense-confirm",
+                        "confirm",
+                        "candidate-expense",
+                        hashExpense,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        null,
+                        null,
+                        null,
+                        null,
+                        confirmedAt,
+                    ),
             )
             // EXPENSE: expense +10000 / credit liability -10000; zero purchase-day cash outflow.
             expected.formal("expense", "EXPENSE", expenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
@@ -857,11 +1032,26 @@ class P406CreditFullStateOracleTest {
             }
             expected.intake("req-repay", 1, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile, "repay")
             expected.confirm(
-                "req-repay-confirm", "repay",
-                decisionRow = row(
-                    ledgerId.value, "req-repay-confirm", "confirm", "candidate-repay", hashRepay,
-                    null, null, null, null, "account-credit-huabei", "account-asset-a", null, null, null, confirmedAt,
-                ),
+                "req-repay-confirm",
+                "repay",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-repay-confirm",
+                        "confirm",
+                        "candidate-repay",
+                        hashRepay,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        "account-asset-a",
+                        null,
+                        null,
+                        null,
+                        confirmedAt,
+                    ),
             )
             expected.formal("repay", "CREDIT_REPAYMENT", repaymentFacts.occurredAt, Triple("account-asset-a", -5620L, "CNY"), Triple("account-credit-huabei", 5620L, "CNY"))
 
@@ -877,11 +1067,26 @@ class P406CreditFullStateOracleTest {
             }
             expected.intake("req-refund", 2, ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts, ImportCompleteness.VALID_COMPLETE, refundProfile, "refund")
             expected.confirm(
-                "req-refund-confirm", "refund",
-                decisionRow = row(
-                    ledgerId.value, "req-refund-confirm", "confirm", "candidate-refund", hashRefund,
-                    "category-food", null, null, null, "account-credit-huabei", null, "tx-expense", null, null, confirmedAt,
-                ),
+                "req-refund-confirm",
+                "refund",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-refund-confirm",
+                        "confirm",
+                        "candidate-refund",
+                        hashRefund,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        null,
+                        "tx-expense",
+                        null,
+                        null,
+                        confirmedAt,
+                    ),
             )
             expected.formal("refund", "REFUND_RECEIPT", refundFacts.occurredAt, Triple("account-credit-huabei", 1535L, "CNY"), Triple("expense-account-food", -1535L, "CNY"))
 
@@ -921,22 +1126,25 @@ class P406CreditFullStateOracleTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            val pending = listOf(
-                Triple("expense", ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts.copy(statusToken = "交易关闭", occurredAt = "2026-08-02T09:00:00+08:00")),
-                Triple("repay", ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts.copy(statusToken = "交易成功", occurredAt = "2026-08-02T09:01:00+08:00")),
-                Triple("refund", ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts.copy(statusToken = "退款关闭", occurredAt = "2026-08-02T09:02:00+08:00")),
-            )
-            val profilesByPrefix = mapOf(
-                "expense" to directProfile,
-                "repay" to repaymentProfile,
-                "refund" to refundProfile,
-            )
+            val pending =
+                listOf(
+                    Triple("expense", ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts.copy(statusToken = "交易关闭", occurredAt = "2026-08-02T09:00:00+08:00")),
+                    Triple("repay", ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts.copy(statusToken = "交易成功", occurredAt = "2026-08-02T09:01:00+08:00")),
+                    Triple("refund", ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts.copy(statusToken = "退款关闭", occurredAt = "2026-08-02T09:02:00+08:00")),
+                )
+            val profilesByPrefix =
+                mapOf(
+                    "expense" to directProfile,
+                    "repay" to repaymentProfile,
+                    "refund" to refundProfile,
+                )
             val intakeBatches = pending.map { (prefix, _, _) -> intakeIds(prefix) }
             val run = executor(database, driver, BatchIntakeIdSource(intakeBatches), BatchCommitIdSource(emptyList()))
             pending.forEachIndexed { index, (prefix, kind, facts) ->
-                val result = assertIs<ImportIntakeResult.Accepted>(
-                    run.intake(intakeRequest("req-$prefix", index, kind, facts, ImportCompleteness.VALID_INCOMPLETE, profilesByPrefix.getValue(prefix))),
-                )
+                val result =
+                    assertIs<ImportIntakeResult.Accepted>(
+                        run.intake(intakeRequest("req-$prefix", index, kind, facts, ImportCompleteness.VALID_INCOMPLETE, profilesByPrefix.getValue(prefix))),
+                    )
                 assertEquals("candidate-$prefix", result.receipt.candidateId.value)
             }
             // Zero rejection upgrade: all three stay incomplete, statuses raw, kinds kept.
@@ -944,13 +1152,20 @@ class P406CreditFullStateOracleTest {
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest(ledgerId.value, "req-$prefix").executeAsOne()
                 assertEquals("valid_incomplete", source.completeness)
                 assertEquals(kind.storageValue, source.record_kind)
-                assertEquals("incomplete", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-$prefix").executeAsOne().status)
+                assertEquals(
+                    "incomplete",
+                    database.ledgerQueries
+                        .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-$prefix")
+                        .executeAsOne()
+                        .status,
+                )
             }
             // Confirming an incomplete candidate is the frozen typed rejection.
             val hash = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, pending[0].third, directProfile)
-            val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmCredit(creditExpenseConfirmRequest("req-expense-confirm", "candidate-expense", hash)),
-            )
+            val rejected =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmCredit(creditExpenseConfirmRequest("req-expense-confirm", "candidate-expense", hash)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", rejected.diagnostic.code)
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countPostings().executeAsOne())
@@ -973,10 +1188,14 @@ class P406CreditFullStateOracleTest {
             // whole transaction — source, evidence, candidate, profile, requirement,
             // status, duplicate state, request claim and receipt — rolls back together.
             val attempt1 = BatchIntakeIdSource(listOf(intakeIds("inj-expense")))
-            val failingRun = executor(
-                database, driver, attempt1, BatchCommitIdSource(emptyList()),
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
-            )
+            val failingRun =
+                executor(
+                    database,
+                    driver,
+                    attempt1,
+                    BatchCommitIdSource(emptyList()),
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.INTAKE_AFTER_CANDIDATE) error("injected") },
+                )
             assertFailsWith<IllegalStateException> {
                 failingRun.intake(intakeRequest("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile))
             }
@@ -990,9 +1209,10 @@ class P406CreditFullStateOracleTest {
             // is retryable and now accepts with a fresh id batch.
             val attempt2 = BatchIntakeIdSource(listOf(intakeIds("req-ok")))
             val retryRun = executor(database, driver, attempt2, BatchCommitIdSource(emptyList()))
-            val accepted = assertIs<ImportIntakeResult.Accepted>(
-                retryRun.intake(intakeRequest("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
+            val accepted =
+                assertIs<ImportIntakeResult.Accepted>(
+                    retryRun.intake(intakeRequest("req-inj-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
             assertEquals(listOf("source-req-ok", "evidence-req-ok", "candidate-req-ok"), accepted.returnedIds.map { it.id })
             assertEquals(listOf(1L, 1L, 1L, 1L, 1L, 1L, 0L, 0L, 1L), spineCounts(database))
 
@@ -1014,10 +1234,13 @@ class P406CreditFullStateOracleTest {
             val hashExpense = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, directProfile)
 
             // Setup: one credit-expense candidate pending.
-            val setup = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), BatchCommitIdSource(emptyList()),
-            )
+            val setup =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("inj-conf"))),
+                    BatchCommitIdSource(emptyList()),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 setup.intake(intakeRequest("req-conf-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
             )
@@ -1027,10 +1250,14 @@ class P406CreditFullStateOracleTest {
             // graph (transaction/version/posting set/postings) and the request claim —
             // rolls back together.
             val attempt1 = BatchCommitIdSource(listOf(commitIds("conf-injected")))
-            val failingRun = executor(
-                database, driver, BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), attempt1,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
-            )
+            val failingRun =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("inj-conf"))),
+                    attempt1,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+                )
             assertFailsWith<IllegalStateException> {
                 failingRun.confirmCredit(creditExpenseConfirmRequest("req-conf-injected", "candidate-inj-conf", hashExpense))
             }
@@ -1039,15 +1266,22 @@ class P406CreditFullStateOracleTest {
             assertEquals(listOf(0L, 0L, 0L), formalCounts(database))
             // No decision snapshot and no second status history row survive the rollback.
             assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-inj-conf").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-inj-conf")
+                    .executeAsOne()
+                    .status,
+            )
 
             // The claim was rolled back: the same request identity retries and accepts
             // with a fresh commit id batch.
             val attempt2 = BatchCommitIdSource(listOf(commitIds("conf-ok")))
             val retryRun = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("inj-conf"))), attempt2)
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                retryRun.confirmCredit(creditExpenseConfirmRequest("req-conf-injected", "candidate-inj-conf", hashExpense)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    retryRun.confirmCredit(creditExpenseConfirmRequest("req-conf-injected", "candidate-inj-conf", hashExpense)),
+                )
             assertEquals("tx-conf-ok", confirmed.receipt.transactionId?.value)
             // import_request carries both the intake claim and the retried confirm claim.
             assertEquals(listOf(2L, 1L, 1L, 1L, 1L, 2L, 1L, 1L, 2L), spineCounts(database))
@@ -1056,11 +1290,27 @@ class P406CreditFullStateOracleTest {
             val expected = Expected()
             expected.intake("req-conf-intake", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "inj-conf")
             expected.confirm(
-                "req-conf-injected", "conf-ok", candidatePrefix = "inj-conf",
-                decisionRow = row(
-                    ledgerId.value, "req-conf-injected", "confirm", "candidate-inj-conf", hashExpense,
-                    "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
-                ),
+                "req-conf-injected",
+                "conf-ok",
+                candidatePrefix = "inj-conf",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-conf-injected",
+                        "confirm",
+                        "candidate-inj-conf",
+                        hashExpense,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        null,
+                        null,
+                        null,
+                        null,
+                        confirmedAt,
+                    ),
             )
             expected.formal("conf-ok", "EXPENSE", expenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
             assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "injected-confirm-rollback")
@@ -1081,17 +1331,20 @@ class P406CreditFullStateOracleTest {
 
             // First intake + same-request replay + raw-identity replay: zero new rows.
             val first = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("dup1"))), BatchCommitIdSource(emptyList()))
-            val accepted1 = assertIs<ImportIntakeResult.Accepted>(
-                first.intake(intakeRequest("req-dup-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
-            val replay = assertIs<ImportIntakeResult.NoChange>(
-                first.intake(intakeRequest("req-dup-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
+            val accepted1 =
+                assertIs<ImportIntakeResult.Accepted>(
+                    first.intake(intakeRequest("req-dup-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
+            val replay =
+                assertIs<ImportIntakeResult.NoChange>(
+                    first.intake(intakeRequest("req-dup-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
             assertEquals(accepted1.receipt, replay.receipt)
             assertEquals("equivalent_replay", replay.reasonCode)
-            val rawReplay = assertIs<ImportIntakeResult.NoChange>(
-                first.intake(intakeRequest("req-dup-1b", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
+            val rawReplay =
+                assertIs<ImportIntakeResult.NoChange>(
+                    first.intake(intakeRequest("req-dup-1b", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
             assertEquals("equivalent_replay", rawReplay.reasonCode)
 
             // Second equal credit row at another ordinal: P4-07 exact-tuple duplicate
@@ -1106,20 +1359,23 @@ class P406CreditFullStateOracleTest {
             assertEquals("DEFERRED", database.ledgerQueries.selectDuplicateCurrentStatus(ledgerId.value, "duplicate-dup-2").executeAsOne())
 
             // Non-equivalent same raw identity: hard collision, zero writes.
-            val collision = assertIs<ImportIntakeResult.Rejected>(
-                first.intake(intakeRequest("req-dup-3", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts.copy(amountMinor = 10001), ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
+            val collision =
+                assertIs<ImportIntakeResult.Rejected>(
+                    first.intake(intakeRequest("req-dup-3", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts.copy(amountMinor = 10001), ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
             assertEquals("SPINE_IDENTITY_COLLISION", collision.diagnostic.code)
 
             // Confirm + replay: the original receipt returns, the ID source runs once.
             val commitIds = BatchCommitIdSource(listOf(commitIds("dup1")))
             val confirmRun = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("dup1"))), commitIds)
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                confirmRun.confirmCredit(creditExpenseConfirmRequest("req-dup-1-confirm", "candidate-dup1", hashExpense)),
-            )
-            val confirmReplay = assertIs<ImportCandidateDecisionResult.NoChange>(
-                confirmRun.confirmCredit(creditExpenseConfirmRequest("req-dup-1-confirm", "candidate-dup1", hashExpense)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    confirmRun.confirmCredit(creditExpenseConfirmRequest("req-dup-1-confirm", "candidate-dup1", hashExpense)),
+                )
+            val confirmReplay =
+                assertIs<ImportCandidateDecisionResult.NoChange>(
+                    confirmRun.confirmCredit(creditExpenseConfirmRequest("req-dup-1-confirm", "candidate-dup1", hashExpense)),
+                )
             assertEquals(confirmed.receipt, confirmReplay.receipt)
             assertEquals(1, commitIds.calls.get())
             // No second transaction and no second posting set for the duplicate row.
@@ -1129,15 +1385,36 @@ class P406CreditFullStateOracleTest {
             val expected = Expected()
             expected.intake("req-dup-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "dup1")
             expected.intake(
-                "req-dup-2", 1, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile, "dup2",
+                "req-dup-2",
+                1,
+                ImportRecordKind.CREDIT_EXPENSE_SOURCE,
+                expenseFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                directProfile,
+                "dup2",
                 duplicates = listOf(Triple("duplicate-dup-2", "history-duplicate-dup-2", "source-dup1")),
             )
             expected.confirm(
-                "req-dup-1-confirm", "dup1",
-                decisionRow = row(
-                    ledgerId.value, "req-dup-1-confirm", "confirm", "candidate-dup1", hashExpense,
-                    "category-food", null, null, null, "account-credit-huabei", null, null, null, null, confirmedAt,
-                ),
+                "req-dup-1-confirm",
+                "dup1",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-dup-1-confirm",
+                        "confirm",
+                        "candidate-dup1",
+                        hashExpense,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        null,
+                        null,
+                        null,
+                        null,
+                        confirmedAt,
+                    ),
             )
             expected.formal("dup1", "EXPENSE", expenseFacts.occurredAt, Triple("expense-account-food", 10000L, "CNY"), Triple("account-credit-huabei", -10000L, "CNY"))
             assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "replay-duplicate")
@@ -1159,11 +1436,13 @@ class P406CreditFullStateOracleTest {
             val hashRefund = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts, refundProfile)
 
             // Setup: direct expense + repayment + refund candidates pending.
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("neg-expense"), intakeIds("neg-repay"), intakeIds("neg-refund"))),
-                BatchCommitIdSource((1..9).map { commitIds("neg-attempt-$it") }),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("neg-expense"), intakeIds("neg-repay"), intakeIds("neg-refund"))),
+                    BatchCommitIdSource((1..9).map { commitIds("neg-attempt-$it") }),
+                )
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-neg-expense", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)))
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-neg-repay", 1, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile)))
             assertIs<ImportIntakeResult.Accepted>(run.intake(intakeRequest("req-neg-refund", 2, ImportRecordKind.CREDIT_EXPENSE_SOURCE, refundFacts, ImportCompleteness.VALID_COMPLETE, refundProfile)))
@@ -1178,7 +1457,13 @@ class P406CreditFullStateOracleTest {
             assertDomainFailure(run.confirmCredit(creditExpenseConfirmRequest("req-neg-2", "candidate-neg-expense", hashExpense, liability = "account-asset-a")))
             assertDomainFailure(run.confirmCredit(creditExpenseConfirmRequest("req-neg-3", "candidate-neg-expense", hashExpense, liability = "account-credit-other-ledger")))
             assertDomainFailure(run.confirmCredit(creditExpenseConfirmRequest("req-neg-4", "candidate-neg-expense", hashExpense, liability = "account-credit-usd")))
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-expense").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-expense")
+                    .executeAsOne()
+                    .status,
+            )
 
             // Refund variant: missing original, non-EXPENSE original (needs the repayment
             // confirmed first), and category != the original's current secondary category.
@@ -1193,21 +1478,25 @@ class P406CreditFullStateOracleTest {
             // A USD original expense: the refund currency check fails (validation (i)).
             val usdFacts = ImportSourceFacts(2000, "USD", 2, "2026-08-09T09:00:00+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
             val usdHash = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, usdFacts, null)
-            val usdCatalog = when (
-                val result = LedgerCatalog.create(
-                    accounts = listOf(
-                        Account(AccountId("usd-asset"), ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
-                        Account(AccountId("usd-expense-account"), ledgerId, AccountKind.EXPENSE, usd, ownedByUser = false, realAccount = false),
-                    ),
-                    categories = listOf(
-                        Category(CategoryId("category-primary-usd"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                        Category(CategoryId("category-usd"), ledgerId, parentId = CategoryId("category-primary-usd"), postingAccountId = AccountId("usd-expense-account"), active = true, kind = CategoryKind.EXPENSE),
-                    ),
-                )
-            ) {
-                is DomainResult.Success -> result.value
-                is DomainResult.Failure -> error("usd catalog failure")
-            }
+            val usdCatalog =
+                when (
+                    val result =
+                        LedgerCatalog.create(
+                            accounts =
+                                listOf(
+                                    Account(AccountId("usd-asset"), ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
+                                    Account(AccountId("usd-expense-account"), ledgerId, AccountKind.EXPENSE, usd, ownedByUser = false, realAccount = false),
+                                ),
+                            categories =
+                                listOf(
+                                    Category(CategoryId("category-primary-usd"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                                    Category(CategoryId("category-usd"), ledgerId, parentId = CategoryId("category-primary-usd"), postingAccountId = AccountId("usd-expense-account"), active = true, kind = CategoryKind.EXPENSE),
+                                ),
+                        )
+                ) {
+                    is DomainResult.Success -> result.value
+                    is DomainResult.Failure -> error("usd catalog failure")
+                }
             assertIs<ImportIntakeResult.Accepted>(
                 executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("neg-usd"))), BatchCommitIdSource(listOf(commitIds("neg-usd")))).intake(
                     intakeRequest("req-neg-usd", 3, ImportRecordKind.ORDINARY_FLOW_SOURCE, usdFacts, ImportCompleteness.VALID_COMPLETE, null),
@@ -1221,7 +1510,7 @@ class P406CreditFullStateOracleTest {
                         expectedContentHash = usdHash,
                         explicitConfirmedAt = confirmedAt,
                         decisionFields = ImportConfirmDecisionFields.OrdinaryFlow(CategoryId("category-usd"), AccountId("usd-asset")),
-                ),
+                    ),
                     OrdinaryOutFactory(usdCatalog),
                     usdCatalog,
                 ),
@@ -1245,27 +1534,42 @@ class P406CreditFullStateOracleTest {
             assertDomainFailure(run.confirmCredit(creditRefundConfirmRequest("req-neg-8", "candidate-neg-refund", hashRefund, original = "tx-neg-clothes")))
 
             // Kind/variant/decision-field mismatches.
-            val kindMismatch1 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmCredit(creditRepaymentConfirmRequest("req-neg-9", "candidate-neg-expense", hashExpense)),
-            )
+            val kindMismatch1 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmCredit(creditRepaymentConfirmRequest("req-neg-9", "candidate-neg-expense", hashExpense)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", kindMismatch1.diagnostic.code)
-            val kindMismatch2 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmCredit(creditRefundConfirmRequest("req-neg-10", "candidate-neg-expense", hashExpense)),
-            )
+            val kindMismatch2 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmCredit(creditRefundConfirmRequest("req-neg-10", "candidate-neg-expense", hashExpense)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", kindMismatch2.diagnostic.code)
 
             // Every negative path left the credit candidates pending and zero residue:
             // only the two successful confirmations produced formal rows.
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-expense").executeAsOne().status)
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-refund").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-expense")
+                    .executeAsOne()
+                    .status,
+            )
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-neg-refund")
+                    .executeAsOne()
+                    .status,
+            )
             assertEquals(3L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(6L, database.ledgerQueries.countPostings().executeAsOne())
 
             // The rolled-back claim stays retryable on the same identity: a corrected
             // decision now succeeds (claim rollback + zero-residue proof).
-            val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmCredit(creditExpenseConfirmRequest("req-neg-1", "candidate-neg-expense", hashExpense)),
-            )
+            val corrected =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmCredit(creditExpenseConfirmRequest("req-neg-1", "candidate-neg-expense", hashExpense)),
+                )
             assertEquals("tx-neg-attempt-9", corrected.receipt.transactionId?.value)
         } finally {
             driver.close()
@@ -1282,10 +1586,13 @@ class P406CreditFullStateOracleTest {
             val database = LedgerDatabase(driver)
             val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
 
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("mixed"))), BatchCommitIdSource(listOf(commitIds3("mixed"))),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed"))),
+                    BatchCommitIdSource(listOf(commitIds3("mixed"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 run.intake(intakeRequest("req-mixed", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
             )
@@ -1295,30 +1602,51 @@ class P406CreditFullStateOracleTest {
             assertEquals("mixed_payment", candidateState.candidate_kind)
             assertEquals("pending_confirmation", candidateState.status)
 
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-confirm", "candidate-mixed", hashMixed)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-confirm", "candidate-mixed", hashMixed)),
+                )
             assertEquals("tx-mixed", confirmed.receipt.transactionId?.value)
 
             val expected = Expected()
             expected.intake("req-mixed", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed")
             expected.confirm(
-                "req-mixed-confirm", "mixed",
-                decisionRow = row(
-                    ledgerId.value, "req-mixed-confirm", "confirm", "candidate-mixed", hashMixed,
-                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
-                ),
+                "req-mixed-confirm",
+                "mixed",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-mixed-confirm",
+                        "confirm",
+                        "candidate-mixed",
+                        hashMixed,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        "account-asset-a",
+                        null,
+                        360L,
+                        880L,
+                        confirmedAt,
+                    ),
             )
             expected.formal3(
-                "mixed", mixedFacts.occurredAt,
+                "mixed",
+                mixedFacts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-mixed-confirm", "mixed", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-mixed-confirm",
+                "mixed",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             val actual = captureFullState(driver, accounts())
             assertFullState(expected.state(accounts()), actual, "mixed-anchor")
@@ -1363,55 +1691,87 @@ class P406CreditFullStateOracleTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("mixed-leg"))), BatchCommitIdSource(listOf(commitIds3("mixed-leg"))),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed-leg"))),
+                    BatchCommitIdSource(listOf(commitIds3("mixed-leg"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 run.intake(intakeRequest("req-mixed-leg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
             )
 
             // Either null leg is insufficient decision data (D-108 ruling 1): typed
             // rejection, zero writes, claim rolls back and stays retryable.
-            val missingAsset = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed, assetLegMinor = null)),
-            )
+            val missingAsset =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed, assetLegMinor = null)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", missingAsset.diagnostic.code)
-            val missingCredit = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm-2", "candidate-mixed-leg", hashMixed, creditLegMinor = null)),
-            )
+            val missingCredit =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm-2", "candidate-mixed-leg", hashMixed, creditLegMinor = null)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", missingCredit.diagnostic.code)
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-leg").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-leg")
+                    .executeAsOne()
+                    .status,
+            )
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
             assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
             assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
 
             // The same identity retries with the completed decision (D-106 section 4).
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-leg-confirm", "candidate-mixed-leg", hashMixed)),
+                )
             assertEquals("tx-mixed-leg", confirmed.receipt.transactionId?.value)
 
             val expected = Expected()
             expected.intake("req-mixed-leg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-leg")
             expected.confirm(
-                "req-mixed-leg-confirm", "mixed-leg",
-                decisionRow = row(
-                    ledgerId.value, "req-mixed-leg-confirm", "confirm", "candidate-mixed-leg", hashMixed,
-                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
-                ),
+                "req-mixed-leg-confirm",
+                "mixed-leg",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-mixed-leg-confirm",
+                        "confirm",
+                        "candidate-mixed-leg",
+                        hashMixed,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        "account-asset-a",
+                        null,
+                        360L,
+                        880L,
+                        confirmedAt,
+                    ),
             )
             expected.formal3(
-                "mixed-leg", mixedFacts.occurredAt,
+                "mixed-leg",
+                mixedFacts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-mixed-leg-confirm", "mixed-leg", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-mixed-leg-confirm",
+                "mixed-leg",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-missing-leg-retry")
         } finally {
@@ -1426,10 +1786,13 @@ class P406CreditFullStateOracleTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), BatchCommitIdSource(emptyList()),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))),
+                    BatchCommitIdSource(emptyList()),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 run.intake(intakeRequest("req-mixed-inj", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
             )
@@ -1439,18 +1802,23 @@ class P406CreditFullStateOracleTest {
             )
 
             // The frozen stale-fingerprint gate applies to the mixed kind as-is.
-            val stale = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-inj-stale", "candidate-mixed-inj", "sha256:not-the-hash")),
-            )
+            val stale =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-inj-stale", "candidate-mixed-inj", "sha256:not-the-hash")),
+                )
             assertEquals("SPINE_STALE_FINGERPRINT", stale.diagnostic.code)
 
             // Confirm failure after the formal graph persists: the group tables, the
             // decision snapshot and the formal graph roll back with the claim.
             val attempt1 = BatchCommitIdSource(listOf(commitIds3("mixed-injected")))
-            val failingRun = executor(
-                database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), attempt1,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
-            )
+            val failingRun =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))),
+                    attempt1,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.CONFIRM_AFTER_FORMAL) error("injected") },
+                )
             assertFailsWith<IllegalStateException> {
                 failingRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed))
             }
@@ -1459,21 +1827,29 @@ class P406CreditFullStateOracleTest {
             assertEquals(0L, database.ledgerQueries.countImportDecisionSnapshots().executeAsOne())
             assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
             assertEquals(0L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group_leg", listOf(true)).single().single())
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-inj").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-inj")
+                    .executeAsOne()
+                    .status,
+            )
 
             // The rolled-back claim retries on the same identity and accepts.
             val commitIds = BatchCommitIdSource(listOf(commitIds3("mixed-inj")))
             val retryRun = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-inj"))), commitIds)
-            val confirmed = assertIs<ImportCandidateDecisionResult.Accepted>(
-                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
-            )
+            val confirmed =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
+                )
             assertEquals("tx-mixed-inj", confirmed.receipt.transactionId?.value)
 
             // Confirm replay returns the original receipt with zero new writes,
             // including the group tables (the claim is not re-won).
-            val confirmReplay = assertIs<ImportCandidateDecisionResult.NoChange>(
-                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
-            )
+            val confirmReplay =
+                assertIs<ImportCandidateDecisionResult.NoChange>(
+                    retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed)),
+                )
             assertEquals(confirmed.receipt, confirmReplay.receipt)
             assertEquals(1, commitIds.calls.get())
             assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
@@ -1482,9 +1858,10 @@ class P406CreditFullStateOracleTest {
             // The same request id with different leg amounts is a hard identity
             // conflict (the leg columns are decision values): zero new writes, the
             // ID source still runs once.
-            val conflict = assertIs<ImportCandidateDecisionResult.Rejected>(
-                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed, assetLegMinor = 300L)),
-            )
+            val conflict =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm", "candidate-mixed-inj", hashMixed, assetLegMinor = 300L)),
+                )
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
             assertEquals(1, commitIds.calls.get())
             assertEquals(1L, selectRows(driver, "SELECT count(*) FROM mixed_payment_group", listOf(true)).single().single())
@@ -1492,30 +1869,51 @@ class P406CreditFullStateOracleTest {
 
             // After confirmation the candidate is no longer pending: a fresh request
             // on the same candidate keeps the frozen not-pending rejection.
-            val notPending = assertIs<ImportCandidateDecisionResult.Rejected>(
-                retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm-2", "candidate-mixed-inj", hashMixed)),
-            )
+            val notPending =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    retryRun.confirmMixed(mixedConfirmRequest("req-mixed-inj-confirm-2", "candidate-mixed-inj", hashMixed)),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", notPending.diagnostic.code)
 
             val expected = Expected()
             expected.intake("req-mixed-inj", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-inj")
             expected.confirm(
-                "req-mixed-inj-confirm", "mixed-inj",
-                decisionRow = row(
-                    ledgerId.value, "req-mixed-inj-confirm", "confirm", "candidate-mixed-inj", hashMixed,
-                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
-                ),
+                "req-mixed-inj-confirm",
+                "mixed-inj",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-mixed-inj-confirm",
+                        "confirm",
+                        "candidate-mixed-inj",
+                        hashMixed,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        "account-asset-a",
+                        null,
+                        360L,
+                        880L,
+                        confirmedAt,
+                    ),
             )
             expected.formal3(
-                "mixed-inj", mixedFacts.occurredAt,
+                "mixed-inj",
+                mixedFacts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-mixed-inj-confirm", "mixed-inj", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-mixed-inj-confirm",
+                "mixed-inj",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-injection-replay")
         } finally {
@@ -1531,11 +1929,13 @@ class P406CreditFullStateOracleTest {
             val database = LedgerDatabase(driver)
             val hashMixed = fingerprint.digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, mixedProfile)
             val hashExpense = fingerprint.digest(ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, directProfile)
-            val run = executor(
-                database, driver,
-                BatchIntakeIdSource(listOf(intakeIds("mixed-neg"), intakeIds("credit-neg"))),
-                BatchCommitIdSource((1..12).map { commitIds3("mixed-neg-attempt-$it") }),
-            )
+            val run =
+                executor(
+                    database,
+                    driver,
+                    BatchIntakeIdSource(listOf(intakeIds("mixed-neg"), intakeIds("credit-neg"))),
+                    BatchCommitIdSource((1..12).map { commitIds3("mixed-neg-attempt-$it") }),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 run.intake(intakeRequest("req-mixed-neg", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile)),
             )
@@ -1545,17 +1945,20 @@ class P406CreditFullStateOracleTest {
 
             // Kind gate (positive after the slice-1 defense lift): a mixed candidate
             // only accepts the mixed decision shape, and vice versa.
-            val mismatch1 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmCredit(creditExpenseConfirmRequest("req-mixed-neg-1", "candidate-mixed-neg", hashMixed)),
-            )
+            val mismatch1 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmCredit(creditExpenseConfirmRequest("req-mixed-neg-1", "candidate-mixed-neg", hashMixed)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch1.diagnostic.code)
-            val mismatch2 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmCredit(creditRepaymentConfirmRequest("req-mixed-neg-2", "candidate-mixed-neg", hashMixed)),
-            )
+            val mismatch2 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmCredit(creditRepaymentConfirmRequest("req-mixed-neg-2", "candidate-mixed-neg", hashMixed)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch2.diagnostic.code)
-            val mismatch3 = assertIs<ImportCandidateDecisionResult.Rejected>(
-                run.confirmMixed(mixedConfirmRequest("req-credit-neg-1", "candidate-credit-neg", hashExpense)),
-            )
+            val mismatch3 =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    run.confirmMixed(mixedConfirmRequest("req-credit-neg-1", "candidate-credit-neg", hashExpense)),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", mismatch3.diagnostic.code)
 
             // Domain arithmetic/account negatives: zero writes, candidate stays pending.
@@ -1570,17 +1973,24 @@ class P406CreditFullStateOracleTest {
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-6", "candidate-mixed-neg", hashMixed, liability = "account-credit-unknown")))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-7", "candidate-mixed-neg", hashMixed, liability = "account-credit-usd")))
             assertDomainFailure(run.confirmMixed(mixedConfirmRequest("req-mixed-neg-8", "candidate-mixed-neg", hashMixed, liability = "account-credit-other-ledger")))
-            assertEquals("pending_confirmation", database.ledgerQueries.selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-neg").executeAsOne().status)
+            assertEquals(
+                "pending_confirmation",
+                database.ledgerQueries
+                    .selectImportCandidateCurrentStatus(ledgerId.value, "candidate-mixed-neg")
+                    .executeAsOne()
+                    .status,
+            )
             assertEquals(0L, database.ledgerQueries.countTransactions().executeAsOne())
 
             // Posting-count gate: a 2-id batch on a mixed candidate is rejected before
             // the factory runs at all (zero factory calls).
             val counting = CountingFactory(MixedPaymentFlowFormalFactory(catalog()))
-            val gateRejected = assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(run.store, BatchCommitIdSource(listOf(commitIds("mixed-neg-short"))), counting, run.catalog).execute(
-                    mixedConfirmRequest("req-mixed-neg-9", "candidate-mixed-neg", hashMixed),
-                ),
-            )
+            val gateRejected =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    ConfirmImportCandidate(run.store, BatchCommitIdSource(listOf(commitIds("mixed-neg-short"))), counting, run.catalog).execute(
+                        mixedConfirmRequest("req-mixed-neg-9", "candidate-mixed-neg", hashMixed),
+                    ),
+                )
             assertEquals("SPINE_REFERENCE_INTEGRITY_VIOLATION", gateRejected.diagnostic.code)
             assertEquals(0, counting.calls)
 
@@ -1588,9 +1998,10 @@ class P406CreditFullStateOracleTest {
             // decision now succeeds (claim rollback + zero-residue proof). The seven
             // domain-failure attempts each consumed one commit batch (ids are
             // allocated before the factory); the corrected confirm takes the eighth.
-            val corrected = assertIs<ImportCandidateDecisionResult.Accepted>(
-                run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed)),
-            )
+            val corrected =
+                assertIs<ImportCandidateDecisionResult.Accepted>(
+                    run.confirmMixed(mixedConfirmRequest("req-mixed-neg-3", "candidate-mixed-neg", hashMixed)),
+                )
             assertEquals("tx-mixed-neg-attempt-8", corrected.receipt.transactionId?.value)
         } finally {
             driver.close()
@@ -1614,14 +2025,21 @@ class P406CreditFullStateOracleTest {
             // candidate (kind-agnostic persisted-facts tuple comparison).
             assertIs<ImportIntakeResult.Accepted>(
                 executor(
-                    database, driver,
+                    database,
+                    driver,
                     BatchIntakeIdSource(listOf(intakeIds("mixed-dup2", duplicates = listOf("duplicate-mixed-dup-2" to "history-duplicate-mixed-dup-2")))),
                     BatchCommitIdSource(emptyList()),
                 ).intake(
                     intakeRequest("req-mixed-dup-2", 1, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile),
                 ),
             )
-            assertEquals("EXACT_BUSINESS_TUPLE", database.ledgerQueries.selectDuplicateCandidate(ledgerId.value, "duplicate-mixed-dup-2").executeAsOne().kind)
+            assertEquals(
+                "EXACT_BUSINESS_TUPLE",
+                database.ledgerQueries
+                    .selectDuplicateCandidate(ledgerId.value, "duplicate-mixed-dup-2")
+                    .executeAsOne()
+                    .kind,
+            )
             assertEquals("DEFERRED", database.ledgerQueries.selectDuplicateCurrentStatus(ledgerId.value, "duplicate-mixed-dup-2").executeAsOne())
 
             val run = executor(database, driver, BatchIntakeIdSource(listOf(intakeIds("mixed-dup1"))), BatchCommitIdSource(listOf(commitIds3("mixed-dup1"))))
@@ -1641,26 +2059,52 @@ class P406CreditFullStateOracleTest {
             val expected = Expected()
             expected.intake("req-mixed-dup-1", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-dup1")
             expected.intake(
-                "req-mixed-dup-2", 1, ImportRecordKind.MIXED_PAYMENT_SOURCE, mixedFacts, ImportCompleteness.VALID_COMPLETE, mixedProfile, "mixed-dup2",
+                "req-mixed-dup-2",
+                1,
+                ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                mixedFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                mixedProfile,
+                "mixed-dup2",
                 duplicates = listOf(Triple("duplicate-mixed-dup-2", "history-duplicate-mixed-dup-2", "source-mixed-dup1")),
             )
             expected.confirm(
-                "req-mixed-dup-1-confirm", "mixed-dup1",
-                decisionRow = row(
-                    ledgerId.value, "req-mixed-dup-1-confirm", "confirm", "candidate-mixed-dup1", hashMixed,
-                    "category-food", null, null, null, "account-credit-huabei", "account-asset-a", null, 360L, 880L, confirmedAt,
-                ),
+                "req-mixed-dup-1-confirm",
+                "mixed-dup1",
+                decisionRow =
+                    row(
+                        ledgerId.value,
+                        "req-mixed-dup-1-confirm",
+                        "confirm",
+                        "candidate-mixed-dup1",
+                        hashMixed,
+                        "category-food",
+                        null,
+                        null,
+                        null,
+                        "account-credit-huabei",
+                        "account-asset-a",
+                        null,
+                        360L,
+                        880L,
+                        confirmedAt,
+                    ),
             )
             expected.formal3(
-                "mixed-dup1", mixedFacts.occurredAt,
+                "mixed-dup1",
+                mixedFacts.occurredAt,
                 Triple("expense-account-food", 1240L, "CNY"),
                 Triple("account-asset-a", -360L, "CNY"),
                 Triple("account-credit-huabei", -880L, "CNY"),
             )
             expected.group(
-                "req-mixed-dup-1-confirm", "mixed-dup1", totalMinor = 1240L,
-                assetAccount = "account-asset-a", assetLegMinor = 360L,
-                creditAccount = "account-credit-huabei", creditLegMinor = 880L,
+                "req-mixed-dup-1-confirm",
+                "mixed-dup1",
+                totalMinor = 1240L,
+                assetAccount = "account-asset-a",
+                assetLegMinor = 360L,
+                creditAccount = "account-credit-huabei",
+                creditLegMinor = 880L,
             )
             assertFullState(expected.state(accounts()), captureFullState(driver, accounts()), "mixed-duplicate")
         } finally {
@@ -1701,28 +2145,36 @@ class P406CreditFullStateOracleTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val run = executor(database, driver, BatchIntakeIdSource(emptyList()), BatchCommitIdSource(emptyList()))
-            val noProfile = assertIs<ImportIntakeResult.Rejected>(
-                run.intake(intakeRequest("req-gate-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, null)),
-            )
+            val noProfile =
+                assertIs<ImportIntakeResult.Rejected>(
+                    run.intake(intakeRequest("req-gate-1", 0, ImportRecordKind.CREDIT_EXPENSE_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, null)),
+                )
             assertEquals("SPINE_INTAKE_INVALID", noProfile.diagnostic.code)
-            val withProfile = assertIs<ImportIntakeResult.Rejected>(
-                run.intake(intakeRequest("req-gate-2", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
-            )
+            val withProfile =
+                assertIs<ImportIntakeResult.Rejected>(
+                    run.intake(intakeRequest("req-gate-2", 0, ImportRecordKind.ORDINARY_FLOW_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE, directProfile)),
+                )
             assertEquals("SPINE_INTAKE_INVALID", withProfile.diagnostic.code)
-            val badShape = assertIs<ImportIntakeResult.Rejected>(
-                run.intake(intakeRequest("req-gate-3", 0, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile.copy(creditLegKindToken = "花呗"))),
-            )
+            val badShape =
+                assertIs<ImportIntakeResult.Rejected>(
+                    run.intake(intakeRequest("req-gate-3", 0, ImportRecordKind.CREDIT_REPAYMENT_SOURCE, repaymentFacts, ImportCompleteness.VALID_COMPLETE, repaymentProfile.copy(creditLegKindToken = "花呗"))),
+                )
             assertEquals("SPINE_INTAKE_INVALID", badShape.diagnostic.code)
-            val mixedShape = assertIs<ImportIntakeResult.Rejected>(
-                run.intake(
-                    intakeRequest(
-                        "req-gate-4", 0, ImportRecordKind.MIXED_PAYMENT_SOURCE, expenseFacts, ImportCompleteness.VALID_COMPLETE,
-                        // A well-formed mixed profile (both legs non-null) is a frozen-valid
-                        // shape (D-107 section 3.2); the gate rejects only malformed ones.
-                        ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, null, "花呗"),
+            val mixedShape =
+                assertIs<ImportIntakeResult.Rejected>(
+                    run.intake(
+                        intakeRequest(
+                            "req-gate-4",
+                            0,
+                            ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                            expenseFacts,
+                            ImportCompleteness.VALID_COMPLETE,
+                            // A well-formed mixed profile (both legs non-null) is a frozen-valid
+                            // shape (D-107 section 3.2); the gate rejects only malformed ones.
+                            ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, null, "花呗"),
+                        ),
                     ),
-                ),
-            )
+                )
             assertEquals("SPINE_INTAKE_INVALID", mixedShape.diagnostic.code)
             assertEquals(0L, database.ledgerQueries.countImportSourceRecords().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countImportCandidates().executeAsOne())

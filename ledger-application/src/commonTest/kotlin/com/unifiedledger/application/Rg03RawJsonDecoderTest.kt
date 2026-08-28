@@ -50,22 +50,23 @@ class Rg03RawJsonDecoderTest {
     @Test
     fun `complete source rejects debit alias mixing and requires every complete fact`() {
         val sourcePath = "$.import_lifecycle.ordered_operations[0].input.source_record"
-        val cases = listOf(
-            mutateRg03Source(complete = true) { it["debit_amount"] = JsonPrimitive("60.00") } to
-                Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-            mutateRg03Source(complete = true) {
-                it.remove("source_debit_amount")
-                it["debit_amount"] = JsonPrimitive("60.00")
-            } to Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-            mutateRg03Source(complete = true) { it.remove("source_debit_amount") } to
-                Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03Source(complete = true) { it.remove("destination_account_id") } to
-                Rg03RawJsonContractError("$sourcePath.destination_account_id", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03Source(complete = true) { it.remove("destination_credit_amount") } to
-                Rg03RawJsonContractError("$sourcePath.destination_credit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03Source(complete = true) { it.remove("fee_amount") } to
-                Rg03RawJsonContractError("$sourcePath.fee_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-        )
+        val cases =
+            listOf(
+                mutateRg03Source(complete = true) { it["debit_amount"] = JsonPrimitive("60.00") } to
+                    Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+                mutateRg03Source(complete = true) {
+                    it.remove("source_debit_amount")
+                    it["debit_amount"] = JsonPrimitive("60.00")
+                } to Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+                mutateRg03Source(complete = true) { it.remove("source_debit_amount") } to
+                    Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03Source(complete = true) { it.remove("destination_account_id") } to
+                    Rg03RawJsonContractError("$sourcePath.destination_account_id", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03Source(complete = true) { it.remove("destination_credit_amount") } to
+                    Rg03RawJsonContractError("$sourcePath.destination_credit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03Source(complete = true) { it.remove("fee_amount") } to
+                    Rg03RawJsonContractError("$sourcePath.fee_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+            )
 
         cases.forEach { (raw, expected) ->
             assertEquals(expected, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error)
@@ -75,22 +76,23 @@ class Rg03RawJsonDecoderTest {
     @Test
     fun `missing destination source rejects complete aliases and every ignored destination fact`() {
         val sourcePath = "$.unknown_one_sided_debit.input.source_record"
-        val cases = listOf(
-            mutateRg03Source(complete = false) { it["source_debit_amount"] = JsonPrimitive("40.00") } to
-                Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-            mutateRg03Source(complete = false) {
-                it.remove("debit_amount")
-                it["source_debit_amount"] = JsonPrimitive("40.00")
-            } to Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-            mutateRg03Source(complete = false) { it.remove("debit_amount") } to
-                Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03Source(complete = false) { it["destination_account_id"] = JsonPrimitive("asset-wallet-b") } to
-                Rg03RawJsonContractError("$sourcePath.destination_account_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03Source(complete = false) { it["destination_credit_amount"] = JsonPrimitive("39.00") } to
-                Rg03RawJsonContractError("$sourcePath.destination_credit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-            mutateRg03Source(complete = false) { it["fee_amount"] = JsonPrimitive("1.00") } to
-                Rg03RawJsonContractError("$sourcePath.fee_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
-        )
+        val cases =
+            listOf(
+                mutateRg03Source(complete = false) { it["source_debit_amount"] = JsonPrimitive("40.00") } to
+                    Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+                mutateRg03Source(complete = false) {
+                    it.remove("debit_amount")
+                    it["source_debit_amount"] = JsonPrimitive("40.00")
+                } to Rg03RawJsonContractError("$sourcePath.source_debit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+                mutateRg03Source(complete = false) { it.remove("debit_amount") } to
+                    Rg03RawJsonContractError("$sourcePath.debit_amount", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03Source(complete = false) { it["destination_account_id"] = JsonPrimitive("asset-wallet-b") } to
+                    Rg03RawJsonContractError("$sourcePath.destination_account_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03Source(complete = false) { it["destination_credit_amount"] = JsonPrimitive("39.00") } to
+                    Rg03RawJsonContractError("$sourcePath.destination_credit_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+                mutateRg03Source(complete = false) { it["fee_amount"] = JsonPrimitive("1.00") } to
+                    Rg03RawJsonContractError("$sourcePath.fee_amount", Rg03RawJsonContractErrorReason.UNKNOWN_FIELD),
+            )
 
         cases.forEach { (raw, expected) ->
             assertEquals(expected, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error)
@@ -123,11 +125,12 @@ class Rg03RawJsonDecoderTest {
     @Test
     fun `out of scope and forbidden side effects are exact frozen values`() {
         listOf("combination_transfer", "fee_refund", "target_balance_adjustment").forEach { field ->
-            val raw = mutateRg03Root { root ->
-                val outOfScope = root.getValue("out_of_scope").jsonObject.toMutableMap()
-                outOfScope[field] = JsonPrimitive("arbitrary")
-                root["out_of_scope"] = JsonObject(outOfScope)
-            }
+            val raw =
+                mutateRg03Root { root ->
+                    val outOfScope = root.getValue("out_of_scope").jsonObject.toMutableMap()
+                    outOfScope[field] = JsonPrimitive("arbitrary")
+                    root["out_of_scope"] = JsonObject(outOfScope)
+                }
             assertEquals(
                 Rg03RawJsonContractError("$.out_of_scope.$field", Rg03RawJsonContractErrorReason.INVALID_VALUE),
                 assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error,
@@ -138,17 +141,18 @@ class Rg03RawJsonDecoderTest {
         val reordered = mutateRg03Root { it["forbidden_side_effects"] = JsonArray(frozen.reversed()) }
         assertIs<Rg03RawJsonDecodeResult.Success>(decodeRg03RawJson(reordered))
 
-        val invalidCases = listOf(
-            emptyList<JsonElement>() to
-                Rg03RawJsonContractError("$.forbidden_side_effects", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            listOf<JsonElement>(JsonPrimitive("arbitrary")) to
-                Rg03RawJsonContractError("$.forbidden_side_effects[0]", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            frozen + frozen.first() to
-                Rg03RawJsonContractError(
-                    "$.forbidden_side_effects[${frozen.size}]",
-                    Rg03RawJsonContractErrorReason.INVALID_VALUE,
-                ),
-        )
+        val invalidCases =
+            listOf(
+                emptyList<JsonElement>() to
+                    Rg03RawJsonContractError("$.forbidden_side_effects", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                listOf<JsonElement>(JsonPrimitive("arbitrary")) to
+                    Rg03RawJsonContractError("$.forbidden_side_effects[0]", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                frozen + frozen.first() to
+                    Rg03RawJsonContractError(
+                        "$.forbidden_side_effects[${frozen.size}]",
+                        Rg03RawJsonContractErrorReason.INVALID_VALUE,
+                    ),
+            )
         invalidCases.forEach { (items, expected) ->
             val raw = mutateRg03Root { it["forbidden_side_effects"] = JsonArray(items) }
             assertEquals(expected, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error)
@@ -157,30 +161,33 @@ class Rg03RawJsonDecoderTest {
 
     @Test
     fun `replay request ids must equal and replace their original operation request ids`() {
-        val repeatedFields = listOf(
-            "repeated_manual_request_id",
-            "repeated_source_request_id",
-            "repeated_confirmation_request_id",
-            "repeated_mirror_request_id",
-        )
+        val repeatedFields =
+            listOf(
+                "repeated_manual_request_id",
+                "repeated_source_request_id",
+                "repeated_confirmation_request_id",
+                "repeated_mirror_request_id",
+            )
         repeatedFields.forEach { field ->
-            val raw = mutateRg03Root { root ->
-                val idempotency = root.getValue("idempotency").jsonObject.toMutableMap()
-                idempotency[field] = JsonPrimitive("different-request")
-                root["idempotency"] = JsonObject(idempotency)
-            }
+            val raw =
+                mutateRg03Root { root ->
+                    val idempotency = root.getValue("idempotency").jsonObject.toMutableMap()
+                    idempotency[field] = JsonPrimitive("different-request")
+                    root["idempotency"] = JsonObject(idempotency)
+                }
             assertEquals(
                 Rg03RawJsonContractError("$.idempotency.$field", Rg03RawJsonContractErrorReason.INVALID_VALUE),
                 assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error,
             )
         }
-        val incompleteRetry = mutateRg03Root { root ->
-            val incomplete = root.getValue("unknown_one_sided_debit").jsonObject.toMutableMap()
-            val retry = incomplete.getValue("retry").jsonObject.toMutableMap()
-            retry["repeated_request_id"] = JsonPrimitive("different-request")
-            incomplete["retry"] = JsonObject(retry)
-            root["unknown_one_sided_debit"] = JsonObject(incomplete)
-        }
+        val incompleteRetry =
+            mutateRg03Root { root ->
+                val incomplete = root.getValue("unknown_one_sided_debit").jsonObject.toMutableMap()
+                val retry = incomplete.getValue("retry").jsonObject.toMutableMap()
+                retry["repeated_request_id"] = JsonPrimitive("different-request")
+                incomplete["retry"] = JsonObject(retry)
+                root["unknown_one_sided_debit"] = JsonObject(incomplete)
+            }
         assertEquals(
             Rg03RawJsonContractError(
                 "$.unknown_one_sided_debit.retry.repeated_request_id",
@@ -198,22 +205,24 @@ class Rg03RawJsonDecoderTest {
     @Test
     fun `root baselines manual candidate and lifecycle operation ids are exact frozen values`() {
         listOf("manual_create", "import_lifecycle", "unknown_one_sided_debit").forEach { section ->
-            val raw = mutateRg03Root { root ->
-                val value = root.getValue(section).jsonObject.toMutableMap()
-                value["independent_baseline"] = JsonPrimitive("other")
-                root[section] = JsonObject(value)
-            }
+            val raw =
+                mutateRg03Root { root ->
+                    val value = root.getValue(section).jsonObject.toMutableMap()
+                    value["independent_baseline"] = JsonPrimitive("other")
+                    root[section] = JsonObject(value)
+                }
             assertEquals(
                 Rg03RawJsonContractError("$.$section.independent_baseline", Rg03RawJsonContractErrorReason.INVALID_VALUE),
                 assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error,
             )
         }
 
-        val candidate = mutateRg03Root { root ->
-            val manual = root.getValue("manual_create").jsonObject.toMutableMap()
-            manual["candidate"] = JsonObject(emptyMap())
-            root["manual_create"] = JsonObject(manual)
-        }
+        val candidate =
+            mutateRg03Root { root ->
+                val manual = root.getValue("manual_create").jsonObject.toMutableMap()
+                manual["candidate"] = JsonObject(emptyMap())
+                root["manual_create"] = JsonObject(manual)
+            }
         assertEquals(
             Rg03RawJsonContractError("$.manual_create.candidate", Rg03RawJsonContractErrorReason.INVALID_VALUE),
             assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(candidate)).error,
@@ -242,23 +251,31 @@ class Rg03RawJsonDecoderTest {
 
     @Test
     fun `catalog names and stable account identities have exact frozen semantics`() {
-        val cases = listOf(
-            mutateRg03CatalogItem("accounts", 0) { it["name"] = JsonPrimitive(1) } to
-                Rg03RawJsonContractError("$.catalog.accounts[0].name", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03CatalogItem("accounts", 1) { it["id"] = JsonPrimitive("asset-bank-a") } to
-                Rg03RawJsonContractError("$.catalog.accounts[1].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItems("accounts") { items ->
-                items += JsonObject(items.first().jsonObject.toMutableMap().apply { this["id"] = JsonPrimitive("account-extra") })
-            } to Rg03RawJsonContractError("$.catalog.accounts[6].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItems("accounts") { it.removeAt(0) } to
-                Rg03RawJsonContractError("$.catalog.accounts", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("accounts", 0) { it["kind"] = JsonPrimitive("expense") } to
-                Rg03RawJsonContractError("$.catalog.accounts[0].kind", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("accounts", 0) { it["real_account"] = JsonPrimitive(false) } to
-                Rg03RawJsonContractError("$.catalog.accounts[0].real_account", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("accounts", 0) { it["owned_by_user"] = JsonPrimitive(false) } to
-                Rg03RawJsonContractError("$.catalog.accounts[0].owned_by_user", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-        )
+        val cases =
+            listOf(
+                mutateRg03CatalogItem("accounts", 0) { it["name"] = JsonPrimitive(1) } to
+                    Rg03RawJsonContractError("$.catalog.accounts[0].name", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03CatalogItem("accounts", 1) { it["id"] = JsonPrimitive("asset-bank-a") } to
+                    Rg03RawJsonContractError("$.catalog.accounts[1].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItems("accounts") { items ->
+                    items +=
+                        JsonObject(
+                            items
+                                .first()
+                                .jsonObject
+                                .toMutableMap()
+                                .apply { this["id"] = JsonPrimitive("account-extra") },
+                        )
+                } to Rg03RawJsonContractError("$.catalog.accounts[6].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItems("accounts") { it.removeAt(0) } to
+                    Rg03RawJsonContractError("$.catalog.accounts", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("accounts", 0) { it["kind"] = JsonPrimitive("expense") } to
+                    Rg03RawJsonContractError("$.catalog.accounts[0].kind", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("accounts", 0) { it["real_account"] = JsonPrimitive(false) } to
+                    Rg03RawJsonContractError("$.catalog.accounts[0].real_account", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("accounts", 0) { it["owned_by_user"] = JsonPrimitive(false) } to
+                    Rg03RawJsonContractError("$.catalog.accounts[0].owned_by_user", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+            )
         cases.forEach { (raw, expected) ->
             assertEquals(expected, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error)
         }
@@ -266,25 +283,33 @@ class Rg03RawJsonDecoderTest {
 
     @Test
     fun `catalog stable category identities have exact frozen semantics`() {
-        val cases = listOf(
-            mutateRg03CatalogItem("categories", 0) { it["name"] = JsonPrimitive(false) } to
-                Rg03RawJsonContractError("$.catalog.categories[0].name", Rg03RawJsonContractErrorReason.WRONG_TYPE),
-            mutateRg03CatalogItem("categories", 1) { it["id"] = JsonPrimitive("expense-category-financial") } to
-                Rg03RawJsonContractError("$.catalog.categories[1].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItems("categories") { items ->
-                items += JsonObject(items.first().jsonObject.toMutableMap().apply { this["id"] = JsonPrimitive("category-extra") })
-            } to Rg03RawJsonContractError("$.catalog.categories[2].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItems("categories") { it.removeAt(0) } to
-                Rg03RawJsonContractError("$.catalog.categories", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("categories", 0) { it["kind"] = JsonPrimitive("income") } to
-                Rg03RawJsonContractError("$.catalog.categories[0].kind", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("categories", 1) { it["parent_id"] = JsonNull } to
-                Rg03RawJsonContractError("$.catalog.categories[1].parent_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("categories", 1) { it["posting_account_id"] = JsonNull } to
-                Rg03RawJsonContractError("$.catalog.categories[1].posting_account_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-            mutateRg03CatalogItem("categories", 0) { it["active"] = JsonPrimitive(false) } to
-                Rg03RawJsonContractError("$.catalog.categories[0].active", Rg03RawJsonContractErrorReason.INVALID_VALUE),
-        )
+        val cases =
+            listOf(
+                mutateRg03CatalogItem("categories", 0) { it["name"] = JsonPrimitive(false) } to
+                    Rg03RawJsonContractError("$.catalog.categories[0].name", Rg03RawJsonContractErrorReason.WRONG_TYPE),
+                mutateRg03CatalogItem("categories", 1) { it["id"] = JsonPrimitive("expense-category-financial") } to
+                    Rg03RawJsonContractError("$.catalog.categories[1].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItems("categories") { items ->
+                    items +=
+                        JsonObject(
+                            items
+                                .first()
+                                .jsonObject
+                                .toMutableMap()
+                                .apply { this["id"] = JsonPrimitive("category-extra") },
+                        )
+                } to Rg03RawJsonContractError("$.catalog.categories[2].id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItems("categories") { it.removeAt(0) } to
+                    Rg03RawJsonContractError("$.catalog.categories", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("categories", 0) { it["kind"] = JsonPrimitive("income") } to
+                    Rg03RawJsonContractError("$.catalog.categories[0].kind", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("categories", 1) { it["parent_id"] = JsonNull } to
+                    Rg03RawJsonContractError("$.catalog.categories[1].parent_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("categories", 1) { it["posting_account_id"] = JsonNull } to
+                    Rg03RawJsonContractError("$.catalog.categories[1].posting_account_id", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+                mutateRg03CatalogItem("categories", 0) { it["active"] = JsonPrimitive(false) } to
+                    Rg03RawJsonContractError("$.catalog.categories[0].active", Rg03RawJsonContractErrorReason.INVALID_VALUE),
+            )
         cases.forEach { (raw, expected) ->
             assertEquals(expected, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error)
         }
@@ -292,14 +317,15 @@ class Rg03RawJsonDecoderTest {
 
     @Test
     fun `strict decoder rejects duplicate unknown wrong type malformed and resource violations`() {
-        val cases = listOf(
-            validRg03Raw().replaceFirst("\"schema_version\":1", "\"schema_version\":1,\"schema_version\":1") to Rg03RawJsonContractErrorReason.DUPLICATE_KEY,
-            validRg03Raw().replace("\"scope\":\"one_to_one_same_currency_own_real_financial_account_transfer\"", "\"scope\":\"one_to_one_same_currency_own_real_financial_account_transfer\",\"extra\":true") to Rg03RawJsonContractErrorReason.UNKNOWN_FIELD,
-            validRg03Raw().replaceFirst("\"precision\":2", "\"precision\":\"2\"") to Rg03RawJsonContractErrorReason.WRONG_TYPE,
-            "{" to Rg03RawJsonContractErrorReason.MALFORMED_JSON,
-            " ".repeat(1_048_577) to Rg03RawJsonContractErrorReason.RESOURCE_LIMIT,
-            "[".repeat(65) + "]".repeat(65) to Rg03RawJsonContractErrorReason.RESOURCE_LIMIT,
-        )
+        val cases =
+            listOf(
+                validRg03Raw().replaceFirst("\"schema_version\":1", "\"schema_version\":1,\"schema_version\":1") to Rg03RawJsonContractErrorReason.DUPLICATE_KEY,
+                validRg03Raw().replace("\"scope\":\"one_to_one_same_currency_own_real_financial_account_transfer\"", "\"scope\":\"one_to_one_same_currency_own_real_financial_account_transfer\",\"extra\":true") to Rg03RawJsonContractErrorReason.UNKNOWN_FIELD,
+                validRg03Raw().replaceFirst("\"precision\":2", "\"precision\":\"2\"") to Rg03RawJsonContractErrorReason.WRONG_TYPE,
+                "{" to Rg03RawJsonContractErrorReason.MALFORMED_JSON,
+                " ".repeat(1_048_577) to Rg03RawJsonContractErrorReason.RESOURCE_LIMIT,
+                "[".repeat(65) + "]".repeat(65) to Rg03RawJsonContractErrorReason.RESOURCE_LIMIT,
+            )
 
         cases.forEach { (raw, reason) ->
             assertEquals(reason, assertIs<Rg03RawJsonDecodeResult.Invalid>(decodeRg03RawJson(raw)).error.reason)
@@ -338,15 +364,16 @@ private fun mutateRg03Source(
 
 private fun mutateRg03InvalidManualOverride(
     mutation: (MutableMap<String, JsonElement>) -> Unit,
-): String = mutateRg03Root { root ->
-    val invalidInputs = root.getValue("invalid_manual_inputs").jsonArray.toMutableList()
-    val item = invalidInputs[0].jsonObject.toMutableMap()
-    val input = item.getValue("input").jsonObject.toMutableMap()
-    mutation(input)
-    item["input"] = JsonObject(input)
-    invalidInputs[0] = JsonObject(item)
-    root["invalid_manual_inputs"] = JsonArray(invalidInputs)
-}
+): String =
+    mutateRg03Root { root ->
+        val invalidInputs = root.getValue("invalid_manual_inputs").jsonArray.toMutableList()
+        val item = invalidInputs[0].jsonObject.toMutableMap()
+        val input = item.getValue("input").jsonObject.toMutableMap()
+        mutation(input)
+        item["input"] = JsonObject(input)
+        invalidInputs[0] = JsonObject(item)
+        root["invalid_manual_inputs"] = JsonArray(invalidInputs)
+    }
 
 private fun mutateRg03Root(
     mutation: (MutableMap<String, JsonElement>) -> Unit,
@@ -359,36 +386,39 @@ private fun mutateRg03Root(
 private fun mutateRg03LifecycleOperation(
     index: Int,
     mutation: (MutableMap<String, JsonElement>) -> Unit,
-): String = mutateRg03Root { root ->
-    val lifecycle = root.getValue("import_lifecycle").jsonObject.toMutableMap()
-    val operations = lifecycle.getValue("ordered_operations").jsonArray.toMutableList()
-    val operation = operations[index].jsonObject.toMutableMap()
-    mutation(operation)
-    operations[index] = JsonObject(operation)
-    lifecycle["ordered_operations"] = JsonArray(operations)
-    root["import_lifecycle"] = JsonObject(lifecycle)
-}
+): String =
+    mutateRg03Root { root ->
+        val lifecycle = root.getValue("import_lifecycle").jsonObject.toMutableMap()
+        val operations = lifecycle.getValue("ordered_operations").jsonArray.toMutableList()
+        val operation = operations[index].jsonObject.toMutableMap()
+        mutation(operation)
+        operations[index] = JsonObject(operation)
+        lifecycle["ordered_operations"] = JsonArray(operations)
+        root["import_lifecycle"] = JsonObject(lifecycle)
+    }
 
 private fun mutateRg03CatalogItem(
     collection: String,
     index: Int,
     mutation: (MutableMap<String, JsonElement>) -> Unit,
-): String = mutateRg03CatalogItems(collection) { items ->
-    val item = items[index].jsonObject.toMutableMap()
-    mutation(item)
-    items[index] = JsonObject(item)
-}
+): String =
+    mutateRg03CatalogItems(collection) { items ->
+        val item = items[index].jsonObject.toMutableMap()
+        mutation(item)
+        items[index] = JsonObject(item)
+    }
 
 private fun mutateRg03CatalogItems(
     collection: String,
     mutation: (MutableList<JsonElement>) -> Unit,
-): String = mutateRg03Root { root ->
-    val catalog = root.getValue("catalog").jsonObject.toMutableMap()
-    val items = catalog.getValue(collection).jsonArray.toMutableList()
-    mutation(items)
-    catalog[collection] = JsonArray(items)
-    root["catalog"] = JsonObject(catalog)
-}
+): String =
+    mutateRg03Root { root ->
+        val catalog = root.getValue("catalog").jsonObject.toMutableMap()
+        val items = catalog.getValue(collection).jsonArray.toMutableList()
+        mutation(items)
+        catalog[collection] = JsonArray(items)
+        root["catalog"] = JsonObject(catalog)
+    }
 
 private val rg03FullStatistics = """{"day":"2026-01-20","month":"2026-01","day_consumption":"1.00","month_consumption":"1.00","day_cash_outflow":"1.00","month_cash_outflow":"1.00","day_income":"0.00","month_income":"0.00","principal_consumption":"0.00","principal_external_cash_flow":"0.00","net_worth_change":"-1.00","budget":"not_applicable"}"""
 private val rg03ZeroStatistics = """{"consumption":"0.00","cash_outflow":"0.00","income":"0.00","net_worth_change":"0.00"}"""
@@ -400,24 +430,26 @@ private val rg03EvidenceLinks = "[]"
 private val rg03RejectedResidue = """"state_unchanged":true,"new_transaction_count":0,"new_posting_count":0,"new_version_count":0,"reconciliation_change_count":0"""
 private val rg03ManualState = """{"transaction_id":"tx-manual","current_version_id":"version-manual","posting_set_id":"posting-set-manual","balances":$rg03Balances,"statistics":$rg03FullStatistics,"reconciliation":$rg03Reconciliation,"source_refs":[],"evidence_refs":[],"evidence_links":$rg03EvidenceLinks}"""
 private val rg03ImportState = """{"transaction_id":"tx-import","current_version_id":"version-import","posting_set_id":"posting-set-import","balances":$rg03Balances,"statistics":$rg03FullStatistics,"reconciliation":$rg03Reconciliation,"source_refs":[],"evidence_refs":[],"evidence_links":$rg03EvidenceLinks,"candidate_id":"candidate-id","candidate_status":"confirmed","posting_ids":[]}"""
-private val rg03ForbiddenSideEffects = listOf(
-    "auto_confirm_import_candidate",
-    "create_duplicate_transfer",
-    "create_duplicate_postings",
-    "create_income_for_transfer_principal",
-    "count_transfer_principal_as_consumption",
-    "count_transfer_principal_as_external_cash_flow",
-    "create_balancing_account",
-    "create_suspense_posting",
-    "overwrite_source_evidence",
-    "create_fee_refund",
-    "create_target_balance_adjustment",
-    "invoke_network",
-    "invoke_sync",
-    "invoke_intelligent_suggestion",
-)
+private val rg03ForbiddenSideEffects =
+    listOf(
+        "auto_confirm_import_candidate",
+        "create_duplicate_transfer",
+        "create_duplicate_postings",
+        "create_income_for_transfer_principal",
+        "count_transfer_principal_as_consumption",
+        "count_transfer_principal_as_external_cash_flow",
+        "create_balancing_account",
+        "create_suspense_posting",
+        "overwrite_source_evidence",
+        "create_fee_refund",
+        "create_target_balance_adjustment",
+        "invoke_network",
+        "invoke_sync",
+        "invoke_intelligent_suggestion",
+    )
 
-internal fun validRg03Raw(): String = """{
+internal fun validRg03Raw(): String =
+    """{
   "schema_version":1,
   "case":{"id":"RG-03","level":"core_required","rule_version":1,"timezone":"Asia/Shanghai","currency":"CNY","precision":2,"ledger_id":"ledger-a","scope":"one_to_one_same_currency_own_real_financial_account_transfer"},
   "catalog":{"accounts":[

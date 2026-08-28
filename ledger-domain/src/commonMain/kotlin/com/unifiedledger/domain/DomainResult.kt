@@ -1,9 +1,13 @@
 package com.unifiedledger.domain
 
 sealed interface DomainResult<out T> {
-    data class Success<out T>(val value: T) : DomainResult<T>
+    data class Success<out T>(
+        val value: T,
+    ) : DomainResult<T>
 
-    data class Failure(val violation: DomainViolation) : DomainResult<Nothing>
+    data class Failure(
+        val violation: DomainViolation,
+    ) : DomainResult<Nothing>
 }
 
 sealed interface DomainViolation {
@@ -39,31 +43,53 @@ sealed interface DomainViolation {
 
 sealed interface MixedPaymentViolation : DomainViolation {
     data object AmountMustBePositive : MixedPaymentViolation
+
     data object FundingLegMustBePositive : MixedPaymentViolation
+
     data object DuplicateFundingAccount : MixedPaymentViolation
+
     data object FundingTotalMustEqualExpense : MixedPaymentViolation
+
     data object UnknownRealAccount : MixedPaymentViolation
+
     data object RealFinancialAccountRequired : MixedPaymentViolation
+
     data object OwnedAccountRequired : MixedPaymentViolation
+
     data object SecondaryCategoryRequired : MixedPaymentViolation
+
     data object CategoryInactive : MixedPaymentViolation
+
     data object ExpenseCategoryRequired : MixedPaymentViolation
+
     data object SingleCurrencyRequired : MixedPaymentViolation
+
     data object AssetAndCreditLiabilityRequired : MixedPaymentViolation
 }
 
 sealed interface MergedPaymentViolation : DomainViolation {
     data object AmountMustBePositive : MergedPaymentViolation
+
     data object ItemAmountMustBePositive : MergedPaymentViolation
+
     data object AllocationTotalMustEqualPayment : MergedPaymentViolation
+
     data object DuplicateItemId : MergedPaymentViolation
+
     data object UnknownRealAccount : MergedPaymentViolation
+
     data object RealFinancialAccountRequired : MergedPaymentViolation
+
     data object AssetAccountRequired : MergedPaymentViolation
+
     data object OwnedAccountRequired : MergedPaymentViolation
+
     data object SecondaryCategoryRequired : MergedPaymentViolation
+
     data object CategoryInactive : MergedPaymentViolation
+
     data object ExpenseCategoryRequired : MergedPaymentViolation
+
     data object SingleCurrencyRequired : MergedPaymentViolation
 }
 
@@ -94,17 +120,27 @@ enum class AccountTransferField {
 }
 
 sealed interface AccountTransferViolation : DomainViolation {
-    data class KnownAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+    data class KnownAccountRequired(
+        val field: AccountTransferField,
+    ) : AccountTransferViolation
 
     data object DistinctAccountsRequired : AccountTransferViolation
 
-    data class OwnAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+    data class OwnAccountRequired(
+        val field: AccountTransferField,
+    ) : AccountTransferViolation
 
-    data class RealFinancialAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+    data class RealFinancialAccountRequired(
+        val field: AccountTransferField,
+    ) : AccountTransferViolation
 
-    data class AssetAccountRequired(val field: AccountTransferField) : AccountTransferViolation
+    data class AssetAccountRequired(
+        val field: AccountTransferField,
+    ) : AccountTransferViolation
 
-    data class AmountMustBePositive(val field: AccountTransferField) : AccountTransferViolation
+    data class AmountMustBePositive(
+        val field: AccountTransferField,
+    ) : AccountTransferViolation
 
     data object FeeMustNotBeNegative : AccountTransferViolation
 
@@ -122,9 +158,13 @@ enum class BalanceAdjustmentField {
 }
 
 sealed interface BalanceAdjustmentViolation : DomainViolation {
-    data class KnownAccountRequired(val field: BalanceAdjustmentField) : BalanceAdjustmentViolation
+    data class KnownAccountRequired(
+        val field: BalanceAdjustmentField,
+    ) : BalanceAdjustmentViolation
 
-    data class OwnedRealAssetRequired(val field: BalanceAdjustmentField) : BalanceAdjustmentViolation
+    data class OwnedRealAssetRequired(
+        val field: BalanceAdjustmentField,
+    ) : BalanceAdjustmentViolation
 
     data object DedicatedAdjustmentEquityRequired : BalanceAdjustmentViolation
 
@@ -142,9 +182,13 @@ enum class PrincipalTransferField {
 }
 
 sealed interface PrincipalTransferViolation : DomainViolation {
-    data class KnownAccountRequired(val field: PrincipalTransferField) : PrincipalTransferViolation
+    data class KnownAccountRequired(
+        val field: PrincipalTransferField,
+    ) : PrincipalTransferViolation
 
-    data class OwnedRealAssetRequired(val field: PrincipalTransferField) : PrincipalTransferViolation
+    data class OwnedRealAssetRequired(
+        val field: PrincipalTransferField,
+    ) : PrincipalTransferViolation
 
     data object DistinctAccountsRequired : PrincipalTransferViolation
 
@@ -211,7 +255,9 @@ sealed interface LendingViolation : DomainViolation {
 
     data object CandidateSourceRequired : LendingViolation
 
-    data class ConfirmationRequired(val field: LendingConfirmationGateField) : LendingViolation
+    data class ConfirmationRequired(
+        val field: LendingConfirmationGateField,
+    ) : LendingViolation
 
     data object InvalidCandidateLifecycle : LendingViolation
 
@@ -243,13 +289,21 @@ sealed interface LendingViolation : DomainViolation {
 }
 
 sealed interface StoredValueViolation : DomainViolation {
-    data class KnownAccountRequired(val field: StoredValueField) : StoredValueViolation
+    data class KnownAccountRequired(
+        val field: StoredValueField,
+    ) : StoredValueViolation
 
-    data class EnabledRestrictedStoredValueAssetRequired(val field: StoredValueField) : StoredValueViolation
+    data class EnabledRestrictedStoredValueAssetRequired(
+        val field: StoredValueField,
+    ) : StoredValueViolation
 
-    data class OwnedPaymentAssetRequired(val field: StoredValueField) : StoredValueViolation
+    data class OwnedPaymentAssetRequired(
+        val field: StoredValueField,
+    ) : StoredValueViolation
 
-    data class ActiveSecondaryCategoryRequired(val field: StoredValueField) : StoredValueViolation
+    data class ActiveSecondaryCategoryRequired(
+        val field: StoredValueField,
+    ) : StoredValueViolation
 
     data object BonusIncomeAccountRequired : StoredValueViolation
 

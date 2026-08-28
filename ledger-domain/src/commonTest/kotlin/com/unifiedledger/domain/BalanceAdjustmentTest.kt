@@ -14,13 +14,14 @@ class BalanceAdjustmentTest {
 
     @Test
     fun `positive adjustment creates target increase and dedicated equity counterpart`() {
-        val adjustment = assertIs<DomainResult.Success<BalanceAdjustment>>(
-            createBalanceAdjustment(
-                catalog,
-                command(delta = Money.ofMinor(3_000L, cny)),
-                ids(TransactionKind.BALANCE_ADJUSTMENT),
-            ),
-        ).value
+        val adjustment =
+            assertIs<DomainResult.Success<BalanceAdjustment>>(
+                createBalanceAdjustment(
+                    catalog,
+                    command(delta = Money.ofMinor(3_000L, cny)),
+                    ids(TransactionKind.BALANCE_ADJUSTMENT),
+                ),
+            ).value
 
         assertEquals(TransactionKind.BALANCE_ADJUSTMENT, adjustment.formalTransaction.transaction.kind)
         assertEquals(
@@ -38,20 +39,31 @@ class BalanceAdjustmentTest {
 
     @Test
     fun `reversal preserves signed direction and uses reversal transaction kind`() {
-        val adjustment = assertIs<DomainResult.Success<BalanceAdjustment>>(
-            createBalanceAdjustment(
-                catalog,
-                command(
-                    delta = Money.ofMinor(-2_000L, cny),
-                    kind = TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
+        val adjustment =
+            assertIs<DomainResult.Success<BalanceAdjustment>>(
+                createBalanceAdjustment(
+                    catalog,
+                    command(
+                        delta = Money.ofMinor(-2_000L, cny),
+                        kind = TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
+                    ),
+                    ids(TransactionKind.BALANCE_ADJUSTMENT_REVERSAL),
                 ),
-                ids(TransactionKind.BALANCE_ADJUSTMENT_REVERSAL),
-            ),
-        ).value
+            ).value
 
         assertEquals(TransactionKind.BALANCE_ADJUSTMENT_REVERSAL, adjustment.formalTransaction.transaction.kind)
-        assertEquals(-2_000L, adjustment.postings.first().posting.amount.minorUnits)
-        assertEquals(2_000L, adjustment.postings.last().posting.amount.minorUnits)
+        assertEquals(
+            -2_000L,
+            adjustment.postings
+                .first()
+                .posting.amount.minorUnits,
+        )
+        assertEquals(
+            2_000L,
+            adjustment.postings
+                .last()
+                .posting.amount.minorUnits,
+        )
         assertEquals(-2_000L, adjustment.reportEffects.netWorthChangeMinor)
     }
 
@@ -87,31 +99,34 @@ class BalanceAdjustmentTest {
         kind = kind,
     )
 
-    private fun ids(kind: TransactionKind) = BalanceAdjustmentIds(
-        transactionId = TransactionId("tx-${kind.name.lowercase()}"),
-        versionId = TransactionVersionId("version-${kind.name.lowercase()}-v1"),
-        postingSetId = PostingSetId("posting-set-${kind.name.lowercase()}"),
-        targetPostingId = PostingId("posting-target-${kind.name.lowercase()}"),
-        equityPostingId = PostingId("posting-equity-${kind.name.lowercase()}"),
-    )
+    private fun ids(kind: TransactionKind) =
+        BalanceAdjustmentIds(
+            transactionId = TransactionId("tx-${kind.name.lowercase()}"),
+            versionId = TransactionVersionId("version-${kind.name.lowercase()}-v1"),
+            postingSetId = PostingSetId("posting-set-${kind.name.lowercase()}"),
+            targetPostingId = PostingId("posting-target-${kind.name.lowercase()}"),
+            equityPostingId = PostingId("posting-equity-${kind.name.lowercase()}"),
+        )
 
-    private fun catalog(): LedgerCatalog = success(
-        LedgerCatalog.create(
-            accounts = listOf(
-                Account(target, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("asset-b"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(
-                    equity,
-                    ledgerId,
-                    AccountKind.EQUITY,
-                    cny,
-                    ownedByUser = false,
-                    realAccount = false,
-                    systemRole = BALANCE_ADJUSTMENT_EQUITY_ROLE,
-                ),
-                Account(AccountId("equity-opening"), ledgerId, AccountKind.EQUITY, cny, ownedByUser = false, realAccount = false),
+    private fun catalog(): LedgerCatalog =
+        success(
+            LedgerCatalog.create(
+                accounts =
+                    listOf(
+                        Account(target, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                        Account(AccountId("asset-b"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                        Account(
+                            equity,
+                            ledgerId,
+                            AccountKind.EQUITY,
+                            cny,
+                            ownedByUser = false,
+                            realAccount = false,
+                            systemRole = BALANCE_ADJUSTMENT_EQUITY_ROLE,
+                        ),
+                        Account(AccountId("equity-opening"), ledgerId, AccountKind.EQUITY, cny, ownedByUser = false, realAccount = false),
+                    ),
+                categories = emptyList(),
             ),
-            categories = emptyList(),
-        ),
-    )
+        )
 }

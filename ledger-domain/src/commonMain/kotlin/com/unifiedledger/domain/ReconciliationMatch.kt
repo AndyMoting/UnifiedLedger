@@ -18,7 +18,9 @@ enum class ReconciliationMatchStatus {
  * (`golden/rules/rg-12.json`): `exact_evidence` for the initial match and `posting_replaced`
  * for an invalidation caused by a `correct_transaction_version` `posting_facts` correction.
  */
-enum class ReconciliationMatchReason(val jsonName: String) {
+enum class ReconciliationMatchReason(
+    val jsonName: String,
+) {
     EXACT_EVIDENCE("exact_evidence"),
     POSTING_REPLACED("posting_replaced"),
 }
@@ -113,13 +115,15 @@ fun invalidateReconciliationMatch(
         id = match.id,
         postingId = match.postingId,
         evidenceId = match.evidenceId,
-        statusHistory = match.statusHistory + ReconciliationMatchStatusEntry(
-            id = entryId,
-            sequence = match.statusHistory.size + 1,
-            status = ReconciliationMatchStatus.INVALIDATED,
-            at = at,
-            reason = ReconciliationMatchReason.POSTING_REPLACED,
-        ),
+        statusHistory =
+            match.statusHistory +
+                ReconciliationMatchStatusEntry(
+                    id = entryId,
+                    sequence = match.statusHistory.size + 1,
+                    status = ReconciliationMatchStatus.INVALIDATED,
+                    at = at,
+                    reason = ReconciliationMatchReason.POSTING_REPLACED,
+                ),
     )
 }
 

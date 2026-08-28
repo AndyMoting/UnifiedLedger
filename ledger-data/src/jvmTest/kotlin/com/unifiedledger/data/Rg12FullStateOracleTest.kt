@@ -19,6 +19,15 @@ import com.unifiedledger.domain.ReconciliationMatchStatus
 import com.unifiedledger.domain.ReconciliationSummary
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
@@ -29,15 +38,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Instant
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * RG-12 D-085 acceptance oracle (shard 4): the frozen direct-v2 contract
@@ -122,8 +122,18 @@ class Rg12FullStateOracleTest {
                 .toSet()
                 .size,
         )
-        assertEquals("idempotent_replay", oracle.fixture.allOperations.single { it.id == "root-correction-replay" }.expectedReason)
-        assertEquals("root-correction-correct", oracle.fixture.allOperations.single { it.id == "root-correction-replay" }.retryOf)
+        assertEquals(
+            "idempotent_replay",
+            oracle.fixture.allOperations
+                .single { it.id == "root-correction-replay" }
+                .expectedReason,
+        )
+        assertEquals(
+            "root-correction-correct",
+            oracle.fixture.allOperations
+                .single { it.id == "root-correction-replay" }
+                .retryOf,
+        )
         // The partial root is a baseline-only root of the state graph: no operations.
         assertEquals(emptyList(), oracle.fixture.allOperations.filter { it.rootId == "root-partial" })
     }
@@ -267,7 +277,10 @@ class Rg12FullStateOracleTest {
 
     // ------------------------------------------------------------------ per-op
 
-    private fun assertOperation(oracle: OracleFixture, operation: Rg12FixtureOperation) {
+    private fun assertOperation(
+        oracle: OracleFixture,
+        operation: Rg12FixtureOperation,
+    ) {
         val document = oracle.operations.getValue(operation.id)
         val runtime = baselineRuntime(oracle, operation)
         val before = runtime.snapshot()
@@ -329,29 +342,37 @@ class Rg12FullStateOracleTest {
         }
     }
 
-    private fun stateMismatches(oracle: OracleFixture, stateId: String, snapshot: Rg12Snapshot, label: String): List<String> {
+    private fun stateMismatches(
+        oracle: OracleFixture,
+        stateId: String,
+        snapshot: Rg12Snapshot,
+        label: String,
+    ): List<String> {
         val expected = oracle.states.getValue(stateId)
         val rootId = expected.string("root_id")
         val projected = projectState(snapshot, oracle.fixture, rootId)
         val expectedPayload = expected.filterKeys { it !in STATE_META_KEYS && it != "catalog" }
-        val mismatches = expectedPayload.mapNotNull { (key, value) ->
-            val actual = projected[key]
-            val equal = when (key) {
-                "domain_entities", "balances" ->
-                    // Order-insensitive collections: the validator compares by id / as maps.
-                    value.jsonArray.map(::canonical).toSet() == actual?.jsonArray?.map(::canonical)?.toSet()
-                else -> actual == value
+        val mismatches =
+            expectedPayload.mapNotNull { (key, value) ->
+                val actual = projected[key]
+                val equal =
+                    when (key) {
+                        "domain_entities", "balances" ->
+                            // Order-insensitive collections: the validator compares by id / as maps.
+                            value.jsonArray.map(::canonical).toSet() == actual?.jsonArray?.map(::canonical)?.toSet()
+                        else -> actual == value
+                    }
+                if (equal) null else "$label: field $key expected=${describe(value)} actual=${describe(actual)}"
             }
-            if (equal) null else "$label: field $key expected=${describe(value)} actual=${describe(actual)}"
-        }
         val extraKeys = projected.keys - expectedPayload.keys
         return mismatches + extraKeys.map { "$label: unexpected field $it" } + assertCatalogMismatches(oracle, stateId, label)
     }
 
-    private fun describe(element: JsonElement?): String = when (element) {
-        null -> "<missing>"
-        else -> element.toString().take(400)
-    }
+    private fun describe(element: JsonElement?): String =
+        when (element) {
+            null -> "<missing>"
+            else -> element.toString().take(400)
+        }
 
     private fun deltaMismatches(
         oracle: OracleFixture,
@@ -367,14 +388,16 @@ class Rg12FullStateOracleTest {
         // Entity changes: frozen id lists are sorted (validator + Python test demand sorted
         // added/changed/removed lists). Catalog collections are static in RG-12 (no action
         // mutates them), so their changes are always empty.
-        val computedEntityChanges = JsonObject(
-            mapOf(
-                "catalog_accounts" to emptyEntityChange(),
-                "catalog_categories" to emptyEntityChange(),
-            ) + ENTITY_COLLECTIONS.associate { (name, path) ->
-                name to entityChangeJson(beforeState, afterState, path)
-            },
-        )
+        val computedEntityChanges =
+            JsonObject(
+                mapOf(
+                    "catalog_accounts" to emptyEntityChange(),
+                    "catalog_categories" to emptyEntityChange(),
+                ) +
+                    ENTITY_COLLECTIONS.associate { (name, path) ->
+                        name to entityChangeJson(beforeState, afterState, path)
+                    },
+            )
         val expectedValues = expected.getValue("value_changes").jsonObject
         return buildList {
             if (expected.getValue("entity_changes").jsonObject != computedEntityChanges) {
@@ -386,10 +409,20 @@ class Rg12FullStateOracleTest {
             // Value change entry order of reports and derived statuses is a Python set-iteration
             // artifact, so both are compared as sets of canonical JSON entries (mirrors
             // test_rg12_golden_v2.py).
-            if (expectedValues.getValue("reports").jsonArray.map(::canonical).toSet() != reportChanges(beforeState, afterState).map(::canonical).toSet()) {
+            if (expectedValues
+                    .getValue("reports")
+                    .jsonArray
+                    .map(::canonical)
+                    .toSet() != reportChanges(beforeState, afterState).map(::canonical).toSet()
+            ) {
                 add("$label: report changes differ")
             }
-            if (expectedValues.getValue("derived_statuses").jsonArray.map(::canonical).toSet() != statusValueChanges(beforeState, afterState).map(::canonical).toSet()) {
+            if (expectedValues
+                    .getValue("derived_statuses")
+                    .jsonArray
+                    .map(::canonical)
+                    .toSet() != statusValueChanges(beforeState, afterState).map(::canonical).toSet()
+            ) {
                 add("$label: derived status changes differ")
             }
         }
@@ -407,18 +440,25 @@ class Rg12FullStateOracleTest {
         val afterState = projectState(after, oracle.fixture, document.string("root_id"))
         val beforeMap = statusMap(beforeState)
         val afterMap = statusMap(afterState)
-        val computed = JsonArray((beforeMap.keys + afterMap.keys).mapNotNull { key ->
-            val old = beforeMap[key]
-            val new = afterMap[key]
-            if (old == new) null else jsonObjectOf(
-                "target_kind" to json(key.first),
-                "target_id" to json(key.second),
-                "status_name" to json(key.third),
-                // The frozen contract writes absent sides as explicit null.
-                "before" to (old ?: JsonNull),
-                "after" to (new ?: JsonNull),
+        val computed =
+            JsonArray(
+                (beforeMap.keys + afterMap.keys).mapNotNull { key ->
+                    val old = beforeMap[key]
+                    val new = afterMap[key]
+                    if (old == new) {
+                        null
+                    } else {
+                        jsonObjectOf(
+                            "target_kind" to json(key.first),
+                            "target_id" to json(key.second),
+                            "status_name" to json(key.third),
+                            // The frozen contract writes absent sides as explicit null.
+                            "before" to (old ?: JsonNull),
+                            "after" to (new ?: JsonNull),
+                        )
+                    }
+                },
             )
-        })
         return if (expected.map(::canonical).toSet() == computed.map(::canonical).toSet()) {
             emptyList()
         } else {
@@ -428,12 +468,18 @@ class Rg12FullStateOracleTest {
 
     // ------------------------------------------------------------------ runtime construction
 
-    private fun baselineRuntime(oracle: OracleFixture, operation: Rg12FixtureOperation): Rg12Runtime {
+    private fun baselineRuntime(
+        oracle: OracleFixture,
+        operation: Rg12FixtureOperation,
+    ): Rg12Runtime {
         val stateId = operation.baselineStateId ?: error("${operation.id} has no baseline state id")
         return buildStateRuntime(oracle, stateId)
     }
 
-    private fun buildStateRuntime(oracle: OracleFixture, stateId: String): Rg12Runtime {
+    private fun buildStateRuntime(
+        oracle: OracleFixture,
+        stateId: String,
+    ): Rg12Runtime {
         val rootId = oracle.states.getValue(stateId).string("root_id")
         if (stateId == oracle.fixture.initialStateIds[rootId]) {
             return Rg12Runtime(
@@ -441,8 +487,9 @@ class Rg12FullStateOracleTest {
                 oracle.fixture.baselines.getValue(rootId),
             )
         }
-        val producer = producerOf(oracle.fixture, stateId)
-            ?: error("no producer for canonical state $stateId")
+        val producer =
+            producerOf(oracle.fixture, stateId)
+                ?: error("no producer for canonical state $stateId")
         val runtime = buildStateRuntime(oracle, producer.baselineStateId!!)
         val result = runtime.commit(producer.operation)
         check(
@@ -454,7 +501,10 @@ class Rg12FullStateOracleTest {
         return runtime
     }
 
-    private fun producerOf(fixture: Rg12FixtureCase, stateId: String): Rg12FixtureOperation? =
+    private fun producerOf(
+        fixture: Rg12FixtureCase,
+        stateId: String,
+    ): Rg12FixtureOperation? =
         fixture.allOperations.firstOrNull { candidate ->
             candidate.retryOf == null &&
                 candidate.resultStateId == stateId &&
@@ -472,211 +522,268 @@ class Rg12FullStateOracleTest {
 
     // ------------------------------------------------------------------ state projection
 
-    private fun projectState(snapshot: Rg12Snapshot, fixture: Rg12FixtureCase, rootId: String): JsonObject = jsonObjectOf(
-        "transactions" to JsonArray(snapshot.formalTransactions.map { record ->
-            jsonObjectOf(
-                "id" to json(record.formalTransaction.transaction.id.value),
-                "type" to json(record.formalTransaction.transaction.kind.name.lowercase()),
-                "current_version_id" to json(record.formalTransaction.transaction.currentVersionId.value),
-            )
-        }),
-        "transaction_versions" to JsonArray(snapshot.formalTransactions.flatMap { record ->
-            record.formalTransaction.versions.map { version ->
-                jsonObjectOf(
-                    "id" to json(version.id.value),
-                    "transaction_id" to json(version.transactionId.value),
-                    "version_number" to json(version.versionNumber),
-                    "posting_set_id" to json(version.postingSetId.value),
-                    "occurred_at" to json(instantText(version.times.occurredAt)),
-                    "statistics_at" to json(instantText(version.times.statisticsAt)),
-                    "effective_at" to json(instantText(version.times.effectiveAt)),
-                    "created_at" to json(record.versionCreatedAtTexts[version.id] ?: error("no created_at text for ${version.id.value}")),
-                    "note" to version.note?.let(::json),
-                    "confirmation_id" to record.versionConfirmationIds[version.id]?.let(::json),
-                )
-            }
-        }),
-        "posting_sets" to JsonArray(snapshot.formalTransactions.flatMap { record ->
-            record.formalTransaction.postingSets.map { set ->
-                jsonObjectOf(
-                    "id" to json(set.id.value),
-                    "posting_ids" to JsonArray(set.postings.map { json(it.id.value) }),
-                )
-            }
-        }),
-        "postings" to JsonArray(snapshot.formalTransactions.flatMap { record ->
-            record.formalTransaction.postingSets.flatMap { set ->
-                set.postings.map { posting ->
-                    val semantics = snapshot.postingSemantics[posting.id.value]
-                    jsonObjectOf(
-                        "id" to json(posting.id.value),
-                        "posting_set_id" to json(set.id.value),
-                        "account_id" to json(posting.accountId.value),
-                        "amount" to json(moneyText(posting.amount)),
-                        "currency" to json(posting.amount.currency.code),
-                        "reconciliation_eligible" to json(semantics?.reconciliationEligible ?: false),
-                        "role" to semantics?.role?.let(::json),
-                        "category_id" to semantics?.categoryId?.value?.let(::json),
-                    )
-                }
-            }
-        }),
-        "sources" to fixture.staticSeeds.getValue(rootId).sources,
-        "candidates" to JsonArray(emptyList()),
-        "confirmations" to JsonArray(snapshot.confirmations.map(::projectConfirmation)),
-        "evidence" to fixture.staticSeeds.getValue(rootId).evidence,
-        "evidence_links" to fixture.staticSeeds.getValue(rootId).evidenceLinks,
-        "relations" to JsonArray(emptyList()),
-        "domain_entities" to projectDomainEntities(snapshot),
-        "audit_links" to JsonArray(snapshot.postingReplacements.map { link ->
-            jsonObjectOf(
-                "id" to json(link.id),
-                "type" to json("posting_replacement"),
-                "from" to jsonObjectOf("kind" to json("posting"), "id" to json(link.fromPostingId.value)),
-                "to" to jsonObjectOf("kind" to json("posting"), "id" to json(link.toPostingId.value)),
-                "payload" to jsonObjectOf("reconciliation_effect" to json(link.reconciliationEffect.jsonName)),
-            )
-        }),
-        "posting_reconciliations" to projectReconciliations(snapshot, fixture),
-        "balances" to projectBalances(snapshot),
-        "reports" to projectReports(snapshot),
-        "derived_statuses" to JsonArray(snapshot.reconciliationSummary.entries.map { (transactionId, summary) ->
-            jsonObjectOf(
-                // The frozen `<rootId>-summary` convention of the fixture (derived status id).
-                "id" to json("$rootId-summary"),
-                "target_kind" to json("transaction"),
-                "target_id" to json(transactionId.value),
-                "status_name" to json("reconciliation_summary"),
-                "value" to json(summary.jsonName),
-            )
-        }),
-    )
-
-    private fun projectConfirmation(confirmation: ExplicitOperationConfirmation): JsonObject = jsonObjectOf(
-        "id" to json(confirmation.id),
-        "type" to json("explicit_operation_confirmation"),
-        "operation_id" to json(confirmation.operationId),
-        "subject" to jsonObjectOf("kind" to json(confirmation.subject.kind), "id" to json(confirmation.subject.id)),
-        "confirmed_at" to json(instantText(confirmation.createdAt)),
-        "payload" to JsonObject(confirmation.payload.mapValues { (_, value) -> json(value) }),
-    )
-
-    private fun projectDomainEntities(snapshot: Rg12Snapshot): JsonArray = JsonArray(
-        snapshot.domainEntities.map { entity ->
-            jsonObjectOf(
-                "id" to json(entity.id),
-                "type" to json(entity.type),
-                "payload" to JsonObject(
-                    entity.payload.map { (key, value) ->
-                        key to if (key == "status_history") {
-                            // The runtime renders the append-only status_history as one JSON
-                            // text; parse it back for the canonical payload comparison.
-                            Json.parseToJsonElement(value)
-                        } else {
-                            json(value)
+    private fun projectState(
+        snapshot: Rg12Snapshot,
+        fixture: Rg12FixtureCase,
+        rootId: String,
+    ): JsonObject =
+        jsonObjectOf(
+            "transactions" to
+                JsonArray(
+                    snapshot.formalTransactions.map { record ->
+                        jsonObjectOf(
+                            "id" to json(record.formalTransaction.transaction.id.value),
+                            "type" to
+                                json(
+                                    record.formalTransaction.transaction.kind.name
+                                        .lowercase(),
+                                ),
+                            "current_version_id" to json(record.formalTransaction.transaction.currentVersionId.value),
+                        )
+                    },
+                ),
+            "transaction_versions" to
+                JsonArray(
+                    snapshot.formalTransactions.flatMap { record ->
+                        record.formalTransaction.versions.map { version ->
+                            jsonObjectOf(
+                                "id" to json(version.id.value),
+                                "transaction_id" to json(version.transactionId.value),
+                                "version_number" to json(version.versionNumber),
+                                "posting_set_id" to json(version.postingSetId.value),
+                                "occurred_at" to json(instantText(version.times.occurredAt)),
+                                "statistics_at" to json(instantText(version.times.statisticsAt)),
+                                "effective_at" to json(instantText(version.times.effectiveAt)),
+                                "created_at" to json(record.versionCreatedAtTexts[version.id] ?: error("no created_at text for ${version.id.value}")),
+                                "note" to version.note?.let(::json),
+                                "confirmation_id" to record.versionConfirmationIds[version.id]?.let(::json),
+                            )
                         }
-                    }.toMap(),
+                    },
                 ),
-            )
-        },
-    )
-
-    private fun projectReconciliations(snapshot: Rg12Snapshot, fixture: Rg12FixtureCase): JsonArray = JsonArray(
-        snapshot.postingReconciliations.map { fact ->
-            jsonObjectOf(
-                "id" to json(fixture.reconciliationIds[fact.postingId.value] ?: error("no reconciliation id anchor for ${fact.postingId.value}")),
-                "posting_id" to json(fact.postingId.value),
-                "status" to json(fact.status.jsonName),
-            )
-        },
-    )
-
-    private fun projectBalances(snapshot: Rg12Snapshot): JsonArray = JsonArray(
-        snapshot.balances.entries.sortedBy { it.key.value }.map { (accountId, amount) ->
-            jsonObjectOf(
-                "account_id" to json(accountId.value),
-                "currency" to json(amount.currency.code),
-                "amount" to json(moneyText(amount)),
-            )
-        },
-    )
-
-    private fun projectReports(snapshot: Rg12Snapshot): JsonArray = JsonArray(
-        snapshot.reports.entries.map { (period, report) ->
-            jsonObjectOf(
-                "period_type" to json("day"),
-                "period" to json(period),
-                "metrics" to JsonArray(
-                    listOf(
-                        metricJson("cash_outflow", report.cashOutflowMinor),
-                        metricJson("consumption", report.consumptionMinor),
-                        metricJson("category_consumption", report.categoryConsumptionMinor),
-                        metricJson("net_worth_change", report.netWorthChangeMinor),
-                    ),
+            "posting_sets" to
+                JsonArray(
+                    snapshot.formalTransactions.flatMap { record ->
+                        record.formalTransaction.postingSets.map { set ->
+                            jsonObjectOf(
+                                "id" to json(set.id.value),
+                                "posting_ids" to JsonArray(set.postings.map { json(it.id.value) }),
+                            )
+                        }
+                    },
                 ),
-            )
-        },
-    )
+            "postings" to
+                JsonArray(
+                    snapshot.formalTransactions.flatMap { record ->
+                        record.formalTransaction.postingSets.flatMap { set ->
+                            set.postings.map { posting ->
+                                val semantics = snapshot.postingSemantics[posting.id.value]
+                                jsonObjectOf(
+                                    "id" to json(posting.id.value),
+                                    "posting_set_id" to json(set.id.value),
+                                    "account_id" to json(posting.accountId.value),
+                                    "amount" to json(moneyText(posting.amount)),
+                                    "currency" to json(posting.amount.currency.code),
+                                    "reconciliation_eligible" to json(semantics?.reconciliationEligible ?: false),
+                                    "role" to semantics?.role?.let(::json),
+                                    "category_id" to semantics?.categoryId?.value?.let(::json),
+                                )
+                            }
+                        }
+                    },
+                ),
+            "sources" to fixture.staticSeeds.getValue(rootId).sources,
+            "candidates" to JsonArray(emptyList()),
+            "confirmations" to JsonArray(snapshot.confirmations.map(::projectConfirmation)),
+            "evidence" to fixture.staticSeeds.getValue(rootId).evidence,
+            "evidence_links" to fixture.staticSeeds.getValue(rootId).evidenceLinks,
+            "relations" to JsonArray(emptyList()),
+            "domain_entities" to projectDomainEntities(snapshot),
+            "audit_links" to
+                JsonArray(
+                    snapshot.postingReplacements.map { link ->
+                        jsonObjectOf(
+                            "id" to json(link.id),
+                            "type" to json("posting_replacement"),
+                            "from" to jsonObjectOf("kind" to json("posting"), "id" to json(link.fromPostingId.value)),
+                            "to" to jsonObjectOf("kind" to json("posting"), "id" to json(link.toPostingId.value)),
+                            "payload" to jsonObjectOf("reconciliation_effect" to json(link.reconciliationEffect.jsonName)),
+                        )
+                    },
+                ),
+            "posting_reconciliations" to projectReconciliations(snapshot, fixture),
+            "balances" to projectBalances(snapshot),
+            "reports" to projectReports(snapshot),
+            "derived_statuses" to
+                JsonArray(
+                    snapshot.reconciliationSummary.entries.map { (transactionId, summary) ->
+                        jsonObjectOf(
+                            // The frozen `<rootId>-summary` convention of the fixture (derived status id).
+                            "id" to json("$rootId-summary"),
+                            "target_kind" to json("transaction"),
+                            "target_id" to json(transactionId.value),
+                            "status_name" to json("reconciliation_summary"),
+                            "value" to json(summary.jsonName),
+                        )
+                    },
+                ),
+        )
 
-    private fun metricJson(name: String, minor: Long): JsonObject = jsonObjectOf(
-        "metric" to json(name),
-        "applicability" to json("applicable"),
-        "currency" to json("CNY"),
-        "amount" to json(moneyText(minor)),
-    )
+    private fun projectConfirmation(confirmation: ExplicitOperationConfirmation): JsonObject =
+        jsonObjectOf(
+            "id" to json(confirmation.id),
+            "type" to json("explicit_operation_confirmation"),
+            "operation_id" to json(confirmation.operationId),
+            "subject" to jsonObjectOf("kind" to json(confirmation.subject.kind), "id" to json(confirmation.subject.id)),
+            "confirmed_at" to json(instantText(confirmation.createdAt)),
+            "payload" to JsonObject(confirmation.payload.mapValues { (_, value) -> json(value) }),
+        )
 
-    private fun assertCatalogMismatches(oracle: OracleFixture, stateId: String, label: String): List<String> = buildList {
-        val state = oracle.states.getValue(stateId)
-        val rootId = state.string("root_id")
-        val catalog = oracle.fixture.catalogs.getValue(rootId)
-        val frozen = state.getValue("catalog").jsonObject
-        val frozenAccounts = frozen.getValue("accounts").jsonArray.map { it.jsonObject }
-        if (frozenAccounts.map { it.string("id") } != catalog.accounts.map { it.id.value }) {
-            add("$label: catalog account ids differ")
+    private fun projectDomainEntities(snapshot: Rg12Snapshot): JsonArray =
+        JsonArray(
+            snapshot.domainEntities.map { entity ->
+                jsonObjectOf(
+                    "id" to json(entity.id),
+                    "type" to json(entity.type),
+                    "payload" to
+                        JsonObject(
+                            entity.payload
+                                .map { (key, value) ->
+                                    key to
+                                        if (key == "status_history") {
+                                            // The runtime renders the append-only status_history as one JSON
+                                            // text; parse it back for the canonical payload comparison.
+                                            Json.parseToJsonElement(value)
+                                        } else {
+                                            json(value)
+                                        }
+                                }.toMap(),
+                        ),
+                )
+            },
+        )
+
+    private fun projectReconciliations(
+        snapshot: Rg12Snapshot,
+        fixture: Rg12FixtureCase,
+    ): JsonArray =
+        JsonArray(
+            snapshot.postingReconciliations.map { fact ->
+                jsonObjectOf(
+                    "id" to json(fixture.reconciliationIds[fact.postingId.value] ?: error("no reconciliation id anchor for ${fact.postingId.value}")),
+                    "posting_id" to json(fact.postingId.value),
+                    "status" to json(fact.status.jsonName),
+                )
+            },
+        )
+
+    private fun projectBalances(snapshot: Rg12Snapshot): JsonArray =
+        JsonArray(
+            snapshot.balances.entries.sortedBy { it.key.value }.map { (accountId, amount) ->
+                jsonObjectOf(
+                    "account_id" to json(accountId.value),
+                    "currency" to json(amount.currency.code),
+                    "amount" to json(moneyText(amount)),
+                )
+            },
+        )
+
+    private fun projectReports(snapshot: Rg12Snapshot): JsonArray =
+        JsonArray(
+            snapshot.reports.entries.map { (period, report) ->
+                jsonObjectOf(
+                    "period_type" to json("day"),
+                    "period" to json(period),
+                    "metrics" to
+                        JsonArray(
+                            listOf(
+                                metricJson("cash_outflow", report.cashOutflowMinor),
+                                metricJson("consumption", report.consumptionMinor),
+                                metricJson("category_consumption", report.categoryConsumptionMinor),
+                                metricJson("net_worth_change", report.netWorthChangeMinor),
+                            ),
+                        ),
+                )
+            },
+        )
+
+    private fun metricJson(
+        name: String,
+        minor: Long,
+    ): JsonObject =
+        jsonObjectOf(
+            "metric" to json(name),
+            "applicability" to json("applicable"),
+            "currency" to json("CNY"),
+            "amount" to json(moneyText(minor)),
+        )
+
+    private fun assertCatalogMismatches(
+        oracle: OracleFixture,
+        stateId: String,
+        label: String,
+    ): List<String> =
+        buildList {
+            val state = oracle.states.getValue(stateId)
+            val rootId = state.string("root_id")
+            val catalog = oracle.fixture.catalogs.getValue(rootId)
+            val frozen = state.getValue("catalog").jsonObject
+            val frozenAccounts = frozen.getValue("accounts").jsonArray.map { it.jsonObject }
+            if (frozenAccounts.map { it.string("id") } != catalog.accounts.map { it.id.value }) {
+                add("$label: catalog account ids differ")
+            }
+            frozenAccounts.forEach { account ->
+                val runtime = catalog.accounts.single { it.id.value == account.string("id") }
+                if (account.string("kind") != runtime.kind.name.lowercase()) add("$label: account kind ${account.string("id")}")
+                if (account.string("currency") != runtime.currency.code) add("$label: account currency ${account.string("id")}")
+                if (account.boolean("owned_by_user") != runtime.ownedByUser) add("$label: account ownership ${account.string("id")}")
+                if (account.boolean("real_account") != runtime.realAccount) add("$label: account real flag ${account.string("id")}")
+            }
+            val frozenCategories = frozen.getValue("categories").jsonArray.map { it.jsonObject }
+            if (frozenCategories.map { it.string("id") } != catalog.categories.map { it.id.value }) {
+                add("$label: catalog category ids differ")
+            }
+            frozenCategories.forEach { category ->
+                val runtime = catalog.categories.single { it.id.value == category.string("id") }
+                if (category.optionalString("parent_id") != runtime.parentId?.value) add("$label: category parent ${category.string("id")}")
+                if (category.optionalString("posting_account_id") != runtime.postingAccountId?.value) add("$label: category posting account ${category.string("id")}")
+                if (category.boolean("active") != runtime.active) add("$label: category active ${category.string("id")}")
+            }
         }
-        frozenAccounts.forEach { account ->
-            val runtime = catalog.accounts.single { it.id.value == account.string("id") }
-            if (account.string("kind") != runtime.kind.name.lowercase()) add("$label: account kind ${account.string("id")}")
-            if (account.string("currency") != runtime.currency.code) add("$label: account currency ${account.string("id")}")
-            if (account.boolean("owned_by_user") != runtime.ownedByUser) add("$label: account ownership ${account.string("id")}")
-            if (account.boolean("real_account") != runtime.realAccount) add("$label: account real flag ${account.string("id")}")
-        }
-        val frozenCategories = frozen.getValue("categories").jsonArray.map { it.jsonObject }
-        if (frozenCategories.map { it.string("id") } != catalog.categories.map { it.id.value }) {
-            add("$label: catalog category ids differ")
-        }
-        frozenCategories.forEach { category ->
-            val runtime = catalog.categories.single { it.id.value == category.string("id") }
-            if (category.optionalString("parent_id") != runtime.parentId?.value) add("$label: category parent ${category.string("id")}")
-            if (category.optionalString("posting_account_id") != runtime.postingAccountId?.value) add("$label: category posting account ${category.string("id")}")
-            if (category.boolean("active") != runtime.active) add("$label: category active ${category.string("id")}")
-        }
-    }
 
     // ------------------------------------------------------------------ delta computation
 
-    private fun emptyEntityChange(): JsonObject = jsonObjectOf(
-        "added_ids" to JsonArray(emptyList()),
-        "changed_ids" to JsonArray(emptyList()),
-        "removed_ids" to JsonArray(emptyList()),
-    )
+    private fun emptyEntityChange(): JsonObject =
+        jsonObjectOf(
+            "added_ids" to JsonArray(emptyList()),
+            "changed_ids" to JsonArray(emptyList()),
+            "removed_ids" to JsonArray(emptyList()),
+        )
 
-    private fun entityChangeJson(before: JsonObject, after: JsonObject, path: List<String>): JsonObject {
+    private fun entityChangeJson(
+        before: JsonObject,
+        after: JsonObject,
+        path: List<String>,
+    ): JsonObject {
         val beforeById = byId(before.nested(path))
         val afterById = byId(after.nested(path))
         return jsonObjectOf(
             "added_ids" to JsonArray((afterById.keys - beforeById.keys).sorted().map(::json)),
-            "changed_ids" to JsonArray(
-                (beforeById.keys intersect afterById.keys)
-                    .filter { beforeById[it] != afterById[it] }
-                    .sorted()
-                    .map(::json),
-            ),
+            "changed_ids" to
+                JsonArray(
+                    (beforeById.keys intersect afterById.keys)
+                        .filter { beforeById[it] != afterById[it] }
+                        .sorted()
+                        .map(::json),
+                ),
             "removed_ids" to JsonArray((beforeById.keys - afterById.keys).sorted().map(::json)),
         )
     }
 
-    private fun balanceChanges(before: JsonObject, after: JsonObject): JsonArray {
+    private fun balanceChanges(
+        before: JsonObject,
+        after: JsonObject,
+    ): JsonArray {
         val beforeMap = balanceMap(before)
         val afterMap = balanceMap(after)
         return JsonArray(
@@ -685,57 +792,78 @@ class Rg12FullStateOracleTest {
                 .mapNotNull { key ->
                     val old = beforeMap[key]
                     val new = afterMap[key]
-                    if (old == new) null else jsonObjectOf(
-                        "key" to jsonObjectOf(
-                            "account_id" to json(key.first),
-                            "currency" to json(key.second),
-                        ),
-                        "before" to old,
-                        "after" to new,
-                    )
+                    if (old == new) {
+                        null
+                    } else {
+                        jsonObjectOf(
+                            "key" to
+                                jsonObjectOf(
+                                    "account_id" to json(key.first),
+                                    "currency" to json(key.second),
+                                ),
+                            "before" to old,
+                            "after" to new,
+                        )
+                    }
                 },
         )
     }
 
-    private fun reportChanges(before: JsonObject, after: JsonObject): JsonArray {
+    private fun reportChanges(
+        before: JsonObject,
+        after: JsonObject,
+    ): JsonArray {
         val beforeMap = reportMap(before)
         val afterMap = reportMap(after)
         return JsonArray(
             (beforeMap.keys + afterMap.keys).mapNotNull { key ->
                 val old = beforeMap[key]
                 val new = afterMap[key]
-                if (old == new) null else jsonObjectOf(
-                    "key" to jsonObjectOf(
-                        "period_type" to json(key.periodType),
-                        "period" to json(key.period),
-                        "metric" to json(key.metric),
-                        "currency" to key.currency?.let(::json),
-                    ),
-                    // The frozen contract writes absent sides as explicit null.
-                    "before" to (old ?: JsonNull),
-                    "after" to (new ?: JsonNull),
-                )
+                if (old == new) {
+                    null
+                } else {
+                    jsonObjectOf(
+                        "key" to
+                            jsonObjectOf(
+                                "period_type" to json(key.periodType),
+                                "period" to json(key.period),
+                                "metric" to json(key.metric),
+                                "currency" to key.currency?.let(::json),
+                            ),
+                        // The frozen contract writes absent sides as explicit null.
+                        "before" to (old ?: JsonNull),
+                        "after" to (new ?: JsonNull),
+                    )
+                }
             },
         )
     }
 
-    private fun statusValueChanges(before: JsonObject, after: JsonObject): JsonArray {
+    private fun statusValueChanges(
+        before: JsonObject,
+        after: JsonObject,
+    ): JsonArray {
         val beforeMap = statusMap(before)
         val afterMap = statusMap(after)
         return JsonArray(
             (beforeMap.keys + afterMap.keys).mapNotNull { key ->
                 val old = beforeMap[key]
                 val new = afterMap[key]
-                if (old == new) null else jsonObjectOf(
-                    "key" to jsonObjectOf(
-                        "kind" to json(key.first),
-                        "target_id" to json(key.second),
-                        "status_name" to json(key.third),
-                    ),
-                    // The frozen contract writes absent sides as explicit null.
-                    "before" to (old ?: JsonNull),
-                    "after" to (new ?: JsonNull),
-                )
+                if (old == new) {
+                    null
+                } else {
+                    jsonObjectOf(
+                        "key" to
+                            jsonObjectOf(
+                                "kind" to json(key.first),
+                                "target_id" to json(key.second),
+                                "status_name" to json(key.third),
+                            ),
+                        // The frozen contract writes absent sides as explicit null.
+                        "before" to (old ?: JsonNull),
+                        "after" to (new ?: JsonNull),
+                    )
+                }
             },
         )
     }
@@ -746,23 +874,31 @@ class Rg12FullStateOracleTest {
             (item.string("account_id") to item.string("currency")) to item.getValue("amount")
         }
 
-    private data class ReportKey(val periodType: String, val period: String, val metric: String, val currency: String?)
+    private data class ReportKey(
+        val periodType: String,
+        val period: String,
+        val metric: String,
+        val currency: String?,
+    )
 
     private fun reportMap(state: JsonObject): Map<ReportKey, JsonElement> =
-        state.getValue("reports").jsonArray.flatMap { report ->
-            val item = report.jsonObject
-            val periodType = item.string("period_type")
-            val period = item.string("period")
-            item.getValue("metrics").jsonArray.map { metric ->
-                val metricObject = metric.jsonObject
-                ReportKey(
-                    periodType,
-                    period,
-                    metricObject.string("metric"),
-                    metricObject.optionalString("currency"),
-                ) to JsonObject(metricObject.filterKeys { it != "metric" })
-            }
-        }.toMap()
+        state
+            .getValue("reports")
+            .jsonArray
+            .flatMap { report ->
+                val item = report.jsonObject
+                val periodType = item.string("period_type")
+                val period = item.string("period")
+                item.getValue("metrics").jsonArray.map { metric ->
+                    val metricObject = metric.jsonObject
+                    ReportKey(
+                        periodType,
+                        period,
+                        metricObject.string("metric"),
+                        metricObject.optionalString("currency"),
+                    ) to JsonObject(metricObject.filterKeys { it != "metric" })
+                }
+            }.toMap()
 
     private fun statusMap(state: JsonObject): Map<Triple<String, String, String>, JsonElement> =
         state.getValue("derived_statuses").jsonArray.associate { status ->
@@ -778,11 +914,9 @@ class Rg12FullStateOracleTest {
         return current
     }
 
-    private fun byId(collection: JsonElement): Map<String, JsonElement> =
-        collection.jsonArray.associate { element -> element.jsonObject.string("id") to element }
+    private fun byId(collection: JsonElement): Map<String, JsonElement> = collection.jsonArray.associate { element -> element.jsonObject.string("id") to element }
 
-    private fun payloadOf(state: JsonObject): JsonObject =
-        JsonObject(state.filterKeys { it !in STATE_META_KEYS })
+    private fun payloadOf(state: JsonObject): JsonObject = JsonObject(state.filterKeys { it !in STATE_META_KEYS })
 
     private fun canonical(element: JsonElement): String = element.toString()
 
@@ -791,8 +925,18 @@ class Rg12FullStateOracleTest {
         val contract = Json.parseToJsonElement(raw).jsonObject
         val inputs = parseRg12FixtureInputs(Files.readString(repositoryFile("tests/fixtures/rg12-runtime-input.json")))
         val fixture = adaptRg12Fixture(raw, inputs)
-        val states = contract.getValue("states").jsonArray.map { it.jsonObject }.associateBy { it.string("id") }
-        val operations = contract.getValue("operations").jsonArray.map { it.jsonObject }.associateBy { it.string("id") }
+        val states =
+            contract
+                .getValue("states")
+                .jsonArray
+                .map { it.jsonObject }
+                .associateBy { it.string("id") }
+        val operations =
+            contract
+                .getValue("operations")
+                .jsonArray
+                .map { it.jsonObject }
+                .associateBy { it.string("id") }
         return OracleFixture(fixture, inputs, operations, states)
     }
 
@@ -807,28 +951,28 @@ class Rg12FullStateOracleTest {
         val STATE_META_KEYS = setOf("id", "root_id", "as_of_operation_id")
 
         /** Frozen delta entity collections in the declared order (catalog handled as static). */
-        val ENTITY_COLLECTIONS: List<Pair<String, List<String>>> = listOf(
-            "transactions" to listOf("transactions"),
-            "transaction_versions" to listOf("transaction_versions"),
-            "posting_sets" to listOf("posting_sets"),
-            "postings" to listOf("postings"),
-            "sources" to listOf("sources"),
-            "candidates" to listOf("candidates"),
-            "confirmations" to listOf("confirmations"),
-            "evidence" to listOf("evidence"),
-            "evidence_links" to listOf("evidence_links"),
-            "relations" to listOf("relations"),
-            "domain_entities" to listOf("domain_entities"),
-            "audit_links" to listOf("audit_links"),
-            "posting_reconciliations" to listOf("posting_reconciliations"),
-        )
+        val ENTITY_COLLECTIONS: List<Pair<String, List<String>>> =
+            listOf(
+                "transactions" to listOf("transactions"),
+                "transaction_versions" to listOf("transaction_versions"),
+                "posting_sets" to listOf("posting_sets"),
+                "postings" to listOf("postings"),
+                "sources" to listOf("sources"),
+                "candidates" to listOf("candidates"),
+                "confirmations" to listOf("confirmations"),
+                "evidence" to listOf("evidence"),
+                "evidence_links" to listOf("evidence_links"),
+                "relations" to listOf("relations"),
+                "domain_entities" to listOf("domain_entities"),
+                "audit_links" to listOf("audit_links"),
+                "posting_reconciliations" to listOf("posting_reconciliations"),
+            )
     }
 }
 
 private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
 
-private fun JsonObject.optionalString(key: String): String? =
-    this[key]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content
+private fun JsonObject.optionalString(key: String): String? = this[key]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content
 
 private fun JsonObject.boolean(key: String): Boolean = getValue(key).jsonPrimitive.content.toBooleanStrict()
 
@@ -840,18 +984,20 @@ private fun instantText(instant: Instant): String =
         OffsetDateTime.ofInstant(java.time.Instant.parse(instant.toString()), ZoneOffset.ofHours(8)),
     )
 
-private fun moneyText(amount: com.unifiedledger.domain.Money): String =
-    moneyText(amount.minorUnits, amount.currency.precision)
+private fun moneyText(amount: com.unifiedledger.domain.Money): String = moneyText(amount.minorUnits, amount.currency.precision)
 
-private fun moneyText(minor: Long, precision: Int = 2): String =
-    BigDecimal.valueOf(minor, precision).setScale(precision).toPlainString()
+private fun moneyText(
+    minor: Long,
+    precision: Int = 2,
+): String = BigDecimal.valueOf(minor, precision).setScale(precision).toPlainString()
 
 private fun json(value: String): JsonPrimitive = JsonPrimitive(value)
+
 private fun json(value: Boolean): JsonPrimitive = JsonPrimitive(value)
+
 private fun json(value: Int): JsonPrimitive = JsonPrimitive(value)
 
-private fun jsonObjectOf(vararg fields: Pair<String, JsonElement?>): JsonObject =
-    JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())
+private fun jsonObjectOf(vararg fields: Pair<String, JsonElement?>): JsonObject = JsonObject(fields.mapNotNull { (key, value) -> value?.let { key to it } }.toMap())
 
 private fun repositoryFile(relative: String): Path {
     var candidate = Path.of(System.getProperty("user.dir"))

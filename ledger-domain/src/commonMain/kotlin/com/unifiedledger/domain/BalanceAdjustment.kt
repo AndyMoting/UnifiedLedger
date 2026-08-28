@@ -43,14 +43,16 @@ fun createBalanceAdjustment(
     command: BalanceAdjustmentCommand,
     ids: BalanceAdjustmentIds,
 ): DomainResult<BalanceAdjustment> {
-    val target = catalog.account(command.targetAccountId)
-        ?: return DomainResult.Failure(
-            BalanceAdjustmentViolation.KnownAccountRequired(BalanceAdjustmentField.TARGET_ACCOUNT),
-        )
-    val equity = catalog.account(command.adjustmentEquityAccountId)
-        ?: return DomainResult.Failure(
-            BalanceAdjustmentViolation.KnownAccountRequired(BalanceAdjustmentField.ADJUSTMENT_EQUITY_ACCOUNT),
-        )
+    val target =
+        catalog.account(command.targetAccountId)
+            ?: return DomainResult.Failure(
+                BalanceAdjustmentViolation.KnownAccountRequired(BalanceAdjustmentField.TARGET_ACCOUNT),
+            )
+    val equity =
+        catalog.account(command.adjustmentEquityAccountId)
+            ?: return DomainResult.Failure(
+                BalanceAdjustmentViolation.KnownAccountRequired(BalanceAdjustmentField.ADJUSTMENT_EQUITY_ACCOUNT),
+            )
     if (
         command.kind != TransactionKind.BALANCE_ADJUSTMENT &&
         command.kind != TransactionKind.BALANCE_ADJUSTMENT_REVERSAL
@@ -86,51 +88,58 @@ fun createBalanceAdjustment(
         return DomainResult.Failure(BalanceAdjustmentViolation.SameCurrencyRequired)
     }
 
-    val equityAmount = checkedNegate(command.delta.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val typedPostings = listOf(
-        BalanceAdjustmentPosting(
-            Posting(ids.targetPostingId, target.id, command.delta),
-            BalanceAdjustmentPostingRole.TARGET,
-        ),
-        BalanceAdjustmentPosting(
-            Posting(ids.equityPostingId, equity.id, Money.ofMinor(equityAmount, command.delta.currency)),
-            BalanceAdjustmentPostingRole.ADJUSTMENT_EQUITY,
-        ),
-    )
-    val postingSet = when (
-        val created = PostingSet.create(ids.postingSetId, typedPostings.map(BalanceAdjustmentPosting::posting))
-    ) {
-        is DomainResult.Success -> created.value
-        is DomainResult.Failure -> return created
-    }
-    val transaction = Transaction(
-        id = ids.transactionId,
-        ledgerId = command.ledgerId,
-        kind = command.kind,
-        currentVersionId = ids.versionId,
-    )
-    val version = TransactionVersion(
-        id = ids.versionId,
-        transactionId = ids.transactionId,
-        versionNumber = 1,
-        postingSetId = ids.postingSetId,
-        times = command.times,
-    )
-    val formal = when (
-        val created = FormalTransaction.create(transaction, listOf(version), listOf(postingSet))
-    ) {
-        is DomainResult.Success -> created.value
-        is DomainResult.Failure -> return created
-    }
+    val equityAmount =
+        checkedNegate(command.delta.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val typedPostings =
+        listOf(
+            BalanceAdjustmentPosting(
+                Posting(ids.targetPostingId, target.id, command.delta),
+                BalanceAdjustmentPostingRole.TARGET,
+            ),
+            BalanceAdjustmentPosting(
+                Posting(ids.equityPostingId, equity.id, Money.ofMinor(equityAmount, command.delta.currency)),
+                BalanceAdjustmentPostingRole.ADJUSTMENT_EQUITY,
+            ),
+        )
+    val postingSet =
+        when (
+            val created = PostingSet.create(ids.postingSetId, typedPostings.map(BalanceAdjustmentPosting::posting))
+        ) {
+            is DomainResult.Success -> created.value
+            is DomainResult.Failure -> return created
+        }
+    val transaction =
+        Transaction(
+            id = ids.transactionId,
+            ledgerId = command.ledgerId,
+            kind = command.kind,
+            currentVersionId = ids.versionId,
+        )
+    val version =
+        TransactionVersion(
+            id = ids.versionId,
+            transactionId = ids.transactionId,
+            versionNumber = 1,
+            postingSetId = ids.postingSetId,
+            times = command.times,
+        )
+    val formal =
+        when (
+            val created = FormalTransaction.create(transaction, listOf(version), listOf(postingSet))
+        ) {
+            is DomainResult.Success -> created.value
+            is DomainResult.Failure -> return created
+        }
     return DomainResult.Success(
         BalanceAdjustment(
             formalTransaction = formal,
             postings = typedPostings,
-            reportEffects = BalanceAdjustmentReportEffects(
-                balanceAdjustmentNetWorthChangeMinor = command.delta.minorUnits,
-                netWorthChangeMinor = command.delta.minorUnits,
-            ),
+            reportEffects =
+                BalanceAdjustmentReportEffects(
+                    balanceAdjustmentNetWorthChangeMinor = command.delta.minorUnits,
+                    netWorthChangeMinor = command.delta.minorUnits,
+                ),
         ),
     )
 }

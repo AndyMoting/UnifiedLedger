@@ -26,14 +26,12 @@ import kotlin.test.assertTrue
  * suite remaining green plus the mixed-batch assertion in P-18/R-01).
  */
 class AlipayCsvParserYuebaoTransferJvmTest {
-
     private val inputRef = "batch-rl04-a"
     private val gb18030: Charset = Charset.forName("GB18030")
 
     // ---- Synthetic CSV builder (same frozen shape as P4-05 §2.1) ----
 
-    private fun metadataLines(): List<String> =
-        (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
+    private fun metadataLines(): List<String> = (0..22).map { "SYN-META-PII-EXPORT-$it,SYN-META-PII-NICK-$it" }
 
     private fun headerLine(): String = AlipaySourceTokens.HEADER_TOKENS.joinToString(",") + ","
 
@@ -49,47 +47,65 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         time: String,
         method: String?,
         merchOrderNo: String? = "SYN-SECRET-MERCHNO",
-    ): String = listOf(
-        time, "投资理财", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-        subtype, directionCol, amount, method ?: "", status,
-        "SYN-SECRET-TXNO\t", merchOrderNo?.let { "$it\t" } ?: "", "SYN-SECRET-NOTE",
-    ).joinToString(",") + ","
+    ): String =
+        listOf(
+            time,
+            "投资理财",
+            "SYN-SECRET-COUNTERPARTY",
+            "SYN-SECRET-ACCOUNT",
+            subtype,
+            directionCol,
+            amount,
+            method ?: "",
+            status,
+            "SYN-SECRET-TXNO\t",
+            merchOrderNo?.let { "$it\t" } ?: "",
+            "SYN-SECRET-NOTE",
+        ).joinToString(",") + ","
 
     /**
      * Frozen source record rows Y-01..Y-15 (design section 1.2), batch-rl04-a data area.
      * Y-01..Y-07 自动转入 (method 空×3 + 账户余额×4), Y-08 单次转入/交易关闭, Y-09 转出到余额;
      * Y-10..Y-15 synthetic defensive rows (explicitly marked; mask method shape).
      */
-    private fun batchARows(): List<String> = listOf(
-        yuebaoRow("余额宝-自动转入", "不计收支", "100.00", "交易成功", "2026-08-01 12:30:45", null),                       // Y-01
-        yuebaoRow("余额宝-自动转入", "不计收支", "200.00", "交易成功", "2026-08-01 13:00:00", "账户余额"),                // Y-02
-        yuebaoRow("余额宝-自动转入", "不计收支", "300.00", "交易成功", "2026-08-02 09:15:30", "账户余额"),                // Y-03
-        yuebaoRow("余额宝-自动转入", "不计收支", "400.00", "交易成功", "2026-08-02 10:20:00", null),                       // Y-04
-        yuebaoRow("余额宝-自动转入", "不计收支", "500.00", "交易成功", "2026-08-03 11:05:45", "账户余额"),                // Y-05
-        yuebaoRow("余额宝-自动转入", "不计收支", "600.00", "交易成功", "2026-08-03 14:10:20", "账户余额"),                // Y-06
-        yuebaoRow("余额宝-自动转入", "不计收支", "700.00", "交易成功", "2026-08-04 08:25:15", null),                       // Y-07
-        yuebaoRow("余额宝-单次转入", "不计收支", "80.00", "交易关闭", "2026-08-05 09:00:00", null),                        // Y-08
-        yuebaoRow("余额宝-转出到余额", "不计收支", "900.00", "交易成功", "2026-08-06 16:40:35", "余额"),                  // Y-09
-        yuebaoRow("余额宝-转出到银行卡", "不计收支", "75.50", "交易成功", "2026-08-07 10:00:00", "SYN-MASK-METHOD"),      // Y-10
-        yuebaoRow("余额宝-收益发放", "不计收支", "12.34", "交易成功", "2026-08-07 10:30:00", "SYN-MASK-METHOD"),          // Y-11
-        yuebaoRow("余额宝-自动转入", "不计收支", "111.11", "交易关闭", "2026-08-08 09:00:00", null),                       // Y-12
-        yuebaoRow("基金买入", "不计收支", "99.99", "交易成功", "2026-08-08 10:00:00", null),                                // Y-13
-        yuebaoRow("余额宝-自动转入", "支出", "123.45", "交易成功", "2026-08-09 11:11:11", null),                            // Y-14
-        yuebaoRow("余额宝-自动转入", "不计收支", "456.78", "退款成功", "2026-08-10 12:12:12", null),                        // Y-15
-    )
+    private fun batchARows(): List<String> =
+        listOf(
+            yuebaoRow("余额宝-自动转入", "不计收支", "100.00", "交易成功", "2026-08-01 12:30:45", null), // Y-01
+            yuebaoRow("余额宝-自动转入", "不计收支", "200.00", "交易成功", "2026-08-01 13:00:00", "账户余额"), // Y-02
+            yuebaoRow("余额宝-自动转入", "不计收支", "300.00", "交易成功", "2026-08-02 09:15:30", "账户余额"), // Y-03
+            yuebaoRow("余额宝-自动转入", "不计收支", "400.00", "交易成功", "2026-08-02 10:20:00", null), // Y-04
+            yuebaoRow("余额宝-自动转入", "不计收支", "500.00", "交易成功", "2026-08-03 11:05:45", "账户余额"), // Y-05
+            yuebaoRow("余额宝-自动转入", "不计收支", "600.00", "交易成功", "2026-08-03 14:10:20", "账户余额"), // Y-06
+            yuebaoRow("余额宝-自动转入", "不计收支", "700.00", "交易成功", "2026-08-04 08:25:15", null), // Y-07
+            yuebaoRow("余额宝-单次转入", "不计收支", "80.00", "交易关闭", "2026-08-05 09:00:00", null), // Y-08
+            yuebaoRow("余额宝-转出到余额", "不计收支", "900.00", "交易成功", "2026-08-06 16:40:35", "余额"), // Y-09
+            yuebaoRow("余额宝-转出到银行卡", "不计收支", "75.50", "交易成功", "2026-08-07 10:00:00", "SYN-MASK-METHOD"), // Y-10
+            yuebaoRow("余额宝-收益发放", "不计收支", "12.34", "交易成功", "2026-08-07 10:30:00", "SYN-MASK-METHOD"), // Y-11
+            yuebaoRow("余额宝-自动转入", "不计收支", "111.11", "交易关闭", "2026-08-08 09:00:00", null), // Y-12
+            yuebaoRow("基金买入", "不计收支", "99.99", "交易成功", "2026-08-08 10:00:00", null), // Y-13
+            yuebaoRow("余额宝-自动转入", "支出", "123.45", "交易成功", "2026-08-09 11:11:11", null), // Y-14
+            yuebaoRow("余额宝-自动转入", "不计收支", "456.78", "退款成功", "2026-08-10 12:12:12", null), // Y-15
+        )
 
-    private fun csvBytes(dataRows: List<String>): ByteArray = buildString {
-        metadataLines().forEach { append(it).append("\r\n") }
-        append(headerLine()).append("\n")
-        dataRows.forEach { append(it).append("\n") }
-    }.toByteArray(gb18030)
+    private fun csvBytes(dataRows: List<String>): ByteArray =
+        buildString {
+            metadataLines().forEach { append(it).append("\r\n") }
+            append(headerLine()).append("\n")
+            dataRows.forEach { append(it).append("\n") }
+        }.toByteArray(gb18030)
 
-    private fun accepted(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Accepted {
+    private fun accepted(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Accepted {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Accepted>(row)
     }
 
-    private fun rejected(rows: List<AlipayRowResult>, ordinal: Int): AlipayRowResult.Rejected {
+    private fun rejected(
+        rows: List<AlipayRowResult>,
+        ordinal: Int,
+    ): AlipayRowResult.Rejected {
         val row = rows.first { it.recordOrdinal == ordinal }
         return assertIs<AlipayRowResult.Rejected>(row)
     }
@@ -110,17 +126,24 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         assertEquals(fieldRole, diagnostic.fieldRole)
     }
 
-    private fun outputStrings(result: AlipayBatchResult): List<String> = result.rows.flatMap { row ->
-        when (row) {
-            is AlipayRowResult.Accepted -> listOf(
-                row.facts.amountMinor.toString(), row.facts.currencyCode, row.facts.currencyPrecision.toString(),
-                row.facts.occurredAt, row.facts.directionToken, row.facts.statusToken ?: "",
-            )
-            is AlipayRowResult.Rejected -> emptyList()
-        } + row.diagnostics.flatMap {
-            listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "")
+    private fun outputStrings(result: AlipayBatchResult): List<String> =
+        result.rows.flatMap { row ->
+            when (row) {
+                is AlipayRowResult.Accepted ->
+                    listOf(
+                        row.facts.amountMinor.toString(),
+                        row.facts.currencyCode,
+                        row.facts.currencyPrecision.toString(),
+                        row.facts.occurredAt,
+                        row.facts.directionToken,
+                        row.facts.statusToken ?: "",
+                    )
+                is AlipayRowResult.Rejected -> emptyList()
+            } +
+                row.diagnostics.flatMap {
+                    listOf(it.code, it.severity, it.scope, it.inputRef, it.recordOrdinal?.toString() ?: "", it.fieldRole ?: "")
+                }
         }
-    }
 
     /** Frozen transfer-facts shape helper: subtype-derived direction + status + transfer kind. */
     private fun transferFacts(
@@ -154,14 +177,15 @@ class AlipayCsvParserYuebaoTransferJvmTest {
     @Test // T-02..T-07 / P-02..P-07
     fun y02ToY07AutoTransferMethodShapesNeverAffectRouting() {
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
-        val expected = listOf(
-            transferFacts(20000, "out", "2026-08-01T13:00:00+08:00", "settled"),
-            transferFacts(30000, "out", "2026-08-02T09:15:30+08:00", "settled"),
-            transferFacts(40000, "out", "2026-08-02T10:20:00+08:00", "settled"),
-            transferFacts(50000, "out", "2026-08-03T11:05:45+08:00", "settled"),
-            transferFacts(60000, "out", "2026-08-03T14:10:20+08:00", "settled"),
-            transferFacts(70000, "out", "2026-08-04T08:25:15+08:00", "settled"),
-        )
+        val expected =
+            listOf(
+                transferFacts(20000, "out", "2026-08-01T13:00:00+08:00", "settled"),
+                transferFacts(30000, "out", "2026-08-02T09:15:30+08:00", "settled"),
+                transferFacts(40000, "out", "2026-08-02T10:20:00+08:00", "settled"),
+                transferFacts(50000, "out", "2026-08-03T11:05:45+08:00", "settled"),
+                transferFacts(60000, "out", "2026-08-03T14:10:20+08:00", "settled"),
+                transferFacts(70000, "out", "2026-08-04T08:25:15+08:00", "settled"),
+            )
         (1..6).forEach { index ->
             val row = accepted(result.rows, index)
             assertEquals(ImportRecordKind.TRANSFER_FLOW_SOURCE, row.recordKind, "Y-0${index + 1} kind")
@@ -283,9 +307,10 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         }
 
         // Frozen 6-entry diagnostic multiset (design section 1.3 P-16; message never compared).
-        val multiset = result.rows
-            .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
-            .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
+        val multiset =
+            result.rows
+                .flatMap { row -> row.diagnostics.map { Triple(it.code, it.recordOrdinal, it.fieldRole) } }
+                .sortedWith(compareBy({ it.second ?: -1 }, { it.first }))
         assertEquals(
             listOf(
                 Triple("SPINE_ALIPAY_UNKNOWN_TOKEN", 7, null),
@@ -305,10 +330,20 @@ class AlipayCsvParserYuebaoTransferJvmTest {
     fun nonRoutedColumnValuesNeverLeakIntoOutputOrDiagnostics() {
         val result = AlipayCsvParser.parse(inputRef, csvBytes(batchARows()))
         val outputs = outputStrings(result)
-        val columnValueSecrets = listOf(
-            "余额宝-自动转入", "余额宝-单次转入", "余额宝-转出到余额", "余额宝-转出到银行卡",
-            "余额宝-收益发放", "基金买入", "账户余额", "余额", "SYN-MASK-METHOD", "不计收支", "支出",
-        )
+        val columnValueSecrets =
+            listOf(
+                "余额宝-自动转入",
+                "余额宝-单次转入",
+                "余额宝-转出到余额",
+                "余额宝-转出到银行卡",
+                "余额宝-收益发放",
+                "基金买入",
+                "账户余额",
+                "余额",
+                "SYN-MASK-METHOD",
+                "不计收支",
+                "支出",
+            )
         columnValueSecrets.forEach { secret ->
             assertTrue(
                 outputs.none { it.isNotEmpty() && it.contains(secret) },
@@ -335,18 +370,28 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         // Mixed batch: P4-05 ordinary rows (A-01/A-02 shape) plus the yuebao batch. The
         // ordinary rows must keep the exact P4-05 facts/diagnostics; the yuebao branch must
         // not disturb them (R-01 zero oracle shift).
-        val mixed = AlipayCsvParser.parse(
-            inputRef,
-            csvBytes(
-                listOf(
+        val mixed =
+            AlipayCsvParser.parse(
+                inputRef,
+                csvBytes(
                     listOf(
-                        "2026-08-01 12:30:45", "网上支付", "SYN-SECRET-COUNTERPARTY", "SYN-SECRET-ACCOUNT",
-                        "SYN-SECRET-PRODUCT", "支出", "128.50", "", "交易成功",
-                        "SYN-SECRET-TXNO\t", "SYN-SECRET-MERCHNO\t", "SYN-SECRET-NOTE",
-                    ).joinToString(",") + ",",
-                ) + batchARows(),
-            ),
-        )
+                        listOf(
+                            "2026-08-01 12:30:45",
+                            "网上支付",
+                            "SYN-SECRET-COUNTERPARTY",
+                            "SYN-SECRET-ACCOUNT",
+                            "SYN-SECRET-PRODUCT",
+                            "支出",
+                            "128.50",
+                            "",
+                            "交易成功",
+                            "SYN-SECRET-TXNO\t",
+                            "SYN-SECRET-MERCHNO\t",
+                            "SYN-SECRET-NOTE",
+                        ).joinToString(",") + ",",
+                    ) + batchARows(),
+                ),
+            )
         val ordinary = accepted(mixed.rows, 0)
         assertEquals(ImportRecordKind.ORDINARY_FLOW_SOURCE, ordinary.recordKind)
         assertEquals(ImportSourceFacts(12850, "CNY", 2, "2026-08-01T12:30:45+08:00", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1), ordinary.facts)
@@ -362,9 +407,10 @@ class AlipayCsvParserYuebaoTransferJvmTest {
 
     @Test // T-21
     fun transferBackToBalanceWithClosedStatusStaysValidIncomplete() {
-        val rows = listOf(
-            yuebaoRow("余额宝-转出到余额", "不计收支", "55.55", "交易关闭", "2026-08-11 09:00:00", "余额"),
-        )
+        val rows =
+            listOf(
+                yuebaoRow("余额宝-转出到余额", "不计收支", "55.55", "交易关闭", "2026-08-11 09:00:00", "余额"),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.PARTIAL, result.outcome)
         val row = accepted(result.rows, 0)
@@ -382,11 +428,12 @@ class AlipayCsvParserYuebaoTransferJvmTest {
 
     @Test // T-22
     fun methodColumnTokensAreBehaviorEvidenceOnlyAndNeverPersisted() {
-        val rows = listOf(
-            yuebaoRow("余额宝-自动转入", "不计收支", "10.00", "交易成功", "2026-08-12 08:00:00", "账户余额"),
-            yuebaoRow("余额宝-转出到余额", "不计收支", "20.00", "交易成功", "2026-08-12 08:30:00", "余额"),
-            yuebaoRow("余额宝-自动转入", "不计收支", "30.00", "交易成功", "2026-08-12 09:00:00", null),
-        )
+        val rows =
+            listOf(
+                yuebaoRow("余额宝-自动转入", "不计收支", "10.00", "交易成功", "2026-08-12 08:00:00", "账户余额"),
+                yuebaoRow("余额宝-转出到余额", "不计收支", "20.00", "交易成功", "2026-08-12 08:30:00", "余额"),
+                yuebaoRow("余额宝-自动转入", "不计收支", "30.00", "交易成功", "2026-08-12 09:00:00", null),
+            )
         val result = AlipayCsvParser.parse(inputRef, csvBytes(rows))
         assertEquals(AlipayBatchOutcome.COMPLETE, result.outcome)
         val outputs = outputStrings(result)
@@ -408,7 +455,11 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         val row = rejected(result.rows, 0)
         assertEquals(1, row.diagnostics.size)
         assertDiagnostic(
-            row.diagnostics[0], "FIELD_AMOUNT_INVALID", "record_error", "field", 0,
+            row.diagnostics[0],
+            "FIELD_AMOUNT_INVALID",
+            "record_error",
+            "field",
+            0,
             AlipaySourceTokens.FIELD_ROLE_AMOUNT,
         )
     }
@@ -422,7 +473,11 @@ class AlipayCsvParserYuebaoTransferJvmTest {
         val row = rejected(result.rows, 0)
         assertEquals(1, row.diagnostics.size)
         assertDiagnostic(
-            row.diagnostics[0], "FIELD_TIME_INVALID", "record_error", "field", 0,
+            row.diagnostics[0],
+            "FIELD_TIME_INVALID",
+            "record_error",
+            "field",
+            0,
             AlipaySourceTokens.FIELD_ROLE_OCCURRED_AT,
         )
     }

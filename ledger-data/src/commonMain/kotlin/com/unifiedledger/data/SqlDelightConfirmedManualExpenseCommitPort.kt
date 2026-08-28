@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.SqlDriver
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
@@ -11,7 +12,6 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.TransactionId
-import app.cash.sqldelight.db.SqlDriver
 
 class SqlDelightConfirmedManualExpenseCommitPort private constructor(
     private val database: LedgerDatabase,
@@ -35,15 +35,19 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                 request_id = identity.requestId.value,
                 amount_minor = requestSnapshot.amount.minorUnits,
                 currency_code = requestSnapshot.amount.currency.code,
-                currency_precision = requestSnapshot.amount.currency.precision.toLong(),
+                currency_precision =
+                    requestSnapshot.amount.currency.precision
+                        .toLong(),
                 category_id = requestSnapshot.categoryId.value,
                 payment_account_id = requestSnapshot.paymentAccountId.value,
                 occurred_at = requestSnapshot.occurredAt.toString(),
                 note = requestSnapshot.note,
                 confirmation_marker = EXPLICIT_MANUAL_SAVE_MARKER,
             )
-            val claimed = database.ledgerQueries.lastStatementChangedRowCount()
-                .executeAsOne() == 1L
+            val claimed =
+                database.ledgerQueries
+                    .lastStatementChangedRowCount()
+                    .executeAsOne() == 1L
             if (!claimed) {
                 return@transactionWithResult resolveExisting(identity, requestSnapshot)
             }
@@ -78,28 +82,41 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
     ): ConfirmedManualExpenseResult {
-        val existing = checkNotNull(
-            database.ledgerQueries.selectCommittedRequest(
-                ledger_id = identity.ledgerId.value,
-                request_id = identity.requestId.value,
-            ) { amountMinor, currencyCode, currencyPrecision, categoryId, paymentAccountId,
-                    occurredAt, note, confirmationMarker, confirmationId, transactionId ->
-                StoredCommit(
-                    amountMinor = amountMinor,
-                    currencyCode = currencyCode,
-                    currencyPrecision = currencyPrecision,
-                    categoryId = categoryId,
-                    paymentAccountId = paymentAccountId,
-                    occurredAt = occurredAt,
-                    note = note,
-                    confirmationMarker = confirmationMarker,
-                    receipt = ConfirmedExpenseReceipt(
-                        confirmationId = ConfirmationId(confirmationId),
-                        transactionId = TransactionId(transactionId),
-                    ),
-                )
-            }.executeAsOneOrNull(),
-        ) { "Committed request is missing its receipt" }
+        val existing =
+            checkNotNull(
+                database.ledgerQueries
+                    .selectCommittedRequest(
+                        ledger_id = identity.ledgerId.value,
+                        request_id = identity.requestId.value,
+                    ) {
+                        amountMinor,
+                        currencyCode,
+                        currencyPrecision,
+                        categoryId,
+                        paymentAccountId,
+                        occurredAt,
+                        note,
+                        confirmationMarker,
+                        confirmationId,
+                        transactionId,
+                        ->
+                        StoredCommit(
+                            amountMinor = amountMinor,
+                            currencyCode = currencyCode,
+                            currencyPrecision = currencyPrecision,
+                            categoryId = categoryId,
+                            paymentAccountId = paymentAccountId,
+                            occurredAt = occurredAt,
+                            note = note,
+                            confirmationMarker = confirmationMarker,
+                            receipt =
+                                ConfirmedExpenseReceipt(
+                                    confirmationId = ConfirmationId(confirmationId),
+                                    transactionId = TransactionId(transactionId),
+                                ),
+                        )
+                    }.executeAsOneOrNull(),
+            ) { "Committed request is missing its receipt" }
         return if (existing.matches(requestSnapshot)) {
             ConfirmedManualExpenseResult.NoChange(existing.receipt)
         } else {
@@ -152,7 +169,9 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                     account_id = posting.accountId.value,
                     amount_minor = posting.amount.minorUnits,
                     currency_code = posting.amount.currency.code,
-                    currency_precision = posting.amount.currency.precision.toLong(),
+                    currency_precision =
+                        posting.amount.currency.precision
+                            .toLong(),
                 )
             }
         }
@@ -173,8 +192,7 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
     companion object {
         internal fun forPlatformConfiguredDatabase(
             database: LedgerDatabase,
-        ): SqlDelightConfirmedManualExpenseCommitPort =
-            SqlDelightConfirmedManualExpenseCommitPort(database)
+        ): SqlDelightConfirmedManualExpenseCommitPort = SqlDelightConfirmedManualExpenseCommitPort(database)
     }
 }
 
@@ -204,7 +222,9 @@ private data class StoredCommit(
     fun matches(snapshot: ManualExpenseRequestSnapshot): Boolean =
         amountMinor == snapshot.amount.minorUnits &&
             currencyCode == snapshot.amount.currency.code &&
-            currencyPrecision == snapshot.amount.currency.precision.toLong() &&
+            currencyPrecision ==
+            snapshot.amount.currency.precision
+                .toLong() &&
             categoryId == snapshot.categoryId.value &&
             paymentAccountId == snapshot.paymentAccountId.value &&
             occurredAt == snapshot.occurredAt.toString() &&

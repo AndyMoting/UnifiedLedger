@@ -1,12 +1,24 @@
 package com.unifiedledger.application
 
-import com.unifiedledger.domain.*
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MergedPaymentExpenseIds
+import com.unifiedledger.domain.MergedPaymentItem
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
 sealed interface Rg05Field<out T> {
     data object Omitted : Rg05Field<Nothing>
+
     data object Null : Rg05Field<Nothing>
-    data class Value<T>(val value: T) : Rg05Field<T>
+
+    data class Value<T>(
+        val value: T,
+    ) : Rg05Field<T>
 }
 
 data class Rg05ItemInput(
@@ -52,7 +64,9 @@ sealed interface Rg05PreparedOperation {
         val allocationIds: Map<String, String> = emptyMap(),
     ) : Rg05PreparedOperation
 
-    data class Ingest(val snapshot: Rg05IngestSnapshot) : Rg05PreparedOperation
+    data class Ingest(
+        val snapshot: Rg05IngestSnapshot,
+    ) : Rg05PreparedOperation
 
     data class Confirm(
         val snapshot: Rg05ConfirmSnapshot,
@@ -66,7 +80,9 @@ sealed interface Rg05PreparedOperation {
         val allocationIds: Map<String, String>,
     ) : Rg05PreparedOperation
 
-    data class Receipt(val snapshot: Rg05ReceiptSnapshot) : Rg05PreparedOperation
+    data class Receipt(
+        val snapshot: Rg05ReceiptSnapshot,
+    ) : Rg05PreparedOperation
 }
 
 enum class Rg05Action {
@@ -75,38 +91,92 @@ enum class Rg05Action {
     CONFIRM_MERGED_PAYMENT_CANDIDATE,
     MERGE_ITEM_RECEIPT_EVIDENCE,
 }
+
 enum class Rg05OperationClass { CREATION, REJECTION, RECONCILIATION }
+
 enum class Rg05ExecutionError {
-    EXPLICIT_CONFIRMATION_REQUIRED, MUST_BE_POSITIVE, ITEM_AMOUNT_MUST_BE_POSITIVE,
-    ALLOCATION_TOTAL_MUST_EQUAL_PAYMENT, DUPLICATE_ITEM_ID, UNKNOWN_REAL_ACCOUNT,
-    REAL_FINANCIAL_ACCOUNT_REQUIRED, ASSET_ACCOUNT_REQUIRED, OWNED_ACCOUNT_REQUIRED,
-    SECONDARY_CATEGORY_REQUIRED, CATEGORY_INACTIVE, EXPENSE_CATEGORY_REQUIRED,
-    SINGLE_CURRENCY_REQUIRED, INVALID_TIMESTAMP,
-    CANDIDATE_NOT_FOUND, CANDIDATE_NOT_PENDING, ALLOCATION_INCOMPLETE,
-    ALLOCATION_CONFLICT, ALLOCATION_TARGET_NOT_FOUND, ALLOCATION_TARGET_MISMATCH,
+    EXPLICIT_CONFIRMATION_REQUIRED,
+    MUST_BE_POSITIVE,
+    ITEM_AMOUNT_MUST_BE_POSITIVE,
+    ALLOCATION_TOTAL_MUST_EQUAL_PAYMENT,
+    DUPLICATE_ITEM_ID,
+    UNKNOWN_REAL_ACCOUNT,
+    REAL_FINANCIAL_ACCOUNT_REQUIRED,
+    ASSET_ACCOUNT_REQUIRED,
+    OWNED_ACCOUNT_REQUIRED,
+    SECONDARY_CATEGORY_REQUIRED,
+    CATEGORY_INACTIVE,
+    EXPENSE_CATEGORY_REQUIRED,
+    SINGLE_CURRENCY_REQUIRED,
+    INVALID_TIMESTAMP,
+    CANDIDATE_NOT_FOUND,
+    CANDIDATE_NOT_PENDING,
+    ALLOCATION_INCOMPLETE,
+    ALLOCATION_CONFLICT,
+    ALLOCATION_TARGET_NOT_FOUND,
+    ALLOCATION_TARGET_MISMATCH,
     INTERNAL_DOMAIN_VIOLATION,
 }
 
 sealed interface Rg05ExecutionResult {
-    data class Accepted(val confirmationId: String, val transactionId: TransactionId, val relationId: String) : Rg05ExecutionResult
-    data class NoChange(val confirmationId: String, val transactionId: TransactionId, val relationId: String) : Rg05ExecutionResult
-    data class IngestAccepted(val candidateId: String, val sourceIds: List<String>, val evidenceIds: List<String>) : Rg05ExecutionResult
-    data class IngestNoChange(val candidateId: String, val sourceIds: List<String>, val evidenceIds: List<String>) : Rg05ExecutionResult
-    data class ReceiptAccepted(val sourceId: String, val evidenceId: String, val evidenceLinkId: String) : Rg05ExecutionResult
-    data class ReceiptNoChange(val sourceId: String, val evidenceId: String, val evidenceLinkId: String) : Rg05ExecutionResult
-    data class Rejected(val error: Rg05ExecutionError, val field: String) : Rg05ExecutionResult
+    data class Accepted(
+        val confirmationId: String,
+        val transactionId: TransactionId,
+        val relationId: String,
+    ) : Rg05ExecutionResult
+
+    data class NoChange(
+        val confirmationId: String,
+        val transactionId: TransactionId,
+        val relationId: String,
+    ) : Rg05ExecutionResult
+
+    data class IngestAccepted(
+        val candidateId: String,
+        val sourceIds: List<String>,
+        val evidenceIds: List<String>,
+    ) : Rg05ExecutionResult
+
+    data class IngestNoChange(
+        val candidateId: String,
+        val sourceIds: List<String>,
+        val evidenceIds: List<String>,
+    ) : Rg05ExecutionResult
+
+    data class ReceiptAccepted(
+        val sourceId: String,
+        val evidenceId: String,
+        val evidenceLinkId: String,
+    ) : Rg05ExecutionResult
+
+    data class ReceiptNoChange(
+        val sourceId: String,
+        val evidenceId: String,
+        val evidenceLinkId: String,
+    ) : Rg05ExecutionResult
+
+    data class Rejected(
+        val error: Rg05ExecutionError,
+        val field: String,
+    ) : Rg05ExecutionResult
+
     data object RequestIdentityConflict : Rg05ExecutionResult
 }
 
-fun interface Rg05CommitPort { fun commit(operation: Rg05PreparedOperation): Rg05ExecutionResult }
+fun interface Rg05CommitPort {
+    fun commit(operation: Rg05PreparedOperation): Rg05ExecutionResult
+}
 
-class ExecuteRg05Operation(private val port: Rg05CommitPort) {
+class ExecuteRg05Operation(
+    private val port: Rg05CommitPort,
+) {
     fun execute(operation: Rg05PreparedOperation): Rg05ExecutionResult {
-        val confirmed = when (operation) {
-            is Rg05PreparedOperation.Manual -> operation.snapshot.confirmed
-            is Rg05PreparedOperation.Confirm -> operation.snapshot.confirmed
-            is Rg05PreparedOperation.Ingest, is Rg05PreparedOperation.Receipt -> true
-        }
+        val confirmed =
+            when (operation) {
+                is Rg05PreparedOperation.Manual -> operation.snapshot.confirmed
+                is Rg05PreparedOperation.Confirm -> operation.snapshot.confirmed
+                is Rg05PreparedOperation.Ingest, is Rg05PreparedOperation.Receipt -> true
+            }
         return if (!confirmed) Rg05ExecutionResult.Rejected(Rg05ExecutionError.EXPLICIT_CONFIRMATION_REQUIRED, "explicit_confirmation") else port.commit(operation)
     }
 }
@@ -177,12 +247,25 @@ data class Rg05ReceiptSnapshot(
 )
 
 sealed interface Rg05AdaptResult {
-    data class Success(val operation: Rg05PreparedOperation) : Rg05AdaptResult
-    data class Invalid(val reason: String, val field: String) : Rg05AdaptResult
+    data class Success(
+        val operation: Rg05PreparedOperation,
+    ) : Rg05AdaptResult
+
+    data class Invalid(
+        val reason: String,
+        val field: String,
+    ) : Rg05AdaptResult
 }
 
-fun adaptRg05Manual(case: Rg05RawJsonCase, input: Rg05ManualInput, ids: Rg05PreparedIds): Rg05AdaptResult {
-    fun text(field: Rg05Field<String>, name: String): String? = (field as? Rg05Field.Value)?.value ?: return null
+fun adaptRg05Manual(
+    case: Rg05RawJsonCase,
+    input: Rg05ManualInput,
+    ids: Rg05PreparedIds,
+): Rg05AdaptResult {
+    fun text(
+        field: Rg05Field<String>,
+        name: String,
+    ): String? = (field as? Rg05Field.Value)?.value ?: return null
     val request = text(input.requestId, "request_id") ?: return Rg05AdaptResult.Invalid("required", "request_id")
     val paymentText = text(input.paymentAt, "payment_at") ?: return Rg05AdaptResult.Invalid("required", "payment_at")
     val totalText = text(input.totalAmount, "total_amount") ?: return Rg05AdaptResult.Invalid("required", "total_amount")
@@ -190,18 +273,29 @@ fun adaptRg05Manual(case: Rg05RawJsonCase, input: Rg05ManualInput, ids: Rg05Prep
     val funding = text(input.fundingAccountId, "funding_account_id") ?: return Rg05AdaptResult.Invalid("required", "funding_account_id")
     val currency = CurrencyUnit(currencyCode, case.currency.precision)
     val total = exactMoney(totalText, currency) ?: return Rg05AdaptResult.Invalid("exact_decimal_string_required", "total_amount")
-    val payment = try { Instant.parse(paymentText) } catch (_: IllegalArgumentException) { return Rg05AdaptResult.Invalid("invalid_timestamp", "payment_at") }
-    val items = input.items.mapIndexed { index, item ->
-        val itemId = text(item.itemId, "items[$index].item_id") ?: return Rg05AdaptResult.Invalid("required", "items[$index].item_id")
-        val amountText = text(item.amount, "items[$index].amount") ?: return Rg05AdaptResult.Invalid("required", "items[$index].amount")
-        val itemCurrency = text(item.currency, "items[$index].currency") ?: return Rg05AdaptResult.Invalid("required", "items[$index].currency")
-        val category = (item.categoryId as? Rg05Field.Value)?.value ?: return Rg05AdaptResult.Invalid("secondary_category_required", "items")
-        val details = text(item.details, "items[$index].details") ?: return Rg05AdaptResult.Invalid("required", "items[$index].details")
-        val observedText = text(item.sourceObservedAt, "items[$index].source_observed_at") ?: return Rg05AdaptResult.Invalid("required", "items[$index].source_observed_at")
-        val amount = exactMoney(amountText, CurrencyUnit(itemCurrency, case.currency.precision)) ?: return Rg05AdaptResult.Invalid("exact_decimal_string_required", "items[$index].amount")
-        val observed = try { Instant.parse(observedText) } catch (_: IllegalArgumentException) { return Rg05AdaptResult.Invalid("invalid_timestamp", "items[$index].source_observed_at") }
-        MergedPaymentItem(itemId, amount, CategoryId(category), details, observed)
-    }
+    val payment =
+        try {
+            Instant.parse(paymentText)
+        } catch (_: IllegalArgumentException) {
+            return Rg05AdaptResult.Invalid("invalid_timestamp", "payment_at")
+        }
+    val items =
+        input.items.mapIndexed { index, item ->
+            val itemId = text(item.itemId, "items[$index].item_id") ?: return Rg05AdaptResult.Invalid("required", "items[$index].item_id")
+            val amountText = text(item.amount, "items[$index].amount") ?: return Rg05AdaptResult.Invalid("required", "items[$index].amount")
+            val itemCurrency = text(item.currency, "items[$index].currency") ?: return Rg05AdaptResult.Invalid("required", "items[$index].currency")
+            val category = (item.categoryId as? Rg05Field.Value)?.value ?: return Rg05AdaptResult.Invalid("secondary_category_required", "items")
+            val details = text(item.details, "items[$index].details") ?: return Rg05AdaptResult.Invalid("required", "items[$index].details")
+            val observedText = text(item.sourceObservedAt, "items[$index].source_observed_at") ?: return Rg05AdaptResult.Invalid("required", "items[$index].source_observed_at")
+            val amount = exactMoney(amountText, CurrencyUnit(itemCurrency, case.currency.precision)) ?: return Rg05AdaptResult.Invalid("exact_decimal_string_required", "items[$index].amount")
+            val observed =
+                try {
+                    Instant.parse(observedText)
+                } catch (_: IllegalArgumentException) {
+                    return Rg05AdaptResult.Invalid("invalid_timestamp", "items[$index].source_observed_at")
+                }
+            MergedPaymentItem(itemId, amount, CategoryId(category), details, observed)
+        }
     return Rg05AdaptResult.Success(Rg05PreparedOperation.Manual(Rg05ManualSnapshot(case.ledgerId, RequestId(request), payment, paymentText, total, AccountId(funding), items, (input.explicitConfirmation as? Rg05Field.Value)?.value == true), ids.formalIds, ids.relationId, ids.confirmationId, ids.reconciliationId, ids.consumptionIds, ids.allocationIds))
 }
 
@@ -213,6 +307,7 @@ data class Rg05PreparedIds(
     val consumptionIds: Map<String, String> = emptyMap(),
     val allocationIds: Map<String, String> = emptyMap(),
 )
+
 data class Rg05RawJsonCase(
     val ledgerId: LedgerId,
     val currency: CurrencyUnit,
@@ -224,7 +319,10 @@ data class Rg05RawJsonCase(
     val manualIds: Rg05PreparedIds? = null,
 )
 
-internal fun exactMoney(text: String, currency: CurrencyUnit): Money? {
+internal fun exactMoney(
+    text: String,
+    currency: CurrencyUnit,
+): Money? {
     val match = Regex("^-?(0|[1-9][0-9]*)\\.([0-9]{${currency.precision}})$").matchEntire(text) ?: return null
     val minor = (if (text.startsWith('-')) "-${match.groupValues[1]}${match.groupValues[2]}" else "${match.groupValues[1]}${match.groupValues[2]}").toLongOrNull() ?: return null
     return Money.ofMinor(minor, currency)

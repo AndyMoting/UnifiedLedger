@@ -11,12 +11,13 @@ class TransactionNoteReplacementTest {
     fun replacesOnlyTheNoteByAppendingVersionTwo() {
         val original = fixture.acceptedExpense()
 
-        val replaced: FormalTransaction = success(
-            original.replaceNote(
-                command = TransactionNoteUpdateCommand(note = "早餐"),
-                ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
-            ),
-        )
+        val replaced: FormalTransaction =
+            success(
+                original.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = "早餐"),
+                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                ),
+            )
 
         assertEquals(original.transaction.id, replaced.transaction.id)
         assertEquals(original.transaction.ledgerId, replaced.transaction.ledgerId)
@@ -37,12 +38,13 @@ class TransactionNoteReplacementTest {
     fun reusesThePostingSetAndExactEconomicTimesWithoutAddingFinancialEntities() {
         val original = fixture.acceptedExpense()
 
-        val replaced: FormalTransaction = success(
-            original.replaceNote(
-                command = TransactionNoteUpdateCommand(note = "早餐"),
-                ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
-            ),
-        )
+        val replaced: FormalTransaction =
+            success(
+                original.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = "早餐"),
+                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                ),
+            )
 
         val versionOne = replaced.versions.single { it.versionNumber == 1 }
         val versionTwo = replaced.versions.single { it.versionNumber == 2 }
@@ -60,8 +62,14 @@ class TransactionNoteReplacementTest {
         )
         assertEquals(original.postingContent(), replaced.postingContent())
         assertEquals(
-            original.postingSets.flatMap { it.postings }.map { it.id }.toSet(),
-            replaced.postingSets.flatMap { it.postings }.map { it.id }.toSet(),
+            original.postingSets
+                .flatMap { it.postings }
+                .map { it.id }
+                .toSet(),
+            replaced.postingSets
+                .flatMap { it.postings }
+                .map { it.id }
+                .toSet(),
         )
     }
 
@@ -72,12 +80,13 @@ class TransactionNoteReplacementTest {
         val versionsBefore = original.versions.toList()
         val postingContentBefore = original.postingContent()
 
-        val replaced: FormalTransaction = success(
-            original.replaceNote(
-                command = TransactionNoteUpdateCommand(note = "早餐"),
-                ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
-            ),
-        )
+        val replaced: FormalTransaction =
+            success(
+                original.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = "早餐"),
+                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                ),
+            )
 
         assertEquals(transactionBefore, original.transaction)
         assertEquals(versionsBefore, original.versions)
@@ -90,30 +99,34 @@ class TransactionNoteReplacementTest {
     fun replaysTheSameSingleFundingEffectBeforeAndAfterReplacement() {
         val opening = fixture.openingBalance()
         val original = fixture.acceptedExpense()
-        val replaced: FormalTransaction = success(
-            original.replaceNote(
-                command = TransactionNoteUpdateCommand(note = "早餐"),
-                ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
-            ),
-        )
+        val replaced: FormalTransaction =
+            success(
+                original.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = "早餐"),
+                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                ),
+            )
 
-        val before = success(
-            replayBalances(
-                catalog = fixture.catalog,
-                transactions = listOf(opening, original),
-            ),
-        )
-        val after = success(
-            replayBalances(
-                catalog = fixture.catalog,
-                transactions = listOf(opening, replaced),
-            ),
-        )
-        val expectedBalances = mapOf(
-            fixture.paymentAccountId to money(96_420, fixture.cny),
-            fixture.expenseAccountId to money(3_580, fixture.cny),
-            fixture.equityAccountId to money(-100_000, fixture.cny),
-        )
+        val before =
+            success(
+                replayBalances(
+                    catalog = fixture.catalog,
+                    transactions = listOf(opening, original),
+                ),
+            )
+        val after =
+            success(
+                replayBalances(
+                    catalog = fixture.catalog,
+                    transactions = listOf(opening, replaced),
+                ),
+            )
+        val expectedBalances =
+            mapOf(
+                fixture.paymentAccountId to money(96_420, fixture.cny),
+                fixture.expenseAccountId to money(3_580, fixture.cny),
+                fixture.equityAccountId to money(-100_000, fixture.cny),
+            )
 
         assertEquals(before.balances, after.balances)
         assertEquals(expectedBalances, after.balances)
@@ -124,16 +137,18 @@ class TransactionNoteReplacementTest {
         val original = fixture.acceptedExpense()
         val versionOne = original.versions.single()
         val versionThreeId = TransactionVersionId("version-expense-rg01-v3")
-        val versionThree = versionOne.copy(
-            id = versionThreeId,
-            versionNumber = 3,
-        )
+        val versionThree =
+            versionOne.copy(
+                id = versionThreeId,
+                versionNumber = 3,
+            )
 
-        val result = FormalTransaction.create(
-            transaction = original.transaction.copy(currentVersionId = versionThreeId),
-            versions = listOf(versionOne, versionThree),
-            postingSets = original.postingSets,
-        )
+        val result =
+            FormalTransaction.create(
+                transaction = original.transaction.copy(currentVersionId = versionThreeId),
+                versions = listOf(versionOne, versionThree),
+                postingSets = original.postingSets,
+            )
 
         assertEquals(DomainViolation.InvalidFormalTransaction, failure(result))
     }
@@ -142,16 +157,18 @@ class TransactionNoteReplacementTest {
     fun rejectsACurrentPointerThatDoesNotTargetTheHighestVersion() {
         val original = fixture.acceptedExpense()
         val versionOne = original.versions.single()
-        val versionTwo = versionOne.copy(
-            id = replacementVersionId,
-            versionNumber = 2,
-        )
+        val versionTwo =
+            versionOne.copy(
+                id = replacementVersionId,
+                versionNumber = 2,
+            )
 
-        val result = FormalTransaction.create(
-            transaction = original.transaction,
-            versions = listOf(versionOne, versionTwo),
-            postingSets = original.postingSets,
-        )
+        val result =
+            FormalTransaction.create(
+                transaction = original.transaction,
+                versions = listOf(versionOne, versionTwo),
+                postingSets = original.postingSets,
+            )
 
         assertEquals(DomainViolation.InvalidFormalTransaction, failure(result))
     }
@@ -160,19 +177,21 @@ class TransactionNoteReplacementTest {
     fun acceptsAContiguousVersionChainRegardlessOfInputOrder() {
         val original = fixture.acceptedExpense()
         val versionOne = original.versions.single()
-        val versionTwo = versionOne.copy(
-            id = replacementVersionId,
-            versionNumber = 2,
-            note = "早餐",
-        )
+        val versionTwo =
+            versionOne.copy(
+                id = replacementVersionId,
+                versionNumber = 2,
+                note = "早餐",
+            )
 
-        val formal = success(
-            FormalTransaction.create(
-                transaction = original.transaction.copy(currentVersionId = replacementVersionId),
-                versions = listOf(versionTwo, versionOne),
-                postingSets = original.postingSets,
-            ),
-        )
+        val formal =
+            success(
+                FormalTransaction.create(
+                    transaction = original.transaction.copy(currentVersionId = replacementVersionId),
+                    versions = listOf(versionTwo, versionOne),
+                    postingSets = original.postingSets,
+                ),
+            )
 
         assertEquals(replacementVersionId, formal.transaction.currentVersionId)
         assertEquals(2, formal.versions.single { it.id == replacementVersionId }.versionNumber)
@@ -184,24 +203,26 @@ class TransactionNoteReplacementTest {
         val originalTransactionBefore = original.transaction
         val originalVersionsBefore = original.versions.toList()
         val originalPostingContentBefore = original.postingContent()
-        val versionTwo = success(
-            original.replaceNote(
-                command = TransactionNoteUpdateCommand(note = "早餐"),
-                ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
-            ),
-        )
+        val versionTwo =
+            success(
+                original.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = "早餐"),
+                    ids = TransactionNoteUpdateIds(versionId = replacementVersionId),
+                ),
+            )
         val versionTwoTransactionBefore = versionTwo.transaction
         val versionTwoVersionsBefore = versionTwo.versions.toList()
         val versionTwoPostingContentBefore = versionTwo.postingContent()
         val versionThreeId = TransactionVersionId("version-expense-rg01-v3")
         val versionThreeNote = "晚餐 🌙 e\u0301"
 
-        val versionThree = success(
-            versionTwo.replaceNote(
-                command = TransactionNoteUpdateCommand(note = versionThreeNote),
-                ids = TransactionNoteUpdateIds(versionId = versionThreeId),
-            ),
-        )
+        val versionThree =
+            success(
+                versionTwo.replaceNote(
+                    command = TransactionNoteUpdateCommand(note = versionThreeNote),
+                    ids = TransactionNoteUpdateIds(versionId = versionThreeId),
+                ),
+            )
 
         assertEquals(versionThreeId, versionThree.transaction.currentVersionId)
         assertEquals(3, versionThree.versions.size)
@@ -230,7 +251,10 @@ class TransactionNoteReplacementTest {
         )
         assertEquals(
             originalPostingIds.toSet(),
-            versionThree.postingSets.flatMap { it.postings }.map { it.id }.toSet(),
+            versionThree.postingSets
+                .flatMap { it.postings }
+                .map { it.id }
+                .toSet(),
         )
         assertEquals(originalPostingContentBefore, versionThree.postingContent())
 
@@ -249,10 +273,11 @@ class TransactionNoteReplacementTest {
         val versionsBefore = original.versions.toList()
         val postingContentBefore = original.postingContent()
 
-        val result = original.replaceNote(
-            command = TransactionNoteUpdateCommand(note = "早餐"),
-            ids = TransactionNoteUpdateIds(versionId = fixture.expenseIds.versionId),
-        )
+        val result =
+            original.replaceNote(
+                command = TransactionNoteUpdateCommand(note = "早餐"),
+                ids = TransactionNoteUpdateIds(versionId = fixture.expenseIds.versionId),
+            )
 
         assertEquals(DomainViolation.InvalidFormalTransaction, failure(result))
         assertEquals(transactionBefore, original.transaction)
@@ -264,8 +289,10 @@ class TransactionNoteReplacementTest {
 private fun FormalTransaction.postingContent(): Map<
     PostingSetId,
     Set<Triple<PostingId, AccountId, Money>>,
-> = postingSets.associate { postingSet ->
-    postingSet.id to postingSet.postings
-        .map { posting -> Triple(posting.id, posting.accountId, posting.amount) }
-        .toSet()
-}
+> =
+    postingSets.associate { postingSet ->
+        postingSet.id to
+            postingSet.postings
+                .map { posting -> Triple(posting.id, posting.accountId, posting.amount) }
+                .toSet()
+    }

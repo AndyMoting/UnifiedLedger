@@ -23,9 +23,9 @@ import com.unifiedledger.application.ImportDuplicateReviewId
 import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateReviewResult
 import com.unifiedledger.application.ImportDuplicateStatus
-import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportFormalCommit
 import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIdSource
 import com.unifiedledger.application.ImportIntakeIdSource
 import com.unifiedledger.application.ImportIntakeIds
@@ -42,23 +42,17 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
-import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
-import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import java.nio.file.Files
 import java.sql.SQLException
 import java.util.concurrent.CountDownLatch
@@ -98,42 +92,70 @@ class P407DuplicateClosedFullStateOracleTest {
     private val comparisonFingerprint = ImportDuplicateComparisonFingerprint()
 
     // Frozen tuple X: three distinct raw identities share it exactly.
-    private val tupleXFacts = ImportSourceFacts(
-        12850, "CNY", 2, "2026-08-01T12:30:00+08:00", "out", "settled",
-        ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1,
-    )
+    private val tupleXFacts =
+        ImportSourceFacts(
+            12850,
+            "CNY",
+            2,
+            "2026-08-01T12:30:00+08:00",
+            "out",
+            "settled",
+            ImportFundingState.SETTLED,
+            IMPORT_FUNDING_RULE_LEGACY_SETTLED,
+            1,
+        )
     private val hashTupleX = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, tupleXFacts)
     private val generatedAt = "2026-08-19T08:00:00Z"
 
     // Matrix 7 fixture: a refund-pending row whose funding state is explicitly UNRESOLVED.
-    private val unresolvedFacts = ImportSourceFacts(
-        7700, "CNY", 2, "2026-08-02T09:00:00+08:00", "out", "refund-pending",
-        ImportFundingState.UNRESOLVED, "source-contract-unresolved-v1", 1,
-    )
+    private val unresolvedFacts =
+        ImportSourceFacts(
+            7700,
+            "CNY",
+            2,
+            "2026-08-02T09:00:00+08:00",
+            "out",
+            "refund-pending",
+            ImportFundingState.UNRESOLVED,
+            "source-contract-unresolved-v1",
+            1,
+        )
     private val hashUnresolved = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, unresolvedFacts)
 
     // Matrix 6/5d fixture: a source-contract-proved closed record with no funds movement.
-    private val noFundsFacts = ImportSourceFacts(
-        9900, "CNY", 2, "2026-08-03T10:00:00+08:00", "out", "closed",
-        ImportFundingState.NO_FUNDS, "source-contract-closed-v1", 1,
-    )
+    private val noFundsFacts =
+        ImportSourceFacts(
+            9900,
+            "CNY",
+            2,
+            "2026-08-03T10:00:00+08:00",
+            "out",
+            "closed",
+            ImportFundingState.NO_FUNDS,
+            "source-contract-closed-v1",
+            1,
+        )
     private val hashNoFunds = fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, noFundsFacts)
 
-    private fun catalog(): LedgerCatalog = when (
-        val result = LedgerCatalog.create(
-            accounts = listOf(
-                Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
-                Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
-            ),
-            categories = listOf(
-                Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
-                Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
-            ),
-        )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("p407 oracle catalog failure: ${result.violation}")
-    }
+    private fun catalog(): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(AccountId("account-asset-a"), ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            Account(AccountId("expense-account-food"), ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-primary-food"), ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE),
+                            Category(CategoryId("category-food"), ledgerId, parentId = CategoryId("category-primary-food"), postingAccountId = AccountId("expense-account-food"), active = true, kind = CategoryKind.EXPENSE),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("p407 oracle catalog failure: ${result.violation}")
+        }
 
     private fun accounts(): List<Account> = catalog().accounts
 
@@ -153,29 +175,39 @@ class P407DuplicateClosedFullStateOracleTest {
         candidateGeneratedAt = candidateGeneratedAt,
     )
 
-    private fun intakeIds(prefix: String, statusId: String, duplicates: List<Pair<String, String>> = emptyList()) = ImportIntakeIds(
+    private fun intakeIds(
+        prefix: String,
+        statusId: String,
+        duplicates: List<Pair<String, String>> = emptyList(),
+    ) = ImportIntakeIds(
         sourceId = ImportSourceId("source-$prefix"),
         evidenceId = com.unifiedledger.application.ImportEvidenceId("evidence-$prefix"),
         candidateId = ImportCandidateId("candidate-$prefix"),
         statusHistoryId = ImportStatusHistoryId(statusId),
-        duplicateIds = duplicates.map { (candidateId, historyId) ->
-            ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
-        },
+        duplicateIds =
+            duplicates.map { (candidateId, historyId) ->
+                ImportDuplicateIntakeIds(ImportDuplicateCandidateId(candidateId), ImportStatusHistoryId(historyId))
+            },
     )
 
-    private fun commitIds(prefix: String) = ImportCommitIds(
-        confirmationId = ImportConfirmationId("confirmation-$prefix"),
-        statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
-        formalIds = ImportFormalIds(
-            transactionId = TransactionId("tx-$prefix"),
-            versionId = TransactionVersionId("version-$prefix-v1"),
-            postingSetId = PostingSetId("posting-set-$prefix"),
-            postingIds = listOf(PostingId("posting-$prefix-expense"), PostingId("posting-$prefix-asset")),
-        ),
-    )
+    private fun commitIds(prefix: String) =
+        ImportCommitIds(
+            confirmationId = ImportConfirmationId("confirmation-$prefix"),
+            statusHistoryId = ImportStatusHistoryId("status-$prefix-2"),
+            formalIds =
+                ImportFormalIds(
+                    transactionId = TransactionId("tx-$prefix"),
+                    versionId = TransactionVersionId("version-$prefix-v1"),
+                    postingSetId = PostingSetId("posting-set-$prefix"),
+                    postingIds = listOf(PostingId("posting-$prefix-expense"), PostingId("posting-$prefix-asset")),
+                ),
+        )
 
-    private class BatchIntakeIdSource(private val batches: List<ImportIntakeIds>) : ImportIntakeIdSource {
+    private class BatchIntakeIdSource(
+        private val batches: List<ImportIntakeIds>,
+    ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
@@ -183,8 +215,11 @@ class P407DuplicateClosedFullStateOracleTest {
         }
     }
 
-    private class BatchCommitIdSource(private val batches: List<ImportCommitIds>) : ImportIdSource {
+    private class BatchCommitIdSource(
+        private val batches: List<ImportCommitIds>,
+    ) : ImportIdSource {
         val calls = AtomicInteger(0)
+
         override fun next(): ImportCommitIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "commit id batch exhausted" }
@@ -199,8 +234,10 @@ class P407DuplicateClosedFullStateOracleTest {
     ) : ImportCandidateFormalFactory {
         private val delegate = com.unifiedledger.application.OrdinaryFlowFormalFactory(catalog)
 
-        override fun create(input: ImportCandidateFormalizationInput, ids: ImportCommitIds): DomainResult<ImportFormalCommit> =
-            delegate.create(input, ids)
+        override fun create(
+            input: ImportCandidateFormalizationInput,
+            ids: ImportCommitIds,
+        ): DomainResult<ImportFormalCommit> = delegate.create(input, ids)
     }
 
     private fun confirmRequest(
@@ -246,7 +283,11 @@ class P407DuplicateClosedFullStateOracleTest {
         val netWorthChangeMinor: Long,
     )
 
-    private data class ReportTx(val ledgerId: String, val kind: String, val postings: List<Pair<String, Long>>)
+    private data class ReportTx(
+        val ledgerId: String,
+        val kind: String,
+        val postings: List<Pair<String, Long>>,
+    )
 
     private data class P407FullState(
         val importRequest: List<List<Any?>>,
@@ -272,63 +313,82 @@ class P407DuplicateClosedFullStateOracleTest {
         val reconciliation: Map<String, List<List<Any?>>>,
     )
 
-    private val rowComparator = Comparator<List<Any?>> { left, right ->
-        val size = maxOf(left.size, right.size)
-        for (index in 0 until size) {
-            val l = left.getOrNull(index)
-            val r = right.getOrNull(index)
-            val compare = when {
-                l == null && r == null -> 0
-                l == null -> -1
-                r == null -> 1
-                else -> l.toString().compareTo(r.toString())
+    private val rowComparator =
+        Comparator<List<Any?>> { left, right ->
+            val size = maxOf(left.size, right.size)
+            for (index in 0 until size) {
+                val l = left.getOrNull(index)
+                val r = right.getOrNull(index)
+                val compare =
+                    when {
+                        l == null && r == null -> 0
+                        l == null -> -1
+                        r == null -> 1
+                        else -> l.toString().compareTo(r.toString())
+                    }
+                if (compare != 0) return@Comparator compare
             }
-            if (compare != 0) return@Comparator compare
+            0
         }
-        0
-    }
 
-    private fun selectRows(driver: JdbcSqliteDriver, sql: String, longColumns: List<Boolean>): List<List<Any?>> = driver.executeQuery(
-        null, sql,
-        { cursor ->
-            val rows = mutableListOf<List<Any?>>()
-            while (cursor.next().value) {
-                rows += longColumns.mapIndexed { index, isLong ->
-                    if (isLong) cursor.getLong(index) else cursor.getString(index)
+    private fun selectRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+        longColumns: List<Boolean>,
+    ): List<List<Any?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows = mutableListOf<List<Any?>>()
+                    while (cursor.next().value) {
+                        rows +=
+                            longColumns.mapIndexed { index, isLong ->
+                                if (isLong) cursor.getLong(index) else cursor.getString(index)
+                            }
+                    }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows.toList())
+                },
+                0,
+            ).value
+
+    private fun captureFullState(
+        driver: JdbcSqliteDriver,
+        accounts: List<Account>,
+    ): P407FullState {
+        val formalJoin =
+            "FROM posting AS p " +
+                "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
+                "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
+        val formalRows =
+            selectRows(
+                driver,
+                "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor $formalJoin ORDER BY t.transaction_id, p.posting_index",
+                listOf(false, false, false, false, true),
+            )
+        val formalTxs =
+            formalRows
+                .groupBy { it[0] as String }
+                .map { (_, rows) ->
+                    ReportTx(
+                        ledgerId = rows.first()[1] as String,
+                        kind = rows.first()[2] as String,
+                        postings = rows.map { (it[3] as String) to (it[4] as Long) },
+                    )
                 }
-            }
-            app.cash.sqldelight.db.QueryResult.Value(rows.toList())
-        },
-        0,
-    ).value
-
-    private fun captureFullState(driver: JdbcSqliteDriver, accounts: List<Account>): P407FullState {
-        val formalJoin = "FROM posting AS p " +
-            "JOIN transaction_version AS v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id " +
-            "JOIN ledger_transaction AS t ON t.transaction_id = v.transaction_id AND t.ledger_id = p.ledger_id"
-        val formalRows = selectRows(
-            driver,
-            "SELECT t.transaction_id, t.ledger_id, t.kind, p.account_id, p.amount_minor $formalJoin ORDER BY t.transaction_id, p.posting_index",
-            listOf(false, false, false, false, true),
-        )
-        val formalTxs = formalRows
-            .groupBy { it[0] as String }
-            .map { (_, rows) ->
-                ReportTx(
-                    ledgerId = rows.first()[1] as String,
-                    kind = rows.first()[2] as String,
-                    postings = rows.map { (it[3] as String) to (it[4] as Long) },
-                )
-            }
-        val report = (accounts.map { it.ledgerId.value }.toSortedSet() + formalTxs.map { it.ledgerId })
-            .associateWith { ledger -> reduceReport(formalTxs, ledger, accounts) }
+        val report =
+            (accounts.map { it.ledgerId.value }.toSortedSet() + formalTxs.map { it.ledgerId })
+                .associateWith { ledger -> reduceReport(formalTxs, ledger, accounts) }
         return P407FullState(
             importRequest = selectRows(driver, "SELECT ledger_id, request_id, operation FROM import_request", listOf(false, false, false)).sortedWith(rowComparator),
-            importSourceRecord = selectRows(
-                driver,
-                "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
-                listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
-            ).sortedWith(rowComparator),
+            importSourceRecord =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at FROM import_source_record",
+                    listOf(false, false, false, false, true, false, false, true, false, true, false, true, false, false, false, false, false, true, false),
+                ).sortedWith(rowComparator),
             importEvidence = selectRows(driver, "SELECT ledger_id, evidence_id, source_id, evidence_kind, observed_at FROM import_evidence", listOf(false, false, false, false, false)).sortedWith(rowComparator),
             importCandidate = selectRows(driver, "SELECT ledger_id, candidate_id, source_id, candidate_kind, confidence, rule, rule_version FROM import_candidate", listOf(false, false, false, false, false, false, true)).sortedWith(rowComparator),
             importCandidateRequiresConfirmation = selectRows(driver, "SELECT ledger_id, candidate_id, requirement_index, requirement FROM import_candidate_requires_confirmation", listOf(false, false, true, false)).sortedWith(rowComparator),
@@ -336,11 +396,12 @@ class P407DuplicateClosedFullStateOracleTest {
             importCandidateDecisionSnapshot = selectRows(driver, "SELECT ledger_id, request_id, decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, explicit_confirmed_at FROM import_candidate_decision_snapshot", listOf(false, false, false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
             importConfirmation = selectRows(driver, "SELECT ledger_id, confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at FROM import_confirmation", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
             importReceipt = selectRows(driver, "SELECT ledger_id, request_id, outcome, source_id, evidence_id, candidate_id, confirmation_id, transaction_id FROM import_receipt", listOf(false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
-            duplicateCandidate = selectRows(
-                driver,
-                "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
-                listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
-            ).sortedWith(rowComparator),
+            duplicateCandidate =
+                selectRows(
+                    driver,
+                    "SELECT ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id, rule_version, generated_at, creation_request_id FROM import_duplicate_candidate",
+                    listOf(false, false, false, false, false, false, false, false, false, false, true, false, false),
+                ).sortedWith(rowComparator),
             duplicateStatusHistory = selectRows(driver, "SELECT ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class FROM import_duplicate_status_history", listOf(false, false, true, false, false, false, false)).sortedWith(rowComparator),
             duplicateReviewRequest = selectRows(driver, "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM import_duplicate_review_request", listOf(false, false, false, false, false, false)).sortedWith(rowComparator),
             duplicateReviewSnapshot = selectRows(driver, "SELECT ledger_id, request_id, candidate_id, expected_comparison_fingerprint, decision, reason_token, reviewed_at, reviewer_reference, generated_at, review_id FROM import_duplicate_review_snapshot", listOf(false, false, false, false, false, false, false, false, false, false)).sortedWith(rowComparator),
@@ -351,19 +412,24 @@ class P407DuplicateClosedFullStateOracleTest {
             ledgerTransactionCurrentVersion = selectRows(driver, "SELECT transaction_id, ledger_id, current_version_id FROM ledger_transaction_current_version", listOf(false, false, false)).sortedWith(rowComparator),
             posting = selectRows(driver, "SELECT posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision FROM posting", listOf(false, false, false, true, false, true, false, true)).sortedWith(rowComparator),
             report = report,
-            reconciliation = mapOf(
-                "reconciliation_request" to selectRows(driver, "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM reconciliation_request", listOf(false, false, false, false, false, false)),
-                "reconciliation_request_snapshot" to selectRows(driver, "SELECT ledger_id, request_id FROM reconciliation_request_snapshot", listOf(false, false)),
-                "reconciliation_receipt" to selectRows(driver, "SELECT ledger_id, request_id, outcome FROM reconciliation_receipt", listOf(false, false, false)),
-                "evidence_link" to selectRows(driver, "SELECT ledger_id, link_id FROM evidence_link", listOf(false, false)),
-                "evidence_link_history" to selectRows(driver, "SELECT ledger_id, link_id, sequence FROM evidence_link_history", listOf(false, false, true)),
-                "posting_reconciliation" to selectRows(driver, "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
-                "posting_reconciliation_history" to selectRows(driver, "SELECT ledger_id, reconciliation_id, sequence FROM posting_reconciliation_history", listOf(false, false, true)),
-            ),
+            reconciliation =
+                mapOf(
+                    "reconciliation_request" to selectRows(driver, "SELECT ledger_id, request_id, operation, input_fingerprint, outcome, reason_code FROM reconciliation_request", listOf(false, false, false, false, false, false)),
+                    "reconciliation_request_snapshot" to selectRows(driver, "SELECT ledger_id, request_id FROM reconciliation_request_snapshot", listOf(false, false)),
+                    "reconciliation_receipt" to selectRows(driver, "SELECT ledger_id, request_id, outcome FROM reconciliation_receipt", listOf(false, false, false)),
+                    "evidence_link" to selectRows(driver, "SELECT ledger_id, link_id FROM evidence_link", listOf(false, false)),
+                    "evidence_link_history" to selectRows(driver, "SELECT ledger_id, link_id, sequence FROM evidence_link_history", listOf(false, false, true)),
+                    "posting_reconciliation" to selectRows(driver, "SELECT ledger_id, reconciliation_id, posting_id, status, latest_sequence FROM posting_reconciliation", listOf(false, false, false, false, true)),
+                    "posting_reconciliation_history" to selectRows(driver, "SELECT ledger_id, reconciliation_id, sequence FROM posting_reconciliation_history", listOf(false, false, true)),
+                ),
         )
     }
 
-    private fun reduceReport(transactions: List<ReportTx>, ledgerId: String, accounts: List<Account>): P407ReportProjection {
+    private fun reduceReport(
+        transactions: List<ReportTx>,
+        ledgerId: String,
+        accounts: List<Account>,
+    ): P407ReportProjection {
         val balances = LinkedHashMap<String, Long>()
         accounts.filter { it.ledgerId.value == ledgerId }.forEach { balances[it.id.value] = 0L }
         var internalTransfer = 0L
@@ -375,15 +441,25 @@ class P407DuplicateClosedFullStateOracleTest {
             val positiveTotal = tx.postings.sumOf { if (it.second > 0L) it.second else 0L }
             when (tx.kind) {
                 "ACCOUNT_TRANSFER" -> internalTransfer += positiveTotal
-                "EXPENSE" -> { externalExpense += positiveTotal; netWorth -= positiveTotal }
-                "INCOME" -> { externalIncome += positiveTotal; netWorth += positiveTotal }
+                "EXPENSE" -> {
+                    externalExpense += positiveTotal
+                    netWorth -= positiveTotal
+                }
+                "INCOME" -> {
+                    externalIncome += positiveTotal
+                    netWorth += positiveTotal
+                }
                 else -> Unit
             }
         }
         return P407ReportProjection(balances, internalTransfer, externalIncome, externalExpense, externalExpense, netWorth)
     }
 
-    private fun assertFullState(expected: P407FullState, actual: P407FullState, checkpoint: String) {
+    private fun assertFullState(
+        expected: P407FullState,
+        actual: P407FullState,
+        checkpoint: String,
+    ) {
         assertEquals(expected.importRequest, actual.importRequest, "$checkpoint: import_request")
         assertEquals(expected.importSourceRecord, actual.importSourceRecord, "$checkpoint: import_source_record")
         assertEquals(expected.importEvidence, actual.importEvidence, "$checkpoint: import_evidence")
@@ -409,54 +485,66 @@ class P407DuplicateClosedFullStateOracleTest {
 
     // ---------- test-side expected builder (never reads the database under test) ----------
 
-    private fun tupleComparisonJson(subjectSourceId: String, existingSourceId: String?): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            subjectSourceId = ImportSourceId(subjectSourceId),
-            possibleExistingSourceId = existingSourceId?.let(::ImportSourceId),
-            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-            contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
-            amountMinor = tupleXFacts.amountMinor,
-            currencyCode = tupleXFacts.currencyCode,
-            currencyPrecision = tupleXFacts.currencyPrecision,
-            occurredAt = tupleXFacts.occurredAt,
-            directionToken = tupleXFacts.directionToken,
-            statusToken = tupleXFacts.statusToken,
-        )
+    private fun tupleComparisonJson(
+        subjectSourceId: String,
+        existingSourceId: String?,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                subjectSourceId = ImportSourceId(subjectSourceId),
+                possibleExistingSourceId = existingSourceId?.let(::ImportSourceId),
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
+                amountMinor = tupleXFacts.amountMinor,
+                currencyCode = tupleXFacts.currencyCode,
+                currencyPrecision = tupleXFacts.currencyPrecision,
+                occurredAt = tupleXFacts.occurredAt,
+                directionToken = tupleXFacts.directionToken,
+                statusToken = tupleXFacts.statusToken,
+            )
         val target = if (existingSourceId == null) "null" else "\"$existingSourceId\""
         return "{\"possible_existing_source_id\":$target,\"subject_source_id\":\"$subjectSourceId\",\"tuple\":${comparisonFingerprint.canonicalJson(projection)}}"
     }
 
-    private fun tupleComparisonDigest(subjectSourceId: String, existingSourceId: String): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            subjectSourceId = ImportSourceId(subjectSourceId),
-            possibleExistingSourceId = ImportSourceId(existingSourceId),
-            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-            contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
-            amountMinor = tupleXFacts.amountMinor,
-            currencyCode = tupleXFacts.currencyCode,
-            currencyPrecision = tupleXFacts.currencyPrecision,
-            occurredAt = tupleXFacts.occurredAt,
-            directionToken = tupleXFacts.directionToken,
-            statusToken = tupleXFacts.statusToken,
-        )
+    private fun tupleComparisonDigest(
+        subjectSourceId: String,
+        existingSourceId: String,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                subjectSourceId = ImportSourceId(subjectSourceId),
+                possibleExistingSourceId = ImportSourceId(existingSourceId),
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
+                amountMinor = tupleXFacts.amountMinor,
+                currencyCode = tupleXFacts.currencyCode,
+                currencyPrecision = tupleXFacts.currencyPrecision,
+                occurredAt = tupleXFacts.occurredAt,
+                directionToken = tupleXFacts.directionToken,
+                statusToken = tupleXFacts.statusToken,
+            )
         return comparisonFingerprint.digest(projection)
     }
 
     private fun noFundsComparisonDigest(subjectSourceId: String) = "sha256:no-funds-$subjectSourceId"
 
-    private fun noFundsComparisonJson(facts: ImportSourceFacts, subjectSourceId: String): String {
-        val projection = ImportDuplicateComparisonSnapshot(
-            subjectSourceId = ImportSourceId(subjectSourceId),
-            possibleExistingSourceId = null,
-            recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
-            contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
-            amountMinor = facts.amountMinor,
-            currencyCode = facts.currencyCode,
-            currencyPrecision = facts.currencyPrecision,
-            occurredAt = facts.occurredAt,
-            directionToken = facts.directionToken,
-            statusToken = facts.statusToken,
-        )
+    private fun noFundsComparisonJson(
+        facts: ImportSourceFacts,
+        subjectSourceId: String,
+    ): String {
+        val projection =
+            ImportDuplicateComparisonSnapshot(
+                subjectSourceId = ImportSourceId(subjectSourceId),
+                possibleExistingSourceId = null,
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
+                amountMinor = facts.amountMinor,
+                currencyCode = facts.currencyCode,
+                currencyPrecision = facts.currencyPrecision,
+                occurredAt = facts.occurredAt,
+                directionToken = facts.directionToken,
+                statusToken = facts.statusToken,
+            )
         return "{\"possible_existing_source_id\":null,\"subject_source_id\":\"$subjectSourceId\",\"tuple\":${comparisonFingerprint.canonicalJson(projection)}}"
     }
 
@@ -496,40 +584,90 @@ class P407DuplicateClosedFullStateOracleTest {
             val complete = completeness == ImportCompleteness.VALID_COMPLETE
             val settled = facts.fundingState == ImportFundingState.SETTLED
             requests += row(ledgerId, requestId, "intake")
-            sources += row(
-                ledgerId, "source-$prefix", requestId, inputRef, 0L, ImportRecordKind.ORDINARY_FLOW_SOURCE.storageValue,
-                hash, 1L, if (complete) "valid_complete" else "valid_incomplete",
-                facts.amountMinor, facts.currencyCode, facts.currencyPrecision.toLong(), facts.occurredAt,
-                facts.directionToken, facts.statusToken, facts.fundingState.name, facts.fundingRuleId,
-                facts.fundingRuleVersion.toLong(), generatedAt,
-            )
+            sources +=
+                row(
+                    ledgerId,
+                    "source-$prefix",
+                    requestId,
+                    inputRef,
+                    0L,
+                    ImportRecordKind.ORDINARY_FLOW_SOURCE.storageValue,
+                    hash,
+                    1L,
+                    if (complete) "valid_complete" else "valid_incomplete",
+                    facts.amountMinor,
+                    facts.currencyCode,
+                    facts.currencyPrecision.toLong(),
+                    facts.occurredAt,
+                    facts.directionToken,
+                    facts.statusToken,
+                    facts.fundingState.name,
+                    facts.fundingRuleId,
+                    facts.fundingRuleVersion.toLong(),
+                    generatedAt,
+                )
             evidence += row(ledgerId, "evidence-$prefix", "source-$prefix", "source_observation", facts.occurredAt)
             candidates += row(ledgerId, "candidate-$prefix", "source-$prefix", "ordinary_flow", if (complete) "1.00" else "0.50", ImportRecordKind.ORDINARY_FLOW_SOURCE.storageValue, 1L)
             requirements += row(ledgerId, "candidate-$prefix", 0L, "formal_transaction_creation")
-            statusHistory += row(
-                ledgerId, "candidate-$prefix", 1L, "status-$prefix-1",
-                if (complete && settled) "pending_confirmation" else "incomplete", requestId, "creation",
-            )
+            statusHistory +=
+                row(
+                    ledgerId,
+                    "candidate-$prefix",
+                    1L,
+                    "status-$prefix-1",
+                    if (complete && settled) "pending_confirmation" else "incomplete",
+                    requestId,
+                    "creation",
+                )
             receipts += row(ledgerId, requestId, "accepted", "source-$prefix", "evidence-$prefix", "candidate-$prefix", null, null)
             duplicates.forEach { (candidateId, historyId, existingSourceId) ->
                 if (existingSourceId == null) {
-                    duplicateCandidates += row(
-                        ledgerId, candidateId, "source-$prefix", null, "CLOSED_OR_FAILED_NO_FUNDS",
-                        noFundsComparisonDigest("source-$prefix"), noFundsComparisonJson(facts, "source-$prefix"),
-                        "source_declared + mechanical_decode", "exact", "p407_exact_business_tuple_v1", 1L, generatedAt, requestId,
-                    )
+                    duplicateCandidates +=
+                        row(
+                            ledgerId,
+                            candidateId,
+                            "source-$prefix",
+                            null,
+                            "CLOSED_OR_FAILED_NO_FUNDS",
+                            noFundsComparisonDigest("source-$prefix"),
+                            noFundsComparisonJson(facts, "source-$prefix"),
+                            "source_declared + mechanical_decode",
+                            "exact",
+                            "p407_exact_business_tuple_v1",
+                            1L,
+                            generatedAt,
+                            requestId,
+                        )
                 } else {
-                    duplicateCandidates += row(
-                        ledgerId, candidateId, "source-$prefix", existingSourceId, "EXACT_BUSINESS_TUPLE",
-                        tupleComparisonDigest("source-$prefix", existingSourceId), tupleComparisonJson("source-$prefix", existingSourceId),
-                        "source_declared + mechanical_decode + p407_exact_business_tuple_v1", "exact", "p407_exact_business_tuple_v1", 1L, generatedAt, requestId,
-                    )
+                    duplicateCandidates +=
+                        row(
+                            ledgerId,
+                            candidateId,
+                            "source-$prefix",
+                            existingSourceId,
+                            "EXACT_BUSINESS_TUPLE",
+                            tupleComparisonDigest("source-$prefix", existingSourceId),
+                            tupleComparisonJson("source-$prefix", existingSourceId),
+                            "source_declared + mechanical_decode + p407_exact_business_tuple_v1",
+                            "exact",
+                            "p407_exact_business_tuple_v1",
+                            1L,
+                            generatedAt,
+                            requestId,
+                        )
                 }
                 duplicateHistory += row(ledgerId, candidateId, 1L, historyId, "DEFERRED", requestId, "creation")
             }
         }
 
-        fun confirm(ledgerId: String, requestId: String, candidatePrefix: String, hash: String, facts: ImportSourceFacts, confirmedAt: String?) {
+        fun confirm(
+            ledgerId: String,
+            requestId: String,
+            candidatePrefix: String,
+            hash: String,
+            facts: ImportSourceFacts,
+            confirmedAt: String?,
+        ) {
             val timeText = Instant.parse(facts.occurredAt).toString()
             requests += row(ledgerId, requestId, "confirm_candidate")
             decisions += row(ledgerId, requestId, "confirm", "candidate-$candidatePrefix", hash, "category-food", "account-asset-a", null, null, confirmedAt)
@@ -545,26 +683,50 @@ class P407DuplicateClosedFullStateOracleTest {
             formalTxs += ReportTx(ledgerId, "EXPENSE", listOf("expense-account-food" to facts.amountMinor, "account-asset-a" to -facts.amountMinor))
         }
 
-        fun review(ledgerId: String, request: ImportDuplicateReviewRequest, digest: String) {
+        fun review(
+            ledgerId: String,
+            request: ImportDuplicateReviewRequest,
+            digest: String,
+        ) {
             reviewRequests += row(ledgerId, request.identity.requestId.value, "review_duplicate", digest, "ACCEPTED", null)
-            reviewSnapshots += row(
-                ledgerId, request.identity.requestId.value, request.candidateId.value, request.expectedComparisonFingerprint,
-                request.decision.name, request.reasonToken, request.reviewedAt, request.reviewerReference,
-                request.generatedAt, request.reviewId.value,
-            )
-            duplicateHistory += row(
-                ledgerId, request.candidateId.value, 2L, request.historyId.value, request.decision.name,
-                request.identity.requestId.value, "status_transition",
-            )
-            reviewReceipts += row(
-                ledgerId, request.identity.requestId.value, request.candidateId.value, request.reviewId.value,
-                request.historyId.value, request.decision.name,
-            )
+            reviewSnapshots +=
+                row(
+                    ledgerId,
+                    request.identity.requestId.value,
+                    request.candidateId.value,
+                    request.expectedComparisonFingerprint,
+                    request.decision.name,
+                    request.reasonToken,
+                    request.reviewedAt,
+                    request.reviewerReference,
+                    request.generatedAt,
+                    request.reviewId.value,
+                )
+            duplicateHistory +=
+                row(
+                    ledgerId,
+                    request.candidateId.value,
+                    2L,
+                    request.historyId.value,
+                    request.decision.name,
+                    request.identity.requestId.value,
+                    "status_transition",
+                )
+            reviewReceipts +=
+                row(
+                    ledgerId,
+                    request.identity.requestId.value,
+                    request.candidateId.value,
+                    request.reviewId.value,
+                    request.historyId.value,
+                    request.decision.name,
+                )
         }
 
         fun state(accounts: List<Account>): P407FullState {
-            val report = (accounts.map { it.ledgerId.value }.toSortedSet() + formalTxs.map { it.ledgerId })
-                .associateWith { ledger -> reduceReport(formalTxs, ledger, accounts) }
+            val report =
+                (accounts.map { it.ledgerId.value }.toSortedSet() + formalTxs.map { it.ledgerId })
+                    .associateWith { ledger -> reduceReport(formalTxs, ledger, accounts) }
             return P407FullState(
                 importRequest = requests.sortedWith(rowComparator),
                 importSourceRecord = sources.sortedWith(rowComparator),
@@ -588,10 +750,16 @@ class P407DuplicateClosedFullStateOracleTest {
                 report = report,
                 // P4-07 operations never write P4-08 state: every reconciliation owner
                 // stays empty in the expected projection.
-                reconciliation = listOf(
-                    "reconciliation_request", "reconciliation_request_snapshot", "reconciliation_receipt",
-                    "evidence_link", "evidence_link_history", "posting_reconciliation", "posting_reconciliation_history",
-                ).associateWith { emptyList<List<Any?>>() },
+                reconciliation =
+                    listOf(
+                        "reconciliation_request",
+                        "reconciliation_request_snapshot",
+                        "reconciliation_receipt",
+                        "evidence_link",
+                        "evidence_link_history",
+                        "posting_reconciliation",
+                        "posting_reconciliation_history",
+                    ).associateWith { emptyList<List<Any?>>() },
             )
         }
 
@@ -632,23 +800,32 @@ class P407DuplicateClosedFullStateOracleTest {
             assertFullState(state, captureFullState(driver, accounts), "1a raw-identity replay")
 
             // Same raw identity, different content: hard collision, zero writes.
-            val collision = assertIs<ImportIntakeResult.Rejected>(
-                intake.execute(
-                    intakeRequest("req-o1-collision", "batch-oracle-1", tupleXFacts.copy(amountMinor = 12851), candidateGeneratedAt = "2026-08-21T00:00:00Z"),
-                ),
-            )
+            val collision =
+                assertIs<ImportIntakeResult.Rejected>(
+                    intake.execute(
+                        intakeRequest("req-o1-collision", "batch-oracle-1", tupleXFacts.copy(amountMinor = 12851), candidateGeneratedAt = "2026-08-21T00:00:00Z"),
+                    ),
+                )
             assertEquals("SPINE_IDENTITY_COLLISION", collision.diagnostic.code)
             assertFullState(state, captureFullState(driver, accounts), "1a identity collision")
 
             // S2: same exact tuple, new raw identity -> exactly one directed duplicate row.
-            val intake2 = BatchIntakeIdSource(
-                listOf(intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1"))),
-            )
+            val intake2 =
+                BatchIntakeIdSource(
+                    listOf(intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1"))),
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(store, intake2, ImportContentFingerprint()).execute(intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)),
             )
             expected.intake(
-                ledgerId.value, "req-o2", "batch-oracle-2", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s2", generatedAt,
+                ledgerId.value,
+                "req-o2",
+                "batch-oracle-2",
+                hashTupleX,
+                tupleXFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "s2",
+                generatedAt,
                 duplicates = listOf(Triple("duplicate-s2-s1", "duplicate-status-s2-s1", "source-s1")),
             )
             state = expected.state(accounts)
@@ -684,31 +861,48 @@ class P407DuplicateClosedFullStateOracleTest {
 
             // S1, S2, S3 share tuple X: S3 gets one directed candidate per existing
             // source (no winner, both s1 and s2 stay listed as possible existing).
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("s1", "status-s1-1"),
-                    intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
-                    intakeIds(
-                        "s3", "status-s3-1",
-                        duplicates = listOf("duplicate-s3-s1" to "duplicate-status-s3-s1", "duplicate-s3-s2" to "duplicate-status-s3-s2"),
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("s1", "status-s1-1"),
+                        intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
+                        intakeIds(
+                            "s3",
+                            "status-s3-1",
+                            duplicates = listOf("duplicate-s3-s1" to "duplicate-status-s3-s1", "duplicate-s3-s2" to "duplicate-status-s3-s2"),
+                        ),
                     ),
-                ),
-            )
+                )
             val intake = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o1", "batch-oracle-1", tupleXFacts)))
             expected.intake(ledgerId.value, "req-o1", "batch-oracle-1", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s1", generatedAt)
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)))
             expected.intake(
-                ledgerId.value, "req-o2", "batch-oracle-2", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s2", generatedAt,
+                ledgerId.value,
+                "req-o2",
+                "batch-oracle-2",
+                hashTupleX,
+                tupleXFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "s2",
+                generatedAt,
                 duplicates = listOf(Triple("duplicate-s2-s1", "duplicate-status-s2-s1", "source-s1")),
             )
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o3", "batch-oracle-3", tupleXFacts)))
             expected.intake(
-                ledgerId.value, "req-o3", "batch-oracle-3", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s3", generatedAt,
-                duplicates = listOf(
-                    Triple("duplicate-s3-s1", "duplicate-status-s3-s1", "source-s1"),
-                    Triple("duplicate-s3-s2", "duplicate-status-s3-s2", "source-s2"),
-                ),
+                ledgerId.value,
+                "req-o3",
+                "batch-oracle-3",
+                hashTupleX,
+                tupleXFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "s3",
+                generatedAt,
+                duplicates =
+                    listOf(
+                        Triple("duplicate-s3-s1", "duplicate-status-s3-s1", "source-s1"),
+                        Triple("duplicate-s3-s2", "duplicate-status-s3-s2", "source-s2"),
+                    ),
             )
             var state = expected.state(accounts)
             assertFullState(state, captureFullState(driver, accounts), "3b three sources, no winner")
@@ -764,36 +958,47 @@ class P407DuplicateClosedFullStateOracleTest {
             val review = ReviewImportDuplicateCandidate(store)
 
             // Setup: s1 + s2 with one deferred exact-tuple candidate.
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("s1", "status-s1-1"),
-                    intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
-                ),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("s1", "status-s1-1"),
+                        intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
+                    ),
+                )
             val intake = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o1", "batch-oracle-1", tupleXFacts)))
             expected.intake(ledgerId.value, "req-o1", "batch-oracle-1", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s1", generatedAt)
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)))
             expected.intake(
-                ledgerId.value, "req-o2", "batch-oracle-2", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s2", generatedAt,
+                ledgerId.value,
+                "req-o2",
+                "batch-oracle-2",
+                hashTupleX,
+                tupleXFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "s2",
+                generatedAt,
                 duplicates = listOf(Triple("duplicate-s2-s1", "duplicate-status-s2-s1", "source-s1")),
             )
             val state = expected.state(accounts)
             assertFullState(state, captureFullState(driver, accounts), "5c setup")
 
             // Stale expected fingerprint: typed rejection, zero review rows.
-            val stale = assertIs<ImportDuplicateReviewResult.Rejected>(
-                review.execute(reviewRequest("review-stale", "duplicate-s2-s1", "sha256:not-the-persisted-fingerprint", ImportDuplicateStatus.CONFIRMED_DUPLICATE, "stale")),
-            )
+            val stale =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    review.execute(reviewRequest("review-stale", "duplicate-s2-s1", "sha256:not-the-persisted-fingerprint", ImportDuplicateStatus.CONFIRMED_DUPLICATE, "stale")),
+                )
             assertEquals("SPINE_STALE_FINGERPRINT", stale.diagnostic.code)
             assertFullState(state, captureFullState(driver, accounts), "5c stale fingerprint")
 
             // Injected failure after the snapshot insert: full rollback, corrected retry
             // on the same request identity accepts (the claim is not burned).
-            val failingStore = SqlDelightImportSpineStore(
-                database, driver,
-                ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.REVIEW_AFTER_SNAPSHOT) error("injected") },
-            )
+            val failingStore =
+                SqlDelightImportSpineStore(
+                    database,
+                    driver,
+                    ImportSpineFailureInjector { if (it == ImportSpineFailurePoint.REVIEW_AFTER_SNAPSHOT) error("injected") },
+                )
             val injected = reviewRequest("review-injected", "duplicate-s2-s1", tupleComparisonDigest("source-s2", "source-s1"), ImportDuplicateStatus.CONFIRMED_DUPLICATE, "duplicate")
             assertFailsWith<IllegalStateException> { ReviewImportDuplicateCandidate(failingStore).execute(injected) }
             assertFullState(state, captureFullState(driver, accounts), "5c injected failure rollback")
@@ -804,16 +1009,18 @@ class P407DuplicateClosedFullStateOracleTest {
             assertFullState(afterRetry, captureFullState(driver, accounts), "5c corrected retry")
 
             // Non-deferred review (candidate already terminal): typed rejection, zero rows.
-            val nonDeferred = assertIs<ImportDuplicateReviewResult.Rejected>(
-                review.execute(reviewRequest("review-again", "duplicate-s2-s1", tupleComparisonDigest("source-s2", "source-s1"), ImportDuplicateStatus.DISMISSED_LOOKALIKE, "double-review")),
-            )
+            val nonDeferred =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    review.execute(reviewRequest("review-again", "duplicate-s2-s1", tupleComparisonDigest("source-s2", "source-s1"), ImportDuplicateStatus.DISMISSED_LOOKALIKE, "double-review")),
+                )
             assertEquals("SPINE_CANDIDATE_NOT_PENDING", nonDeferred.diagnostic.code)
             assertFullState(afterRetry, captureFullState(driver, accounts), "5c non-deferred review")
 
             // Same request different content: claim conflict, zero new rows.
-            val conflict = assertIs<ImportDuplicateReviewResult.Rejected>(
-                review.execute(retried.copy(reasonToken = "different-reason")),
-            )
+            val conflict =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    review.execute(retried.copy(reasonToken = "different-reason")),
+                )
             assertEquals("SPINE_REQUEST_IDENTITY_CONFLICT", conflict.diagnostic.code)
             assertFullState(afterRetry, captureFullState(driver, accounts), "5c request conflict")
         } finally {
@@ -830,20 +1037,22 @@ class P407DuplicateClosedFullStateOracleTest {
             JdbcSqliteDriver(url).use { driver ->
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightImportSpineStore(database, driver)
-                val intakeIds = BatchIntakeIdSource(
-                    listOf(
-                        intakeIds("s1", "status-s1-1"),
-                        intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
-                    ),
-                )
+                val intakeIds =
+                    BatchIntakeIdSource(
+                        listOf(
+                            intakeIds("s1", "status-s1-1"),
+                            intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
+                        ),
+                    )
                 val intake = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint())
                 assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o1", "batch-oracle-1", tupleXFacts)))
                 assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)))
             }
             val request = reviewRequest("review-concurrent", "duplicate-s2-s1", tupleComparisonDigest("source-s2", "source-s1"), ImportDuplicateStatus.CONFIRMED_DUPLICATE, "duplicate")
-            val results = concurrentExecute(url) { connection ->
-                ReviewImportDuplicateCandidate(connection).execute(request)
-            }
+            val results =
+                concurrentExecute(url) { connection ->
+                    ReviewImportDuplicateCandidate(connection).execute(request)
+                }
             assertEquals(1, results.count { it is ImportDuplicateReviewResult.Accepted })
             assertEquals(1, results.count { it is ImportDuplicateReviewResult.NoChange })
             JdbcSqliteDriver(url).use { driver ->
@@ -869,24 +1078,39 @@ class P407DuplicateClosedFullStateOracleTest {
             val store = SqlDelightImportSpineStore(database, driver)
             val expected = Expected()
 
-            val intakeIds = BatchIntakeIdSource(
-                listOf(
-                    intakeIds("s1", "status-s1-1"),
-                    intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
-                    intakeIds("nf", "status-nf-1", duplicates = listOf("duplicate-nf" to "duplicate-status-nf")),
-                ),
-            )
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("s1", "status-s1-1"),
+                        intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1")),
+                        intakeIds("nf", "status-nf-1", duplicates = listOf("duplicate-nf" to "duplicate-status-nf")),
+                    ),
+                )
             val intake = ExecuteImportIntake(store, intakeIds, ImportContentFingerprint())
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o1", "batch-oracle-1", tupleXFacts)))
             expected.intake(ledgerId.value, "req-o1", "batch-oracle-1", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s1", generatedAt)
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)))
             expected.intake(
-                ledgerId.value, "req-o2", "batch-oracle-2", hashTupleX, tupleXFacts, ImportCompleteness.VALID_COMPLETE, "s2", generatedAt,
+                ledgerId.value,
+                "req-o2",
+                "batch-oracle-2",
+                hashTupleX,
+                tupleXFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "s2",
+                generatedAt,
                 duplicates = listOf(Triple("duplicate-s2-s1", "duplicate-status-s2-s1", "source-s1")),
             )
             assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-nf", "batch-oracle-nf", noFundsFacts)))
             expected.intake(
-                ledgerId.value, "req-nf", "batch-oracle-nf", hashNoFunds, noFundsFacts, ImportCompleteness.VALID_COMPLETE, "nf", generatedAt,
+                ledgerId.value,
+                "req-nf",
+                "batch-oracle-nf",
+                hashNoFunds,
+                noFundsFacts,
+                ImportCompleteness.VALID_COMPLETE,
+                "nf",
+                generatedAt,
                 duplicates = listOf(Triple("duplicate-nf", "duplicate-status-nf", null)),
             )
             var state = expected.state(accounts)
@@ -931,9 +1155,10 @@ class P407DuplicateClosedFullStateOracleTest {
             // formal/balance/report/reconciliation effect. CONFIRMED_DUPLICATE is a typed
             // rejection (SPEC-001); DISMISSED_LOOKALIKE is the closing disposition.
             val review = ReviewImportDuplicateCandidate(store)
-            val rejectedDuplicate = assertIs<ImportDuplicateReviewResult.Rejected>(
-                review.execute(reviewRequest("review-nf-duplicate", "duplicate-nf", noFundsComparisonDigest("source-nf"), ImportDuplicateStatus.CONFIRMED_DUPLICATE, "closed-no-funds")),
-            )
+            val rejectedDuplicate =
+                assertIs<ImportDuplicateReviewResult.Rejected>(
+                    review.execute(reviewRequest("review-nf-duplicate", "duplicate-nf", noFundsComparisonDigest("source-nf"), ImportDuplicateStatus.CONFIRMED_DUPLICATE, "closed-no-funds")),
+                )
             assertEquals("SPINE_DECISION_KIND_MISMATCH", rejectedDuplicate.diagnostic.code)
             assertFullState(state, captureFullState(driver, accounts), "5d no-funds confirmed-duplicate rejected")
             val dismissal = reviewRequest("review-nf-dismiss", "duplicate-nf", noFundsComparisonDigest("source-nf"), ImportDuplicateStatus.DISMISSED_LOOKALIKE, "manual-dismissal")
@@ -969,12 +1194,14 @@ class P407DuplicateClosedFullStateOracleTest {
                 assertIs<ImportIntakeResult.Accepted>(intake.execute(intakeRequest("req-o1", "batch-oracle-1", tupleXFacts)))
             }
             val request = intakeRequest("req-o2", "batch-oracle-2", tupleXFacts)
-            val ids = BatchIntakeIdSource(
-                listOf(intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1"))),
-            )
-            val results = concurrentExecute(url) { connection ->
-                ExecuteImportIntake(connection, ids, ImportContentFingerprint()).execute(request)
-            }
+            val ids =
+                BatchIntakeIdSource(
+                    listOf(intakeIds("s2", "status-s2-1", duplicates = listOf("duplicate-s2-s1" to "duplicate-status-s2-s1"))),
+                )
+            val results =
+                concurrentExecute(url) { connection ->
+                    ExecuteImportIntake(connection, ids, ImportContentFingerprint()).execute(request)
+                }
             assertEquals(1, results.count { it is ImportIntakeResult.Accepted })
             assertEquals(1, ids.calls.get())
             JdbcSqliteDriver(url).use { driver ->
@@ -1009,14 +1236,28 @@ class P407DuplicateClosedFullStateOracleTest {
             assertEquals(0L, countRows(driver, "import_duplicate_candidate"))
             assertEquals(
                 "UNRESOLVED",
-                driver.executeQuery(null, "SELECT funding_state FROM import_source_record WHERE source_id = 'source-u'", { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value,
+                driver
+                    .executeQuery(null, "SELECT funding_state FROM import_source_record WHERE source_id = 'source-u'", { c ->
+                        c.next()
+                        app.cash.sqldelight.db.QueryResult
+                            .Value(c.getString(0)!!)
+                    }, 0)
+                    .value,
             )
 
             // A valid_incomplete row (missing status) also stays duplicate-free.
-            val missingStatusFacts = ImportSourceFacts(
-                4500, "CNY", 2, "2026-08-04T08:00:00+08:00", "out", null,
-                ImportFundingState.UNRESOLVED, "source-contract-unresolved-v1", 1,
-            )
+            val missingStatusFacts =
+                ImportSourceFacts(
+                    4500,
+                    "CNY",
+                    2,
+                    "2026-08-04T08:00:00+08:00",
+                    "out",
+                    null,
+                    ImportFundingState.UNRESOLVED,
+                    "source-contract-unresolved-v1",
+                    1,
+                )
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(
                     store,
@@ -1025,9 +1266,14 @@ class P407DuplicateClosedFullStateOracleTest {
                 ).execute(intakeRequest("req-oi", "batch-oracle-i", missingStatusFacts, completeness = ImportCompleteness.VALID_INCOMPLETE)),
             )
             expected.intake(
-                ledgerId.value, "req-oi", "batch-oracle-i",
+                ledgerId.value,
+                "req-oi",
+                "batch-oracle-i",
                 fingerprint.digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, missingStatusFacts),
-                missingStatusFacts, ImportCompleteness.VALID_INCOMPLETE, "i", generatedAt,
+                missingStatusFacts,
+                ImportCompleteness.VALID_INCOMPLETE,
+                "i",
+                generatedAt,
             )
             state = expected.state(accounts)
             assertFullState(state, captureFullState(driver, accounts), "7 incomplete intake")
@@ -1036,10 +1282,11 @@ class P407DuplicateClosedFullStateOracleTest {
             // The UNRESOLVED source cannot reach NO_FUNDS semantics either: its confirm is
             // rejected as incomplete with zero formal residue (D-105 section 3).
             val confirmIds = BatchCommitIdSource(listOf(commitIds("u")))
-            val rejected = assertIs<ImportCandidateDecisionResult.Rejected>(
-                ConfirmImportCandidate(store, confirmIds, OrdinaryFlowFormalFactory(catalog(), CategoryId("category-food"), AccountId("account-asset-a")), catalog())
-                    .execute(confirmRequest("req-ou-confirm", "candidate-u", hashUnresolved)),
-            )
+            val rejected =
+                assertIs<ImportCandidateDecisionResult.Rejected>(
+                    ConfirmImportCandidate(store, confirmIds, OrdinaryFlowFormalFactory(catalog(), CategoryId("category-food"), AccountId("account-asset-a")), catalog())
+                        .execute(confirmRequest("req-ou-confirm", "candidate-u", hashUnresolved)),
+                )
             assertEquals("SPINE_CANDIDATE_INCOMPLETE", rejected.diagnostic.code)
             assertEquals(0, confirmIds.calls.get())
             assertFullState(state, captureFullState(driver, accounts), "7 unresolved not formalizable")
@@ -1050,10 +1297,21 @@ class P407DuplicateClosedFullStateOracleTest {
 
     // ---------- helpers ----------
 
-    private fun countRows(driver: JdbcSqliteDriver, table: String): Long = driver.executeQuery(
-        null, "SELECT count(*) FROM $table",
-        { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!!) }, 0,
-    ).value
+    private fun countRows(
+        driver: JdbcSqliteDriver,
+        table: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                "SELECT count(*) FROM $table",
+                { cursor ->
+                    cursor.next()
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(cursor.getLong(0)!!)
+                },
+                0,
+            ).value
 
     private fun concurrentExecute(
         url: String,
@@ -1063,15 +1321,16 @@ class P407DuplicateClosedFullStateOracleTest {
         val ready = CountDownLatch(operations.size)
         val start = CountDownLatch(1)
         return try {
-            val futures = operations.map { operation ->
-                pool.submit<Any> {
-                    ready.countDown()
-                    check(start.await(5, TimeUnit.SECONDS))
-                    JdbcSqliteDriver(url).use { driver ->
-                        operation(SqlDelightImportSpineStore(LedgerDatabase(driver), driver))
+            val futures =
+                operations.map { operation ->
+                    pool.submit<Any> {
+                        ready.countDown()
+                        check(start.await(5, TimeUnit.SECONDS))
+                        JdbcSqliteDriver(url).use { driver ->
+                            operation(SqlDelightImportSpineStore(LedgerDatabase(driver), driver))
+                        }
                     }
                 }
-            }
             check(ready.await(5, TimeUnit.SECONDS))
             start.countDown()
             futures.map { it.get(10, TimeUnit.SECONDS) }
@@ -1080,6 +1339,8 @@ class P407DuplicateClosedFullStateOracleTest {
         }
     }
 
-    private fun concurrentExecute(url: String, operation: (SqlDelightImportSpineStore) -> Any): List<Any> =
-        concurrentExecute(url, listOf(operation, operation))
+    private fun concurrentExecute(
+        url: String,
+        operation: (SqlDelightImportSpineStore) -> Any,
+    ): List<Any> = concurrentExecute(url, listOf(operation, operation))
 }

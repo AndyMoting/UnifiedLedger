@@ -24,63 +24,75 @@ import com.unifiedledger.domain.createMixedPaymentExpense
 class MixedPaymentFlowFormalFactory(
     val catalog: LedgerCatalog,
 ) : ImportCandidateFormalFactory {
-
     override fun create(
         input: ImportCandidateFormalizationInput,
         ids: ImportCommitIds,
     ): DomainResult<ImportFormalCommit> {
-        val fields = input.decisionFields as? ImportConfirmDecisionFields.MixedPaymentFlow
-            ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        val fields =
+            input.decisionFields as? ImportConfirmDecisionFields.MixedPaymentFlow
+                ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
         if (ids.formalIds.postingIds.size != 3) {
             return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
         }
-        val assetLegMinor = fields.assetLegMinor
-            ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
-        val creditLegMinor = fields.creditLegMinor
-            ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
-        val targetCurrency = catalog.accounts.firstOrNull {
-            it.id == fields.assetAccountId && it.ledgerId == input.ledgerId
-        }?.currency
-            ?: return DomainResult.Failure(com.unifiedledger.domain.MixedPaymentViolation.UnknownRealAccount)
+        val assetLegMinor =
+            fields.assetLegMinor
+                ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        val creditLegMinor =
+            fields.creditLegMinor
+                ?: return DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
+        val targetCurrency =
+            catalog.accounts
+                .firstOrNull {
+                    it.id == fields.assetAccountId && it.ledgerId == input.ledgerId
+                }?.currency
+                ?: return DomainResult.Failure(com.unifiedledger.domain.MixedPaymentViolation.UnknownRealAccount)
         if (catalog.accounts.none { it.id == fields.creditLiabilityAccountId && it.ledgerId == input.ledgerId }) {
             return DomainResult.Failure(com.unifiedledger.domain.MixedPaymentViolation.UnknownRealAccount)
         }
         val resolved = input.resolved
-        val total = when (val normalized = normalizeImportAmountExact(resolved, targetCurrency)) {
-            is DomainResult.Success -> normalized.value
-            is DomainResult.Failure -> return DomainResult.Failure(normalized.violation)
-        }
-        val occurredAt = when (val parsed = parseImportOccurredAt(resolved.occurredAt)) {
-            is DomainResult.Success -> parsed.value
-            is DomainResult.Failure -> return DomainResult.Failure(parsed.violation)
-        }
+        val total =
+            when (val normalized = normalizeImportAmountExact(resolved, targetCurrency)) {
+                is DomainResult.Success -> normalized.value
+                is DomainResult.Failure -> return DomainResult.Failure(normalized.violation)
+            }
+        val occurredAt =
+            when (val parsed = parseImportOccurredAt(resolved.occurredAt)) {
+                is DomainResult.Success -> parsed.value
+                is DomainResult.Failure -> return DomainResult.Failure(parsed.violation)
+            }
         return when (
-            val result = createMixedPaymentExpense(
-                catalog,
-                MixedPaymentExpenseCommand(
-                    ledgerId = input.ledgerId,
-                    total = total,
-                    categoryId = fields.categoryId,
-                    funding = listOf(
-                        // D-108 freezes leg fields as target-account minor units; this
-                        // batch does not infer or rescale an independent leg precision.
-                        FundingComponent(fields.assetAccountId, Money.ofMinor(assetLegMinor, targetCurrency)),
-                        FundingComponent(fields.creditLiabilityAccountId, Money.ofMinor(creditLegMinor, targetCurrency)),
+            val result =
+                createMixedPaymentExpense(
+                    catalog,
+                    MixedPaymentExpenseCommand(
+                        ledgerId = input.ledgerId,
+                        total = total,
+                        categoryId = fields.categoryId,
+                        funding =
+                            listOf(
+                                // D-108 freezes leg fields as target-account minor units; this
+                                // batch does not infer or rescale an independent leg precision.
+                                FundingComponent(fields.assetAccountId, Money.ofMinor(assetLegMinor, targetCurrency)),
+                                FundingComponent(fields.creditLiabilityAccountId, Money.ofMinor(creditLegMinor, targetCurrency)),
+                            ),
+                        times = TransactionTimes.collapsed(occurredAt),
                     ),
-                    times = TransactionTimes.collapsed(occurredAt),
-                ),
-                MixedPaymentExpenseIds(
-                    transactionId = ids.formalIds.transactionId,
-                    versionId = ids.formalIds.versionId,
-                    postingSetId = ids.formalIds.postingSetId,
-                    expensePostingId = ids.formalIds.postingIds[0],
-                    fundingPostingIds = listOf(ids.formalIds.postingIds[1], ids.formalIds.postingIds[2]),
-                ),
-            )
+                    MixedPaymentExpenseIds(
+                        transactionId = ids.formalIds.transactionId,
+                        versionId = ids.formalIds.versionId,
+                        postingSetId = ids.formalIds.postingSetId,
+                        expensePostingId = ids.formalIds.postingIds[0],
+                        fundingPostingIds = listOf(ids.formalIds.postingIds[1], ids.formalIds.postingIds[2]),
+                    ),
+                )
         ) {
-            is DomainResult.Success -> checkedImportFormalCommit(
-                input, ids, ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction), catalog,
-            )
+            is DomainResult.Success ->
+                checkedImportFormalCommit(
+                    input,
+                    ids,
+                    ImportFormalCommit(ids.confirmationId, ids.statusHistoryId, result.value.formalTransaction),
+                    catalog,
+                )
             is DomainResult.Failure -> DomainResult.Failure(result.violation)
         }
     }

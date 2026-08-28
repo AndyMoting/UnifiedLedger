@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.Rg08ExecutionResult
 import com.unifiedledger.application.Rg08FieldPath
 import com.unifiedledger.application.Rg08FixtureCase
@@ -10,7 +11,6 @@ import com.unifiedledger.application.Rg08RejectionReason
 import com.unifiedledger.application.Rg08ReturnedId
 import com.unifiedledger.application.Rg08Runtime
 import com.unifiedledger.application.Rg08Snapshot
-import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.adaptRg08Fixture
 import com.unifiedledger.application.parseRg08FixtureInputs
 import com.unifiedledger.data.db.LedgerDatabase
@@ -65,9 +65,11 @@ class SqlDelightRg08StoreTest {
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
-                val mainBranch = fixture.operations.filter {
-                    it.id in MAIN_BRANCH_IDS
-                }.sortedBy { MAIN_BRANCH_IDS.indexOf(it.id) }
+                val mainBranch =
+                    fixture.operations
+                        .filter {
+                            it.id in MAIN_BRANCH_IDS
+                        }.sortedBy { MAIN_BRANCH_IDS.indexOf(it.id) }
                 assertEquals(22, mainBranch.size, "main branch operation count")
                 val lend = mainBranch.first { it.id == "lend" }
                 val lendIds = (lend.operation as Rg08Operation.ValidateLendingEvent).ids
@@ -98,8 +100,11 @@ class SqlDelightRg08StoreTest {
                 assertEquals(1, expectedSnapshot.settlements.size)
                 assertEquals(
                     1L,
-                    database.ledgerQueries.selectRg08AllNameHistory(fixture.ledgerId.value)
-                        .executeAsList().size.toLong(),
+                    database.ledgerQueries
+                        .selectRg08AllNameHistory(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
                 )
             }
 
@@ -134,8 +139,10 @@ class SqlDelightRg08StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
-                val manual = fixture.operations.first { it.id == "manual-collection" }
-                    .operation as Rg08Operation.ValidateLendingSettlement
+                val manual =
+                    fixture.operations
+                        .first { it.id == "manual-collection" }
+                        .operation as Rg08Operation.ValidateLendingSettlement
                 val noChange = assertIs<Rg08ExecutionResult.NoChange>(store.commit(manual))
                 assertEquals(
                     listOf(
@@ -172,9 +179,10 @@ class SqlDelightRg08StoreTest {
                 val overBalance = fixture.operations.first { it.id == "over-balance-attempt" }
                 val rejected = assertIs<Rg08ExecutionResult.Rejected>(store.commit(overBalance.operation))
                 assertEquals(Rg08RejectionReason.PRINCIPAL_EXCEEDS_OUTSTANDING_POSITION, rejected.reason)
-                val saved = database.ledgerQueries
-                    .selectRg08Operation(fixture.ledgerId.value, overBalance.operation.identity.value)
-                    .executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg08Operation(fixture.ledgerId.value, overBalance.operation.identity.value)
+                        .executeAsOne()
                 assertEquals("REJECTED", saved.outcome)
                 assertEquals("principal_exceeds_outstanding_position", saved.reason_code)
                 assertEquals(2L, database.ledgerQueries.countRg08Operations(fixture.ledgerId.value).executeAsOne())
@@ -188,11 +196,13 @@ class SqlDelightRg08StoreTest {
                 assertEquals(rejected, store.commit(overBalance.operation))
                 // A changed fingerprint on the same identity is a conflict.
                 val allocate = overBalance.operation as Rg08Operation.AllocateLendingCollection
-                val changed = allocate.copy(
-                    input = allocate.input.copy(
-                        interestAmount = Money.ofMinor(501L, cny),
-                    ),
-                )
+                val changed =
+                    allocate.copy(
+                        input =
+                            allocate.input.copy(
+                                interestAmount = Money.ofMinor(501L, cny),
+                            ),
+                    )
                 assertEquals(Rg08ExecutionResult.RequestIdentityConflict, store.commit(changed))
             }
         } finally {
@@ -217,23 +227,28 @@ class SqlDelightRg08StoreTest {
                 val store = store(database, driver, fixture)
                 val lend = fixture.operations.first { it.id == "lend" }
                 assertIs<Rg08ExecutionResult.Accepted>(store.commit(lend.operation), lend.id)
-                val manual = fixture.operations.first { it.id == "manual-collection" }
-                    .operation as Rg08Operation.ValidateLendingSettlement
+                val manual =
+                    fixture.operations
+                        .first { it.id == "manual-collection" }
+                        .operation as Rg08Operation.ValidateLendingSettlement
                 val cny = CurrencyUnit("CNY", 2)
-                val zeroPrincipal = manual.copy(
-                    input = manual.input.copy(
-                        requestId = RequestId("request-rg08-zero-principal"),
-                        totalReceived = Money.ofMinor(500L, cny),
-                        principalAmount = Money.ofMinor(0L, cny),
-                        interestAmount = Money.ofMinor(500L, cny),
-                    ),
-                )
+                val zeroPrincipal =
+                    manual.copy(
+                        input =
+                            manual.input.copy(
+                                requestId = RequestId("request-rg08-zero-principal"),
+                                totalReceived = Money.ofMinor(500L, cny),
+                                principalAmount = Money.ofMinor(0L, cny),
+                                interestAmount = Money.ofMinor(500L, cny),
+                            ),
+                    )
                 val rejected = assertIs<Rg08ExecutionResult.Rejected>(store.commit(zeroPrincipal))
                 assertEquals(Rg08RejectionReason.PRINCIPAL_MUST_BE_POSITIVE, rejected.reason)
                 assertEquals(Rg08FieldPath.INPUT_PRINCIPAL_AMOUNT, rejected.fieldPath)
-                val saved = database.ledgerQueries
-                    .selectRg08Operation(fixture.ledgerId.value, zeroPrincipal.identity.value)
-                    .executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg08Operation(fixture.ledgerId.value, zeroPrincipal.identity.value)
+                        .executeAsOne()
                 assertEquals("REJECTED", saved.outcome)
                 assertEquals("principal_must_be_positive", saved.reason_code)
                 assertEquals(2L, database.ledgerQueries.countRg08Operations(fixture.ledgerId.value).executeAsOne())
@@ -259,19 +274,27 @@ class SqlDelightRg08StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val failing = store(
-                    database,
-                    driver,
-                    fixture,
-                    Rg08FailureInjector { point ->
-                        if (point == Rg08FailurePoint.AFTER_CLAIM) error("injected RG-08 claim failure")
-                    },
-                )
+                val failing =
+                    store(
+                        database,
+                        driver,
+                        fixture,
+                        Rg08FailureInjector { point ->
+                            if (point == Rg08FailurePoint.AFTER_CLAIM) error("injected RG-08 claim failure")
+                        },
+                    )
                 val lend = fixture.operations.first { it.id == "lend" }
                 assertFailsWith<IllegalStateException> { failing.commit(lend.operation) }
                 assertEquals(0L, database.ledgerQueries.countRg08Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg08FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg08AllPositions(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg08AllPositions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -296,20 +319,35 @@ class SqlDelightRg08StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val failing = store(
-                    database,
-                    driver,
-                    fixture,
-                    Rg08FailureInjector { point ->
-                        if (point == Rg08FailurePoint.AFTER_DELTA) error("injected RG-08 delta failure")
-                    },
-                )
+                val failing =
+                    store(
+                        database,
+                        driver,
+                        fixture,
+                        Rg08FailureInjector { point ->
+                            if (point == Rg08FailurePoint.AFTER_DELTA) error("injected RG-08 delta failure")
+                        },
+                    )
                 val lend = fixture.operations.first { it.id == "lend" }
                 assertFailsWith<IllegalStateException> { failing.commit(lend.operation) }
                 assertEquals(0L, database.ledgerQueries.countRg08Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg08FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg08AllPositions(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg08AllSettlements(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg08AllPositions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg08AllSettlements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -339,29 +377,44 @@ class SqlDelightRg08StoreTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
-                val failing = store(
-                    database,
-                    driver,
-                    fixture,
-                    Rg08FailureInjector { point ->
-                        if (point == Rg08FailurePoint.AFTER_DELTA) {
-                            // The lend delta is already persisted inside the commit
-                            // transaction; this UPDATE violates rg08_position_guard_update
-                            // (new principal balance must be <= old and match the newest
-                            // COLLECT history row), aborting the whole transaction. The
-                            // generated query executes eagerly, so the trigger abort
-                            // propagates from this call.
-                            database.ledgerQueries
-                                .updateRg08PositionBalance(9_999L, fixture.ledgerId.value, "lending-position-rg08")
-                        }
-                    },
-                )
+                val failing =
+                    store(
+                        database,
+                        driver,
+                        fixture,
+                        Rg08FailureInjector { point ->
+                            if (point == Rg08FailurePoint.AFTER_DELTA) {
+                                // The lend delta is already persisted inside the commit
+                                // transaction; this UPDATE violates rg08_position_guard_update
+                                // (new principal balance must be <= old and match the newest
+                                // COLLECT history row), aborting the whole transaction. The
+                                // generated query executes eagerly, so the trigger abort
+                                // propagates from this call.
+                                database.ledgerQueries
+                                    .updateRg08PositionBalance(9_999L, fixture.ledgerId.value, "lending-position-rg08")
+                            }
+                        },
+                    )
                 val lend = fixture.operations.first { it.id == "lend" }
                 assertFailsWith<SQLException> { failing.commit(lend.operation) }
                 assertEquals(0L, database.ledgerQueries.countRg08Operations(fixture.ledgerId.value).executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countRg08FormalTransactions(fixture.ledgerId.value).executeAsOne())
-                assertEquals(0L, database.ledgerQueries.selectRg08AllPositions(fixture.ledgerId.value).executeAsList().size.toLong())
-                assertEquals(0L, database.ledgerQueries.selectRg08AllSettlements(fixture.ledgerId.value).executeAsList().size.toLong())
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg08AllPositions(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
+                assertEquals(
+                    0L,
+                    database.ledgerQueries
+                        .selectRg08AllSettlements(fixture.ledgerId.value)
+                        .executeAsList()
+                        .size
+                        .toLong(),
+                )
             }
 
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
@@ -390,8 +443,9 @@ class SqlDelightRg08StoreTest {
                 val database = LedgerDatabase(driver)
                 val store = store(database, driver, fixture)
                 val lend = fixture.operations.first { it.id == "lend" }.operation as Rg08Operation.ValidateLendingEvent
-                val fingerprint = Rg08Runtime(fixture.catalog, fixture.lendingCatalog, emptyList())
-                    .operationFingerprint(lend)
+                val fingerprint =
+                    Rg08Runtime(fixture.catalog, fixture.lendingCatalog, emptyList())
+                        .operationFingerprint(lend)
                 database.ledgerQueries.insertRg08Operation(
                     fixture.ledgerId.value,
                     lend.identity.value,
@@ -404,13 +458,18 @@ class SqlDelightRg08StoreTest {
                 )
                 val error = assertFailsWith<IllegalStateException> { store.commit(lend) }
                 assertTrue(error.message!!.contains("still pending"), "error names the pending state")
-                val saved = database.ledgerQueries
-                    .selectRg08Operation(fixture.ledgerId.value, lend.identity.value)
-                    .executeAsOne()
+                val saved =
+                    database.ledgerQueries
+                        .selectRg08Operation(fixture.ledgerId.value, lend.identity.value)
+                        .executeAsOne()
                 assertEquals("PENDING", saved.outcome)
-                assertEquals(0, database.ledgerQueries
-                    .selectRg08ReturnedIds(fixture.ledgerId.value, lend.identity.value)
-                    .executeAsList().size)
+                assertEquals(
+                    0,
+                    database.ledgerQueries
+                        .selectRg08ReturnedIds(fixture.ledgerId.value, lend.identity.value)
+                        .executeAsList()
+                        .size,
+                )
                 assertEquals(1L, database.ledgerQueries.countRg08FormalTransactions(fixture.ledgerId.value).executeAsOne())
             }
         } finally {
@@ -530,14 +589,18 @@ class SqlDelightRg08StoreTest {
                 assertEquals(4, expectedFinal.evidenceLinks.size)
                 assertEquals(
                     setOf("evidence-rg08-import-credit"),
-                    expectedFinal.auditLinks.filter { it.kind == LendingAuditLinkKind.MIRROR_OF_EVIDENCE }
-                        .map { it.toId }.toSet(),
+                    expectedFinal.auditLinks
+                        .filter { it.kind == LendingAuditLinkKind.MIRROR_OF_EVIDENCE }
+                        .map { it.toId }
+                        .toSet(),
                     "mirror-of-evidence audit links",
                 )
                 assertEquals(
                     setOf("evidence-link-rg08-import-posting"),
-                    expectedFinal.auditLinks.filter { it.kind == LendingAuditLinkKind.MERGED_INTO_EVIDENCE_LINK }
-                        .map { it.toId }.toSet(),
+                    expectedFinal.auditLinks
+                        .filter { it.kind == LendingAuditLinkKind.MERGED_INTO_EVIDENCE_LINK }
+                        .map { it.toId }
+                        .toSet(),
                     "merged-into-evidence-link audit links",
                 )
                 assertEquals(6_000L, expectedFinal.positions.single().principalBalanceMinor)
@@ -558,14 +621,15 @@ class SqlDelightRg08StoreTest {
         driver: JdbcSqliteDriver,
         fixture: Rg08FixtureCase,
         failureInjector: Rg08FailureInjector = Rg08FailureInjector { },
-    ): SqlDelightRg08Store = SqlDelightRg08Store(
-        database,
-        driver,
-        fixture.catalog,
-        fixture.lendingCatalog,
-        fixture.openingTransactions,
-        failureInjector,
-    )
+    ): SqlDelightRg08Store =
+        SqlDelightRg08Store(
+            database,
+            driver,
+            fixture.catalog,
+            fixture.lendingCatalog,
+            fixture.openingTransactions,
+            failureInjector,
+        )
 
     /**
      * Structural comparison of a snapshot taken before and after a database reopen.
@@ -595,16 +659,18 @@ class SqlDelightRg08StoreTest {
         assertEquals(expected.counterpartyNames, actual.counterpartyNames)
     }
 
-    private fun formalProjection(record: Rg08FormalTransactionRecord) = FormalRecordProjection(
-        transaction = record.formalTransaction.transaction,
-        versions = record.formalTransaction.versions,
-        postingSets = record.formalTransaction.postingSets.map {
-            PostingSetProjection(it.id, it.postings)
-        },
-        createdAt = record.createdAt,
-        createdAtText = record.createdAtText,
-        statisticsAtText = record.statisticsAtText,
-    )
+    private fun formalProjection(record: Rg08FormalTransactionRecord) =
+        FormalRecordProjection(
+            transaction = record.formalTransaction.transaction,
+            versions = record.formalTransaction.versions,
+            postingSets =
+                record.formalTransaction.postingSets.map {
+                    PostingSetProjection(it.id, it.postings)
+                },
+            createdAt = record.createdAt,
+            createdAtText = record.createdAtText,
+            statisticsAtText = record.statisticsAtText,
+        )
 
     private data class FormalRecordProjection(
         val transaction: Transaction,
@@ -635,9 +701,10 @@ class SqlDelightRg08StoreTest {
         error("repository root not found")
     }
 
-    private fun sqliteProperties() = Properties().apply {
-        setProperty("foreign_keys", "true")
-    }
+    private fun sqliteProperties() =
+        Properties().apply {
+            setProperty("foreign_keys", "true")
+        }
 
     private companion object {
         /**
@@ -646,36 +713,38 @@ class SqlDelightRg08StoreTest {
          * attempt and the 18 invalid inputs reject on their inputs (state-independent), and
          * the rename accepts with zero formal effect.
          */
-        val MAIN_BRANCH_IDS = listOf(
-            "lend",
-            "manual-collection",
-            "over-balance-attempt",
-            "rename-counterparty",
-            "floating-total",
-            "zero-total",
-            "negative-total",
-            "component-sum-mismatch",
-            "negative-principal",
-            "negative-interest",
-            "negative-fee",
-            "positive-fee",
-            "principal-over-balance",
-            "unknown-destination",
-            "unowned-destination",
-            "nonfinancial-destination",
-            "unknown-funding-account",
-            "unknown-counterparty",
-            "invalid-behavior",
-            "guessed-split",
-            "cross-currency",
-            "inactive-interest-category",
-        )
+        val MAIN_BRANCH_IDS =
+            listOf(
+                "lend",
+                "manual-collection",
+                "over-balance-attempt",
+                "rename-counterparty",
+                "floating-total",
+                "zero-total",
+                "negative-total",
+                "component-sum-mismatch",
+                "negative-principal",
+                "negative-interest",
+                "negative-fee",
+                "positive-fee",
+                "principal-over-balance",
+                "unknown-destination",
+                "unowned-destination",
+                "nonfinancial-destination",
+                "unknown-funding-account",
+                "unknown-counterparty",
+                "invalid-behavior",
+                "guessed-split",
+                "cross-currency",
+                "inactive-interest-category",
+            )
 
         /** The main branch operations that accept (used for the idempotent replay test). */
-        val ACCEPTED_MAIN_BRANCH_IDS = listOf(
-            "lend",
-            "manual-collection",
-            "rename-counterparty",
-        )
+        val ACCEPTED_MAIN_BRANCH_IDS =
+            listOf(
+                "lend",
+                "manual-collection",
+                "rename-counterparty",
+            )
     }
 }

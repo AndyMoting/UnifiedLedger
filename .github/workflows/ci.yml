@@ -29,6 +29,8 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
       - name: Gradle check
         run: ./gradlew check --warning-mode all
+      - name: Ktlint check
+        run: ./gradlew ktlintCheck --warning-mode all
       - name: SQLDelight migration
         run: ./gradlew :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
 

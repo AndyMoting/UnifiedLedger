@@ -17,8 +17,9 @@ data class TransactionNoteUpdateIds(
 fun FormalTransaction.replaceNote(
     command: TransactionNoteUpdateCommand,
     ids: TransactionNoteUpdateIds,
-): DomainResult<FormalTransaction> = appendVersion(
-    change = TransactionVersionChange.Note(command.note),
-    ids = TransactionVersionAppendIds(versionId = ids.versionId),
-    newPostingSetId = null,
-)
+): DomainResult<FormalTransaction> =
+    appendVersion(
+        change = TransactionVersionChange.Note(command.note),
+        ids = TransactionVersionAppendIds(versionId = ids.versionId),
+        newPostingSetId = null,
+    )

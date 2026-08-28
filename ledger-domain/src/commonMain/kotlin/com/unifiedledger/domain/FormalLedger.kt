@@ -24,7 +24,8 @@ class PostingSet private constructor(
             val totals = mutableMapOf<CurrencyUnit, ExactLongAccumulator>()
             for (posting in postings) {
                 val currency = posting.amount.currency
-                totals.getOrPut(currency, ::ExactLongAccumulator)
+                totals
+                    .getOrPut(currency, ::ExactLongAccumulator)
                     .add(posting.amount.minorUnits)
             }
 
@@ -137,8 +138,9 @@ private fun validateFormalChain(
     if (sortedVersionNumbers.withIndex().any { (index, number) -> number != index + 1 }) return false
     if (versions.any { it.postingSetId !in postingSetsById }) return false
 
-    val currentVersion = versionsById[transaction.currentVersionId]
-        ?: return false
+    val currentVersion =
+        versionsById[transaction.currentVersionId]
+            ?: return false
     if (currentVersion.versionNumber != versions.size) return false
     return true
 }

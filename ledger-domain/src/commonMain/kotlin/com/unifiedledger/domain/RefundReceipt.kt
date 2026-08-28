@@ -33,45 +33,66 @@ fun createRefundReceipt(
     if (command.amount.minorUnits <= 0L) {
         return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     }
-    val category = catalog.category(command.categoryId)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val parent = category.parentId?.let(catalog::category)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val expenseAccount = category.postingAccountId?.let(catalog::account)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val destination = catalog.account(command.destinationAccountId)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val category =
+        catalog.category(command.categoryId)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val parent =
+        category.parentId?.let(catalog::category)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val expenseAccount =
+        category.postingAccountId?.let(catalog::account)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val destination =
+        catalog.account(command.destinationAccountId)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     if (
-        category.ledgerId != command.ledgerId || category.kind != CategoryKind.EXPENSE ||
-        !category.active || parent.ledgerId != command.ledgerId || parent.parentId != null ||
-        parent.kind != CategoryKind.EXPENSE || expenseAccount.ledgerId != command.ledgerId ||
-        expenseAccount.kind != AccountKind.EXPENSE || expenseAccount.realAccount ||
-        expenseAccount.currency != command.amount.currency || destination.ledgerId != command.ledgerId ||
-        destination.kind != AccountKind.ASSET || !destination.ownedByUser || !destination.realAccount ||
+        category.ledgerId != command.ledgerId ||
+        category.kind != CategoryKind.EXPENSE ||
+        !category.active ||
+        parent.ledgerId != command.ledgerId ||
+        parent.parentId != null ||
+        parent.kind != CategoryKind.EXPENSE ||
+        expenseAccount.ledgerId != command.ledgerId ||
+        expenseAccount.kind != AccountKind.EXPENSE ||
+        expenseAccount.realAccount ||
+        expenseAccount.currency != command.amount.currency ||
+        destination.ledgerId != command.ledgerId ||
+        destination.kind != AccountKind.ASSET ||
+        !destination.ownedByUser ||
+        !destination.realAccount ||
         destination.currency != command.amount.currency
     ) {
         return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     }
-    val expenseMinor = checkedNegate(command.amount.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val postingSet = when (val result = PostingSet.create(
-        ids.postingSetId,
-        listOf(
-            Posting(ids.destinationPostingId, destination.id, command.amount),
-            Posting(ids.expensePostingId, expenseAccount.id, Money.ofMinor(expenseMinor, command.amount.currency)),
-        ),
-    )) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> return result
-    }
-    val formal = when (val result = FormalTransaction.create(
-        Transaction(ids.transactionId, command.ledgerId, TransactionKind.REFUND_RECEIPT, ids.versionId),
-        listOf(TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times)),
-        listOf(postingSet),
-    )) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> return result
-    }
+    val expenseMinor =
+        checkedNegate(command.amount.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val postingSet =
+        when (
+            val result =
+                PostingSet.create(
+                    ids.postingSetId,
+                    listOf(
+                        Posting(ids.destinationPostingId, destination.id, command.amount),
+                        Posting(ids.expensePostingId, expenseAccount.id, Money.ofMinor(expenseMinor, command.amount.currency)),
+                    ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> return result
+        }
+    val formal =
+        when (
+            val result =
+                FormalTransaction.create(
+                    Transaction(ids.transactionId, command.ledgerId, TransactionKind.REFUND_RECEIPT, ids.versionId),
+                    listOf(TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times)),
+                    listOf(postingSet),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> return result
+        }
     return DomainResult.Success(
         RefundReceipt(formal, command.originalTransactionId, command.categoryId, ids.destinationPostingId, ids.expensePostingId),
     )
@@ -143,53 +164,75 @@ fun createCreditRefundReceipt(
     ) {
         return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     }
-    val category = catalog.category(command.categoryId)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val parent = category.parentId?.let(catalog::category)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val expenseAccount = category.postingAccountId?.let(catalog::account)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
-    val liability = catalog.account(command.creditLiabilityAccountId)
-        ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val category =
+        catalog.category(command.categoryId)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val parent =
+        category.parentId?.let(catalog::category)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val expenseAccount =
+        category.postingAccountId?.let(catalog::account)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val liability =
+        catalog.account(command.creditLiabilityAccountId)
+            ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     if (
-        category.ledgerId != command.ledgerId || category.kind != CategoryKind.EXPENSE ||
-        !category.active || parent.ledgerId != command.ledgerId || parent.parentId != null ||
-        parent.kind != CategoryKind.EXPENSE || expenseAccount.ledgerId != command.ledgerId ||
-        expenseAccount.kind != AccountKind.EXPENSE || expenseAccount.realAccount ||
-        expenseAccount.currency != command.amount.currency || liability.ledgerId != command.ledgerId ||
-        liability.kind != AccountKind.LIABILITY || !liability.ownedByUser || !liability.realAccount ||
+        category.ledgerId != command.ledgerId ||
+        category.kind != CategoryKind.EXPENSE ||
+        !category.active ||
+        parent.ledgerId != command.ledgerId ||
+        parent.parentId != null ||
+        parent.kind != CategoryKind.EXPENSE ||
+        expenseAccount.ledgerId != command.ledgerId ||
+        expenseAccount.kind != AccountKind.EXPENSE ||
+        expenseAccount.realAccount ||
+        expenseAccount.currency != command.amount.currency ||
+        liability.ledgerId != command.ledgerId ||
+        liability.kind != AccountKind.LIABILITY ||
+        !liability.ownedByUser ||
+        !liability.realAccount ||
         liability.currency != command.amount.currency
     ) {
         return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     }
     // Category-inheritance rule (ii): the refund category must be the secondary
     // expense category currently backing the original transaction's expense leg.
-    val originalCategory = catalog.categories.firstOrNull {
-        it.kind == CategoryKind.EXPENSE && it.parentId != null && it.postingAccountId == original.currentExpensePostingAccountId
-    } ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
+    val originalCategory =
+        catalog.categories.firstOrNull {
+            it.kind == CategoryKind.EXPENSE && it.parentId != null && it.postingAccountId == original.currentExpensePostingAccountId
+        } ?: return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     if (originalCategory.id != command.categoryId) {
         return DomainResult.Failure(DomainViolation.InvalidRefundReceipt)
     }
-    val expenseMinor = checkedNegate(command.amount.minorUnits)
-        ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
-    val postingSet = when (val result = PostingSet.create(
-        ids.postingSetId,
-        listOf(
-            Posting(ids.creditLiabilityPostingId, liability.id, command.amount),
-            Posting(ids.expensePostingId, expenseAccount.id, Money.ofMinor(expenseMinor, command.amount.currency)),
-        ),
-    )) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> return result
-    }
-    val formal = when (val result = FormalTransaction.create(
-        Transaction(ids.transactionId, command.ledgerId, TransactionKind.REFUND_RECEIPT, ids.versionId),
-        listOf(TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times)),
-        listOf(postingSet),
-    )) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> return result
-    }
+    val expenseMinor =
+        checkedNegate(command.amount.minorUnits)
+            ?: return DomainResult.Failure(DomainViolation.ArithmeticOverflow)
+    val postingSet =
+        when (
+            val result =
+                PostingSet.create(
+                    ids.postingSetId,
+                    listOf(
+                        Posting(ids.creditLiabilityPostingId, liability.id, command.amount),
+                        Posting(ids.expensePostingId, expenseAccount.id, Money.ofMinor(expenseMinor, command.amount.currency)),
+                    ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> return result
+        }
+    val formal =
+        when (
+            val result =
+                FormalTransaction.create(
+                    Transaction(ids.transactionId, command.ledgerId, TransactionKind.REFUND_RECEIPT, ids.versionId),
+                    listOf(TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times)),
+                    listOf(postingSet),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> return result
+        }
     return DomainResult.Success(
         CreditRefundReceipt(formal, command.originalTransactionId, command.categoryId, ids.creditLiabilityPostingId, ids.expensePostingId),
     )

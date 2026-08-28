@@ -17,20 +17,28 @@ class P408MatcherTest {
 
         assertEquals(P408MatchDisposition.PROPOSED_MATCH, result.disposition)
         assertEquals(listOf("p-1"), result.candidates.map { it.posting.postingId })
-        assertEquals(2L, result.candidates.single().basis.naturalDayDistance)
+        assertEquals(
+            2L,
+            result.candidates
+                .single()
+                .basis.naturalDayDistance,
+        )
         assertEquals(P408MatchConfidence.EXACT, result.candidates.single().confidence)
         assertEquals(
             setOf("amount", "currency", "direction", "account", "occurred_at_window"),
-            result.candidates.single().basis.fields,
+            result.candidates
+                .single()
+                .basis.fields,
         )
     }
 
     @Test
     fun candidateOutsideWindowIsNotMatched() {
-        val result = matcher.match(
-            evidence("e-2", "2026-08-10T12:00:00+08:00"),
-            listOf(posting("p-2", "2026-08-13T12:00:00+08:00")),
-        )
+        val result =
+            matcher.match(
+                evidence("e-2", "2026-08-10T12:00:00+08:00"),
+                listOf(posting("p-2", "2026-08-13T12:00:00+08:00")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
@@ -38,10 +46,11 @@ class P408MatcherTest {
 
     @Test
     fun sameAmountDifferentFundingFactDoesNotMatch() {
-        val result = matcher.match(
-            evidence("e-3", "2026-08-10T12:00:00+08:00"),
-            listOf(posting("p-3", "2026-08-10T12:00:00+08:00", accountId = "other-account")),
-        )
+        val result =
+            matcher.match(
+                evidence("e-3", "2026-08-10T12:00:00+08:00"),
+                listOf(posting("p-3", "2026-08-10T12:00:00+08:00", accountId = "other-account")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
     }
@@ -49,13 +58,14 @@ class P408MatcherTest {
     @Test
     fun multipleCandidatesDeferWithoutChoosingOne() {
         val evidence = evidence("e-4", "2026-08-10T12:00:00+08:00")
-        val result = matcher.match(
-            evidence,
-            listOf(
-                posting("p-2", "2026-08-11T12:00:00+08:00"),
-                posting("p-1", "2026-08-10T12:30:00+08:00"),
-            ),
-        )
+        val result =
+            matcher.match(
+                evidence,
+                listOf(
+                    posting("p-2", "2026-08-11T12:00:00+08:00"),
+                    posting("p-1", "2026-08-10T12:30:00+08:00"),
+                ),
+            )
 
         assertEquals(P408MatchDisposition.AMBIGUOUS, result.disposition)
         assertEquals(listOf("p-1", "p-2"), result.candidates.map { it.posting.postingId })
@@ -64,23 +74,26 @@ class P408MatcherTest {
 
     @Test
     fun ambiguousReasonTakesPrecedenceOverUnresolvedCompetitor() {
-        val unresolved = posting("p-unresolved", "2026-08-10T12:00:00+08:00").copy(
-            occurredAt = P408TemporalEvidence(
-                "2026-08-10 12:00:00",
-                "local_datetime",
-                false,
-                null,
-                null,
-            ),
-        )
-        val result = matcher.match(
-            evidence("e-amb", "2026-08-10T12:00:00+08:00"),
-            listOf(
-                posting("p-a", "2026-08-10T12:00:00+08:00"),
-                posting("p-b", "2026-08-11T12:00:00+08:00"),
-                unresolved,
-            ),
-        )
+        val unresolved =
+            posting("p-unresolved", "2026-08-10T12:00:00+08:00").copy(
+                occurredAt =
+                    P408TemporalEvidence(
+                        "2026-08-10 12:00:00",
+                        "local_datetime",
+                        false,
+                        null,
+                        null,
+                    ),
+            )
+        val result =
+            matcher.match(
+                evidence("e-amb", "2026-08-10T12:00:00+08:00"),
+                listOf(
+                    posting("p-a", "2026-08-10T12:00:00+08:00"),
+                    posting("p-b", "2026-08-11T12:00:00+08:00"),
+                    unresolved,
+                ),
+            )
 
         assertEquals(P408MatchDisposition.AMBIGUOUS, result.disposition)
         assertEquals("ambiguous_multiple_candidates", result.reason)
@@ -89,20 +102,27 @@ class P408MatcherTest {
 
     @Test
     fun naturalDayUsesConfiguredLocalOffsetAcrossUtcMidnight() {
-        val result = matcher.match(
-            evidence("e-5", "2026-08-10T23:30:00+08:00"),
-            listOf(posting("p-5", "2026-08-11T00:15:00+08:00")),
-        )
+        val result =
+            matcher.match(
+                evidence("e-5", "2026-08-10T23:30:00+08:00"),
+                listOf(posting("p-5", "2026-08-11T00:15:00+08:00")),
+            )
 
         assertEquals(P408MatchDisposition.PROPOSED_MATCH, result.disposition)
-        assertEquals(1L, result.candidates.single().basis.naturalDayDistance)
+        assertEquals(
+            1L,
+            result.candidates
+                .single()
+                .basis.naturalDayDistance,
+        )
     }
 
     @Test
     fun missingSourceOffsetRemainsUnresolved() {
-        val source = evidence("e-6", "2026-08-10T12:00:00+08:00").copy(
-            occurredAt = P408TemporalEvidence("2026-08-10 12:00:00", "local_datetime", false, null, null),
-        )
+        val source =
+            evidence("e-6", "2026-08-10T12:00:00+08:00").copy(
+                occurredAt = P408TemporalEvidence("2026-08-10 12:00:00", "local_datetime", false, null, null),
+            )
         val result = matcher.match(source, listOf(posting("p-6", "2026-08-10T12:00:00+08:00")))
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
@@ -112,20 +132,23 @@ class P408MatcherTest {
     @Test
     fun unresolvedCompetingPostingPreventsUniqueProposal() {
         val comparable = posting("p-comparable", "2026-08-10T12:00:00+08:00")
-        val unresolved = posting("p-unresolved", "2026-08-10T12:00:00+08:00").copy(
-            occurredAt = P408TemporalEvidence(
-                "2026-08-10 12:00:00",
-                "local_datetime",
-                false,
-                null,
-                null,
-            ),
-        )
+        val unresolved =
+            posting("p-unresolved", "2026-08-10T12:00:00+08:00").copy(
+                occurredAt =
+                    P408TemporalEvidence(
+                        "2026-08-10 12:00:00",
+                        "local_datetime",
+                        false,
+                        null,
+                        null,
+                    ),
+            )
 
-        val result = matcher.match(
-            evidence("e-7", "2026-08-10T12:00:00+08:00"),
-            listOf(comparable, unresolved),
-        )
+        val result =
+            matcher.match(
+                evidence("e-7", "2026-08-10T12:00:00+08:00"),
+                listOf(comparable, unresolved),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertEquals(listOf("p-comparable"), result.candidates.map { it.posting.postingId })
@@ -135,16 +158,17 @@ class P408MatcherTest {
     @Test
     fun onlyCurrentEligiblePostingOwnedByLedgerCanMatch() {
         val base = posting("p-valid", "2026-08-10T12:00:00+08:00")
-        val result = matcher.match(
-            evidence("e-8", "2026-08-10T12:00:00+08:00"),
-            listOf(
-                base.copy(postingId = "p-other-ledger", ledgerId = "other-ledger"),
-                base.copy(postingId = "p-other-transaction-ledger", transactionLedgerId = "other-ledger"),
-                base.copy(postingId = "p-ineligible", eligibleRealAccount = false),
-                base.copy(postingId = "p-superseded", current = false),
-                base,
-            ),
-        )
+        val result =
+            matcher.match(
+                evidence("e-8", "2026-08-10T12:00:00+08:00"),
+                listOf(
+                    base.copy(postingId = "p-other-ledger", ledgerId = "other-ledger"),
+                    base.copy(postingId = "p-other-transaction-ledger", transactionLedgerId = "other-ledger"),
+                    base.copy(postingId = "p-ineligible", eligibleRealAccount = false),
+                    base.copy(postingId = "p-superseded", current = false),
+                    base,
+                ),
+            )
 
         assertEquals(P408MatchDisposition.PROPOSED_MATCH, result.disposition)
         assertEquals(listOf("p-valid"), result.candidates.map { it.posting.postingId })
@@ -152,10 +176,11 @@ class P408MatcherTest {
 
     @Test
     fun signedPostingAmountMustAgreeWithDirection() {
-        val result = matcher.match(
-            evidence("e-9", "2026-08-10T12:00:00+08:00"),
-            listOf(posting("p-wrong-sign", "2026-08-10T12:00:00+08:00").copy(amountMinor = 1_000)),
-        )
+        val result =
+            matcher.match(
+                evidence("e-9", "2026-08-10T12:00:00+08:00"),
+                listOf(posting("p-wrong-sign", "2026-08-10T12:00:00+08:00").copy(amountMinor = 1_000)),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
@@ -163,10 +188,11 @@ class P408MatcherTest {
 
     @Test
     fun sameInstantWithDifferentSourceTokenRemainsUnresolved() {
-        val result = matcher.match(
-            evidence("e-10", "2026-08-10T12:00:00+08:00"),
-            listOf(posting("p-token", "2026-08-10T04:00:00Z")),
-        )
+        val result =
+            matcher.match(
+                evidence("e-10", "2026-08-10T12:00:00+08:00"),
+                listOf(posting("p-token", "2026-08-10T04:00:00Z")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
@@ -174,14 +200,15 @@ class P408MatcherTest {
 
     @Test
     fun unsupportedTemporalKindFailsClosed() {
-        val result = matcher.match(
-            evidence("e-11", "2026-08-10T12:00:00+08:00"),
-            listOf(
-                posting("p-kind", "2026-08-10T12:00:00+08:00").copy(
-                    occurredAt = temporal("2026-08-10T12:00:00+08:00").copy(kind = "garbage"),
+        val result =
+            matcher.match(
+                evidence("e-11", "2026-08-10T12:00:00+08:00"),
+                listOf(
+                    posting("p-kind", "2026-08-10T12:00:00+08:00").copy(
+                        occurredAt = temporal("2026-08-10T12:00:00+08:00").copy(kind = "garbage"),
+                    ),
                 ),
-            ),
-        )
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
@@ -189,16 +216,18 @@ class P408MatcherTest {
 
     @Test
     fun componentsMustAgreeWithRawSourceToken() {
-        val result = matcher.match(
-            evidence("e-12", "2026-08-10T12:00:00+08:00"),
-            listOf(
-                posting("p-components", "2026-08-10T12:00:00+08:00").copy(
-                    occurredAt = temporal("2026-08-10T12:00:00+08:00").copy(
-                        components = P408TemporalComponents(2026, 8, 11, 12, 0, 0),
+        val result =
+            matcher.match(
+                evidence("e-12", "2026-08-10T12:00:00+08:00"),
+                listOf(
+                    posting("p-components", "2026-08-10T12:00:00+08:00").copy(
+                        occurredAt =
+                            temporal("2026-08-10T12:00:00+08:00").copy(
+                                components = P408TemporalComponents(2026, 8, 11, 12, 0, 0),
+                            ),
                     ),
                 ),
-            ),
-        )
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
@@ -207,10 +236,11 @@ class P408MatcherTest {
     @Test
     fun zeroDayWindowRequiresTheSameNaturalDay() {
         val zeroDayMatcher = P408Matcher(windowDays = 0)
-        val result = zeroDayMatcher.match(
-            evidence("e-13", "2026-08-10T23:30:00+08:00"),
-            listOf(posting("p-zero", "2026-08-11T00:15:00+08:00")),
-        )
+        val result =
+            zeroDayMatcher.match(
+                evidence("e-13", "2026-08-10T23:30:00+08:00"),
+                listOf(posting("p-zero", "2026-08-11T00:15:00+08:00")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
     }
@@ -218,12 +248,13 @@ class P408MatcherTest {
     @Test
     fun incompleteFundingFactsFailClosed() {
         val incomplete = evidence("e-14", "2026-08-10T12:00:00+08:00")
-        val result = matcher.match(
-            incomplete.copy(
-                normalized = incomplete.normalized.copy(targetAccountId = "", currencyPrecision = -1),
-            ),
-            listOf(posting("p-incomplete", "2026-08-10T12:00:00+08:00")),
-        )
+        val result =
+            matcher.match(
+                incomplete.copy(
+                    normalized = incomplete.normalized.copy(targetAccountId = "", currencyPrecision = -1),
+                ),
+                listOf(posting("p-incomplete", "2026-08-10T12:00:00+08:00")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertEquals("funding_facts_unresolved", result.reason)
@@ -232,10 +263,11 @@ class P408MatcherTest {
     @Test
     fun negativeSourceAmountFailsClosed() {
         val negative = evidence("e-16", "2026-08-10T12:00:00+08:00")
-        val result = matcher.match(
-            negative.copy(normalized = negative.normalized.copy(normalizedAmountMinor = -1)),
-            listOf(posting("p-negative", "2026-08-10T12:00:00+08:00")),
-        )
+        val result =
+            matcher.match(
+                negative.copy(normalized = negative.normalized.copy(normalizedAmountMinor = -1)),
+                listOf(posting("p-negative", "2026-08-10T12:00:00+08:00")),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertEquals("funding_facts_unresolved", result.reason)
@@ -244,58 +276,66 @@ class P408MatcherTest {
     @Test
     fun temporalKindMustAgreeWithOffsetToken() {
         val mislabeled = temporal("2026-08-10T12:00:00+08:00").copy(kind = "local_datetime")
-        val result = matcher.match(
-            evidence("e-15", "2026-08-10T12:00:00+08:00").copy(occurredAt = mislabeled),
-            listOf(posting("p-kind-token", "2026-08-10T12:00:00+08:00").copy(occurredAt = mislabeled)),
-        )
+        val result =
+            matcher.match(
+                evidence("e-15", "2026-08-10T12:00:00+08:00").copy(occurredAt = mislabeled),
+                listOf(posting("p-kind-token", "2026-08-10T12:00:00+08:00").copy(occurredAt = mislabeled)),
+            )
 
         assertEquals(P408MatchDisposition.UNRESOLVED, result.disposition)
         assertTrue(result.candidates.isEmpty())
     }
 
     /** Fixture helper: raw 1000@2 twins and a READY projection carrying the same values. */
-    private fun evidence(id: String, occurredAt: String): P408EvidenceFacts = P408EvidenceFacts(
-        ledgerId = "ledger",
-        evidenceId = id,
-        raw = P408RawEvidenceFacts(
-            sourceId = "src-$id",
-            contentHash = "sha256:$id",
-            amountMinor = 1_000,
-            currencyCode = "CNY",
-            currencyPrecision = 2,
-            directionToken = "out",
-        ),
-        normalized = P408NormalizedProjectionFacts(
-            projectionId = "proj-$id",
-            targetAccountId = "wallet",
-            currencyCode = "CNY",
-            currencyPrecision = 2,
-            normalizedAmountMinor = 1_000,
-            directionToken = "out",
-            ruleId = P408EvidenceProjectionPort.RULE_ID,
-            ruleVersion = P408EvidenceProjectionPort.RULE_VERSION,
-        ),
-        occurredAt = temporal(occurredAt),
-    )
+    private fun evidence(
+        id: String,
+        occurredAt: String,
+    ): P408EvidenceFacts =
+        P408EvidenceFacts(
+            ledgerId = "ledger",
+            evidenceId = id,
+            raw =
+                P408RawEvidenceFacts(
+                    sourceId = "src-$id",
+                    contentHash = "sha256:$id",
+                    amountMinor = 1_000,
+                    currencyCode = "CNY",
+                    currencyPrecision = 2,
+                    directionToken = "out",
+                ),
+            normalized =
+                P408NormalizedProjectionFacts(
+                    projectionId = "proj-$id",
+                    targetAccountId = "wallet",
+                    currencyCode = "CNY",
+                    currencyPrecision = 2,
+                    normalizedAmountMinor = 1_000,
+                    directionToken = "out",
+                    ruleId = P408EvidenceProjectionPort.RULE_ID,
+                    ruleVersion = P408EvidenceProjectionPort.RULE_VERSION,
+                ),
+            occurredAt = temporal(occurredAt),
+        )
 
     private fun posting(
         id: String,
         occurredAt: String,
         accountId: String = "wallet",
-    ): P408PostingFacts = P408PostingFacts(
-        ledgerId = "ledger",
-        postingId = id,
-        transactionId = "tx-$id",
-        transactionLedgerId = "ledger",
-        amountMinor = -1_000,
-        currencyCode = "CNY",
-        currencyPrecision = 2,
-        direction = "out",
-        accountId = accountId,
-        occurredAt = temporal(occurredAt),
-        eligibleRealAccount = true,
-        current = true,
-    )
+    ): P408PostingFacts =
+        P408PostingFacts(
+            ledgerId = "ledger",
+            postingId = id,
+            transactionId = "tx-$id",
+            transactionLedgerId = "ledger",
+            amountMinor = -1_000,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            direction = "out",
+            accountId = accountId,
+            occurredAt = temporal(occurredAt),
+            eligibleRealAccount = true,
+            current = true,
+        )
 
     private fun temporal(text: String): P408TemporalEvidence {
         val instant = Instant.parse(text)
