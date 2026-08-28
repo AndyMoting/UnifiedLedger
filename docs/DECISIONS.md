@@ -1920,7 +1920,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已批准（2026-08-29 用户裁决 UQ-1 方案 A + UQ-2 保持拆分，即契约批准）。
 
-**冻结输入：** `docs/specs/2026-08-29-p5-01-dual-platform-shell-contract-design.md`（Status: approved），冻结文本 = SHA-256（UTF-8+LF 规范域，与 D-116 同域可比）`62ae562e3642`。独立规格评审 REQUEST_CHANGES 六项全部回修，终局 CLOSURE APPROVE；distinct verifier 8/8 与 5/5 PASS。
+**冻结输入：** `docs/specs/2026-08-29-p5-01-dual-platform-shell-contract-design.md`（Status: approved），冻结文本 = SHA-256（UTF-8+LF 规范域，与 D-116 同域可比）`62ae562e3642cf72341269fbf494ff3ce96d304407bd43885580aa102a5b0e11`。独立规格评审 REQUEST_CHANGES 六项全部回修，终局 CLOSURE APPROVE；distinct verifier 8/8 与 5/5 PASS。
 
 **承接裁决登记（契约 §2 四项）：**
 
@@ -1947,4 +1947,4 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **理由：** 契约优先纪律（D-096/IMPORT-001 先例：技术栈与端口契约先冻结、后实装）；外部证据门（平台集成/生产技术变更触发，三个证据包按 D-099 六维模板组织，只入中立契约不入原始研究）；独立评审闭环（REQUEST_CHANGES 六项全部回修后 CLOSURE APPROVE，distinct verifier 8/8 与 5/5 PASS）。
 
-**关联决定：** `D-098`、`D-099`、`D-114`、`D-115`、`D-116`
+**关联决定：** `D-096`、`D-098`、`D-099`、`D-114`、`D-115`、`D-116`
