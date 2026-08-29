@@ -10,6 +10,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# GitHub-hosted runners have enough memory for the Android/KMP build, but the
+# Gradle defaults are too small for compileAndroidMain and dex merging.
+env:
+  GRADLE_OPTS: >-
+    -Dorg.gradle.jvmargs=-Xmx3g
+    -Dkotlin.daemon.jvmargs=-Xmx2g
+    -Dorg.gradle.workers.max=1
+
 jobs:
   kotlin:
     name: Kotlin tests
@@ -28,13 +36,13 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
       - name: Gradle check
-        run: ./gradlew check --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 check --warning-mode all
       - name: Ktlint check
-        run: ./gradlew ktlintCheck --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 ktlintCheck --warning-mode all
       - name: Desktop app build
-        run: ./gradlew :desktop-app:build --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 :desktop-app:build --warning-mode all
       - name: SQLDelight migration
-        run: ./gradlew :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
 
   android:
     name: Android compile
@@ -53,9 +61,9 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
       - name: Compile Android
-        run: ./gradlew :ledger-data:compileAndroidMain --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 :ledger-data:compileAndroidMain --warning-mode all
       - name: Android app assemble debug
-        run: ./gradlew :android-app:assembleDebug --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
 
   python:
     name: Python tests
