@@ -21,3 +21,4 @@ rootProject.name = "UnifiedLedger"
 include(":ledger-domain")
 include(":ledger-application")
 include(":ledger-data")
+include(":android-app", ":desktop-app")
