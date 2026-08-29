@@ -1974,3 +1974,19 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **理由：** 契约优先纪律（D-096 先例：P5-02 实施规格经用户「批准动工」后开批，独立 worktree、单一 bounded writer、独立评审 APPROVE 与 distinct verifier 闭环）；外部证据门结论已在 P5-01（D-117）登记，本批零新增第三方依赖；R-9 资源受限路径按要求上报资源控制裁决并登记，未静默改动资源控制（不静默改 CONTRIBUTING/根构建）。
 
 **关联决定：** `D-096`、`D-098`、`D-099`、`D-114`、`D-115`、`D-116`、`D-117`
+
+## D-119 P5-01/P5-02 闭环补充契约（P5-03 承接边界）
+
+**状态：** 已批准（2026-08-30 用户明确批准最终 proposal）。
+
+**冻结输入：** `docs/specs/2026-08-30-p5-01-02-closure-supplement-design.md`。经评审 proposal SHA-256 = `7A2603373469B68DF4F137411C69A916A168B142E1D9DF104B40BE9B51DFBA77`；状态翻转后的 approved 文件 SHA-256 = `cc5d5dc4d387cfebcbd20d034b723398d21f500435503c57db230753dd3c03a7`。
+
+**决定：** 批准 P5-01/P5-02 到 P5-03 的闭环补充契约。D-118 保持已交付且不重开；批准后可按规格顺序起草 P5-03 spec-only，并独立执行 `closure-evidence follow-up` 取得 P5-03 entry lifecycle evidence。该批准不授权 P5-03 代码实施，实施仍须满足 entry gate、实施规格独立评审与用户批准。
+
+**批准边界摘要：** 冻结 P5-03 的 ledger-scoped/current-version application read/options boundary、固定匿名单 CNY catalog、shared exact-decimal wrapper、独立 request UUIDv7 source、snapshot-aware unknown-commit resolution、startup fail-closed 与双平台行为/可访问性验收。UI 禁止直接访问 SQL；data adapter 只返回 ledger-signed current rows，normal-balance display 由 application 基于同一 catalog 派生。post-handoff 异常只有 matching snapshot 可恢复成功，conflict 不得误判，absent/unavailable 保持 unknown。
+
+**评审与验证：** 独立 specification review 最终 ACCEPT，`P50102-SPEC-001..007` 全部关闭；独立 quality review 最终 ACCEPT，`Q-001..007` 与 Clock gap 全部关闭；distinct verifier PASS。候选 `project_docs`、机械引用/命令/隐私检查均通过。
+
+**开放门与非授权：** Android emulator 当前不可用，安装/启动/应用私有当前 schema 数据库同版本重开证据保持 P5-03 entry 开放门；不阻止本契约批准或 P5-03 spec-only。零 schema、零迁移、零生产代码与行为变化；read/options、amount wrapper、request ID、submission orchestration 和 startup states 均为 approved-but-not-implemented，需后续批实现。
+
+**关联决定：** `D-096`、`D-114`、`D-117`、`D-118`
