@@ -31,6 +31,8 @@ jobs:
         run: ./gradlew check --warning-mode all
       - name: Ktlint check
         run: ./gradlew ktlintCheck --warning-mode all
+      - name: Desktop app build
+        run: ./gradlew :desktop-app:build --warning-mode all
       - name: SQLDelight migration
         run: ./gradlew :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
 
@@ -52,6 +54,8 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
       - name: Compile Android
         run: ./gradlew :ledger-data:compileAndroidMain --warning-mode all
+      - name: Android app assemble debug
+        run: ./gradlew :android-app:assembleDebug --warning-mode all
 
   python:
     name: Python tests

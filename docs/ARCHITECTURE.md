@@ -2,11 +2,11 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块。它们已承载 RG-01 至 RG-12 全部场景的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及全部场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。全部 12 个场景的领域、应用与持久化 runtime 及其 schema/migration 支持已进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
+本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，以及 `desktop-app`/`android-app` 两个组合根应用模块（P5-02）。它们已承载 RG-01 至 RG-12 全部场景的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及全部场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。全部 12 个场景的领域、应用与持久化 runtime 及其 schema/migration 支持已进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
 
 `ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v27；迁移链 `1.sqm`~`26.sqm`（共 26 个文件，v1→v27）、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。迁移链包含 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。全部 12 个 RG 场景均有完整 oracle：RG-01 实现 note_update replacement、replay、request identity conflict 与 stale CAS 零写入，并有完整 state/delta/status 比较（D-087）；RG-09 严格 v2 oracle 以 runtime 独立投影比较已发布的 9 roots、50 operations 与 59 states；RG-08 lending settlement 44-op oracle（schema v15，D-084）；RG-11 periodic allocation 22-op oracle（schema v16，D-085）；RG-12 reconciliation correction 12-op oracle（schema v17，D-085）。
 
-全部 12 个 RG golden v2 工件已发布（`golden/rules-v2/`，manifest 完整，357 operations），806 Kotlin tests 与完整 Python suite 均为绿色，RG-09 mapping gate 已 approved（2026-08-08）。RG-06 恢复边界由领域层验证 snapshot 并通过既有 `FormalTransaction` factory 重建正式链，不查询当前 catalog，也不允许 adapter replay command、解码 opaque aggregate 或重写领域不变量；恢复后的新命令仍按当前 catalog 准入。`D-075` 不授权 RG-05 fixture 迁移。已完成的 schema 变更：DATA-001（D-091），`19.sqm` v19→v20，合并五张私表为共享 `formal_transaction_metadata`，RG-08 的 `effective_at_text` 命名偏差随迁移闭合。下表中除现有三个模块之外的模块仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；Android 与 Desktop app 也尚未建立，因此没有应用运行命令。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
+全部 12 个 RG golden v2 工件已发布（`golden/rules-v2/`，manifest 完整，357 operations），806 Kotlin tests 与完整 Python suite 均为绿色，RG-09 mapping gate 已 approved（2026-08-08）。RG-06 恢复边界由领域层验证 snapshot 并通过既有 `FormalTransaction` factory 重建正式链，不查询当前 catalog，也不允许 adapter replay command、解码 opaque aggregate 或重写领域不变量；恢复后的新命令仍按当前 catalog 准入。`D-075` 不授权 RG-05 fixture 迁移。已完成的 schema 变更：DATA-001（D-091），`19.sqm` v19→v20，合并五张私表为共享 `formal_transaction_metadata`，RG-08 的 `effective_at_text` 命名偏差随迁移闭合。下表中除现有模块之外的模块（`import-core`、`reconcile-core`、`reporting-core`、`platform-android`、`platform-desktop`）仍是后续实现必须遵守的逻辑职责，仓库尚未包含对应构建模块；`android-app` 与 `desktop-app` 两个组合根已按 P5-02 建立（只做装配与占位界面）。桌面占位应用经 `.\gradlew.bat :desktop-app:run` 启动并打开本地测试账本，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（本地模拟器安装与启动为人工门）。`ledger-application` 在此指共享 library，`ledger-data` 的 Android target 也不是可运行的 app/client。
 
 ## 架构原则
 
@@ -60,9 +60,9 @@ reporting-core --+
 
 `D-093` 至 `D-095` 中已标记“暂停实施、重新审议”的历史细节不构成实现授权。`D-097` 已批准 contract-only P4-01 normalized source、typed diagnostics 与匿名 acceptance 子集；`D-098` 已定案 raw identity/retention/provenance、candidate lifecycle 与 atomic confirmation 合同（实施范围限于共享 spine 最小实现，docs/DECISIONS.md 的 D-098）；首个来源与 parser 技术已由 D-099 定案（微信账单 XLSX + Apache POI，ledger-application jvm 作用域）；matcher、产品 ID、Clock 与支付宝/P4-05、银行 PDF、P4-07/P4-08/P4-09 门禁继续待决。
 
-阶段 4 产品路径的 ID 与 Clock 均是应用能力。当前源码证明 ID 保持在持久化 `commitOnce` 的原子首请求 callback 内惰性物化：持久化适配器先 claim 请求并判断 replay/conflict，只有赢得首请求的路径调用应用提供的 factory/callback；精确 replay、identity conflict 和并发失败方不消耗 ID。当前源码没有产品 Clock 端口，Clock 的读取时机、retry/并发语义和审计时间戳分配仍须另行决定。数据适配器负责原子写入、请求幂等、冲突检测、唯一性和事务恢复；它不能选择生成策略、读取系统时间补写来源事实或把 database handle 提升为应用组合根。既有 RG 专用 Store/IdentitySource 保持冻结回放语料，不构成产品装配先例。
+阶段 4 产品路径的 ID 与 Clock 均是应用能力。当前源码证明 ID 保持在持久化 `commitOnce` 的原子首请求 callback 内惰性物化：持久化适配器先 claim 请求并判断 replay/conflict，只有赢得首请求的路径调用应用提供的 factory/callback；精确 replay、identity conflict 和并发失败方不消耗 ID。当前源码已有应用层产品 Clock 端口（`LedgerClock`，P5-02 IMP-4，只供应处理/创建/确认/审计时间）；该端口到具体用例的接入点由各用例签名在 P5-02/P5-03 决定，retry/并发语义与审计时间戳分配仍须另行决定。数据适配器负责原子写入、请求幂等、冲突检测、唯一性和事务恢复；它不能选择生成策略、读取系统时间补写来源事实或把 database handle 提升为应用组合根。既有 RG 专用 Store/IdentitySource 保持冻结回放语料，不构成产品装配先例。
 
-Android 与 Desktop 的运行时端口实现由未来实际存在的 `android-app` / `desktop-app` 组合根装配。仓库当前只有 `ledger-data` Android target 中的 SQLDelight database handle，没有可运行客户端或组合根。Golden 回放使用冻结输入供应确定性 ID 和文本时间；`GoldenV2Identity` 的命名空间与名字布局只属于 Golden v2 合同，不定义产品运行时身份。
+Android 与 Desktop 的运行时端口实现由 `android-app` / `desktop-app` 组合根装配（P5-02：只做装配与占位界面；真实系统集成需求出现后再建 `platform-*` 模块承接）。组合根只经应用用例调用共享核心；`ledger-data` Android target 中的 SQLDelight database handle 只是数据装配，不是可运行客户端或组合根。Golden 回放使用冻结输入供应确定性 ID 和文本时间；`GoldenV2Identity` 的命名空间与名字布局只属于 Golden v2 合同，不定义产品运行时身份。
 
 来源发生、支付、入账、起息和观察时间是不可变来源事实，用户确认的统计时间是独立业务值；运行时 Clock 只供应处理、创建、确认和审计事件自身的时间。任何 adapter、用例或 Store 都不得用当前时间覆盖缺失或已有的来源时间。
 
@@ -145,7 +145,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | Python | 已确定 | 仅用于迁移、规则原型和黄金结果基线 |
 | 运行方式 | 已确定 | 本地优先；同步与 AI 默认关闭且不影响核心验收 |
 | 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；Desktop（`desktop-app` jvmMain）使用 `app.cash.sqldelight:sqlite-driver:2.3.2`（JDBC，传递 xerial `sqlite-jdbc` 3.51.3.0）；Android system SQLite 不变；D-117。当前 schema v27，迁移链 `1.sqm`~`26.sqm`（26 个文件，v1→v27）均经过验证。迁移链含 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。该选择不预先决定报表、同步或更广泛查询的存储方案 |
-| UI 与导航库 | 部分已确定 | UI 栈已确定 = Compose Multiplatform（CMP `1.11.1`，D-117；皮肤主皮库选型证据已登记于 D-117 契约 §3.2、依赖随皮肤批进入）；导航库仍暂缓决定，Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
+| UI 与导航库 | 部分已确定 | UI 栈已确定 = Compose Multiplatform（CMP `1.11.1` 已实装于 `desktop-app`/`android-app` 双模块，P5-02）；皮肤库仍延后（皮肤主皮库选型证据已登记于 D-117 契约 §3.2、依赖随皮肤批进入）；导航库仍暂缓决定，Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |
 | 产品运行时 ID 算法 | 已确定 | UUIDv7（RFC 9562），在持久化首请求 callback 内惰性物化，P5-02 实装；当前无产品存量 ID 数据、无需迁移；Golden v2 UUID 命名空间与名字布局仍不是产品默认（D-117） |

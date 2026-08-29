@@ -22,8 +22,10 @@
 | `ledger-domain` | 精确金额、正式交易、分录、版本和纯领域不变量 | [`src/commonMain`](../ledger-domain/src/commonMain) | [领域模块](modules/ledger-domain.md) | [`src/commonTest`](../ledger-domain/src/commonTest) |
 | `ledger-application` | 操作用例、确认、候选、幂等和外部能力端口 | [`src/commonMain`](../ledger-application/src/commonMain) | [应用模块](modules/ledger-application.md) | [`src/commonTest`](../ledger-application/src/commonTest)、[`src/jvmTest`](../ledger-application/src/jvmTest) |
 | `ledger-data` | SQLDelight、原子存储、迁移、重读和平台数据库装配 | [`src/commonMain`](../ledger-data/src/commonMain) | [数据模块](modules/ledger-data.md) | [`src/jvmTest`](../ledger-data/src/jvmTest) |
+| `desktop-app` | Desktop 组合根、占位界面和平台依赖装配（P5-02） | [`src/jvmMain`](../desktop-app/src/jvmMain) | [架构](ARCHITECTURE.md) | [`src/jvmTest`](../desktop-app/src/jvmTest)、`:desktop-app:build`（[开发规范](CONTRIBUTING.md)） |
+| `android-app` | Android 组合根、占位界面和平台依赖装配（P5-02） | [`src/main`](../android-app/src/main) | [架构](ARCHITECTURE.md) | `:android-app:assembleDebug`（[开发规范](CONTRIBUTING.md)） |
 
-`import-core`、`reconcile-core`、`reporting-core`、平台模块和客户端仍是[架构](ARCHITECTURE.md)中的目标职责，不是当前可构建模块。不存在的模块不得被文档或代码当作已经实现。
+`import-core`、`reconcile-core`、`reporting-core` 与平台模块（`platform-android`/`platform-desktop`）仍是[架构](ARCHITECTURE.md)中的目标职责，不是当前可构建模块；`android-app` 与 `desktop-app` 两个客户端组合根已可构建。不存在的模块不得被文档或代码当作已经实现。
 
 ## 跨模块契约
 
@@ -46,14 +48,15 @@
 ## 依赖方向
 
 ```text
-ledger-data --------+
-                    +--> ledger-application --> ledger-domain
-future adapters ----+
+android-app ----+
+desktop-app ----+--> ledger-application --> ledger-domain
+ledger-data ----+
 ```
 
 - `ledger-domain` 不依赖平台、持久化、网络或外部参考树。
 - `ledger-application` 依赖领域类型并定义端口，不拥有数据库 schema。
 - `ledger-data` 实现应用端口并持久化领域状态，不重新定义账务规则。
+- `android-app`/`desktop-app` 只做组合根与占位界面，装配端口实现、持久化与应用用例，不复制共享核心逻辑。
 - Python 工具用于迁移、验证和 Golden 基线，不是生产运行依赖。
 
 ## 按任务加载

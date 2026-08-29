@@ -6,7 +6,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 阶段 4“导入与对账闭环”已于 2026-08-23 收口；当前停在阶段 5（双端最小外壳）开启前的用户门禁。P4-01 acceptance contract、P4-02 shared import spine、P4-03 微信 XLSX 普通收支、P4-04 transfer formalization、P4-05 支付宝普通收支及 RL-04 余额宝转账路由均已闭环；P4-08 matcher 与 reconciliation persistence 已按 D-103、P4-07 duplicate candidate/closed-records 已按 D-104/D-105 于 2026-08-22 合入 `main`；此后 P4-08 第二批 normalized evidence projection 已按 D-112 完成并合入 `main`（merge `b8755dd`，schema v26，2026-08-27 推送）。此后 P4-08 correction / successor invalidation 已按 D-113 完成并合入 `main`（merge `a3d11bb`，schema v27）——激活预留的失效事件/后继链接与 MISSING/DIFFERENCE 对账结果态，并解除 D-103 登记的该项延期。此后 BP-01 银行 parser 门承接批已按 D-116 于 2026-08-29 交付并推送（CMB 网银 CSV + CCB 网银 XLS 解析器、余额镜像 `note` 诊断与 RL-07 镜像代表路径；银行 parser 门 D-109 O-8 就此关闭，零 schema 变更；PDF/其他银行/信用卡属 D-116 边界外待样本）。
 
-Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v27（v1→v27 共 26 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；仓库仍没有可运行的 Android 或 Desktop app，也没有应用运行命令。
+Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application` 和 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v27（v1→v27 共 26 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；阶段 5 双端最小外壳骨架已按 P5-02 建立：`desktop-app` 与 `android-app` 两个组合根应用模块可构建，桌面占位应用可经 `.\gradlew.bat :desktop-app:run` 启动并打开本地测试账本，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（本地模拟器验收为人工门）。
 
 阶段 3 的规则场景实现范围如下：
 
@@ -69,7 +69,17 @@ Kotlin 构建需要 JDK 21。使用仓库内的 Gradle Wrapper 分别运行三�
 .\gradlew.bat check --rerun-tasks --warning-mode all
 ```
 
-依赖和 Gradle 分发包已在本机缓存时，可以为上述命令追加 `--offline`。三个模块都是 library；仓库当前没有可运行的 Android 或 Desktop app/client，因此没有应用运行命令。
+依赖和 Gradle 分发包已在本机缓存时，可以为上述命令追加 `--offline`。三个共享库模块都是 library；`desktop-app` 与 `android-app` 为组合根应用模块。桌面占位应用运行命令（P5-02 判据 1 人工门）：
+
+```powershell
+.\gradlew.bat :desktop-app:run
+```
+
+构建 Android 调试 APK（P5-02 判据 2 的构建门；本地模拟器安装与启动为人工门）：
+
+```powershell
+.\gradlew.bat :android-app:assembleDebug --stacktrace --rerun-tasks --warning-mode all
+```
 
 运行完整 Python 测试：
 

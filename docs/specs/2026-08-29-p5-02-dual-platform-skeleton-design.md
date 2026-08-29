@@ -1,6 +1,6 @@
 # P5-02 双平台骨架实施规格（阶段 5 实施批）
 
-**状态：proposal** — 本文件为 P5-02 双平台骨架实施规格草案（contract-only 设计冻结：零实现、零 schema、零生产代码）。经用户批准并完成独立评审后，本文件翻转为 `approved`，随后由独立实施批落地执行。
+**状态：approved** — 本文件为 P5-02 双平台骨架实施规格（contract-only 设计冻结：零实现、零 schema、零生产代码）。2026-08-29 用户「批准动工」后实施并经独立评审 APPROVE 与全量套件验证，D-118 登记。
 
 **Scope:** 按已批准契约 `docs/specs/2026-08-29-p5-01-dual-platform-shell-contract-design.md` §5 P5-02（D-117）的内容清单，把 P5-02 的每一项落地为可实施的冻结设计：两模块 + 组合根、UUIDv7 与 Clock 端口实装、桌面驱动接线、CI/CONTRIBUTING 接线、零 schema。本文件只冻结设计，不实施任何代码；实施发生在批准后的独立实施批。
 
