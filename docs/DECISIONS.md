@@ -1948,3 +1948,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **理由：** 契约优先纪律（D-096/IMPORT-001 先例：技术栈与端口契约先冻结、后实装）；外部证据门（平台集成/生产技术变更触发，三个证据包按 D-099 六维模板组织，只入中立契约不入原始研究）；独立评审闭环（REQUEST_CHANGES 六项全部回修后 CLOSURE APPROVE，distinct verifier 8/8 与 5/5 PASS）。
 
 **关联决定：** `D-096`、`D-098`、`D-099`、`D-114`、`D-115`、`D-116`
+
+## D-118 P5-02 双平台骨架实施批（desktop-app/android-app 组合根、LedgerClock 端口与 UUIDv7 产品 ID）
+
+**状态：** 已批准/已交付（2026-08-29 用户「批准动工」后实施；实施规格 `docs/specs/2026-08-29-p5-02-dual-platform-skeleton-design.md` 翻转为 approved）。
+
+**冻结输入：** 实施规格（approved）+ 实施提交 `0cc8915`（基 `b7ccce3`，21 文件 +947/−13）。
+
+**实施内容摘要（IMP-1..IMP-13 落点）：**
+
+1. **desktop-app**：KMP jvm-only，CMP `1.11.1` + plugin.compose `2.4.10`，主类 `com.unifiedledger.desktop.MainKt`，jvmMain 声明 `app.cash.sqldelight:sqlite-driver:2.3.2`（F-2），空库引导本地测试账本（IMP-12）+ `DesktopSkeletonSmokeTest`（判据 1：Created、UUIDv7 文本、逐币种平衡、计数精确、重放 NoChange、组合根时钟近当前时刻）。
+2. **android-app**：`com.android.application`（AGP 9 内置 Kotlin，不应用 `org.jetbrains.kotlin.android`），applicationId `com.unifiedledger.android`，minSdk 34 / targetSdk 36 / compileSdk 36，`androidx.activity:activity-compose:1.13.0`，NoActionBar 主题 + `android:exported="true"` MAIN/LAUNCHER activity，`AndroidSqliteDriver` 应用私有库装配。
+3. **LedgerClock 端口**（IMP-4..IMP-6）：`ledger-application` commonMain `fun interface LedgerClock { fun now(): Instant }`（`kotlin.time.Instant`）；`FixedLedgerClock` 确定性实现置 commonTest；系统实现 `LedgerClock { Clock.System.now() }` 置两端组合根。
+4. **UUIDv7**（IMP-7..IMP-9）：RFC 9562 规范形式（8-4-4-4-12 小写十六进制、version 7、variant 10xx）；`UuidV7Generator` 纯位打包置 commonMain、平台 `SecureRandom` 由两端组合根注入；`UuidV7ConfirmedManualExpenseIdSource` 每次 `next()` 恰生成 6 个 UUIDv7（confirmationId + `AssetPaidOrdinaryExpenseIds` 五字段）。
+5. **接线**（IMP-1/2/3/13）：根 `build.gradle.kts` 新增 `org.jetbrains.compose 1.11.1` 与 `kotlin("plugin.compose") 2.4.10` 两条 `apply false`、`settings.gradle.kts` 新增 `include(":android-app", ":desktop-app")`；ci.yml（kotlin job `:desktop-app:build`、android job `:android-app:assembleDebug`）与 CONTRIBUTING.md 同步；README/PROJECT_MAP/ARCHITECTURE 同步更新。
+
+**R-9 结果登记（P502-IMPL-001 必含）：** `:android-app:assembleDebug` 在本机 `mergeExtDexDebug` 于 1 GB heap 与 `-Xmx3g` 两度 OOM（主机 16 GB，当时空闲 <6 GB）；本地门 = `compileDebugKotlin` 0、`processDebugResources` 0、`dexBuilderDebug` 0（编译/资源路径已证明）；完整 APK 装配归 CI（ubuntu-latest 无 heap 上限，ci.yml 已接线）+ 模拟器安装/启动人工门（判据 2，R-6）；未改 CONTRIBUTING/根构建资源控制（R-9 纪律）。
+
+**IMP-2/R-2 重检项登记（P502-IMPL-002 必含）：** `activity-compose:1.13.0` 与 `compose.material3` 实际解析坐标（1.11 线 alpha 线，占位 only）在实施批开工时已确认并在本登记中锁定；正式 M3 版本选择仍留皮肤批。
+
+**验证证据：** 独立评审 APPROVE（零代码缺陷）；distinct verifier 10/11（1 项低危 = CURRENT_STATE/ROADMAP 陈旧句，本登记批一并修正）；主代理批判审查通过；写者聚焦 9 命令全绿（desktop build/jvmTest 1/1、ledger-application jvmTest、ktlint、migration、compileAndroidMain、project_docs）；主代理受影响全量套件 `:ledger-domain:jvmTest :ledger-data:jvmTest ktlintCheck :ledger-data:verifyCommonMainLedgerDatabaseMigration` BUILD SUCCESSFUL（30m22s，exit 0）。
+
+**边界：** 零 schema/迁移变更；ledger-domain/ledger-data 零改动；ledger-application 仅新增 6 文件零改动既有源码；`platform-*` 未建；皮肤未实现；无发布打包。
+
+**理由：** 契约优先纪律（D-096 先例：P5-02 实施规格经用户「批准动工」后开批，独立 worktree、单一 bounded writer、独立评审 APPROVE 与 distinct verifier 闭环）；外部证据门结论已在 P5-01（D-117）登记，本批零新增第三方依赖；R-9 资源受限路径按要求上报资源控制裁决并登记，未静默改动资源控制（不静默改 CONTRIBUTING/根构建）。
+
+**关联决定：** `D-096`、`D-098`、`D-099`、`D-114`、`D-115`、`D-116`、`D-117`

@@ -42,7 +42,7 @@
 
 ## 阶段 5：双端最小外壳
 
-建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心。当前仓库尚无 Android 或 Desktop app 入口，因此也没有应用运行命令。
+建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心。`android-app` 与 `desktop-app` 两个组合根模块已按 P5-02 建立（只做装配与占位界面）；桌面占位应用可经 `.\gradlew.bat :desktop-app:run` 运行，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（模拟器安装/启动为人工门）。
 
 - 进入条件：共享核心具备稳定调用边界，导入与对账最小闭环通过验收。
 - 完成条件：两端可以打开本地测试账本、调用共享用例并持续通过构建检查。
