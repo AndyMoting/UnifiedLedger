@@ -66,6 +66,14 @@ Android 与 Desktop 的运行时端口实现由 `android-app` / `desktop-app` �
 
 来源发生、支付、入账、起息和观察时间是不可变来源事实，用户确认的统计时间是独立业务值；运行时 Clock 只供应处理、创建、确认和审计事件自身的时间。任何 adapter、用例或 Store 都不得用当前时间覆盖缺失或已有的来源时间。
 
+## P5-03 批准边界（尚未实现）
+
+`D-119` 批准 P5-03 的承接架构，不重开已交付的 D-118，也不授权代码实施。拟议 application 边界按 ledger 隔离并只投影 current transaction versions：`ledger-data` adapter 仅返回 ledger-signed current rows 与 request/snapshot/receipt 关系；application 以组合根注入的同一 `LedgerCatalog` snapshot 校验账户 ownership/kind/currency、投影可用 payment account/leaf expense category options，并派生正常余额展示符号。UI 只调用 read/options/write 用例，禁止直接访问 SQL、database handle 或从余额反推输入选项；不同币种不得汇总。
+
+P5-03 demo 的 catalog 为两端以相同稳定 ID 确定性重建的固定匿名单 CNY snapshot，同一实例注入 write factory、options 与 read projection；catalog persistence/management 和产品多账户配置延后。精确金额由共享 application wrapper 复用 domain `parseExactDecimal`，两端不得复制 parser；每个 draft/save intent 使用独立平台 UUIDv7 request ID source，与六个 commit ID source 分离。
+
+commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 ledgerId、requestId 与 attempted snapshot；只有逐值 matching receipt 可恢复成功，snapshot conflict 映射稳定冲突，absent/unavailable 保持 unknown 且不得自动重试或换 requestId。仅 handoff 前可证明 `commitOnce` 零调用的 orchestration failure 可重试。两端组合根还须实现 `Starting`/`Ready`/稳定 startup-error 的 fail-closed 装配，driver/schema/open 失败时业务 UI 与用例不可达，只提供 Retry/Exit。上述 read/options、resolver、amount/requestId 和 startup 边界均为 approved-but-not-implemented，留给 `closure-evidence follow-up` 与获批后的 P5-03 实施批。
+
 ## 正式数据流
 
 ### 手工入口

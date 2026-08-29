@@ -44,6 +44,8 @@
 
 建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心。`android-app` 与 `desktop-app` 两个组合根模块已按 P5-02 建立（只做装配与占位界面）；桌面占位应用可经 `.\gradlew.bat :desktop-app:run` 运行，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（模拟器安装/启动为人工门）。
 
+`D-119` 已批准 P5-01/P5-02 到 P5-03 的闭环补充契约，D-118 保持已交付。当前方向按 approved 规格顺序推进：可起草 P5-03 spec-only，并独立执行 `closure-evidence follow-up`；ledger-scoped/current-version read/options、snapshot-aware unknown resolution、固定 catalog、startup fail-closed、精确金额/requestId 和最小 UI 均待后续批实现。Android emulator entry 证据开放；本登记不授权 P5-03 代码实施，零 schema/生产行为变化。
+
 - 进入条件：共享核心具备稳定调用边界，导入与对账最小闭环通过验收。
 - 完成条件：两端可以打开本地测试账本、调用共享用例并持续通过构建检查。
 
