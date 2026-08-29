@@ -84,7 +84,7 @@
 - `android { namespace = "com.unifiedledger.android"; compileSdk = 36; defaultConfig { applicationId = "com.unifiedledger.android"; minSdk = 34; targetSdk = 36 } }`——applicationId 为占位产品标识，最终命名/发布属契约外延后；Java/Kotlin target 对齐仓库 JDK 21（具体 DSL 随实施批按 AGP 9 内置 Kotlin 官方文档落实）。
 - dependencies：
   - `implementation(project(":ledger-application"))`、`implementation(project(":ledger-data"))`（KMP library Android target 以标准 AAR 消费）；
-  - `implementation("androidx.activity:activity-compose:<版本>")`——`MainActivity : ComponentActivity` + `setContent` 必需（无需 appcompat）；具体版本在实施批冻结时锁定并登记；
+  - `implementation("androidx.activity:activity-compose:1.13.0")`——`MainActivity : ComponentActivity` + `setContent` 必需（无需 appcompat）。**契约 §7 合规性分类**：`androidx.activity:activity-compose` 属于冻结 CMP/AndroidX 栈的传递图内工件（提升为 direct 依赖仅为引用 `setContent`），不构成契约 §7「零新增第三方依赖」的违反。版本锁定 `1.13.0`（当前稳定线；来源：developer.android.com/jetpack/androidx/releases/activity 与 dl.google.com/dl/android/maven2/androidx/activity/activity-compose/maven-metadata.xml，两源一致，最高稳定版 `1.13.0`）；登记为实施批开工时重检项（依赖版本可能继续前移，重检后锁定并登记）；
   - 占位 UI 另消费 `compose.runtime`、`compose.foundation`、`compose.material3` 访问器（与 IMP-1 占位集一致）。
 - `MainActivity : ComponentActivity` + `setContent` 占位 UI（`com.unifiedledger.android.MainActivity`）；AndroidManifest：application theme = NoActionBar 主题 + MAIN/LAUNCHER activity + `android:exported="true"`。
 - 目录布局（F-3）：`android-app/build.gradle.kts`、`android-app/src/main/AndroidManifest.xml`、`android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt`、`android-app/src/main/kotlin/com/unifiedledger/android/App.kt`（组合根装配，IMP-11）、`android-app/src/main/res/values/...`（NoActionBar 主题资源，具体以实施批为准）。
@@ -114,16 +114,17 @@ fun interface LedgerClock {
 - 端口只供应处理、创建、确认与审计事件自身的时间；来源发生、支付、入账、起息和观察时间是不可变来源事实，一律不由 Clock 补写或覆盖（契约 F-4 + `docs/ARCHITECTURE.md:67` 不变）。
 - 本批不改变任何既有用例签名（契约 F-4：Clock 接入点由各用例签名在 P5-02/P5-03 决定；端口契约本身对既有签名零改动）。
 
-### IMP-5 确定性实现（测试/golden）
+### IMP-5 确定性实现（测试/golden，置 commonTest）
 
-- `ledger-application` commonMain 新增 `FixedLedgerClock(instant: Instant) : LedgerClock`（恒返回注入时刻）——只用于测试/golden，不进入产品装配（契约 F-4 风险注记）。
-- commonTest：`FixedLedgerClock` 恒等断言。
+- `FixedLedgerClock(instant: Instant) : LedgerClock`（恒返回注入时刻）置于 `ledger-application` commonTest——只用于测试/golden，不进入产品装配（契约 F-4 风险注记）；测试 fixture 归 commonTest 属仓库约定（既有测试支持类均在 commonTest）。
+- 本批 Clock 相关的 commonMain 产品新增仅限 IMP-4 的 `LedgerClock` 端口；系统实现按契约 F-4「平台实现 = 系统时钟，在各组合根装配」置于两端组合根（IMP-6）。
+- commonTest：确定性时钟断言——`FixedLedgerClock` 恒等断言。
 
 ### IMP-6 系统实现与注入位置
 
 - 系统实现 = `LedgerClock { Clock.System.now() }`（`kotlin.time.Clock`，Kotlin 2.4.10 稳定、无 opt-in）；置于两端组合根：android-app androidMain / desktop-app jvmMain。
 - 系统实现作为可用能力注入对象图（IMP-10/IMP-11），接线到具体用例由 P5-02/P5-03 用例签名决定，本批不接线。
-- commonTest 覆盖系统实现语义：`Clock.System.now()` 返回当前时刻（宽松容差断言；组合根内 lambda 为该语义的直接委托）。
+- 系统实现断言落在 `desktop-app` jvmTest：执行接线后的组合根时钟（注入对象图的 `ledgerClock`）返回接近当前时刻的 `Instant`（宽松容差断言）。该 lambda 位于组合根，`ledger-application` commonTest 不可达，故 commonTest 不设系统时钟断言；android 侧由模拟器人工门（判据 2）覆盖。
 
 ## 6. UUIDv7 实装冻结（F-5）
 
@@ -139,6 +140,7 @@ fun interface LedgerClock {
   - `fun next(): String` 返回规范形式 UUIDv7 文本；
   - 纯算法、确定性可测（固定随机字节 → 固定输出）。
 - **注入位置冻结裁决**：位打包为纯算法置于共享 commonMain（两端零复制）；安全随机数由各组合根在平台侧注入（desktop jvmMain / android androidMain 各自构造平台安全随机源）。这满足契约 F-5 风险注记「随机源必须来自平台安全随机数，实现属组合根/平台侧」——「实现属组合根/平台侧」针对安全随机数来源；位打包本身是共享中性算法，共享放置避免两端复制且不引入平台 API。此为对契约残余自由度「生成器类型与注入位置」的冻结裁决，理由如上；实施中若发现承载缺口，回 P5-01 契约做修订与评审门（D-096），不静默变更。
+- **与契约 F-3/D-117 的协调说明（裁决的一致性声明）**：契约 F-5 风险注记「随机源必须来自平台安全随机数，实现属组合根/平台侧」与契约 F-3 决定「最小壳所需的少数端口（Clock、ID 生成、驱动装配）由组合根直接实现」（P5-01 spec 第 121 行；D-117 登记摘要「组合根暂直接实现少数端口」，docs/DECISIONS.md:1925）共同约束本裁决的边界：组合根仍直接实现平台敏感部分——安全随机数注入与把 IdSource 接入用例的装配——而纯 RFC 9562 位打包算法共享于 `ledger-application` commonMain，以兑现 F-3「不得复制共享核心逻辑」的零复制意图。此为在契约授予的残余自由度「生成器类型与注入位置」范围内作出的裁决；若实施中发现承载缺口，经 D-096 修订门回 P5-01 契约修订与评审，不静默变更。
 - 理由：`AssetPaidOrdinaryExpenseIds` 五字段 + confirmationId 共六个 ID 全部来自同一生成器（IMP-9），共享实现防两端复制；RFC 9562 无需协调方（契约 F-5）。
 
 ### IMP-9 UuidV7ConfirmedManualExpenseIdSource
@@ -182,7 +184,7 @@ fun interface LedgerClock {
 
 | 判据（契约 §5 P5-02） | 本批测试/人工门 | 断言明细 |
 | --- | --- | --- |
-| 1. Desktop：`gradlew :desktop-app:run` 启动占位界面并打开本地测试账本；一次经确认用例的手工支出在 JVM 账本中形成逐币种平衡分录 | 人工门：`:desktop-app:run` 启动占位界面并打开本地测试账本；`desktop-app` jvmTest `DesktopSkeletonSmokeTest` | 空库引导打开测试账本（IMP-12）；`ExecuteConfirmedManualExpense` 一次手工支出 → `Created`；confirmationId/transactionId 为规范 UUIDv7 文本（正则）；分录逐币种平衡（各 posting amount.minorUnits 和为零）；同请求重放 → `NoChange` 且 receipt 不变、事务/分录/请求记录各恰一条（零重复） |
+| 1. Desktop：`gradlew :desktop-app:run` 启动占位界面并打开本地测试账本；一次经确认用例的手工支出在 JVM 账本中形成逐币种平衡分录 | 人工门：`:desktop-app:run` 启动占位界面并打开本地测试账本；`desktop-app` jvmTest `DesktopSkeletonSmokeTest` | 空库引导打开测试账本（IMP-12）；`ExecuteConfirmedManualExpense` 一次手工支出 → `Created`；confirmationId/transactionId 为规范 UUIDv7 文本（正则）；分录逐币种平衡——每个 `currency_code` 分组内 posting 的 `amount.minorUnits` 和为零（非全局求和）；计数精确——transaction、request、receipt 各恰一条，posting set 恰一个且含恰两条 posting（expense leg + payment leg）；同请求重放 → `NoChange` 且 receipt 不变（零重复） |
 | 2. Android：APK 安装到本地模拟器并启动；同一路径经模拟器人工验收 | 人工门（本地模拟器工具链：安装 + 启动 + 人工检查，非 Gradle 命令）；`:android-app:assembleDebug` 构建 APK | APK 构建成功并安装；应用启动显示占位界面（模拟器人工检查） |
 | 3. 组合根零核心逻辑复制；`ledger-data` 构建脚本与迁移链零改动 | 评审门 + `git diff --stat` 核对 | 两组合根只装配与占位 UI；`ledger-data`/`ledger-domain` 构建脚本与迁移链零改动（§10） |
 | 4. 既有验证全绿：三模块 jvmTest、migration verify、`ktlintCheck`（新增模块纳入） | 命令门（§11 既有全套） | `:ledger-domain:jvmTest`、`:ledger-application:jvmTest`、`:ledger-data:jvmTest`、`:ledger-data:verifyCommonMainLedgerDatabaseMigration`、`ktlintCheck` 全部通过；ktlint 覆盖新增两模块 |
@@ -193,6 +195,7 @@ fun interface LedgerClock {
 - `.github/workflows/ci.yml`：kotlin job 增 `:desktop-app:build`（如实施批拆分为 `:desktop-app:jvmTest` + 编译等更细任务，以实施批冻结为准，总效果等价 build）；android job 增 `:android-app:assembleDebug`（契约 §5 注记允许 `:android-app:build` 拆分更细任务）。
 - `docs/CONTRIBUTING.md`：Kotlin 验证节增 `:desktop-app:jvmTest`（或 build）与 `:android-app:assembleDebug` 命令；环境描述增两新模块与运行命令（`gradlew :desktop-app:run`）；与 ci.yml 同步。
 - `README.md`：环境描述同步（「仓库尚无 Android/Desktop app」段，`README.md:9,72` 更新为两模块已建立并有运行命令）。
+- `docs/PROJECT_MAP.md`：模块表与验证入口同步新增两模块（模块/文档/机器工件/验证入口的导航投影，`CONTRIBUTING.md:100-101`）。
 - 上述均属实施批交付的一部分，本批（规格）不改动任何既有文件。
 
 ## 9. 资源约束与风险（承接契约 R-1..R-6 + 新增）
@@ -202,14 +205,15 @@ fun interface LedgerClock {
 | # | 风险 | 影响 | 缓解/登记 |
 | --- | --- | --- | --- |
 | R-1 | CMP `1.12.0` 新鲜度（2026-08-25 发布） | 新版本未知缺陷影响双端稳定 | UQ-1 已裁决 CMP `1.11.1`（IMP-1/IMP-2），升级路径已登记 |
-| R-2 | 1.11 线多平台 material3 为 alpha（`1.11.0-alpha07`） | alpha API 面进入构建 | 仅占位组件使用；正式版本留皮肤批冻结（IMP-1 注记） |
+| R-2 | 1.11 线多平台 material3 为 alpha（`1.11.0-alpha07`） | alpha API 面进入构建 | 仅占位组件使用；正式版本留皮肤批冻结（IMP-1 注记）。注：契约 UQ-1 方案 A 以「零 alpha 暴露」为特征，而 1.11 线多平台 material3 工件实为 alpha——该差异已登记并限定占位-only 使用，最终 M3 版本在皮肤批冻结；实施批开工时即解析并登记 `compose.material3` 访问器的实际解析坐标（构建期解析），作为实施起点事实 |
 | R-3 | 皮肤主皮库单维护者风险 | 上游停滞或破坏性变更 | 皮肤批采用时复核（P5-01 §3.2）；本批零依赖 |
 | R-4 | xerial sqlite-jdbc native 解压边角（只读临时目录场景未验证） | 特殊环境启动失败 | 版本锁定 `3.51.3.0`；`JdbcSqliteDriver` 可换任意 JDBC URL（F-2） |
-| R-5 | 新增两模块拉长 16 GB 主机构建时间；CMP 首建下载 Skiko native | 验证耗时上升 | 串行 + 单 worker + 1 GB heap 继续适用；首建耗时一次性 |
+| R-5 | 新增两模块拉长 16 GB 主机构建时间；CMP 首建下载 Skiko native；desktop 首次运行渲染（Skiko native 下载 + D3D/软件回退）在人工 run 门前未验证 | 验证耗时上升；首次渲染可能失败 | 串行 + 单 worker + 1 GB heap 继续适用；首建耗时一次性；`:desktop-app:run` 人工门为首次渲染验证点，失败可 `-Dskiko.renderApi` 诊断（P5-01 §3.1） |
 | R-6 | Android 模拟器验收依赖本地模拟器工具链 | P5-02 验收门受阻 | 验收前确认本地模拟器可用（环境前提，非产品依赖） |
-| R-7（新增） | AGP 9 内置 Kotlin 与 compose 编译器插件组合首次实装 | 构建配置风险 | 研究已给出官方示例背书（§3 android-app 规范形态）；实施批先做最小冒烟 |
+| R-7（新增） | 两组首次配对：CMP 1.11.1 desktop 运行时 × Kotlin 2.4.10 compose 编译器；AGP 9 内置 Kotlin 的 `com.android.application` 模块 × compose 插件（官方文档对后者无直接示例，为本批最大构建配置未知项） | 构建配置风险 | 研究已给出官方示例背书（§3）；实施批先做最小冒烟（smoke-first）：首个提交即含两模块空壳构建通过 |
 | R-8（新增） | 1.11 线 M3 alpha 的 API 面随 1.12 稳定线可能变化 | 皮肤批升级成本 | 皮肤批再冻结（R-2）；占位组件不依赖高级 M3 API |
 | R-9（新增） | AGP 9 + Compose 首建内存压力（16 GB 主机 1 GB heap） | 潜在 OOM | 如遇 OOM，实施批上报资源控制裁决，不静默改 CONTRIBUTING |
+| R-10（新增） | `kotlin.time.Clock` 无 opt-in 稳定性是编译级事实，须由实施冒烟证明 | 若实现期出现 opt-in 需求则影响契约 F-4 端口形状 | 实施批早期检查点：冒烟编译尽早证明 `Clock.System.now()` 无需 opt-in；与契约不符则回修订门（D-096） |
 
 ## 10. 边界（明确不做）
 
