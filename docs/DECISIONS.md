@@ -1967,7 +1967,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **IMP-2/R-2 重检项登记（P502-IMPL-002 必含）：** `activity-compose:1.13.0` 与 `compose.material3` 实际解析坐标（1.11 线 alpha 线，占位 only）在实施批开工时已确认并在本登记中锁定；正式 M3 版本选择仍留皮肤批。
 
-**验证证据：** 独立评审 APPROVE（零代码缺陷）；distinct verifier 10/11（1 项低危 = CURRENT_STATE/ROADMAP 陈旧句，本登记批一并修正）；主代理批判审查通过；写者聚焦 9 命令全绿（desktop build/jvmTest 1/1、ledger-application jvmTest、ktlint、migration、compileAndroidMain、project_docs）；主代理受影响全量套件 `:ledger-domain:jvmTest :ledger-data:jvmTest ktlintCheck :ledger-data:verifyCommonMainLedgerDatabaseMigration` BUILD SUCCESSFUL（30m22s，exit 0）。
+**验证证据：** 独立评审 APPROVE（零代码缺陷）；distinct verifier 10/11（1 项低危 = CURRENT_STATE/ROADMAP 陈旧句，本登记批一并修正）；主代理复核通过；写者聚焦 9 命令全绿（desktop build/jvmTest 1/1、ledger-application jvmTest、ktlint、migration、compileAndroidMain、project_docs）；主代理受影响全量套件 `:ledger-domain:jvmTest :ledger-data:jvmTest ktlintCheck :ledger-data:verifyCommonMainLedgerDatabaseMigration` BUILD SUCCESSFUL（30m22s，exit 0）。
 
 **边界：** 零 schema/迁移变更；ledger-domain/ledger-data 零改动；ledger-application 仅新增 6 文件零改动既有源码；`platform-*` 未建；皮肤未实现；无发布打包。
 
