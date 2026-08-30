@@ -8452,3 +8452,85 @@ JOIN ledger_transaction tx ON tx.ledger_id = v.ledger_id AND tx.transaction_id =
 INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at)
 SELECT ledger_id, reconciliation_id, 1, 'PENDING', NULL, 'migration-v23-seed', 'schema-v23'
 FROM posting_reconciliation;
+
+-- P5-03 read boundary (D-119 section 4; P5-03 implementation spec section 5).
+-- Ledger-filtered, current-version-only projections returning ledger-signed minor units.
+-- No DDL: schema v27 stays unchanged.
+
+currentVersionRowsForLedger:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  tx.kind,
+  version.occurred_at,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+WHERE tx.ledger_id = ?
+ORDER BY tx.transaction_id, posting.posting_index;
+
+manualExpenseCommitByRequest:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.payment_account_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM manual_expense_request AS request
+JOIN confirmed_expense_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE request.ledger_id = ?
+  AND request.request_id = ?;
+
+manualExpenseCommitByReceipt:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.payment_account_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM confirmed_expense_receipt AS receipt
+JOIN manual_expense_request AS request
+  ON request.ledger_id = receipt.ledger_id
+ AND request.request_id = receipt.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE receipt.ledger_id = ?
+  AND receipt.confirmation_id = ?
+  AND receipt.transaction_id = ?;

@@ -39,6 +39,8 @@ jobs:
         run: ./gradlew --no-daemon --max-workers=1 check --warning-mode all
       - name: Ktlint check
         run: ./gradlew --no-daemon --max-workers=1 ktlintCheck --warning-mode all
+      - name: Shared UI tests
+        run: ./gradlew --no-daemon --max-workers=1 :app-ui:jvmTest --warning-mode all
       - name: Desktop app build
         run: ./gradlew --no-daemon --max-workers=1 :desktop-app:build --warning-mode all
       - name: SQLDelight migration
@@ -64,6 +66,12 @@ jobs:
         run: ./gradlew --no-daemon --max-workers=1 :ledger-data:compileAndroidMain --warning-mode all
       - name: Android app assemble debug
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk-${{ github.sha }}
+          path: android-app/build/outputs/apk/debug/*.apk
+          retention-days: 7
 
   python:
     name: Python tests

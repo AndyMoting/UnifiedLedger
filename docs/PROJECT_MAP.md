@@ -22,6 +22,7 @@
 | `ledger-domain` | 精确金额、正式交易、分录、版本和纯领域不变量 | [`src/commonMain`](../ledger-domain/src/commonMain) | [领域模块](modules/ledger-domain.md) | [`src/commonTest`](../ledger-domain/src/commonTest) |
 | `ledger-application` | 操作用例、确认、候选、幂等和外部能力端口 | [`src/commonMain`](../ledger-application/src/commonMain) | [应用模块](modules/ledger-application.md) | [`src/commonTest`](../ledger-application/src/commonTest)、[`src/jvmTest`](../ledger-application/src/jvmTest) |
 | `ledger-data` | SQLDelight、原子存储、迁移、重读和平台数据库装配 | [`src/commonMain`](../ledger-data/src/commonMain) | [数据模块](modules/ledger-data.md) | [`src/jvmTest`](../ledger-data/src/jvmTest) |
+| `app-ui` | 共享 P5-03 演示界面、纯 UI 状态机/reducer 与无障碍呈现 | [`src/commonMain`](../app-ui/src/commonMain) | [架构](ARCHITECTURE.md) | [`src/commonTest`](../app-ui/src/commonTest)、`:app-ui:jvmTest`（[开发规范](CONTRIBUTING.md)） |
 | `desktop-app` | Desktop 组合根、占位界面和平台依赖装配（P5-02） | [`src/jvmMain`](../desktop-app/src/jvmMain) | [架构](ARCHITECTURE.md) | [`src/jvmTest`](../desktop-app/src/jvmTest)、`:desktop-app:build`（[开发规范](CONTRIBUTING.md)） |
 | `android-app` | Android 组合根、占位界面和平台依赖装配（P5-02） | [`src/main`](../android-app/src/main) | [架构](ARCHITECTURE.md) | `:android-app:assembleDebug`（[开发规范](CONTRIBUTING.md)） |
 
@@ -48,15 +49,16 @@
 ## 依赖方向
 
 ```text
-android-app ----+
-desktop-app ----+--> ledger-application --> ledger-domain
-ledger-data ----+
+android-app ----+                 +--> ledger-application --> ledger-domain
+desktop-app ----+--> app-ui -----+                 ^
+ledger-data --------------------------------------+
 ```
 
 - `ledger-domain` 不依赖平台、持久化、网络或外部参考树。
 - `ledger-application` 依赖领域类型并定义端口，不拥有数据库 schema。
 - `ledger-data` 实现应用端口并持久化领域状态，不重新定义账务规则。
-- `android-app`/`desktop-app` 只做组合根与占位界面，装配端口实现、持久化与应用用例，不复制共享核心逻辑。
+- `app-ui` 共享界面只消费 application 层类型（facade/use cases/read projection），永不依赖 `ledger-data`、SQLDelight 或 database handle。
+- `android-app`/`desktop-app` 只做组合根，装配端口实现、持久化与应用用例后调用共享 `P503App`，不复制共享核心逻辑。
 - Python 工具用于迁移、验证和 Golden 基线，不是生产运行依赖。
 
 ## 按任务加载

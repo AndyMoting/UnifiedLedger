@@ -8,3 +8,6 @@ end_of_line = crlf
 insert_final_newline = true
 max_line_length = off
 ktlint_code_style = ktlint_official
+# Compose composables follow the uppercase Compose naming convention (frozen P5-03 screen
+# names in the implementation spec); the ktlint function-naming rule exempts them.
+ktlint_function_naming_ignore_when_annotated_with=Composable

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个可构建的 Kotlin Multiplatform 共享库模块，以及 `desktop-app`/`android-app` 两个组合根应用模块（P5-02）。它们已承载 RG-01 至 RG-12 全部场景的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及全部场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。全部 12 个场景的领域、应用与持久化 runtime 及其 schema/migration 支持已进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
+本文件定义目标模块边界和依赖约束。仓库当前包含 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个可构建的 Kotlin Multiplatform 共享库模块，以及 `desktop-app`/`android-app` 两个组合根应用模块（P5-02）。它们已承载 RG-01 至 RG-12 全部场景的 runtime 范围，包括精确金额、平衡分录与版本替代，明确确认、严格 raw JSON 与 request identity，以及全部场景的 SQLDelight 原子持久化、import/candidate/evidence ownership 和分录级 reconciliation。全部 12 个场景的领域、应用与持久化 runtime 及其 schema/migration 支持已进入共享库；RG-06 由 dedicated normalized owners 保存场景状态，并复用共享正式交易表。
 
 `ledger-data` 使用 SQLDelight `2.3.2`，当前 schema 为 v27；迁移链 `1.sqm`~`26.sqm`（共 26 个文件，v1→v27）、fresh/migrated schema、一致性约束与 Android system SQLite 装配均有验证。迁移链包含 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。全部 12 个 RG 场景均有完整 oracle：RG-01 实现 note_update replacement、replay、request identity conflict 与 stale CAS 零写入，并有完整 state/delta/status 比较（D-087）；RG-09 严格 v2 oracle 以 runtime 独立投影比较已发布的 9 roots、50 operations 与 59 states；RG-08 lending settlement 44-op oracle（schema v15，D-084）；RG-11 periodic allocation 22-op oracle（schema v16，D-085）；RG-12 reconciliation correction 12-op oracle（schema v17，D-085）。
 
@@ -25,6 +25,7 @@
 | `ledger-domain` | 精确金额、账户、交易、分录、版本、证据值对象和纯业务不变量 | 持久化、平台 API、界面状态 |
 | `ledger-application` | 用例、事务边界、确认流程、权限无关的应用服务和端口 | 具体数据库、文件选择器、窗口或权限 |
 | `ledger-data` | 共享持久化实现、查询、原子写入、schema 迁移和审计历史存储 | 决定账务规则或绕过应用用例 |
+| `app-ui` | 共享演示界面、纯 UI 状态机/reducer、无障碍呈现和 P5-03 流程编排 | 数据库、SQLDelight、driver、平台窗口/Activity API、账务规则 |
 | `import-core` | `SourceRecord` 标准化、解析结果、来源哈希、去重和导入候选 | 自动确认正式交易 |
 | `reconcile-core` | 分录匹配、证据引用、差异、置信度和对账候选 | 修改余额或伪造补平交易 |
 | `reporting-core` | 有效分录重放、余额、收支、消费和其他确定性报表计算 | 保存独立于正式账本的报表事实 |
@@ -38,11 +39,11 @@
 ```text
 android-app  -> platform-android  --+
                                      |
-desktop-app  -> platform-desktop  --+--> ledger-application --> ledger-domain
-                                     |           ^                 ^
-                                     +-----------|-----------------+
-                                                 |
-ledger-data -----+-------------------------------+
+desktop-app  -> platform-desktop  --+--> app-ui --> ledger-application --> ledger-domain
+                                     |                    ^                 ^
+                                     +--------------------|-----------------+
+                                                          |
+ledger-data -----+----------------------------------------+
 import-core -----+
 reconcile-core --+
 reporting-core --+
@@ -51,6 +52,7 @@ reporting-core --+
 - `ledger-domain` 位于最内层，不依赖其他目标模块。
 - `ledger-application` 依赖领域类型，并定义外部能力端口。
 - 数据、导入、对账和报表模块依赖领域或应用契约，不能反向成为核心依赖。
+- `app-ui` 共享界面只消费 application 层类型（facade/use cases/read projection），不依赖 `ledger-data`、SQLDelight 或 database handle；两端组合根把装配好的 `P503LedgerFacade` 交给它。
 - 平台模块实现系统能力端口，应用组合根负责装配。
 - ID、时钟等运行时能力由应用用例通过端口消费；持久化适配器不拥有生成策略。当前 Android database handle 只是数据装配，不是 app 组合根。
 - 客户端 UI 只能调用应用用例，不直接写数据库或构造绕过不变量的正式分录。
@@ -66,13 +68,13 @@ Android 与 Desktop 的运行时端口实现由 `android-app` / `desktop-app` �
 
 来源发生、支付、入账、起息和观察时间是不可变来源事实，用户确认的统计时间是独立业务值；运行时 Clock 只供应处理、创建、确认和审计事件自身的时间。任何 adapter、用例或 Store 都不得用当前时间覆盖缺失或已有的来源时间。
 
-## P5-03 批准边界（尚未实现）
+## P5-03 演示面 B 边界（已实现，D-120）
 
-`D-119` 批准 P5-03 的承接架构，不重开已交付的 D-118，也不授权代码实施。拟议 application 边界按 ledger 隔离并只投影 current transaction versions：`ledger-data` adapter 仅返回 ledger-signed current rows 与 request/snapshot/receipt 关系；application 以组合根注入的同一 `LedgerCatalog` snapshot 校验账户 ownership/kind/currency、投影可用 payment account/leaf expense category options，并派生正常余额展示符号。UI 只调用 read/options/write 用例，禁止直接访问 SQL、database handle 或从余额反推输入选项；不同币种不得汇总。
+`D-119` 批准 P5-03 的承接架构，不重开已交付的 D-118；该边界已由 D-120 实施（规格 `docs/specs/2026-08-30-p5-03-demo-surface-b-implementation-design.md`）。拟议 application 边界按 ledger 隔离并只投影 current transaction versions：`ledger-data` adapter 仅返回 ledger-signed current rows 与 request/snapshot/receipt 关系；application 以组合根注入的同一 `LedgerCatalog` snapshot 校验账户 ownership/kind/currency、投影可用 payment account/leaf expense category options，并派生正常余额展示符号。UI 只调用 read/options/write 用例，禁止直接访问 SQL、database handle 或从余额反推输入选项；不同币种不得汇总。
 
 P5-03 demo 的 catalog 为两端以相同稳定 ID 确定性重建的固定匿名单 CNY snapshot，同一实例注入 write factory、options 与 read projection；catalog persistence/management 和产品多账户配置延后。精确金额由共享 application wrapper 复用 domain `parseExactDecimal`，两端不得复制 parser；每个 draft/save intent 使用独立平台 UUIDv7 request ID source，与六个 commit ID source 分离。
 
-commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 ledgerId、requestId 与 attempted snapshot；只有逐值 matching receipt 可恢复成功，snapshot conflict 映射稳定冲突，absent/unavailable 保持 unknown 且不得自动重试或换 requestId。仅 handoff 前可证明 `commitOnce` 零调用的 orchestration failure 可重试。两端组合根还须实现 `Starting`/`Ready`/稳定 startup-error 的 fail-closed 装配，driver/schema/open 失败时业务 UI 与用例不可达，只提供 Retry/Exit。上述 read/options、resolver、amount/requestId 和 startup 边界均为 approved-but-not-implemented，留给 `closure-evidence follow-up` 与获批后的 P5-03 实施批。
+commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 ledgerId、requestId 与 attempted snapshot；只有逐值 matching receipt 可恢复成功，snapshot conflict 映射稳定冲突，absent/unavailable 保持 unknown 且不得自动重试或换 requestId。仅 handoff 前可证明 `commitOnce` 零调用的 orchestration failure 可重试。两端组合根还须实现 `Starting`/`Ready`/稳定 startup-error 的 fail-closed 装配，driver/schema/open 失败时业务 UI 与用例不可达，只提供 Retry/Exit。上述 read/options、resolver、amount/requestId 和 startup 边界均已由 D-120 实施（`docs/specs/2026-08-30-p5-03-demo-surface-b-implementation-design.md`），现为已实现约束。
 
 ## 正式数据流
 

@@ -9,7 +9,7 @@
 - Gradle Wrapper 9.5.0
 - Kotlin Multiplatform 插件 2.4.10
 
-所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application` 与 `ledger-data` 三个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 带 Android 编译目标。桌面占位应用运行命令（启动占位界面并打开本地测试账本，P5-02 判据 1 人工门）：
+所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 与 `app-ui` 带 Android 编译目标。桌面占位应用运行命令（启动占位界面并打开本地测试账本，P5-02 判据 1 人工门）：
 
 ## 本机 Gradle 资源限制
 
@@ -44,6 +44,12 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat :ledger-application:jvmTest --stacktrace --rerun-tasks --warning-mode all
 ```
 
+运行 `app-ui` 的共享 UI 纯 reducer/状态机测试（P5-03；不引入 compose ui-test harness）：
+
+```powershell
+.\gradlew.bat :app-ui:jvmTest --stacktrace --rerun-tasks --warning-mode all
+```
+
 ```powershell
 .\gradlew.bat :desktop-app:run
 ```
@@ -64,6 +70,26 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ```powershell
 .\gradlew.bat :android-app:assembleDebug --stacktrace --rerun-tasks --warning-mode all
+```
+
+### Android APK 下载与人工安装
+
+CI 在 `:android-app:assembleDebug` 后上传调试 APK 工件，名称为 `android-debug-apk-<sha>`（保留 7 天）。人工验收必须使用固定 SHA 对应的工件；CI 成功不构成 emulator 人工证据已完成。
+
+下载固定 SHA 对应 APK（任选其一）：
+
+```powershell
+# 从对应提交的 CI 运行下载
+gh run download --repo <owner>/UnifiedLedger --name "android-debug-apk-<sha>" --dir apk-download
+# 或从 GitHub Actions artifact 页面手动下载
+```
+
+安装并核对（首次启动、创建/打开应用私有当前 schema 数据库、退出后同版本重开）：
+
+```powershell
+adb install -r apk-download\android-app-debug.apk
+adb shell am start -n com.unifiedledger.android/.MainActivity
+# 核对启动状态与空态；退出进程后再次启动核对同版本重开恢复正式结果
 ```
 
 运行 `ledger-data` JVM 测试：

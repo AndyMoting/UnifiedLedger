@@ -38,6 +38,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":app-ui"))
     implementation(project(":ledger-application"))
     implementation(project(":ledger-data"))
     // F-2 analog (IMP-11): the composition root consumes the Android system SQLite driver
@@ -45,6 +46,4 @@ dependencies {
     implementation("app.cash.sqldelight:android-driver:2.3.2")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(compose.runtime)
-    implementation(compose.foundation)
-    implementation(compose.material3)
 }
