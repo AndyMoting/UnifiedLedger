@@ -22,11 +22,13 @@
 | `ledger-domain` | 精确金额、正式交易、分录、版本和纯领域不变量 | [`src/commonMain`](../ledger-domain/src/commonMain) | [领域模块](modules/ledger-domain.md) | [`src/commonTest`](../ledger-domain/src/commonTest) |
 | `ledger-application` | 操作用例、确认、候选、幂等和外部能力端口 | [`src/commonMain`](../ledger-application/src/commonMain) | [应用模块](modules/ledger-application.md) | [`src/commonTest`](../ledger-application/src/commonTest)、[`src/jvmTest`](../ledger-application/src/jvmTest) |
 | `ledger-data` | SQLDelight、原子存储、迁移、重读和平台数据库装配 | [`src/commonMain`](../ledger-data/src/commonMain) | [数据模块](modules/ledger-data.md) | [`src/jvmTest`](../ledger-data/src/jvmTest) |
-| `app-ui` | 共享 P5-03 演示界面、纯 UI 状态机/reducer 与无障碍呈现 | [`src/commonMain`](../app-ui/src/commonMain) | [架构](ARCHITECTURE.md) | [`src/commonTest`](../app-ui/src/commonTest)、`:app-ui:jvmTest`（[开发规范](CONTRIBUTING.md)） |
-| `desktop-app` | Desktop 组合根、占位界面和平台依赖装配（P5-02） | [`src/jvmMain`](../desktop-app/src/jvmMain) | [架构](ARCHITECTURE.md) | [`src/jvmTest`](../desktop-app/src/jvmTest)、`:desktop-app:build`（[开发规范](CONTRIBUTING.md)） |
-| `android-app` | Android 组合根、占位界面和平台依赖装配（P5-02） | [`src/main`](../android-app/src/main) | [架构](ARCHITECTURE.md) | `:android-app:assembleDebug`（[开发规范](CONTRIBUTING.md)） |
+| `app-ui` | 共享 P5-03 演示面 B、纯 UI 状态机/reducer、手工支出流程与无障碍呈现 | [`src/commonMain`](../app-ui/src/commonMain) | [架构](ARCHITECTURE.md) | [`src/commonTest`](../app-ui/src/commonTest)、`:app-ui:jvmTest`（[开发规范](CONTRIBUTING.md)） |
+| `desktop-app` | Desktop 组合根、P5-03 演示面 B 启动与数据库装配 | [`src/jvmMain`](../desktop-app/src/jvmMain) | [架构](ARCHITECTURE.md) | [`src/jvmTest`](../desktop-app/src/jvmTest)、`:desktop-app:build`、`:desktop-app:run`（[开发规范](CONTRIBUTING.md)） |
+| `android-app` | Android 组合根、P5-03 演示面 B 启动与数据库装配 | [`src/main`](../android-app/src/main) | [架构](ARCHITECTURE.md) | `:android-app:compileDebugKotlin`、`:android-app:assembleDebug`（CI artifact 与 Android 人工门；[开发规范](CONTRIBUTING.md)） |
 
 `import-core`、`reconcile-core`、`reporting-core` 与平台模块（`platform-android`/`platform-desktop`）仍是[架构](ARCHITECTURE.md)中的目标职责，不是当前可构建模块；`android-app` 与 `desktop-app` 两个客户端组合根已可构建。不存在的模块不得被文档或代码当作已经实现。
+
+P5-03 演示面 B 已在两端组合根接通：`app-ui` 提供启动、总览、编辑、确认和结果屏幕，以及纯 reducer 驱动的异步状态转场；Desktop 的鼠标流程和键盘/焦点流程、Android 的模拟器启动/重开/持久化流程与 TalkBack 流程均已完成人工验证。Android 调试 APK 由 CI artifact 提供，当前版本的数据库 schema 为 v27。
 
 ## 跨模块契约
 
