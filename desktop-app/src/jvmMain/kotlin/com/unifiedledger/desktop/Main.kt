@@ -114,6 +114,8 @@ internal class DesktopStartupController(
                 facade = openDatabase()
                 P503StartupState.Ready
             } catch (failure: Exception) {
+                System.err.println("UnifiedLedger startup failed: " + failure)
+                failure.printStackTrace()
                 P503StartupState.StartupError
             }
     }
