@@ -40,6 +40,11 @@ private class ForeignKeysCallback : AndroidSqliteDriver.Callback(LedgerDatabase.
     override fun onConfigure(db: SupportSQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
-        db.execSQL("PRAGMA busy_timeout = 5000")
+        // PRAGMA busy_timeout = N must not be issued through execSQL/execute on Android: the
+        // setting statement returns a result row, which SQLiteSession.executeForChangedRowCount
+        // rejects with "Queries can be performed using SQLiteDatabase query or rawQuery methods
+        // only" (observed on an API 36 emulator). The single-connection demo has no busy
+        // contention on Android, so the busy timeout is intentionally not set here; the desktop
+        // JDBC path keeps its own busy_timeout via configureSqliteConnection.
     }
 }
