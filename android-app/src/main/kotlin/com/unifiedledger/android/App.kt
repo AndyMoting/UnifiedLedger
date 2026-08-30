@@ -1,6 +1,7 @@
 package com.unifiedledger.android
 
 import android.app.Activity
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -99,6 +100,7 @@ internal class AndroidStartupController(
                 facade = openDatabase()
                 P503StartupState.Ready
             } catch (failure: Exception) {
+                Log.w("UnifiedLedger", "startup failed", failure)
                 P503StartupState.StartupError
             }
     }
