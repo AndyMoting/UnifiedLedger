@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("multiplatform")
+    id("com.android.kotlin.multiplatform.library")
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jlleitschuh.gradle.ktlint")
@@ -30,25 +31,22 @@ kotlin {
         }
     }
 
+    android {
+        namespace = "com.unifiedledger.ui"
+        minSdk = 34
+        compileSdk = 36
+    }
+
     sourceSets {
-        jvmMain.dependencies {
-            implementation(compose.desktop.currentOs)
-            implementation(project(":app-ui"))
-            implementation(project(":ledger-application"))
-            implementation(project(":ledger-data"))
-            // F-2 (IMP-1): the desktop SQLite driver is declared in this module's jvmMain;
-            // the ledger-data build script stays unchanged.
-            implementation("app.cash.sqldelight:sqlite-driver:2.3.2")
+        commonMain.dependencies {
+            api(project(":ledger-application"))
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material3)
         }
 
-        jvmTest.dependencies {
+        commonTest.dependencies {
             implementation(kotlin("test"))
         }
-    }
-}
-
-compose.desktop {
-    application {
-        mainClass = "com.unifiedledger.desktop.MainKt"
     }
 }

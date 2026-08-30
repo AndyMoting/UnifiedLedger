@@ -1990,3 +1990,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **开放门与非授权：** Android emulator 当前不可用，安装/启动/应用私有当前 schema 数据库同版本重开证据保持 P5-03 entry 开放门；不阻止本契约批准或 P5-03 spec-only。零 schema、零迁移、零生产代码与行为变化；read/options、amount wrapper、request ID、submission orchestration 和 startup states 均为 approved-but-not-implemented，需后续批实现。
 
 **关联决定：** `D-096`、`D-114`、`D-117`、`D-118`
+
+## D-120 P5-03 演示面 B 实施批（共享 app-ui KMP UI 模块 + 手工支出写路径）
+
+**状态：** 已批准/已交付（2026-08-30）。
+
+**背景/授权：** P5-03 实施规格（`docs/specs/2026-08-30-p5-03-demo-surface-b-implementation-design.md`，冻结 SHA-256 `9cba25e0fb39d13c89ba531bc1ff27918cdd0dce5df362dddf3c485fb357768a`，本批转 approved）经双独立评审 APPROVE + distinct verifier 12/12；用户 goal 指令（除 push 外默认推荐）授权实施。
+
+**实施落点：**
+
+1. **app-ui** KMP library（androidTarget + jvm；Kotlin 2.4.10 / CMP 1.11.1 / AGP 9.1.0 零升级；compose × AGP 9 KMP-library 配对冒烟验证通过；`ledger-application`/`ledger-domain` 保持 jvm-only 零构建脚本改动——D-118 IMP-3 边界保持）。
+2. **application API**：`ParseManualExpenseAmount`（仅 trim ASCII space/tab/CR/LF，委托 domain `parseExactDecimal`，无 UI 精度）、`ManualExpenseOptionsProvider`/`QueryManualExpenseOptions`（仅从注入 catalog snapshot 派生 owned ASSET real 支付账户带币种 + active leaf EXPENSE 分类，不从余额/行/硬编码 ID 推导）、`LedgerCurrentStateReadPort`（loadCurrentRows/findManualExpenseByRequest/findManualExpenseByReceipt，ledger 过滤）、`QueryLedgerCurrentState`（current-version 投影、ownership/kind/currency/posting 一致性、`AccountCurrencyBalance` 无跨币种汇总、normal-balance display sign ASSET/EXPENSE=账本符号 LIABILITY/INCOME/EQUITY 取反、checkedAdd/checkedNegate 防溢出→InvalidState、异常→Unavailable 非 Rejected）、`ResolveManualExpenseCommitStatus`（MatchingReceipt/SnapshotConflict/Absent/Unavailable，逐字段比较含空 note，仅 MatchingReceipt→Recovered）、`ExecuteManualExpenseSubmission` + `CommitOnceInvocationTracker`（per-submit `reset()`；InfrastructureFailure 仅 zero-call 可证明；post-handoff matching→Recovered / SnapshotConflict→稳定 RequestIdentityConflict / Absent+Unavailable→UnknownCommit；Unknown 禁止自动重试、乐观刷新、换 requestId）+ 独立 `UuidV7ManualExpenseRequestIdSource`（独立 UuidV7Generator 实例）。
+3. **`SqlDelightLedgerCurrentStateReadAdapter` + `Ledger.sq`** 仅追加 3 条查询（`currentVersionRowsForLedger`/`manualExpenseCommitByRequest`/`manualExpenseCommitByReceipt`，+82 行，零 DDL，schema v27 与 26 个迁移文件不变；数据库异常→Unavailable 非 Rejected）。
+4. **共享 UI**：14 状态（Starting/Ready/StartupError/OverviewEmpty/Editing/AwaitingConfirmation/Submitting/Created/NoChange/RequestIdentityConflict/DomainRejected/InfrastructureFailure/UnknownCommit/Recovered）纯 `P503Reducer`（无 IO/随机/facade）+ 7 异步结果事件；无障碍（字段错误 semantics 关联、键盘/焦点、≥48dp、liveRegion、content description）；startup fail-closed（Starting→Ready / 任一 driver/schema/create/open 异常→StartupError(LocalDatabaseUnavailable)，仅 Retry/Exit，不构造业务 UI/handle，不映射 Rejected）。
+5. **两端组合根接线**（desktop 临时文件 DB + android `AndroidSqliteDriver(Schema, ctx, "ledger.db")`；产品 `SecureRandom` + `Clock.System.now()`；共享 `P503App`；`DesktopStartupController`/`AndroidStartupController` fail-closed）；固定 catalog（ledger-local-test / CNY(2) / asset-payment-local / expense-account-local / expense-category-food / expense-category-breakfast）同实例注入 write/options/read-projection。
+6. **CI**：`:app-ui:jvmTest` 步骤 + upload-artifact（`actions/upload-artifact@v4`，`android-debug-apk-${{ github.sha }}`，`android-app/build/outputs/apk/debug/*.apk`，`retention-days: 7`）；CONTRIBUTING APK 下载/安装人工步骤；README/PROJECT_MAP/ARCHITECTURE 模块注册。
+7. **测试**：`ParseManualExpenseAmountTest`、`QueryManualExpenseOptionsTest`、`QueryLedgerCurrentStateTest`（含 MIN_VALUE 取反溢出→InvalidState）、`ResolveManualExpenseCommitStatusTest`、`ExecuteManualExpenseSubmissionTest`（含 pre-submit zero-call 与 second-submission reset 证据）、`ManualExpenseRequestIdSourceTest`、`SqlDelightLedgerCurrentStateReadAdapterTest`（current pointer/ledger isolation/receipt 一致性/reopen/零重复）、`P503ReducerTest`（14 场景事件序列）、`P503DraftValidationTest`、`DesktopCurrentSchemaReopenTest`（同 current schema 关闭/重开证据）、`DesktopStartupControllerTest`、`DesktopSkeletonSmokeTest`（回归保持）。
+
+**验证证据：** writer 聚焦命令全绿（ledger-application 361 tests、ledger-data 31m32s、migration verifier、compileAndroidMain、ktlint 47 tasks、project_docs、Python 806）；双独立评审（规格 P503IMPL-S-001..008 + 质量 P503IMPL-Q-001..007）APPROVE + 打磨轮 + delta closure CONFIRMED APPROVE；distinct verifier 9/9 PASS（逐命令独立重跑 + Desktop reopen 证据 + 零 schema/账务漂移 + 隐私扫描零命中）；verify-project full 本地 git/docs/Python PASS，Gradle `check` 聚合在 1 GB Kotlin daemon 上限下 `:ledger-data:compileKotlinJvm` OOM（**R-17**：与 R-9 同类本机资源限制，遵守用户「单命令 heap 不变」裁决，聚合 check 归 CI）。
+
+**开放项：** R-9 本地 `:android-app:assembleDebug` OOM → APK artifact 归 CI（需 push）；Android emulator 人工门（安装/启动/私有库同版本重开）保持开放；TalkBack/键盘无障碍人工门保持开放；CURRENT_STATE/ROADMAP 正式状态同步留待推送前文档批。
+
+**关联决定：** `D-118`、`D-119`

@@ -1,23 +1,30 @@
 package com.unifiedledger.android
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import android.app.Activity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
+import com.unifiedledger.application.ExecuteManualExpenseSave
+import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.QueryLedgerCurrentState
+import com.unifiedledger.application.QueryManualExpenseOptions
+import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7Generator
+import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.data.SqlDelightConfirmedManualExpenseCommitPort
+import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
@@ -31,38 +38,73 @@ import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
+import com.unifiedledger.ui.P503App
+import com.unifiedledger.ui.P503LedgerFacade
+import com.unifiedledger.ui.P503StartupScreen
+import com.unifiedledger.ui.P503StartupState
 import java.security.SecureRandom
 import kotlin.time.Clock
 
 /**
- * Android composition root (P5-02, IMP-11). The placeholder UI never writes through the
- * database handle directly; it only displays that the local test ledger is open.
+ * Android composition root (P5-03 spec sections 8/10.2). Uses the application-private
+ * `ledger.db` through the existing AndroidSqliteDriver handle pattern, assembles the same
+ * object graph as the desktop root (only the driver and random source differ) and calls the
+ * shared [P503App]. Startup is fail-closed: only Retry and Exit are offered on failure.
  */
 @Composable
 fun app() {
     val context = LocalContext.current
-    val graph =
+    val activity = context as? Activity
+    val controller =
         remember(context) {
-            buildLedgerGraph(AndroidSqliteDriver(LedgerDatabase.Schema, context, "ledger.db"))
-        }
-
-    MaterialTheme {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("UnifiedLedger 本地测试账本已打开（${graph.ledgerId.value}）")
-            Button(onClick = {}) {
-                Text("占位按钮")
+            AndroidStartupController {
+                buildLedgerFacade(AndroidSqliteDriver(LedgerDatabase.Schema, context, "ledger.db"))
             }
         }
+    LaunchedEffect(Unit) {
+        controller.start()
+    }
+
+    val facade = controller.facade
+    when {
+        controller.state == P503StartupState.Ready && facade != null ->
+            P503App(facade, onExit = { activity?.finish() })
+        else ->
+            P503StartupScreen(
+                state = controller.state,
+                onRetry = controller::start,
+                onExit = { activity?.finish() },
+            )
     }
 }
 
-private data class LedgerGraph(
-    val ledgerId: LedgerId,
-    val useCase: ExecuteConfirmedManualExpense,
-    val ledgerClock: LedgerClock,
-)
+/**
+ * Testable composition-root startup state (spec section 8). Exposes the shared
+ * [P503StartupState] transitions and never exposes a business graph after a failed start.
+ */
+internal class AndroidStartupController(
+    private val openDatabase: () -> P503LedgerFacade,
+) {
+    var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
+        private set
 
-private fun buildLedgerGraph(driver: AndroidSqliteDriver): LedgerGraph {
+    var facade: P503LedgerFacade? by mutableStateOf(null)
+        private set
+
+    fun start() {
+        state = P503StartupState.Starting
+        facade = null
+        state =
+            try {
+                facade = openDatabase()
+                P503StartupState.Ready
+            } catch (failure: Exception) {
+                P503StartupState.StartupError
+            }
+    }
+}
+
+private fun buildLedgerFacade(driver: AndroidSqliteDriver): P503LedgerFacade {
     val database = LedgerDatabase(driver)
 
     val ledgerId = LedgerId("ledger-local-test")
@@ -83,6 +125,7 @@ private fun buildLedgerGraph(driver: AndroidSqliteDriver): LedgerGraph {
         )
 
     val port = SqlDelightConfirmedManualExpenseCommitPort(database, driver)
+    val tracker = CommitOnceInvocationTracker(port)
     val factory =
         ConfirmedExpenseTransactionFactory { request, ids ->
             when (
@@ -111,12 +154,25 @@ private fun buildLedgerGraph(driver: AndroidSqliteDriver): LedgerGraph {
             }
         }
     val idSource = UuidV7ConfirmedManualExpenseIdSource(UuidV7Generator(::secureRandomBytes))
+    val requestIdSource = UuidV7ManualExpenseRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val ledgerClock = LedgerClock { Clock.System.now() }
-    val useCase = ExecuteConfirmedManualExpense(port, idSource, factory)
+    val executeConfirmed = ExecuteConfirmedManualExpense(tracker, idSource, factory)
+    val executeSave = ExecuteManualExpenseSave(executeConfirmed)
+    val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+    val queryCurrentState = QueryLedgerCurrentState(readAdapter, ledgerId, catalog)
+    val resolver = ResolveManualExpenseCommitStatus(readAdapter)
+    val submission = ExecuteManualExpenseSubmission(executeSave, tracker, resolver)
 
-    return LedgerGraph(
+    return P503LedgerFacade(
         ledgerId = ledgerId,
-        useCase = useCase,
+        currency = currency,
+        catalog = catalog,
+        parseAmount = ParseManualExpenseAmount(),
+        optionsProvider = QueryManualExpenseOptions(ledgerId, catalog),
+        queryCurrentState = queryCurrentState,
+        resolveCommitStatus = resolver,
+        submitExpense = submission,
+        requestIdSource = requestIdSource,
         ledgerClock = ledgerClock,
     )
 }
