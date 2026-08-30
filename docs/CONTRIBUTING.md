@@ -9,7 +9,7 @@
 - Gradle Wrapper 9.5.0
 - Kotlin Multiplatform 插件 2.4.10
 
-所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 与 `app-ui` 带 Android 编译目标。桌面占位应用运行命令（启动占位界面并打开本地测试账本，P5-02 判据 1 人工门）：
+所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 与 `app-ui` 带 Android 编译目标。桌面应用运行命令（启动 P5-03 演示面 B 并打开本地测试账本）：
 
 ## 本机 Gradle 资源限制
 
@@ -54,7 +54,7 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat :desktop-app:run
 ```
 
-运行 `desktop-app` JVM 测试（P5-02 §8 判据 1：空库引导、一次手工支出 Created、UUIDv7 文本、逐币种平衡与重放 NoChange）：
+运行 `desktop-app` JVM 测试（P5-03 回归：空库引导、一次手工支出 Created、UUIDv7 文本、逐币种平衡与重放 NoChange）：
 
 ```powershell
 .\gradlew.bat :desktop-app:jvmTest --stacktrace --rerun-tasks --warning-mode all
@@ -66,7 +66,7 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat :desktop-app:build --stacktrace --rerun-tasks --warning-mode all
 ```
 
-构建 `android-app` 调试 APK（P5-02 判据 2 的构建门；本地模拟器安装与启动为人工门）：
+构建 `android-app` 调试 APK（P5-03 构建门；CI artifact 用于 Android 安装、启动与人工验收）：
 
 ```powershell
 .\gradlew.bat :android-app:assembleDebug --stacktrace --rerun-tasks --warning-mode all

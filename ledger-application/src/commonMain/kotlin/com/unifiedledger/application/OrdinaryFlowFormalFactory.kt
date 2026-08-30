@@ -14,7 +14,7 @@ import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 /**
  * Shared application-layer ordinary-flow assembly helper.
  *
- * Phase 5 has not started, so this class is deliberately limited to the import
+ * The client phase has started, but this helper remains limited to the import
  * confirmation factory contract. It does not create an app composition root.
  */
 class OrdinaryFlowFormalFactory(
