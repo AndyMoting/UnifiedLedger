@@ -42,9 +42,13 @@
 
 ## 阶段 5：双端最小外壳
 
-建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心。`android-app` 与 `desktop-app` 两个组合根模块已按 P5-02 建立（只做装配与占位界面）；桌面占位应用可经 `.\gradlew.bat :desktop-app:run` 运行，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（模拟器安装/启动为人工门）。
+建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心。`android-app` 与 `desktop-app` 两个组合根模块已按 P5-02 建立、按 P5-03 只保留平台入口与组合根装配，共享界面由新增 `app-ui` 模块承载；桌面应用可经 `.\gradlew.bat :desktop-app:run` 运行，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（模拟器安装/启动为人工门）。
 
-`D-119` 已批准 P5-01/P5-02 到 P5-03 的闭环补充契约，D-118 保持已交付。当前方向按 approved 规格顺序推进：可起草 P5-03 spec-only，并独立执行 `closure-evidence follow-up`；ledger-scoped/current-version read/options、snapshot-aware unknown resolution、固定 catalog、startup fail-closed、精确金额/requestId 和最小 UI 均待后续批实现。Android emulator entry 证据开放；本登记不授权 P5-03 代码实施，零 schema/生产行为变化。
+- `P5-01`：双平台最小外壳契约已批准（`D-117`，contract-only，零实现/零 schema/零生产行为变化）。
+- `P5-02`：双平台骨架实施批已交付（`D-118`，`desktop-app`/`android-app` 两组合根、Clock 端口与 UUIDv7 产品 ID；零 schema/迁移变更）。
+- `P5-03`：演示面 B 实施批已交付（`D-120`，共享 `app-ui` KMP UI 模块 + 手工支出写路径；实施 `8a0a079`/merge `85a4138`，2026-08-30 推送 `origin/main`；零 schema/迁移变更，schema 维持 v27；Android APK 工件 + emulator 人工门与 TalkBack/桌面键盘可访问性人工门保持开放）。
+
+`D-119` 已批准 P5-01/P5-02 到 P5-03 的闭环补充契约，D-118 保持已交付；P5-03 演示面 B 已按 approved 规格交付（见上，`D-120`）。Android APK 工件 + emulator 人工门（安装/首次启动/私有 current-schema 数据库创建+打开/同版本重开）与 TalkBack/桌面键盘可访问性人工门保持开放。下一未来批为 P5-04（皮肤/视觉效果/Liquid Glass 评估与实现，`AndroidLiquidGlass` 后续另立 P5-04 规格，独立验证），不得反向改变 P5-03 的账务与状态边界。
 
 - 进入条件：共享核心具备稳定调用边界，导入与对账最小闭环通过验收。
 - 完成条件：两端可以打开本地测试账本、调用共享用例并持续通过构建检查。
