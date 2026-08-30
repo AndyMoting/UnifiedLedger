@@ -9,7 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
@@ -24,9 +23,9 @@ import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
-import com.unifiedledger.data.SqlDelightConfirmedManualExpenseCommitPort
+import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
-import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -59,7 +58,8 @@ fun app() {
     val controller =
         remember(context) {
             AndroidStartupController {
-                buildLedgerFacade(AndroidSqliteDriver(LedgerDatabase.Schema, context, "ledger.db"))
+                createAndroidLedgerDatabase(context, "ledger.db")
+                    .let { handle -> buildLedgerFacade(handle) }
             }
         }
     LaunchedEffect(Unit) {
@@ -106,8 +106,8 @@ internal class AndroidStartupController(
     }
 }
 
-private fun buildLedgerFacade(driver: AndroidSqliteDriver): P503LedgerFacade {
-    val database = LedgerDatabase(driver)
+private fun buildLedgerFacade(handle: AndroidLedgerDatabaseHandle): P503LedgerFacade {
+    val database = handle.database
 
     val ledgerId = LedgerId("ledger-local-test")
     val currency = CurrencyUnit("CNY", 2)
@@ -126,7 +126,7 @@ private fun buildLedgerFacade(driver: AndroidSqliteDriver): P503LedgerFacade {
             categoryId = categoryId,
         )
 
-    val port = SqlDelightConfirmedManualExpenseCommitPort(database, driver)
+    val port = handle.commitPort
     val tracker = CommitOnceInvocationTracker(port)
     val factory =
         ConfirmedExpenseTransactionFactory { request, ids ->
