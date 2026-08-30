@@ -2009,6 +2009,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **验证证据：** writer 聚焦命令全绿（ledger-application 361 tests、ledger-data 31m32s、migration verifier、compileAndroidMain、ktlint 47 tasks、project_docs、Python 806）；双独立评审（规格 P503IMPL-S-001..008 + 质量 P503IMPL-Q-001..007）APPROVE + 打磨轮 + delta closure CONFIRMED APPROVE；distinct verifier 9/9 PASS（逐命令独立重跑 + Desktop reopen 证据 + 零 schema/账务漂移 + 隐私扫描零命中）；verify-project full 本地 git/docs/Python PASS，Gradle `check` 聚合在 1 GB Kotlin daemon 上限下 `:ledger-data:compileKotlinJvm` OOM（**R-17**：与 R-9 同类本机资源限制，遵守用户「单命令 heap 不变」裁决，聚合 check 归 CI）。
 
-**开放项：** R-9 本地 `:android-app:assembleDebug` OOM → APK artifact 归 CI（需 push）；Android emulator 人工门（安装/启动/私有库同版本重开）保持开放；TalkBack/键盘无障碍人工门保持开放；CURRENT_STATE/ROADMAP 正式状态同步留待推送前文档批。
+**收口登记：** R-9 本地 `:android-app:assembleDebug` OOM → APK artifact 归 CI；Android emulator 人工门已于 2026-08-30 使用 CI 固定 APK 和 API 36 模拟器完成（安装/启动/私有库 current schema 创建与同版本重开、完整手工支出与精确持久化）；Desktop 键盘/焦点人工门已通过（Tab/Enter/空格键完成同一流程）；Android TalkBack 人工门已通过（控件可聚焦/激活、输入可用、提交结果可感知）；CURRENT_STATE/ROADMAP 已同步，P5-03 双端人工流程门全部完成。P5-04 皮肤/视觉效果/Liquid Glass 为下一独立批次，不改变本批账务与状态边界。
 
 **关联决定：** `D-118`、`D-119`
