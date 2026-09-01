@@ -54,7 +54,8 @@ class P503ReducerImpl(
 
     private fun reduceReady(event: P503UiEvent): P503AppState =
         when (event) {
-            is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState)
+            // The authoritative load always lands on the home tab (D-122).
+            is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
             P503UiEvent.InitialLoadFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -73,6 +74,9 @@ class P503ReducerImpl(
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
+            // Tab switching keeps the same authoritative LedgerCurrentState reference; no
+            // data is re-fetched and the selection survives only within the overview.
+            is P503UiEvent.SelectTab -> state.copy(selectedTab = event.tab)
             P503UiEvent.StartNewExpense ->
                 P503AppState.Editing(
                     draft =
@@ -168,7 +172,9 @@ class P503ReducerImpl(
         current: P503AppState,
     ): P503AppState =
         when (event) {
-            is P503UiEvent.RefreshResult -> P503AppState.OverviewEmpty(event.currentState)
+            // The authoritative refresh after a submission flow always returns to the home
+            // tab; the submission states carry no tab.
+            is P503UiEvent.RefreshResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
             P503UiEvent.RefreshFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             else -> unhandled(current, event)
         }
@@ -233,7 +239,7 @@ class P503ReducerImpl(
             InfrastructureFailureContext.READ ->
                 when (event) {
                     P503UiEvent.RetryRefresh -> state
-                    is P503UiEvent.RefreshResult -> P503AppState.OverviewEmpty(event.currentState)
+                    is P503UiEvent.RefreshResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
                     P503UiEvent.RefreshFailed -> state
                     else -> unhandled(state, event)
                 }

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,14 +18,14 @@ import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
 
 /**
- * Overview/empty screen (spec section 7.3.1). The authoritative current state is rendered
- * as-is: an empty ledger shows the empty state; a non-empty ledger shows the current
- * transaction list and per-account per-currency balances with display signs.
+ * Home tab content (D-122): the authoritative current state rendered as-is. An empty
+ * ledger shows the empty state; a non-empty ledger shows the current transaction list and
+ * per-account per-currency balances with display signs. The new-expense entry point lives
+ * in the shell's floating action button, not in this content.
  */
 @Composable
 fun P503OverviewScreen(
     state: LedgerCurrentState,
-    onStartNewExpense: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -35,10 +34,6 @@ fun P503OverviewScreen(
         Spacer(Modifier.height(8.dp))
         if (state.transactions.isEmpty()) {
             Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = onStartNewExpense) {
-                Text("新增支出")
-            }
         } else {
             Text("当前交易", style = MaterialTheme.typography.titleMedium)
             state.transactions.forEach { row ->
@@ -54,10 +49,6 @@ fun P503OverviewScreen(
                         formatMinorUnits(balance.displayMinorUnits, balance.currency.precision),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-            }
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = onStartNewExpense) {
-                Text("新增支出")
             }
         }
     }

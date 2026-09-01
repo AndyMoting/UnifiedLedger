@@ -7,6 +7,7 @@ import com.unifiedledger.application.ManualExpenseRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
+import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
@@ -27,4 +28,5 @@ class P503LedgerFacade(
     val submitExpense: ExecuteManualExpenseSubmission,
     val requestIdSource: ManualExpenseRequestIdSource,
     val ledgerClock: LedgerClock,
+    val summarizeActivity: SummarizeLedgerActivity,
 )

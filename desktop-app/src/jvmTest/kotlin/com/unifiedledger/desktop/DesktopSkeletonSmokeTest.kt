@@ -4,9 +4,11 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedManualExpense
+import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TransactionKind
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -74,6 +76,17 @@ class DesktopSkeletonSmokeTest {
         assertEquals(2L, queries.countPostings().executeAsOne())
         assertEquals(1L, queries.countRequests().executeAsOne())
         assertEquals(1L, queries.countReceipts().executeAsOne())
+
+        // The shared analysis derivation (P5-04.1) reads the authoritative state through the facade.
+        val state = assertIs<LedgerCurrentStateResult.Success>(graph.facade.queryCurrentState.query()).state
+        val summary = graph.facade.summarizeActivity.summarize(state)
+        assertEquals(1, summary.totalTransactionCount)
+        assertEquals(1, summary.countByKind[TransactionKind.EXPENSE])
+        assertEquals(1, summary.totalsByCurrency.size)
+        val cnyTotal = summary.totalsByCurrency.single()
+        assertEquals(CurrencyUnit("CNY", 2), cnyTotal.currency)
+        assertEquals(3_580L, cnyTotal.expenseMinorUnits)
+        assertEquals(0L, cnyTotal.incomeMinorUnits)
 
         // IMP-6: the composition-root LedgerClock returns a near-current instant (loose tolerance).
         val now = graph.ledgerClock.now()

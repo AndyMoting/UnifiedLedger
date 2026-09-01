@@ -20,6 +20,11 @@ sealed interface P503UiEvent {
 
     data object StartNewExpense : P503UiEvent
 
+    /** Switches the overview tab; valid only while the overview is on screen. */
+    data class SelectTab(
+        val tab: P503Tab,
+    ) : P503UiEvent
+
     data class UpdateAmount(
         val text: String,
     ) : P503UiEvent

@@ -24,6 +24,7 @@ sealed interface P503AppState {
 
     data class OverviewEmpty(
         val state: LedgerCurrentState,
+        val selectedTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class Editing(
@@ -66,6 +67,16 @@ sealed interface P503AppState {
     data object UnknownCommit : P503AppState
 
     data object Recovered : P503AppState
+}
+
+/**
+ * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an
+ * authoritative refresh can always return the overview to the home tab.
+ */
+enum class P503Tab {
+    HOME,
+    ACCOUNTS,
+    ANALYSIS,
 }
 
 enum class InfrastructureFailureContext {

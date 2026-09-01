@@ -22,7 +22,7 @@
 | `ledger-domain` | 精确金额、正式交易、分录、版本和纯领域不变量 | [`src/commonMain`](../ledger-domain/src/commonMain) | [领域模块](modules/ledger-domain.md) | [`src/commonTest`](../ledger-domain/src/commonTest) |
 | `ledger-application` | 操作用例、确认、候选、幂等和外部能力端口 | [`src/commonMain`](../ledger-application/src/commonMain) | [应用模块](modules/ledger-application.md) | [`src/commonTest`](../ledger-application/src/commonTest)、[`src/jvmTest`](../ledger-application/src/jvmTest) |
 | `ledger-data` | SQLDelight、原子存储、迁移、重读和平台数据库装配 | [`src/commonMain`](../ledger-data/src/commonMain) | [数据模块](modules/ledger-data.md) | [`src/jvmTest`](../ledger-data/src/jvmTest) |
-| `app-ui` | 共享 P5-03 演示面 B、纯 UI 状态机/reducer、手工支出流程与无障碍呈现 | [`src/commonMain`](../app-ui/src/commonMain) | [架构](ARCHITECTURE.md) | [`src/commonTest`](../app-ui/src/commonTest)、`:app-ui:jvmTest`（[开发规范](CONTRIBUTING.md)） |
+| `app-ui` | 共享 P5-03 演示面 B、P5-04.1 三 Tab 壳（首页/账户/分析与中央新增入口；分析 Tab 经 facade 消费 application 纯派生 `SummarizeLedgerActivity`）、纯 UI 状态机/reducer、手工支出流程与无障碍呈现 | [`src/commonMain`](../app-ui/src/commonMain) | [架构](ARCHITECTURE.md) | [`src/commonTest`](../app-ui/src/commonTest)、`:app-ui:jvmTest`（[开发规范](CONTRIBUTING.md)） |
 | `desktop-app` | Desktop 组合根、P5-03 演示面 B 启动与数据库装配 | [`src/jvmMain`](../desktop-app/src/jvmMain) | [架构](ARCHITECTURE.md) | [`src/jvmTest`](../desktop-app/src/jvmTest)、`:desktop-app:build`、`:desktop-app:run`（[开发规范](CONTRIBUTING.md)） |
 | `android-app` | Android 组合根、P5-03 演示面 B 启动与数据库装配 | [`src/main`](../android-app/src/main) | [架构](ARCHITECTURE.md) | `:android-app:compileDebugKotlin`、`:android-app:assembleDebug`（CI artifact 与 Android 人工门；[开发规范](CONTRIBUTING.md)） |
 
