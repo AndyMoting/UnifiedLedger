@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 fun P503App(
     facade: P503LedgerFacade,
     onExit: () -> Unit,
+    backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
 ) {
     val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency) }
     val validation = remember(facade) { P503DraftValidation(facade.parseAmount) }
@@ -53,6 +54,25 @@ fun P503App(
 
     fun dispatch(event: P503UiEvent) {
         state = reducer.reduce(state, event)
+    }
+
+    // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
+    // overview snapshot needed to close back to the originating tab. Submitting swallows the
+    // back to avoid exiting the process mid-submission; only non-Submitting states dispatch.
+    val current = state
+    val editFlowBackEnabled =
+        when (current) {
+            is P503AppState.Editing -> current.overview != null
+            is P503AppState.AwaitingConfirmation -> current.overview != null
+            is P503AppState.Submitting -> current.overview != null
+            is P503AppState.RequestIdentityConflict -> current.overview != null
+            is P503AppState.DomainRejected -> current.overview != null
+            is P503AppState.InfrastructureFailure ->
+                current.context == InfrastructureFailureContext.SUBMISSION && current.overview != null
+            else -> false
+        }
+    backHandler?.invoke(editFlowBackEnabled) {
+        if (state !is P503AppState.Submitting) dispatch(P503UiEvent.Back)
     }
 
     // The parse/display currency follows the selected payment account (spec section 4.1);

@@ -87,6 +87,8 @@ class P503ReducerImpl(
                             occurredAt = null,
                         ),
                     requestId = null,
+                    overview = state.state,
+                    originTab = state.selectedTab,
                 )
             else -> unhandled(state, event)
         }
@@ -106,11 +108,15 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.copy(occurredAt = event.instant))
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
-                    P503AppState.AwaitingConfirmation(state.draft, event.requestId)
+                    P503AppState.AwaitingConfirmation(state.draft, event.requestId, state.overview, state.originTab)
                 } else {
                     // Field error retains input and the (already allocated) requestId.
                     state.copy(requestId = event.requestId)
                 }
+            // System back closes the editor flow back to the originating overview tab,
+            // dropping the draft (P5-04.2). Only reachable with a non-null overview.
+            P503UiEvent.Back ->
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
             else -> unhandled(state, event)
         }
 
@@ -125,12 +131,20 @@ class P503ReducerImpl(
                 P503AppState.Editing(
                     draft = state.draft,
                     requestId = null,
+                    overview = state.overview,
+                    originTab = state.originTab,
                 )
             P503UiEvent.Confirm ->
                 P503AppState.Submitting(
                     draft = state.draft,
                     requestId = state.requestId,
+                    overview = state.overview,
+                    originTab = state.originTab,
                 )
+            // System back drops the draft and closes the editor flow (distinct from Cancel,
+            // which keeps it) (P5-04.2).
+            P503UiEvent.Back ->
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
             else -> unhandled(state, event)
         }
 
@@ -144,15 +158,15 @@ class P503ReducerImpl(
                     is ManualExpenseSubmissionResult.Application ->
                         when (val application = result.result) {
                             is ManualExpenseSaveResult.InvalidInput ->
-                                P503AppState.Editing(state.draft, state.requestId)
+                                P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab)
                             is ManualExpenseSaveResult.Executed ->
                                 when (application.result) {
                                     is ConfirmedManualExpenseResult.Created -> P503AppState.Created
                                     is ConfirmedManualExpenseResult.NoChange -> P503AppState.NoChange
                                     is ConfirmedManualExpenseResult.RequestIdentityConflict ->
-                                        P503AppState.RequestIdentityConflict(state.draft, state.requestId)
+                                        P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab)
                                     is ConfirmedManualExpenseResult.Rejected ->
-                                        P503AppState.DomainRejected(state.draft, state.requestId)
+                                        P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab)
                                 }
                         }
                     is ManualExpenseSubmissionResult.InfrastructureFailure ->
@@ -160,6 +174,8 @@ class P503ReducerImpl(
                             context = InfrastructureFailureContext.SUBMISSION,
                             draft = state.draft,
                             requestId = state.requestId,
+                            overview = state.overview,
+                            originTab = state.originTab,
                         )
                     is ManualExpenseSubmissionResult.UnknownCommit -> P503AppState.UnknownCommit
                     is ManualExpenseSubmissionResult.Recovered -> P503AppState.Recovered
@@ -185,19 +201,23 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             is P503UiEvent.UpdateAmount ->
-                P503AppState.Editing(state.draft.copy(amountText = event.text), state.requestId)
+                P503AppState.Editing(state.draft.copy(amountText = event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdatePaymentAccount ->
-                P503AppState.Editing(state.draft.copy(paymentAccountId = event.accountId), state.requestId)
+                P503AppState.Editing(state.draft.copy(paymentAccountId = event.accountId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateCategory ->
-                P503AppState.Editing(state.draft.copy(categoryId = event.categoryId), state.requestId)
+                P503AppState.Editing(state.draft.copy(categoryId = event.categoryId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateOccurredAt ->
-                P503AppState.Editing(state.draft.copy(occurredAt = event.instant), state.requestId)
+                P503AppState.Editing(state.draft.copy(occurredAt = event.instant), state.requestId, state.overview, state.originTab)
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
                 P503AppState.Editing(
                     draft = state.draft,
                     requestId = null,
+                    overview = state.overview,
+                    originTab = state.originTab,
                 )
+            P503UiEvent.Back ->
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
             else -> unhandled(state, event)
         }
 
@@ -207,13 +227,15 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             is P503UiEvent.UpdateAmount ->
-                P503AppState.Editing(state.draft.copy(amountText = event.text), state.requestId)
+                P503AppState.Editing(state.draft.copy(amountText = event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdatePaymentAccount ->
-                P503AppState.Editing(state.draft.copy(paymentAccountId = event.accountId), state.requestId)
+                P503AppState.Editing(state.draft.copy(paymentAccountId = event.accountId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateCategory ->
-                P503AppState.Editing(state.draft.copy(categoryId = event.categoryId), state.requestId)
+                P503AppState.Editing(state.draft.copy(categoryId = event.categoryId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateOccurredAt ->
-                P503AppState.Editing(state.draft.copy(occurredAt = event.instant), state.requestId)
+                P503AppState.Editing(state.draft.copy(occurredAt = event.instant), state.requestId, state.overview, state.originTab)
+            P503UiEvent.Back ->
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
             else -> unhandled(state, event)
         }
 
@@ -228,12 +250,18 @@ class P503ReducerImpl(
                         P503AppState.Submitting(
                             draft = checkNotNull(state.draft),
                             requestId = checkNotNull(state.requestId),
+                            overview = state.overview,
+                            originTab = state.originTab,
                         )
                     P503UiEvent.Cancel ->
                         P503AppState.Editing(
                             draft = checkNotNull(state.draft),
                             requestId = checkNotNull(state.requestId),
+                            overview = state.overview,
+                            originTab = state.originTab,
                         )
+                    P503UiEvent.Back ->
+                        P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
                     else -> unhandled(state, event)
                 }
             InfrastructureFailureContext.READ ->

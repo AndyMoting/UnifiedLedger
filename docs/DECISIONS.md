@@ -2074,3 +2074,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-02）：** 实施提交 `f496ea3`（task/p5-04-1-floating-delta 单提交，3 文件 +86/-26），merge `1a7b4c5` 合入 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `356ed34128c8d803be8217fa969e08572a66f0b08e6d712d3b43569a5a5aa21d` 经落盘副本与提交 blob 双重核验一致。独立评审 APPROVE（P041F-R1..R4 均 info 级：胶囊措辞、裁切无风险、material3 版本措辞、FAB 容器配色为既存项）。distinct verifier：`:app-ui:jvmTest` 21 tests / `:desktop-app:jvmTest` 4 tests（`--rerun-tasks` 全新，0 failures）、两模块 `ktlintCheck`、`project_docs` 全部 exit 0；主代理复跑确认（BUILD SUCCESSFUL，exit 0）。
 
 **关联决定：** `D-121`、`D-122`、`D-123`。
+
+## D-125 P5-04.2 新增记账全屏编辑页：系统返回关闭与固定确认/取消
+
+**状态：** 已批准（2026-09-02）；实施随本批交付，实施登记由合并后状态同步提交补全。
+
+**决定：** 按 D-121 规划授权实施 P5-04.2：新增记账编辑页系统返回关闭（回来源 Tab）与固定确认/取消行为。编辑流状态机扩展 `overview`/`originTab` 全网络穿线（Editing/AwaitingConfirmation/Submitting/RequestIdentityConflict/DomainRejected/InfrastructureFailure 均带默认值向后兼容）；新增 `Back` 事件：编辑流各态 Back → `OverviewEmpty(overview, originTab)` 关闭回总览（Submitting 吞返回防提交中退出），确认页「取消」= 回编辑保留草稿、「系统返回」= 关闭丢弃，二者语义固定区分；app-ui 暴露 `backHandler` 平台钩子，Android 以 activity-compose 既有稳定 `BackHandler` 接入（零新依赖）；不引入导航库。
+
+**实施规格：** `docs/specs/2026-09-02-p5-04-2-editor-back-close-design.md`（评审冻结 SHA-256 `e8d2e6600ab8fb181a715c3c140b2fa22217f216fdec2bcba89f9270e5a14dff`；独立规格评审 APPROVE-WITH-FINDINGS，P042S-R1..R4 闭环，R1a/R1b 与 DomainRejected 无 AbandonConflict 已并入 v3）。
+
+**边界：** 零 DDL/零新依赖/零新正式交易类型；「权威刷新恒回首页」不变量不变；桌面端本批不改平台接线；P6 拥有视觉。
+
+**关联决定：** `D-121`、`D-122`。

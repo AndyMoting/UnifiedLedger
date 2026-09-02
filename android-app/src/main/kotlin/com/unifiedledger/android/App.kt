@@ -2,6 +2,7 @@ package com.unifiedledger.android
 
 import android.app.Activity
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,7 +71,11 @@ fun app() {
     val facade = controller.facade
     when {
         controller.state == P503StartupState.Ready && facade != null ->
-            P503App(facade, onExit = { activity?.finish() })
+            P503App(
+                facade,
+                onExit = { activity?.finish() },
+                backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
+            )
         else ->
             P503StartupScreen(
                 state = controller.state,

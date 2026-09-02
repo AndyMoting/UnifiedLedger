@@ -56,6 +56,9 @@ sealed interface P503UiEvent {
 
     data object AbandonConflict : P503UiEvent
 
+    /** System back: closes the editor flow back to the originating overview tab (P5-04.2). */
+    data object Back : P503UiEvent
+
     // ---- async result events ----
     data object StartupCompleted : P503UiEvent
 
