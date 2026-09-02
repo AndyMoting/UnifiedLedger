@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
@@ -41,9 +42,15 @@ sealed interface P503UiEvent {
         val instant: Instant,
     ) : P503UiEvent
 
-    /** The host obtains the requestId per spec section 4.6 and dispatches it. */
+    /**
+     * The host obtains the requestId per spec section 4.6 and dispatches it. P5-04.3: the
+     * host may attach display labels resolved from ManualExpenseOptions; the reducer falls
+     * back to the draft id values when a label is absent.
+     */
     data class Continue(
         val requestId: RequestId,
+        val paymentAccountLabel: String? = null,
+        val categoryLabel: String? = null,
     ) : P503UiEvent
 
     data object Cancel : P503UiEvent
@@ -53,6 +60,9 @@ sealed interface P503UiEvent {
     data object RetrySubmission : P503UiEvent
 
     data object RetryRefresh : P503UiEvent
+
+    /** Manual re-check of an unknown commit (P5-04.3); the host runs the read-only resolve. */
+    data object RetryCommitStatusCheck : P503UiEvent
 
     data object AbandonConflict : P503UiEvent
 
@@ -72,6 +82,11 @@ sealed interface P503UiEvent {
 
     data class SubmissionResult(
         val result: ManualExpenseSubmissionResult,
+    ) : P503UiEvent
+
+    /** Async result of one unknown-commit status check (P5-04.3); frozen four-outcome union. */
+    data class CommitStatusResolved(
+        val resolution: ManualExpenseCommitResolution,
     ) : P503UiEvent
 
     data class RefreshResult(

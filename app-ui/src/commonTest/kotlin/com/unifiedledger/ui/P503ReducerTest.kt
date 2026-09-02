@@ -6,6 +6,7 @@ import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseInputFailure
 import com.unifiedledger.application.ManualExpenseInputField
 import com.unifiedledger.application.ManualExpenseRequestIdentity
@@ -29,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.time.Instant
 
 class P503ReducerTest {
@@ -194,7 +196,7 @@ class P503ReducerTest {
                 P503AppState.Submitting(fullDraft(), requestId1),
                 P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.UnknownCommit),
             )
-        assertEquals(P503AppState.UnknownCommit, state)
+        assertEquals(P503AppState.UnknownCommit(fullDraft(), requestId1), state)
 
         val afterEvents =
             reduceFrom(
@@ -205,7 +207,7 @@ class P503ReducerTest {
                 P503UiEvent.StartNewExpense,
                 P503UiEvent.RefreshResult(emptyState),
             )
-        assertEquals(P503AppState.UnknownCommit, afterEvents)
+        assertEquals(P503AppState.UnknownCommit(fullDraft(), requestId1), afterEvents)
     }
 
     @Test
@@ -420,10 +422,10 @@ class P503ReducerTest {
     fun unknownCommitAbsorbsSelectTab() {
         val state =
             reduceFrom(
-                P503AppState.UnknownCommit,
+                P503AppState.UnknownCommit(),
                 P503UiEvent.SelectTab(P503Tab.ANALYSIS),
             )
-        assertEquals(P503AppState.UnknownCommit, state)
+        assertEquals(P503AppState.UnknownCommit(), state)
     }
 
     @Test
@@ -586,8 +588,8 @@ class P503ReducerTest {
 
     @Test
     fun unknownCommitAbsorbsBack() {
-        val state = reduceFrom(P503AppState.UnknownCommit, P503UiEvent.Back)
-        assertEquals(P503AppState.UnknownCommit, state)
+        val state = reduceFrom(P503AppState.UnknownCommit(), P503UiEvent.Back)
+        assertEquals(P503AppState.UnknownCommit(), state)
     }
 
     @Test
@@ -599,6 +601,180 @@ class P503ReducerTest {
             reducer.reduce(P503AppState.Submitting(fullDraft(), requestId1), P503UiEvent.Cancel)
         }
     }
+
+    @Test
+    fun continueCarriesHostResolvedDisplayLabelsIntoAwaitingConfirmation() {
+        val state =
+            reduceFrom(
+                P503AppState.OverviewEmpty(emptyState),
+                P503UiEvent.StartNewExpense,
+                P503UiEvent.UpdatePaymentAccount(paymentAccountId),
+                P503UiEvent.UpdateCategory(categoryId),
+                P503UiEvent.UpdateAmount("35.80"),
+                P503UiEvent.UpdateOccurredAt(occurredAt),
+                P503UiEvent.Continue(requestId1, "本地付款账户", "早餐"),
+            )
+        val awaiting = assertIs<P503AppState.AwaitingConfirmation>(state)
+        assertEquals(fullDraft(), awaiting.draft)
+        assertEquals(requestId1, awaiting.requestId)
+        assertEquals(emptyState, awaiting.overview)
+        assertEquals(P503Tab.HOME, awaiting.originTab)
+        assertEquals("本地付款账户", awaiting.paymentAccountLabel)
+        assertEquals("早餐", awaiting.categoryLabel)
+    }
+
+    @Test
+    fun continueWithoutLabelsFallsBackToDraftIdValues() {
+        val state =
+            reduceFrom(
+                P503AppState.OverviewEmpty(emptyState),
+                P503UiEvent.StartNewExpense,
+                P503UiEvent.UpdatePaymentAccount(paymentAccountId),
+                P503UiEvent.UpdateCategory(categoryId),
+                P503UiEvent.UpdateAmount("35.80"),
+                P503UiEvent.UpdateOccurredAt(occurredAt),
+                P503UiEvent.Continue(requestId1),
+            )
+        val awaiting = assertIs<P503AppState.AwaitingConfirmation>(state)
+        assertEquals("asset-payment-local", awaiting.paymentAccountLabel)
+        assertEquals("expense-category-breakfast", awaiting.categoryLabel)
+    }
+
+    @Test
+    fun unknownCommitEntryCarriesFlowContextWithPendingCheckOutcome() {
+        val state =
+            reduceFrom(
+                P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.UnknownCommit),
+            )
+        val unknown = assertIs<P503AppState.UnknownCommit>(state)
+        assertEquals(fullDraft(), unknown.draft)
+        assertEquals(requestId1, unknown.requestId)
+        assertEquals(oneTransactionState, unknown.overview)
+        assertEquals(P503Tab.ACCOUNTS, unknown.originTab)
+        assertEquals(UnknownCommitCheckOutcome.NONE, unknown.lastCheckOutcome)
+    }
+
+    @Test
+    fun unknownCommitCheckMatchingReceiptRecoversThenRefreshesToOverview() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.MatchingReceipt(receipt())),
+            )
+        assertEquals(P503AppState.Recovered, state)
+
+        val overview =
+            assertIs<P503AppState.OverviewEmpty>(
+                reduceFrom(state, P503UiEvent.RefreshResult(oneTransactionState)),
+            )
+        assertEquals(oneTransactionState, overview.state)
+        assertEquals(P503Tab.HOME, overview.selectedTab)
+    }
+
+    @Test
+    fun unknownCommitCheckSnapshotConflictEntersConflictScreenWithContext() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.SnapshotConflict),
+            )
+        val conflict = assertIs<P503AppState.RequestIdentityConflict>(state)
+        assertEquals(fullDraft(), conflict.draft)
+        assertEquals(requestId1, conflict.requestId)
+        assertEquals(oneTransactionState, conflict.overview)
+        assertEquals(P503Tab.ACCOUNTS, conflict.originTab)
+
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(conflict, P503UiEvent.Back))
+        assertEquals(oneTransactionState, closed.state)
+        assertEquals(P503Tab.ACCOUNTS, closed.selectedTab)
+    }
+
+    @Test
+    fun unknownCommitCheckAbsentStaysWithRecordedOutcome() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.Absent),
+            )
+        val stayed = assertIs<P503AppState.UnknownCommit>(state)
+        assertEquals(fullDraft(), stayed.draft)
+        assertEquals(requestId1, stayed.requestId)
+        assertEquals(oneTransactionState, stayed.overview)
+        assertEquals(P503Tab.ACCOUNTS, stayed.originTab)
+        assertEquals(UnknownCommitCheckOutcome.ABSENT, stayed.lastCheckOutcome)
+    }
+
+    @Test
+    fun unknownCommitCheckUnavailableStaysWithRecordedOutcome() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.Unavailable),
+            )
+        val stayed = assertIs<P503AppState.UnknownCommit>(state)
+        assertEquals(fullDraft(), stayed.draft)
+        assertEquals(requestId1, stayed.requestId)
+        assertEquals(oneTransactionState, stayed.overview)
+        assertEquals(P503Tab.ACCOUNTS, stayed.originTab)
+        assertEquals(UnknownCommitCheckOutcome.UNAVAILABLE, stayed.lastCheckOutcome)
+    }
+
+    @Test
+    fun unknownCommitRetryCheckIsIdempotentSameInstance() {
+        val stayed =
+            P503AppState.UnknownCommit(
+                fullDraft(),
+                requestId1,
+                oneTransactionState,
+                P503Tab.ACCOUNTS,
+                UnknownCommitCheckOutcome.ABSENT,
+            )
+        assertSame(stayed, reduceFrom(stayed, P503UiEvent.RetryCommitStatusCheck))
+    }
+
+    @Test
+    fun unknownCommitStillAbsorbsLegacyEvents() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                P503UiEvent.Back,
+                P503UiEvent.SelectTab(P503Tab.ANALYSIS),
+                P503UiEvent.RetrySubmission,
+                P503UiEvent.RetryRefresh,
+                P503UiEvent.Continue(requestId2),
+                P503UiEvent.StartNewExpense,
+                P503UiEvent.RefreshResult(emptyState),
+                P503UiEvent.RefreshFailed,
+                P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.UnknownCommit),
+            )
+        assertEquals(
+            P503AppState.UnknownCommit(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+            state,
+        )
+    }
+
+    @Test
+    fun unknownCommitSnapshotConflictWithoutContextFailsFast() {
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(
+                P503AppState.UnknownCommit(),
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.SnapshotConflict),
+            )
+        }
+    }
+
+    @Test
+    fun commitStatusResolvedOutsideUnknownCommitFailsFast() {
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(
+                P503AppState.Recovered,
+                P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.MatchingReceipt(receipt())),
+            )
+        }
+    }
+
+    private fun receipt() = ConfirmedExpenseReceipt(ConfirmationId("confirmation-1"), TransactionId("tx-1"))
 
     private fun submissionCreated(): ManualExpenseSubmissionResult =
         ManualExpenseSubmissionResult.Application(

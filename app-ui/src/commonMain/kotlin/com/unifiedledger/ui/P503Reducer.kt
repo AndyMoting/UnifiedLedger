@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.ConfirmedManualExpenseResult
+import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
@@ -42,7 +43,7 @@ class P503ReducerImpl(
             is P503AppState.RequestIdentityConflict -> reduceRequestIdentityConflict(state, event)
             is P503AppState.DomainRejected -> reduceDomainRejected(state, event)
             is P503AppState.InfrastructureFailure -> reduceInfrastructureFailure(state, event)
-            is P503AppState.UnknownCommit -> P503AppState.UnknownCommit
+            is P503AppState.UnknownCommit -> reduceUnknownCommit(state, event)
         }
 
     private fun reduceStarting(event: P503UiEvent): P503AppState =
@@ -108,7 +109,16 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.copy(occurredAt = event.instant))
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
-                    P503AppState.AwaitingConfirmation(state.draft, event.requestId, state.overview, state.originTab)
+                    P503AppState.AwaitingConfirmation(
+                        draft = state.draft,
+                        requestId = event.requestId,
+                        overview = state.overview,
+                        originTab = state.originTab,
+                        // P5-04.3: host-resolved display labels; fall back to the draft id
+                        // values when an option (or its label) is absent.
+                        paymentAccountLabel = event.paymentAccountLabel ?: state.draft.paymentAccountId?.value ?: "",
+                        categoryLabel = event.categoryLabel ?: state.draft.categoryId?.value ?: "",
+                    )
                 } else {
                     // Field error retains input and the (already allocated) requestId.
                     state.copy(requestId = event.requestId)
@@ -177,10 +187,39 @@ class P503ReducerImpl(
                             overview = state.overview,
                             originTab = state.originTab,
                         )
-                    is ManualExpenseSubmissionResult.UnknownCommit -> P503AppState.UnknownCommit
+                    is ManualExpenseSubmissionResult.UnknownCommit ->
+                        P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
                     is ManualExpenseSubmissionResult.Recovered -> P503AppState.Recovered
                 }
             else -> unhandled(state, event)
+        }
+
+    private fun reduceUnknownCommit(
+        state: P503AppState.UnknownCommit,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            // P5-04.3: one read-only status check drives the frozen four-outcome resolution
+            // (D-119); only MatchingReceipt may recover and a conflict keeps its screen.
+            is P503UiEvent.CommitStatusResolved ->
+                when (event.resolution) {
+                    is ManualExpenseCommitResolution.MatchingReceipt -> P503AppState.Recovered
+                    ManualExpenseCommitResolution.SnapshotConflict ->
+                        P503AppState.RequestIdentityConflict(
+                            draft = checkNotNull(state.draft),
+                            requestId = checkNotNull(state.requestId),
+                            overview = state.overview,
+                            originTab = state.originTab,
+                        )
+                    ManualExpenseCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
+                    ManualExpenseCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
+                }
+            // The host dispatches this alongside the check call in its click handler; the
+            // state instance stays untouched so the entry auto-check guard does not re-run.
+            P503UiEvent.RetryCommitStatusCheck -> state
+            // Every other event is still absorbed: UnknownCommit forbids automatic retry,
+            // optimistic refresh and requestId replacement (D-119/D-120).
+            else -> state
         }
 
     private fun reduceTransientResult(
