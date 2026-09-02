@@ -2115,6 +2115,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **验证边界：** 点击热区行为无法由 `app-ui` 纯 reducer 测试覆盖（无 compose ui-test harness，规格已明确）；本缺陷只能实机人工门验证，修复后须经实机人工门复验。本批不为此引入新测试框架。
 
-**实施登记：** 留待交付提交补全。
+**实施登记（2026-09-03）：** 实施提交 `1d30b75`（3 文件 +25/−6：两处手动叠加移除 + 孪生点顺延处置），push `3abb7b9..1d30b75`（trace valid:true 后，2026-09-03），CI run 33682852234 success（APK SHA-256 `c4853e453ca066b8324249eba6a67487519a266cd80d03d1304c4ad52ffecc14`）。实机复验（该修复版 APK 已装模拟器 pixel_7 API 36 实测，uiautomator dump 判定）：关闭按钮点击矩阵 (930,160)/(962,160)/(1000,160)/(962,150)/(962,140) 全部成功关闭，(962,127)×1（新会话）、(962,90)、(886,127)、(940,127)、(962,132) 全部无响应 → 响应区下界 y≈136 vs 按钮 a11y 区间 [74,179]，命中区仍与视觉错位；对照：单选钮上边缘 (106,322) 不选中（中心 (106,384) 可选），系统返回键各会话始终正常。**结论：修复必要但不充分，死区未消除。**根因重定性（主代理判读）：组合根 insets/命中错位——MainActivity 为裸 `ComponentActivity`+`setContent`（无 enableEdgeToEdge/无 WindowInsets 处理），主题 `android:Theme.Material.NoActionBar`（旧平台主题），targetSdk=36 在 API 36 强制 edge-to-edge；错位量 ≈ 状态栏高度（~62px），使小尺寸顶部控件（首个即关闭按钮）命中死区，P5-03 起即存在，其余控件因目标较大（≥105px）从未暴露。属平台集成缺陷，超出 P5-04.3 已批契约范围；按纪律停止动手，待用户裁决另立修复批（研究门：Android 官方 edge-to-edge/API 35+ enforcement 与 Compose insets 文档）。**A1 人工门保持未关闭。**
 
 **关联决定：** `D-126`。
