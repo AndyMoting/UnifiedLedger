@@ -42,13 +42,13 @@
 
 ## 阶段 5：双端最小外壳与稳定 Android MVP
 
-建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01、P5-02、P5-03 与 P5-04.1 已交付，下一批为 P5-04.2。当前基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
+建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01、P5-02、P5-03、P5-04.1 与 P5-04.2 已交付，下一批为 P5-04.3。当前基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
 
 - `P5-01`：双平台最小外壳契约已批准（`D-117`，contract-only，零实现/零 schema/零生产行为变化）。
 - `P5-02`：双平台骨架实施批已交付（`D-118`，`desktop-app`/`android-app` 两组合根、Clock 端口与 UUIDv7 产品 ID；零 schema/迁移变更）。
 - `P5-03`：演示面 B 实施批已交付（`D-120`，共享 `app-ui` KMP UI 模块 + 手工支出写路径；实施 `8a0a079`/merge `85a4138`，2026-08-30 推送 `origin/main`；门期间三个缺陷修复提交 `4ee52fa`/`2cde3a7`/`d616d2e` 推送并经 CI 验证；零 schema/迁移变更，schema 维持 v27；Android emulator、Desktop 键盘/焦点和 Android TalkBack 人工门均已通过）。
 - `P5-04.1`：三 Tab 基础交互（首页、账户、分析）与新增入口。（已交付，`D-122`，实施 `ce8e517`/merge `d1bc8f3`；零 schema/迁移变更，schema 维持 v27；布局经 `D-123` 调整为 Tab 左组 + 底右圆形新增按钮（`1e7955e`/`ee3f4fd`），并经 `D-124` 悬浮胶囊样式与水平对齐（`f496ea3`/`1a7b4c5`））
-- `P5-04.2`：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。
+- `P5-04.2`：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。（已交付，`D-125`，实施 `03c1604`/merge `bc75274`；编辑流状态机 overview/originTab 穿线 + Back 事件 + app-ui backHandler 平台钩子 + Android 稳定 BackHandler；零 DDL/零新依赖）
 - `P5-04.3`：完善既有手工支出流程；不新增收入、转账或借贷正式类型。
 - `P5-04.4`：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。
 - `P5-04.5`：Android 与现有 Desktop 回归验证，完成阶段 5 收口。
