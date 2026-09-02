@@ -2099,6 +2099,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 零 DDL/零 schema 变更/零新依赖/零新正式交易类型；`ledger-application`/`ledger-domain`/`ledger-data` 零改动；P5-03 提交编排与 D-119 冻结恢复顺序不变；「权威刷新恒回首页」不变；UnknownCommit 的 Back/退出语义维持吸收；确认页显示名内容升级（目录显示名来源扩展）归后续批次另立授权，视觉样式归 P6；StartupError 重试接线（平台根所有）与 P5-04.4 fail-closed 重试策略重排不在本批。submit() 不可达防御分支的 InvalidInput 字段集为无条件全集（共享构造器不区分缺失字段），payload 不被 reducer 消费。
 
-**实施登记：** 由交付/合并后状态同步提交补全（实施提交、验证结果与人工门证据届时登记）；本条不提前登记未验证能力。
+**实施登记（2026-09-03）：** 实施提交 `35ae40e`（11 文件 +745/-61，含冻结规格 196 行落库），merge `f5ea663` 合入本地 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `24f1e64afcb488df7c8841afa063f31e35819219a5088f9910ae9e11329551ae`（196 行）。独立候选评审 APPROVE-WITH-FINDINGS（IMPL-R-001..004/006 修正闭环，IMPL-R-004 按「边界」段记录处置，IMPL-R-005/IMPL-R-007 评审接受不改动）终局 CLOSURE APPROVE。distinct verifier 先后两轮 ALL PASS：全量六命令 `:app-ui:jvmTest` 43 tests（`P503ReducerTest` 41 + `P503DraftValidationTest` 2）0 failures、`:desktop-app:jvmTest` 4 tests 0 failures、`:app-ui:ktlintCheck`、`:desktop-app:ktlintCheck`、`:android-app:compileDebugKotlin`、`project_docs` 全部 exit 0，delta 后受影响四命令（`:app-ui:jvmTest`、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin`、`project_docs`）复跑 exit 0；主代理批判性 diff 复检（reducer/desktop/P503App 三文件）并复跑关键证明确认。
 
 **关联决定：** `D-119`、`D-121`、`D-125`。
