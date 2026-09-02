@@ -2046,3 +2046,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-02）：** 实施提交 `ce8e517`（task/p5-04-1-tab-shell 单提交，18 文件 +696/-22），merge `d1bc8f3` 合入 `main`（本批未 push，APK artifact 与 Android 运行门随授权 push 后由 CI 承担）。规格冻结 SHA-256 `2ae00ca230aedb9b9b221d227546f7ef442dede2c02b18c0be68f5d0e900acda` 与落盘副本逐字节核验一致。独立规格评审 APPROVE-WITH-FINDINGS（P041S-R1..R9 全部闭环，P041S-N1 并入 §2.1）；冻结候选独立评审 APPROVE-WITH-FINDINGS（P041-R1..R4 仅 info 级）。distinct verifier：三模块 `jvmTest` 394 tests / 0 failures / 0 errors（`--rerun-tasks` 全新运行：app-ui 21、ledger-application 369、desktop-app 4）、`:android-app:compileDebugKotlin` exit 0、三模块 `ktlintCheck` exit 0、`project_docs` exit 0；主代理关键 diff 复查与复跑确认（BUILD SUCCESSFUL，exit 0）。本地 `:android-app:assembleDebug` 按已登记 R-9 资源约束不作为本地门（1GB 上限下 `mergeExtDexDebug` OOM，三次独立堆转储证据；GRADLE_OPTS 不作用于 fork 的单次构建守护进程），APK 产物验证由授权 push 后的 CI artifact 承担。
 
 **关联决定：** `D-119`、`D-120`、`D-121`。
+
+## D-123 P5-04.1 底部栏布局增量：Tab 左组 + 底右圆形新增入口
+
+**状态：** 已批准并交付（2026-09-02）。
+
+**决定：** 用户 2026-09-02 线框指令明确新增入口交互形态：底部左侧为 首页/账户/分析 三 Tab 组，底部右侧为独立圆形新增按钮（"+" 红色强调），两者分离；D-121「中央新增入口」按用户线框裁决为“应用主新增入口”而非几何居中。同批用户裁决：顶栏（☰ 菜单/年月）与首页「看板」本批不做，推迟至后续批次（需求定义后另立决定）。
+
+**实施规格：** `docs/specs/2026-09-02-p5-04-1-bottom-bar-layout-delta.md`（冻结 SHA-256 `9a69a2bbf35f3fbd602ccebabb344cbc1d9f78d3c5c9629782e2ffe7a19a496f`）。
+
+**边界：** reducer/状态机、既有测试断言、schema、依赖零改动；顶栏与看板不在本批；P6 拥有最终视觉样式。
+
+**关联决定：** `D-121`、`D-122`。
