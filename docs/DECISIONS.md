@@ -2102,3 +2102,19 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-03）：** 实施提交 `35ae40e`（11 文件 +745/-61，含冻结规格 196 行落库），merge `f5ea663` 合入本地 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `24f1e64afcb488df7c8841afa063f31e35819219a5088f9910ae9e11329551ae`（196 行）。独立候选评审 APPROVE-WITH-FINDINGS（IMPL-R-001..004/006 修正闭环，IMPL-R-004 按「边界」段记录处置，IMPL-R-005/IMPL-R-007 评审接受不改动）终局 CLOSURE APPROVE。distinct verifier 先后两轮 ALL PASS：全量六命令 `:app-ui:jvmTest` 43 tests（`P503ReducerTest` 41 + `P503DraftValidationTest` 2）0 failures、`:desktop-app:jvmTest` 4 tests 0 failures、`:app-ui:ktlintCheck`、`:desktop-app:ktlintCheck`、`:android-app:compileDebugKotlin`、`project_docs` 全部 exit 0，delta 后受影响四命令（`:app-ui:jvmTest`、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin`、`project_docs`）复跑 exit 0；主代理批判性 diff 复检（reducer/desktop/P503App 三文件）并复跑关键证明确认。
 
 **关联决定：** `D-119`、`D-121`、`D-125`。
+
+## D-127 P5-04.3 门期缺陷修复：编辑页「关闭」按钮手动叠加触达扩展形成双层命中层
+
+**状态：** 已批准（2026-09-03）。
+
+**缺陷现象：** P5-04.3 交付后实机人工门（Android 模拟器 pixel_7 API 36，CI APK `3abb7b9`）发现编辑页右上「关闭」按钮（D-126 R1，A1 判据）视觉存在但点击大面积无响应：点击 (962,127)×4（跨两个编辑会话）、(900,110)、(1000,127) 编辑页均不关闭、无异常、无 crash；仅 (930,160) 正常关闭回来源 Tab；系统返回键始终正常；单选钮/文本输入/「继续」按钮/确认页「取消」全部正常。a11y 树在该按钮区域出现两个叠加节点——外层 View clickable=true bounds(886,64)-(1038,190)（大于按钮本身）+ 内层 Button clickable=false bounds(886,74)-(1038,179)；正常工作的「继续」/「取消」/「确认提交」均只有单个 clickable 节点。
+
+**定性（双层触达层）：** `P503EditScreen.kt` 对 `TextButton` 手动叠加 `Modifier.minimumInteractiveComponentSize()`，而项目实际解析的 material3（JetBrains `org.jetbrains.compose.material3:material3:1.9.0` → androidx `material3:1.4.0`）已对可点击 `Surface`（`TextButton` 内部实现）内置 `InteractiveComponentSizeKt.minimumInteractiveComponentSize` 触达扩展（`LocalMinimumInteractiveComponentEnforcement` 默认 true、`LocalMinimumInteractiveComponentSize` 默认 48.dp，经本地缓存 AAR 字节码核验），外层再手动叠加产生错位的双层命中结构（命中区与可见区错位，中心形成死区）。对照同文件「继续」（Button）、「取消」（OutlinedButton）、「确认提交」（Button）均未手动叠加该 modifier 且单节点可用；`SelectorField` 行的该 modifier 包在 RadioButton 外层 Row 上、clickable 在内层子节点，不受影响。
+
+**修复：** `P503EditScreen.kt` 关闭按钮移除手动 `minimumInteractiveComponentSize()`，保持 `TextButton(onClick = onClose) { Text("关闭") }`，并留注释说明此处不得手动叠加该 modifier；material3 内置触达扩展保证 ≥48dp 触达目标，A1 判据 ≥48dp 语义不变，规格文档不改。同构孪生点：UnknownCommit 停留屏「重新核对」Button（`P503ResultScreen.kt`）经评审发现同一手动叠加模式，本批以同一行级修法顺延处置（评审 FIX-R-001，主代理裁决方案 a）；≥48dp 触达语义两处均由 material3 内置 enforcement 保持。
+
+**验证边界：** 点击热区行为无法由 `app-ui` 纯 reducer 测试覆盖（无 compose ui-test harness，规格已明确）；本缺陷只能实机人工门验证，修复后须经实机人工门复验。本批不为此引入新测试框架。
+
+**实施登记：** 留待交付提交补全。
+
+**关联决定：** `D-126`。

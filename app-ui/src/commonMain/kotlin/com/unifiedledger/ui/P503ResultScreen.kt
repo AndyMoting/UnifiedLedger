@@ -10,7 +10,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,7 +100,9 @@ private fun P503UnknownCommitStayScreen(
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onRetryCheck, modifier = Modifier.minimumInteractiveComponentSize()) {
+        // No manual minimumInteractiveComponentSize(): it duplicates material3's built-in
+        // 48dp touch-target enforcement and creates a dead-zone hit layer (D-127).
+        Button(onClick = onRetryCheck) {
             Text("重新核对")
         }
     }

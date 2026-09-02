@@ -78,11 +78,13 @@ fun P503EditScreen(
                 modifier = Modifier.weight(1f),
             )
             // P5-04.3 visible close entry: same Back semantics as the system back.
+            // Do not stack a manual minimumInteractiveComponentSize() on this TextButton:
+            // material3 already applies the 48dp touch-target enforcement internally to its
+            // clickable Surface (LocalMinimumInteractiveComponentEnforcement defaults to
+            // true), and duplicating it here produced a misaligned double hit-target layer
+            // that swallowed taps over most of the button (device gate defect, D-127).
             if (onClose != null) {
-                TextButton(
-                    onClick = onClose,
-                    modifier = Modifier.minimumInteractiveComponentSize(),
-                ) {
+                TextButton(onClick = onClose) {
                     Text("关闭")
                 }
             }
