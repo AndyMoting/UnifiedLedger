@@ -3,12 +3,16 @@ package com.unifiedledger.android
 import android.app.Activity
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
@@ -69,19 +73,23 @@ fun app() {
     }
 
     val facade = controller.facade
-    when {
-        controller.state == P503StartupState.Ready && facade != null ->
-            P503App(
-                facade,
-                onExit = { activity?.finish() },
-                backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
-            )
-        else ->
-            P503StartupScreen(
-                state = controller.state,
-                onRetry = controller::start,
-                onExit = { activity?.finish() },
-            )
+    // Enforced edge-to-edge draws content behind the status bar; a root-level statusBarsPadding
+    // keeps every screen's top controls reachable without touching the shared UI (D-128).
+    Box(Modifier.fillMaxSize().statusBarsPadding()) {
+        when {
+            controller.state == P503StartupState.Ready && facade != null ->
+                P503App(
+                    facade,
+                    onExit = { activity?.finish() },
+                    backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
+                )
+            else ->
+                P503StartupScreen(
+                    state = controller.state,
+                    onRetry = controller::start,
+                    onExit = { activity?.finish() },
+                )
+        }
     }
 }
 

@@ -46,4 +46,6 @@ dependencies {
     implementation("app.cash.sqldelight:android-driver:2.3.2")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(compose.runtime)
+    // D-128: compose.foundation supplies Box/fillMaxSize/statusBarsPadding for the root status bar padding.
+    implementation(compose.foundation)
 }
