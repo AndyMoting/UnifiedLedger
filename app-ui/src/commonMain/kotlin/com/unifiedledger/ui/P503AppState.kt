@@ -30,16 +30,23 @@ sealed interface P503AppState {
     data class Editing(
         val draft: ManualExpenseDraft,
         val requestId: RequestId?,
+        // P5-04.2: overview snapshot + source tab captured when the editor flow started.
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class AwaitingConfirmation(
         val draft: ManualExpenseDraft,
         val requestId: RequestId,
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class Submitting(
         val draft: ManualExpenseDraft,
         val requestId: RequestId,
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data object Created : P503AppState
@@ -49,11 +56,15 @@ sealed interface P503AppState {
     data class RequestIdentityConflict(
         val draft: ManualExpenseDraft,
         val requestId: RequestId,
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class DomainRejected(
         val draft: ManualExpenseDraft,
         val requestId: RequestId,
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class InfrastructureFailure(
@@ -62,6 +73,9 @@ sealed interface P503AppState {
         // context == READ: both are null (finding P503Q-014).
         val draft: ManualExpenseDraft? = null,
         val requestId: RequestId? = null,
+        // P5-04.2: overview snapshot + source tab (meaningful only for SUBMISSION; READ is null).
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data object UnknownCommit : P503AppState

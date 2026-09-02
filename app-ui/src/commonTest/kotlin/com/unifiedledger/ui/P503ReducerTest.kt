@@ -426,6 +426,180 @@ class P503ReducerTest {
         assertEquals(P503AppState.UnknownCommit, state)
     }
 
+    @Test
+    fun backFromEditingClosesToOriginatingOverviewTabAndDropsDraft() {
+        val overview = oneTransactionState
+        val editing = P503AppState.Editing(fullDraft(), requestId1, overview, P503Tab.ACCOUNTS)
+        val closed = reduceFrom(editing, P503UiEvent.Back)
+        val closedOverview = assertIs<P503AppState.OverviewEmpty>(closed)
+        // Same snapshot reference and the editor origin tab; the draft is dropped by leaving Editing.
+        assertEquals(overview, closedOverview.state)
+        assertEquals(P503Tab.ACCOUNTS, closedOverview.selectedTab)
+    }
+
+    @Test
+    fun backFromAwaitingConfirmationClosesToOriginatingOverviewTabAndDropsDraft() {
+        val overview = oneTransactionState
+        val awaiting = P503AppState.AwaitingConfirmation(fullDraft(), requestId1, overview, P503Tab.ANALYSIS)
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(awaiting, P503UiEvent.Back))
+        assertEquals(overview, closed.state)
+        assertEquals(P503Tab.ANALYSIS, closed.selectedTab)
+    }
+
+    @Test
+    fun invalidInputRetainsOverviewAndCanStillBackClose() {
+        val editing =
+            assertIs<P503AppState.Editing>(
+                reduceFrom(
+                    P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                    P503UiEvent.SubmissionResult(
+                        ManualExpenseSubmissionResult.Application(
+                            ManualExpenseSaveResult.InvalidInput(
+                                setOf(ManualExpenseInputFailure.Missing(ManualExpenseInputField.AMOUNT)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        assertEquals(oneTransactionState, editing.overview)
+        assertEquals(P503Tab.ACCOUNTS, editing.originTab)
+
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(editing, P503UiEvent.Back))
+        assertEquals(oneTransactionState, closed.state)
+        assertEquals(P503Tab.ACCOUNTS, closed.selectedTab)
+    }
+
+    @Test
+    fun conflictUpdateRetainsOverviewAndBackCloseIsStillPossible() {
+        val identity = ManualExpenseRequestIdentity(ledgerId, requestId1)
+        val conflict =
+            assertIs<P503AppState.RequestIdentityConflict>(
+                reduceFrom(
+                    P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                    P503UiEvent.SubmissionResult(
+                        ManualExpenseSubmissionResult.Application(
+                            ManualExpenseSaveResult.Executed(ConfirmedManualExpenseResult.RequestIdentityConflict(identity)),
+                        ),
+                    ),
+                ),
+            )
+        val editing = assertIs<P503AppState.Editing>(reduceFrom(conflict, P503UiEvent.UpdateAmount("35.81")))
+        assertEquals(oneTransactionState, editing.overview)
+        assertEquals(P503Tab.ACCOUNTS, editing.originTab)
+
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(editing, P503UiEvent.Back))
+        assertEquals(oneTransactionState, closed.state)
+        assertEquals(P503Tab.ACCOUNTS, closed.selectedTab)
+    }
+
+    @Test
+    fun domainRejectedUpdateRetainsOverviewAndBackCloseIsStillPossible() {
+        val rejected =
+            assertIs<P503AppState.DomainRejected>(
+                reduceFrom(
+                    P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.HOME),
+                    P503UiEvent.SubmissionResult(
+                        ManualExpenseSubmissionResult.Application(
+                            ManualExpenseSaveResult.Executed(
+                                ConfirmedManualExpenseResult.Rejected(OrdinaryExpenseViolation.AmountMustBePositive),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        val editing = assertIs<P503AppState.Editing>(reduceFrom(rejected, P503UiEvent.UpdateAmount("35.81")))
+        assertEquals(oneTransactionState, editing.overview)
+        assertEquals(P503Tab.HOME, editing.originTab)
+
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(editing, P503UiEvent.Back))
+        assertEquals(oneTransactionState, closed.state)
+        assertEquals(P503Tab.HOME, closed.selectedTab)
+    }
+
+    @Test
+    fun infrastructureFailureCancelRetainsOverviewAndBackCloseIsStillPossible() {
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                reduceFrom(
+                    P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.ANALYSIS),
+                    P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure),
+                ),
+            )
+        assertEquals(InfrastructureFailureContext.SUBMISSION, failed.context)
+        val editing = assertIs<P503AppState.Editing>(reduceFrom(failed, P503UiEvent.Cancel))
+        assertEquals(oneTransactionState, editing.overview)
+        assertEquals(P503Tab.ANALYSIS, editing.originTab)
+
+        val closed = assertIs<P503AppState.OverviewEmpty>(reduceFrom(editing, P503UiEvent.Back))
+        assertEquals(oneTransactionState, closed.state)
+        assertEquals(P503Tab.ANALYSIS, closed.selectedTab)
+    }
+
+    @Test
+    fun infrastructureFailureRetryRetainsOverviewInReenteredSubmitting() {
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                reduceFrom(
+                    P503AppState.Submitting(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS),
+                    P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure),
+                ),
+            )
+        val retried = assertIs<P503AppState.Submitting>(reduceFrom(failed, P503UiEvent.RetrySubmission))
+        assertEquals(oneTransactionState, retried.overview)
+        assertEquals(P503Tab.ACCOUNTS, retried.originTab)
+    }
+
+    @Test
+    fun backFromConflictDomainRejectedInfrastructureFailureClosesToOriginatingOverview() {
+        val identity = ManualExpenseRequestIdentity(ledgerId, requestId1)
+        val conflict =
+            P503AppState.RequestIdentityConflict(fullDraft(), requestId1, oneTransactionState, P503Tab.ACCOUNTS)
+        val conflictBack = assertIs<P503AppState.OverviewEmpty>(reduceFrom(conflict, P503UiEvent.Back))
+        assertEquals(oneTransactionState, conflictBack.state)
+        assertEquals(P503Tab.ACCOUNTS, conflictBack.selectedTab)
+
+        val rejected = P503AppState.DomainRejected(fullDraft(), requestId1, oneTransactionState, P503Tab.HOME)
+        val rejectedBack = assertIs<P503AppState.OverviewEmpty>(reduceFrom(rejected, P503UiEvent.Back))
+        assertEquals(oneTransactionState, rejectedBack.state)
+        assertEquals(P503Tab.HOME, rejectedBack.selectedTab)
+
+        val infra =
+            P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, fullDraft(), requestId1, oneTransactionState, P503Tab.ANALYSIS)
+        val infraBack = assertIs<P503AppState.OverviewEmpty>(reduceFrom(infra, P503UiEvent.Back))
+        assertEquals(oneTransactionState, infraBack.state)
+        assertEquals(P503Tab.ANALYSIS, infraBack.selectedTab)
+    }
+
+    @Test
+    fun backFromSubmittingNullOverviewAndOverviewEmptyThrowIse() {
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(P503AppState.Submitting(fullDraft(), requestId1), P503UiEvent.Back)
+        }
+        // Null overview makes the close target unbuildable; the UI only enables back with one.
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(P503AppState.Editing(fullDraft(), requestId1), P503UiEvent.Back)
+        }
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(P503AppState.OverviewEmpty(emptyState), P503UiEvent.Back)
+        }
+    }
+
+    @Test
+    fun unknownCommitAbsorbsBack() {
+        val state = reduceFrom(P503AppState.UnknownCommit, P503UiEvent.Back)
+        assertEquals(P503AppState.UnknownCommit, state)
+    }
+
+    @Test
+    fun cancelFromEditingAndSubmittingRemainProgrammingErrors() {
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(P503AppState.Editing(fullDraft(), requestId1), P503UiEvent.Cancel)
+        }
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(P503AppState.Submitting(fullDraft(), requestId1), P503UiEvent.Cancel)
+        }
+    }
+
     private fun submissionCreated(): ManualExpenseSubmissionResult =
         ManualExpenseSubmissionResult.Application(
             ManualExpenseSaveResult.Executed(
