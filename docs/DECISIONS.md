@@ -2060,3 +2060,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-02）：** 实施提交 `1e7955e`（task/p5-04-1-tab-layout-delta 单提交，3 文件 +69/-33），merge `ee3f4fd` 合入 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `9a69a2bbf35f3fbd602ccebabb344cbc1d9f78d3c5c9629782e2ffe7a19a496f` 经落盘副本与提交 blob 双重核验一致。独立评审 APPROVE-WITH-FINDINGS（P041D-R1 文档同步与 P041D-R2 本登记归主代理验收动作；P041D-R3..R5 为 info 级视觉细节，归 P6）。distinct verifier：`:app-ui:jvmTest` 21 tests / `:desktop-app:jvmTest` 4 tests（`--rerun-tasks` 全新，0 failures）、两模块 `ktlintCheck`、`project_docs` 全部 exit 0；主代理复跑确认（BUILD SUCCESSFUL，exit 0）。
 
 **关联决定：** `D-121`、`D-122`。
+
+## D-124 P5-04.1 底部栏悬浮样式与垂直对齐增量
+
+**状态：** 已批准并交付（2026-09-02）。
+
+**决定：** 用户 2026-09-02 指令：Tab 栏做悬浮样式（脱离屏幕边缘的圆角浮层面板），且「+」按钮中心与 Tab 栏中心须处于同一水平线（D-123 实测 FAB 中心低于 Tab 中心半个系统 inset）。实施：`NavigationBar` 的 `windowInsets` 归零并由外层 `navigationBarsPadding` 统一承担，Tab 组包入圆角（胶囊形）`Surface` 浮层面板，FAB 与 Tab 组在外层 Row 内 `CenterVertically` 对齐。
+
+**实施规格：** `docs/specs/2026-09-02-p5-04-1-floating-delta.md`（冻结 SHA-256 `356ed34128c8d803be8217fa969e08572a66f0b08e6d712d3b43569a5a5aa21d`）。
+
+**边界：** reducer/状态机、既有测试断言、schema、依赖零改动；顶栏与看板不在本批；material3 升级（HorizontalFloatingToolbar 等）归 P6/SDK 证据门；最终配色、圆角与阴影归 P6。
+
+**关联决定：** `D-121`、`D-122`、`D-123`。
