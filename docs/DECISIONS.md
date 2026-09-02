@@ -2088,3 +2088,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-02）：** 实施提交 `03c1604`（task/p5-04-2-editor-back 单提交，11 文件 +349/-17），merge `bc75274` 合入 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `e8d2e6600ab8fb181a715c3c140b2fa22217f216fdec2bcba89f9270e5a14dff` 经落盘副本与提交 blob 双重核验一致。独立评审 APPROVE（P042-R1..R3 均 info 级：Submitting 吞返回窗口、checkNotNull 守卫、瞬时态窗口返回=退出）。distinct verifier：`:app-ui:jvmTest` 32 tests / `:desktop-app:jvmTest` 4 tests（`--rerun-tasks` 全新，0 failures）、ktlintCheck、`:android-app:compileDebugKotlin`、`project_docs` 全部 exit 0；主代理复跑确认。
 
 **关联决定：** `D-121`、`D-122`。
+
+## D-126 P5-04.3 完善既有手工支出流程：可见关闭入口、桌面 Esc 对等、确认页显示名与 UnknownCommit 核对闭环
+
+**状态：** 已批准（2026-09-03）。
+
+**决定：** 按 D-121 规划授权实施 P5-04.3：完善既有手工支出流程，不新增收入、转账或借贷正式类型。R1 编辑页新增可见「关闭」入口（dispatch 既有 `Back` 事件，语义与 P5-04.2 系统返回一致：回来源 Tab、丢弃草稿；overview 非空才渲染）；R2 桌面端编辑流退出对等（desktop-app 组合根以 JDK `KeyboardFocusManager` Esc dispatcher 接入既有 `backHandler` 平台钩子，与 Android 逐态等价并含 Esc 双发守卫，非 Esc 按键原样放行，窗口关闭行为不变）；R3 确认页人类可读文案（`Continue` 进入 `AwaitingConfirmation` 时快照携带 `ManualExpenseOptions` 显示名，reducer 内回退草稿 id 原值，确认页不再直接渲染 draft id）；R4 UnknownCommit 核对闭环（状态携带 draft/requestId/overview/originTab 与核对结果，进入后恰好一次只读状态核对并可手动重试；MatchingReceipt→`Recovered`、SnapshotConflict→`RequestIdentityConflict`、Absent/Unavailable→停留可重试；其余事件维持吸收；无提交自动重试、无乐观刷新、requestId 不变）。
+
+**实施规格：** `docs/specs/2026-09-02-p5-04-3-manual-expense-flow-completion-design.md`（冻结 SHA-256 `24f1e64afcb488df7c8841afa063f31e35819219a5088f9910ae9e11329551ae`；独立规格评审首评 APPROVE-WITH-FINDINGS（SPEC-R-001..007），终局 CLOSURE APPROVE）。
+
+**边界：** 零 DDL/零 schema 变更/零新依赖/零新正式交易类型；`ledger-application`/`ledger-domain`/`ledger-data` 零改动；P5-03 提交编排与 D-119 冻结恢复顺序不变；「权威刷新恒回首页」不变；UnknownCommit 的 Back/退出语义维持吸收；确认页显示名内容升级（目录显示名来源扩展）归后续批次另立授权，视觉样式归 P6；StartupError 重试接线（平台根所有）与 P5-04.4 fail-closed 重试策略重排不在本批。submit() 不可达防御分支的 InvalidInput 字段集为无条件全集（共享构造器不区分缺失字段），payload 不被 reducer 消费。
+
+**实施登记：** 由交付/合并后状态同步提交补全（实施提交、验证结果与人工门证据届时登记）；本条不提前登记未验证能力。
+
+**关联决定：** `D-119`、`D-121`、`D-125`。

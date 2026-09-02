@@ -40,6 +40,11 @@ sealed interface P503AppState {
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        // P5-04.3: display labels carried from Continue (the host resolves them from
+        // ManualExpenseOptions); the reducer falls back to the draft id values, so the
+        // empty default is defensive only.
+        val paymentAccountLabel: String = "",
+        val categoryLabel: String = "",
     ) : P503AppState
 
     data class Submitting(
@@ -78,7 +83,18 @@ sealed interface P503AppState {
         val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
-    data object UnknownCommit : P503AppState
+    /**
+     * P5-04.3: carries the flow context so the host can run a read-only commit-status
+     * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
+     * follow the InfrastructureFailure SUBMISSION precedent.
+     */
+    data class UnknownCommit(
+        val draft: ManualExpenseDraft? = null,
+        val requestId: RequestId? = null,
+        val overview: LedgerCurrentState? = null,
+        val originTab: P503Tab = P503Tab.HOME,
+        val lastCheckOutcome: UnknownCommitCheckOutcome = UnknownCommitCheckOutcome.NONE,
+    ) : P503AppState
 
     data object Recovered : P503AppState
 }
@@ -96,6 +112,16 @@ enum class P503Tab {
 enum class InfrastructureFailureContext {
     READ,
     SUBMISSION,
+}
+
+/**
+ * P5-04.3 unknown-commit check outcome: NONE means a check is in flight; ABSENT and
+ * UNAVAILABLE stay actionable with a manual re-check and never claim success or failure.
+ */
+enum class UnknownCommitCheckOutcome {
+    NONE,
+    ABSENT,
+    UNAVAILABLE,
 }
 
 data class ManualExpenseDraft(

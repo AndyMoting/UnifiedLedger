@@ -1,9 +1,11 @@
 package com.unifiedledger.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -43,6 +45,9 @@ import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
+import java.awt.event.KeyEvent
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
@@ -82,7 +87,11 @@ internal fun DesktopRoot(
         val facade = controller.facade
         when {
             controller.state == P503StartupState.Ready && facade != null ->
-                P503App(facade, onExit = onExit)
+                P503App(
+                    facade,
+                    onExit = onExit,
+                    backHandler = { enabled, onBack -> DesktopEscBackHandler(enabled, onBack) },
+                )
             else ->
                 P503StartupScreen(
                     state = controller.state,
@@ -90,6 +99,36 @@ internal fun DesktopRoot(
                     onExit = onExit,
                 )
         }
+    }
+}
+
+/**
+ * P5-04.3 desktop back equivalence: consumes Escape while [enabled] and forwards to
+ * [onBack] (the shared P503App back channel; Submitting already swallows there). Non-Escape
+ * events pass through untouched and are never read or recorded. The dispatcher callback
+ * runs on the AWT event-dispatch thread, which is also the Compose Desktop UI thread, so
+ * [onBack] may touch Compose state directly. The JVM-level KeyboardFocusManager consumes
+ * Escape for any window of this process while enabled; the demo has a single window and no
+ * dialogs in the editor flow. Window closing is unchanged.
+ */
+@Composable
+internal fun DesktopEscBackHandler(
+    enabled: Boolean,
+    onBack: () -> Unit,
+) {
+    val latestOnBack by rememberUpdatedState(onBack)
+    DisposableEffect(enabled) {
+        val dispatcher =
+            KeyEventDispatcher { event ->
+                if (enabled && event.id == KeyEvent.KEY_PRESSED && event.keyCode == KeyEvent.VK_ESCAPE) {
+                    latestOnBack()
+                    true
+                } else {
+                    false
+                }
+            }
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
+        onDispose { KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher) }
     }
 }
 

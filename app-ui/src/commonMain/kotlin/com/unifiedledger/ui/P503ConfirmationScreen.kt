@@ -18,12 +18,15 @@ import androidx.compose.ui.unit.dp
 /**
  * Awaiting-confirmation screen (spec section 7.3.4). Shows the complete attempted
  * snapshot; cancel performs no save. Confirming enters the single-submission-lock
- * Submitting state.
+ * Submitting state. The account and category lines render the display labels carried by
+ * the state (P5-04.3); raw ids are never rendered.
  */
 @Composable
 fun P503ConfirmationScreen(
     draft: ManualExpenseDraft,
     currencyCode: String,
+    paymentAccountLabel: String,
+    categoryLabel: String,
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -32,8 +35,8 @@ fun P503ConfirmationScreen(
     ) {
         Text("确认支出", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
-        Text("支付账户：${draft.paymentAccountId?.value ?: "—"}", style = MaterialTheme.typography.bodyMedium)
-        Text("费用分类：${draft.categoryId?.value ?: "—"}", style = MaterialTheme.typography.bodyMedium)
+        Text("支付账户：$paymentAccountLabel", style = MaterialTheme.typography.bodyMedium)
+        Text("费用分类：$categoryLabel", style = MaterialTheme.typography.bodyMedium)
         Text("金额：${draft.amountText} $currencyCode", style = MaterialTheme.typography.bodyMedium)
         Text("发生时间：${draft.occurredAt ?: "—"}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))

@@ -16,6 +16,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -41,7 +42,9 @@ import kotlin.time.Instant
  * the selector groups), so a screen reader reads each error as part of its field. A
  * non-null [onContinue] shows the Continue button; `null` hides it (used by the
  * conflict/rejection result presentation where the user must modify a field or abandon the
- * conflict before continuing).
+ * conflict before continuing). A non-null [onClose] shows the visible close button
+ * (P5-04.3); it dispatches the same Back event as the system back: drop the draft and
+ * return to the originating overview tab.
  */
 @Composable
 fun P503EditScreen(
@@ -55,6 +58,7 @@ fun P503EditScreen(
     onUpdateOccurredAt: (Instant) -> Unit,
     onContinue: (() -> Unit)?,
     banner: (@Composable () -> Unit)? = null,
+    onClose: (() -> Unit)? = null,
 ) {
     var occurredAtText by remember(draft.occurredAt) { mutableStateOf(draft.occurredAt?.toString() ?: "") }
     var occurredAtParseError by remember { mutableStateOf(false) }
@@ -64,7 +68,25 @@ fun P503EditScreen(
     ) {
         banner?.invoke()
         Spacer(Modifier.height(8.dp))
-        Text("新增手工支出", style = MaterialTheme.typography.titleLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "新增手工支出",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            // P5-04.3 visible close entry: same Back semantics as the system back.
+            if (onClose != null) {
+                TextButton(
+                    onClick = onClose,
+                    modifier = Modifier.minimumInteractiveComponentSize(),
+                ) {
+                    Text("关闭")
+                }
+            }
+        }
         Spacer(Modifier.height(8.dp))
 
         val errors = validation.errors(draft, currency)
