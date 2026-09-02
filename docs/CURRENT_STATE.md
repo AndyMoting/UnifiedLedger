@@ -20,6 +20,7 @@
 - `D-118` 已批准并交付 P5-02 双平台骨架实施批（2026-08-29）：`desktop-app`（KMP jvm-only，CMP `1.11.1` + plugin.compose `2.4.10`，主类 `com.unifiedledger.desktop.MainKt`，jvmMain `sqlite-driver:2.3.2`，空库引导本地测试账本 + `DesktopSkeletonSmokeTest`）与 `android-app`（`com.android.application` 无 kotlin-android，applicationId `com.unifiedledger.android`，minSdk 34/targetSdk 36/compileSdk 36，`activity-compose:1.13.0`，NoActionBar + exported MAIN/LAUNCHER，`AndroidSqliteDriver` 私有库）两组合根；`LedgerClock` 端口（`fun interface now(): Instant`，系统实现置两端组合根）与 UUIDv7 产品 ID（RFC 9562 规范形式，`UuidV7Generator` 纯位打包 + 平台 `SecureRandom` 注入，`UuidV7ConfirmedManualExpenseIdSource` 每次恰 6 个 UUIDv7）；根构建/settings、CI/CONTRIBUTING/README/PROJECT_MAP/ARCHITECTURE 同步；零 schema/迁移变更。
 - `D-119` 已批准 P5-01/P5-02 闭环补充契约（2026-08-30）：D-118 保持已交付；冻结 P5-03 的 current-version/ledger-scoped read/options、固定匿名 catalog、精确金额、requestId、snapshot-aware unknown resolution、startup fail-closed 和双端验收边界。该决定只允许按规格顺序起草 P5-03 spec-only 与执行独立 `closure-evidence follow-up`，不授权 P5-03 代码实施；后续 Android、Desktop 和 TalkBack 人工证据已在 P5-03 收口记录中完成，零 schema/生产行为变化。
 - `D-120` 已批准并交付 P5-03 演示面 B 实施批（2026-08-30）：新增共享 `app-ui` KMP UI 模块（androidTarget + jvm，compose；Kotlin 2.4.10/CMP 1.11.1/AGP 9.1.0 零升级，`ledger-application`/`ledger-domain` 构建脚本零改动），落地阶段 5 首条可用业务流程（只读总览 + 一条手工支出写路径）；application API 含 `ParseManualExpenseAmount`、`ManualExpenseOptionsProvider`/`QueryManualExpenseOptions`、`LedgerCurrentStateReadPort`/`QueryLedgerCurrentState`、`ResolveManualExpenseCommitStatus`、`ExecuteManualExpenseSubmission` + `CommitOnceInvocationTracker` 与独立 `UuidV7ManualExpenseRequestIdSource`；`SqlDelightLedgerCurrentStateReadAdapter` + `Ledger.sq` 只增 3 条只读查询（零 DDL，schema v27 与 26 个迁移文件不变）；共享 14 状态纯 reducer UI（无 IO/随机/facade）+ 7 异步结果事件，两端组合根 startup fail-closed；Desktop current-schema 重开证据测试；CI 增 `:app-ui:jvmTest` 与 upload-artifact（`android-debug-apk-${{ github.sha }}`，retention 7 天）；CONTRIBUTING/README/PROJECT_MAP/ARCHITECTURE 已同步。实施 commit `8a0a079`、merge `85a4138`，2026-08-30 已推送 `origin/main`；双独立评审 APPROVE + polish + delta closure CONFIRMED，distinct verifier 9/9 PASS，project_docs green，Python 806 tests OK。Android 门期间另推送三个缺陷修复提交（`4ee52fa`/`2cde3a7`/`d616d2e`，均经 CI 验证）；Android、Desktop 键盘/焦点和 TalkBack 人工门均已完成。
+- `D-122` 已批准并交付 P5-04.1 三 Tab 与中央新增入口（2026-09-02）：共享 `app-ui` 以 material3 Scaffold + NavigationBar 建立首页/账户/分析三 Tab 壳，中央新增入口（居中 FAB，contentDescription「新增支出」）复用 `StartNewExpense`；Tab 选择由共享 reducer 承载（`P503Tab`/`SelectTab`，`OverviewEmpty.selectedTab`，权威刷新恒回首页）；账户 Tab 渲染 `LedgerCurrentState.balances` 与 catalog kind 文案；分析 Tab 由 application 层新增纯派生 `SummarizeLedgerActivity` 提供按交易 kind 计数与按币种支出/收入合计（normal-balance 符号规则与 `QueryLedgerCurrentState` 一致，checked 累加/取反 fail-closed，未知账户抛 `IllegalStateException`）；`P503LedgerFacade` 增加第 11 个只读成员，两端组合根同源接线。零 DDL、零新依赖、不引入导航库；实施提交 `ce8e517`、merge `d1bc8f3`（本批未 push，APK artifact 验证随授权 push 后由 CI 承担，R-9）；独立验证三模块 jvmTest 394 tests/0 failures、`:android-app:compileDebugKotlin`、三模块 ktlintCheck、project_docs 全部通过；实施规格见 `docs/specs/2026-09-02-p5-04-1-three-tab-shell-implementation-design.md`（冻结 SHA-256 `2ae00ca230aedb9b9b221d227546f7ef442dede2c02b18c0be68f5d0e900acda`）。
 
 ## 验证证据
 
@@ -38,9 +39,9 @@
 
 ## 当前阶段
 
-阶段 5 为“双端最小外壳与稳定 Android MVP”。P5-01、P5-02、P5-03 已交付；当前技术基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。P5-04 仅规划稳定 Android 基础交互，不提前修改主皮库、Backdrop、Liquid Glass 或 SDK 依赖。
+阶段 5 为“双端最小外壳与稳定 Android MVP”。P5-01、P5-02、P5-03 与 P5-04.1（三 Tab 与中央新增入口，D-122）已交付；当前技术基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。P5-04 其余子批仅规划稳定 Android 基础交互，不提前修改主皮库、Backdrop、Liquid Glass 或 SDK 依赖。
 
-- P5-04.1：三 Tab（首页、账户、分析）与中央新增入口。
+- P5-04.1：三 Tab（首页、账户、分析）与中央新增入口。（已交付，D-122）
 - P5-04.2：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。
 - P5-04.3：完善既有手工支出流程，不新增收入、转账或借贷正式类型。
 - P5-04.4：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。
@@ -61,4 +62,4 @@
 
 ## 唯一下一步
 
-阶段 5 当前为 P5-01..P5-03 已交付（P5-03 演示面 B，D-120，实施 `8a0a079`/merge `85a4138`，已推送 `origin/main`；门期间三个缺陷修复提交 `4ee52fa`/`2cde3a7`/`d616d2e` 经 CI 验证）。Android emulator 人工门、Desktop 键盘/焦点门和 Android TalkBack 门均已完成并有记录。唯一下一步：进入 P5-04 基础交互计划，不得反向改变 P5-03 的账务与状态边界。
+阶段 5 当前为 P5-01..P5-03 与 P5-04.1 已交付（P5-04.1 三 Tab 与中央新增入口，D-122，实施 `ce8e517`/merge `d1bc8f3`；本地 main 领先 `origin/main` 两个提交，按用户约束本会话不 push，push 与 APK artifact/Android 运行门需用户另行授权）。唯一下一步：起草 P5-04.2（共享状态控制的新增记账全屏编辑页、系统返回关闭编辑页、固定确认/取消行为）实施规格，不引入导航库，不得反向改变 P5-03/P5-04.1 的账务与状态边界。
