@@ -2071,4 +2071,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** reducer/状态机、既有测试断言、schema、依赖零改动；顶栏与看板不在本批；material3 升级（HorizontalFloatingToolbar 等）归 P6/SDK 证据门；最终配色、圆角与阴影归 P6。
 
+**实施登记（2026-09-02）：** 实施提交 `f496ea3`（task/p5-04-1-floating-delta 单提交，3 文件 +86/-26），merge `1a7b4c5` 合入 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `356ed34128c8d803be8217fa969e08572a66f0b08e6d712d3b43569a5a5aa21d` 经落盘副本与提交 blob 双重核验一致。独立评审 APPROVE（P041F-R1..R4 均 info 级：胶囊措辞、裁切无风险、material3 版本措辞、FAB 容器配色为既存项）。distinct verifier：`:app-ui:jvmTest` 21 tests / `:desktop-app:jvmTest` 4 tests（`--rerun-tasks` 全新，0 failures）、两模块 `ktlintCheck`、`project_docs` 全部 exit 0；主代理复跑确认（BUILD SUCCESSFUL，exit 0）。
+
 **关联决定：** `D-121`、`D-122`、`D-123`。
