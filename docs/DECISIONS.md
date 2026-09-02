@@ -2057,4 +2057,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** reducer/状态机、既有测试断言、schema、依赖零改动；顶栏与看板不在本批；P6 拥有最终视觉样式。
 
+**实施登记（2026-09-02）：** 实施提交 `1e7955e`（task/p5-04-1-tab-layout-delta 单提交，3 文件 +69/-33），merge `ee3f4fd` 合入 `main`（未 push，随下次授权推送）。规格冻结 SHA-256 `9a69a2bbf35f3fbd602ccebabb344cbc1d9f78d3c5c9629782e2ffe7a19a496f` 经落盘副本与提交 blob 双重核验一致。独立评审 APPROVE-WITH-FINDINGS（P041D-R1 文档同步与 P041D-R2 本登记归主代理验收动作；P041D-R3..R5 为 info 级视觉细节，归 P6）。distinct verifier：`:app-ui:jvmTest` 21 tests / `:desktop-app:jvmTest` 4 tests（`--rerun-tasks` 全新，0 failures）、两模块 `ktlintCheck`、`project_docs` 全部 exit 0；主代理复跑确认（BUILD SUCCESSFUL，exit 0）。
+
 **关联决定：** `D-121`、`D-122`。
