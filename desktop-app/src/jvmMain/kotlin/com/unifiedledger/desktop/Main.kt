@@ -20,6 +20,7 @@ import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryManualExpenseOptions
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
+import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
@@ -212,6 +213,7 @@ internal fun buildLedgerGraph(
             submitExpense = submission,
             requestIdSource = requestIdSource,
             ledgerClock = ledgerClock,
+            summarizeActivity = SummarizeLedgerActivity(catalog),
         )
 
     return DesktopLedgerGraph(

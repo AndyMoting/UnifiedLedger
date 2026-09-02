@@ -26,6 +26,7 @@ import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.time.Instant
@@ -365,6 +366,64 @@ class P503ReducerTest {
             )
         val readFailure = assertIs<P503AppState.InfrastructureFailure>(failed)
         assertEquals(InfrastructureFailureContext.READ, readFailure.context)
+    }
+
+    @Test
+    fun initialLoadResultEntersOverviewOnTheHomeTab() {
+        val overview =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(oneTransactionState)),
+            )
+        assertEquals(oneTransactionState, overview.state)
+        assertEquals(P503Tab.HOME, overview.selectedTab)
+    }
+
+    @Test
+    fun selectTabSwitchesWithinOverviewAndKeepsTheAuthoritativeState() {
+        val accounts =
+            reduceFrom(
+                P503AppState.OverviewEmpty(oneTransactionState),
+                P503UiEvent.SelectTab(P503Tab.ACCOUNTS),
+            )
+        val accountsOverview = assertIs<P503AppState.OverviewEmpty>(accounts)
+        assertEquals(P503Tab.ACCOUNTS, accountsOverview.selectedTab)
+        assertEquals(oneTransactionState, accountsOverview.state)
+
+        val analysis = reduceFrom(accounts, P503UiEvent.SelectTab(P503Tab.ANALYSIS))
+        assertEquals(P503Tab.ANALYSIS, assertIs<P503AppState.OverviewEmpty>(analysis).selectedTab)
+
+        val home = reduceFrom(analysis, P503UiEvent.SelectTab(P503Tab.HOME))
+        val homeOverview = assertIs<P503AppState.OverviewEmpty>(home)
+        assertEquals(P503Tab.HOME, homeOverview.selectedTab)
+        assertEquals(oneTransactionState, homeOverview.state)
+    }
+
+    @Test
+    fun authoritativeRefreshAlwaysReturnsToTheHomeTab() {
+        val overview =
+            assertIs<P503AppState.OverviewEmpty>(
+                reduceFrom(P503AppState.Created, P503UiEvent.RefreshResult(oneTransactionState)),
+            )
+        assertEquals(oneTransactionState, overview.state)
+        assertEquals(P503Tab.HOME, overview.selectedTab)
+    }
+
+    @Test
+    fun selectTabInsideEditingIsAProgrammingError() {
+        val editing = P503AppState.Editing(fullDraft(), requestId1)
+        assertFailsWith<IllegalStateException> {
+            reducer.reduce(editing, P503UiEvent.SelectTab(P503Tab.HOME))
+        }
+    }
+
+    @Test
+    fun unknownCommitAbsorbsSelectTab() {
+        val state =
+            reduceFrom(
+                P503AppState.UnknownCommit,
+                P503UiEvent.SelectTab(P503Tab.ANALYSIS),
+            )
+        assertEquals(P503AppState.UnknownCommit, state)
     }
 
     private fun submissionCreated(): ManualExpenseSubmissionResult =

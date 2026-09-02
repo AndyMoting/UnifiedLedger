@@ -142,10 +142,17 @@ fun P503App(
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             P503AppState.StartupError -> P503StartupScreen(P503StartupState.StartupError, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->
-                P503OverviewScreen(
-                    state = current.state,
+                P503TabShell(
+                    selectedTab = current.selectedTab,
+                    onSelectTab = { dispatch(P503UiEvent.SelectTab(it)) },
                     onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
-                )
+                ) {
+                    when (current.selectedTab) {
+                        P503Tab.HOME -> P503OverviewScreen(current.state)
+                        P503Tab.ACCOUNTS -> P503AccountsScreen(current.state, facade.catalog)
+                        P503Tab.ANALYSIS -> P503AnalysisScreen(current.state, facade.summarizeActivity)
+                    }
+                }
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,

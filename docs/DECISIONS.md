@@ -2030,3 +2030,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **历史关系与边界：** 本决定仅 supersede D-120 及 P5-03 实施规格中关于“下一批 P5-04 视觉”的阶段编号/范围分配；D-120 的已交付实现、账务行为、状态边界和验证证据保持不变。D-117、D-118、D-119 与既有 P5-03 规格保留为历史记录，不静默改写；其中关于导航尚待选择的历史状态继续有效，P5-04.2 的规划授权不等于导航库选型或实现授权。
 
 **关联决定：** `D-117`、`D-118`、`D-119`、`D-120`
+
+## D-122 P5-04.1 三 Tab 与中央新增入口
+
+**状态：** 已批准（2026-09-02）；实施随本批交付，实施登记由合并后状态同步提交补全。
+
+**决定：** 按 D-121 规划授权实施 P5-04.1：共享 `app-ui` 建立三 Tab（首页、账户、分析）壳与中央新增入口。Tab 选择由共享 reducer 状态承载（新增 `P503Tab`/`SelectTab`，`OverviewEmpty` 增加 `selectedTab`，权威刷新恒回首页）；中央新增入口复用 `StartNewExpense` 事件，material3 Scaffold + NavigationBar + 居中 FAB，不引入导航库；账户 Tab 以 `LedgerCurrentState.balances` 与 catalog 渲染账户余额（不做明细下钻）；分析 Tab 由 application 层新增纯派生 `SummarizeLedgerActivity` 提供按交易 kind 计数与按币种支出/收入合计（normal-balance 符号规则与 `QueryLedgerCurrentState` 一致，checked 累加/取反 fail-closed，未知账户抛 `IllegalStateException`）；`P503LedgerFacade` 增加第 11 个只读成员，两端组合根同源接线。零 DDL、零新依赖、零新正式交易类型。
+
+**实施规格：** `docs/specs/2026-09-02-p5-04-1-three-tab-shell-implementation-design.md`（评审冻结 SHA-256 `2ae00ca230aedb9b9b221d227546f7ef442dede2c02b18c0be68f5d0e900acda`；独立规格评审 APPROVE-WITH-FINDINGS，P041S-R1..R9 全部闭环，P041S-N1 并入 §2.1）。
+
+**理由：** 先以最小状态机扩展建立基础交互骨架；Tab 内容只读、权威数据链路不变；为 P5-04.2 编辑页行为与 P5-04.3 流程完善留出边界。
+
+**边界：** 本决定不构成 P5-04.2/.3/.4/.5 的实施授权；不选择导航库；不接入 P6 视觉依赖；P5-03 账务与状态边界不变。
+
+**关联决定：** `D-119`、`D-120`、`D-121`。
