@@ -42,7 +42,7 @@
 
 ## 阶段 5：双端最小外壳与稳定 Android MVP
 
-建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01、P5-02、P5-03、P5-04.1、P5-04.2 与 P5-04.3 已交付，下一批为 P5-04.4。当前基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
+建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01 至 P5-04.5 已全部交付，阶段 5 收口完成（`D-130`）。当前基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
 
 - `P5-01`：双平台最小外壳契约已批准（`D-117`，contract-only，零实现/零 schema/零生产行为变化）。
 - `P5-02`：双平台骨架实施批已交付（`D-118`，`desktop-app`/`android-app` 两组合根、Clock 端口与 UUIDv7 产品 ID；零 schema/迁移变更）。
@@ -50,13 +50,14 @@
 - `P5-04.1`：三 Tab 基础交互（首页、账户、分析）与新增入口。（已交付，`D-122`，实施 `ce8e517`/merge `d1bc8f3`；零 schema/迁移变更，schema 维持 v27；布局经 `D-123` 调整为 Tab 左组 + 底右圆形新增按钮（`1e7955e`/`ee3f4fd`），并经 `D-124` 悬浮胶囊样式与水平对齐（`f496ea3`/`1a7b4c5`））
 - `P5-04.2`：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。（已交付，`D-125`，实施 `03c1604`/merge `bc75274`；编辑流状态机 overview/originTab 穿线 + Back 事件 + app-ui backHandler 平台钩子 + Android 稳定 BackHandler；零 DDL/零新依赖）
 - `P5-04.3`：完善既有手工支出流程；不新增收入、转账或借贷正式类型。（已交付，`D-126`，实施 `35ae40e`/merge `f5ea663`；编辑页可见关闭入口 + 桌面 Esc 退出对等 + 确认页显示名快照 + UnknownCommit 核对闭环；零 DDL/零新依赖/零新正式交易类型）
-- `P5-04.4`：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。
-- `P5-04.5`：Android 与现有 Desktop 回归验证，完成阶段 5 收口。
+- `P5-04.4`：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。（已交付，`D-129`，实施 `208e3cf`；启动/加载/提交失败 fail-closed 与恢复重试单一来源；CI 新增 `:android-app:testDebugUnitTest` 步骤）
+- `P5-04.5`：Android 与现有 Desktop 回归验证，完成阶段 5 收口。（已收口，`D-130`，Android API 36 模拟器与 Desktop 回归门全过；阶段 5 完成）
 
 `D-119` 已批准 P5-01/P5-02 到 P5-03 的闭环补充契约，D-118 保持已交付；P5-03 演示面 B 已按 approved 规格交付（见上，`D-120`）。P5-04 仅扩展 Android 基础交互，不新增正式交易类型或改变 P5-03 的账务与状态边界。
 
 - 进入条件：共享核心具备稳定调用边界，导入与对账最小闭环通过验收。
 - 完成条件：两端可以打开本地测试账本、调用共享用例；Android 基础 Tab、入口、返回、手工支出和失败状态流程通过回归验证。
+- 收口声明：阶段 5 已于 2026-09-03 按 `D-130` 完成收口——Android（API 36 模拟器）与 Desktop 回归门全部通过，完成条件逐项满足；下一阶段 P6 待用户门禁（进入条件见阶段 6）。
 
 ## 阶段 6：Android 视觉与平台适配
 
