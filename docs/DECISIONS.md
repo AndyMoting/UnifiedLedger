@@ -2149,6 +2149,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界（非目标）：** 不新增收入/转账/借贷正式类型；不引入导航库；不新增第三方依赖或新 Gradle 模块（Android 启动测试落 JVM 单测、不引 Robolectric）；零 DDL、零 schema、零 `ledger-domain`/`ledger-data` 语义变更；不改变 P5-03/P5-04.1/.2/.3 已交付的账务与正式交易语义、提交编排语义（D-119 冻结恢复顺序）、「权威刷新恒回首页」不变量与 `UnknownCommit` 吸收语义；任何形式自动重试被明确禁止（启动重试为手工按钮；SUBMISSION/`UnknownCommit` 无自动重试）；`UnknownCommit`/冲突/领域拒绝的 Back/退出语义维持吸收；视觉与导航不做变更；桌面窗口管理差异化与 P5-04.5 回归收口不在本批。
 
-**实施登记（待合并后状态同步提交补全）：** （留空，由主代理合入后补全实施提交、verifier 实测与 CI 结果。）
+**实施登记（2026-09-03）：** 实施提交 `208e3cf`（17 文件 +981/−110，含冻结规格 224 行落库），fast-forward 合入本地 `main`（**未 push**，待用户授权）。规格冻结 SHA-256 `9e7e4f5705ee14d6c3bf725976ee88bea5f09a1488f2963d8bb67c82e884342b`（`docs/specs/2026-09-03-p5-04-4-fail-closed-retry-design.md`；首评 APPROVE-WITH-FINDINGS 4 条 → 修订 → 终局 CLOSURE APPROVE，主代理按推荐权批准）。实施评审 APPROVE-WITH-FINDINGS（P5044-I-001 恢复 `RetrySubmission` 防御性验空、P5044-I-002 `logFailure` 三参 `Log.w` 保留堆栈，均修复闭环绕账）终局 CLOSURE APPROVE。distinct verifier 全量实测 ALL PASS（W1-W9）：`:app-ui:jvmTest` 46 tests（`P503ReducerTest` 39 + `P503DraftValidationTest` 2 + `P503HostCoordinatorTest` 5）0 failures、`:desktop-app:jvmTest` 5 tests（基线 4 + T-D1）0 failures、`:android-app:testDebugUnitTest` 4 tests（新设 `AndroidStartupControllerTest`）0 failures、`:ledger-application:jvmTest` 370 tests 0 failures、`:android-app:compileDebugKotlin` 0、三模块 `ktlintCheck` 0、`project_docs` 0；主代理合并后复跑聚焦证明确认。边界（非目标）保持：零 DDL/零 schema/零新正式交易类型/不引 Robolectric/禁自动重试/`UnknownCommit` 冲突拒绝语义不变/视觉导航未动。
 
 **关联决定：** `D-121`。
