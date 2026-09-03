@@ -269,25 +269,6 @@ class P503ReducerTest {
     }
 
     @Test
-    fun startupErrorSupportsRetryAndExit() {
-        assertEquals(P503AppState.StartupError, reducer.reduce(P503AppState.Starting, P503UiEvent.StartupFailed))
-        assertEquals(P503AppState.Starting, reducer.reduce(P503AppState.StartupError, P503UiEvent.StartRetry))
-        assertEquals(P503AppState.StartupError, reducer.reduce(P503AppState.StartupError, P503UiEvent.Exit))
-    }
-
-    @Test
-    fun startupCompletedThenInitialLoadReachesOverview() {
-        val ready = reducer.reduce(P503AppState.Starting, P503UiEvent.StartupCompleted)
-        assertEquals(P503AppState.Ready, ready)
-
-        val overview =
-            assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(ready, P503UiEvent.InitialLoadResult(emptyState)),
-            )
-        assertEquals(emptyState, overview.state)
-    }
-
-    @Test
     fun initialLoadFailureMapsToReadInfrastructureFailureAndRetries() {
         val failed = reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadFailed)
         val readFailure = assertIs<P503AppState.InfrastructureFailure>(failed)

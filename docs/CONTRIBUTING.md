@@ -72,6 +72,12 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat :android-app:assembleDebug --stacktrace --rerun-tasks --warning-mode all
 ```
 
+运行 `android-app` JVM 单元测试（P5-04.4 S2/S3 新增：`AndroidStartupController` fail-closed 与重试资源安全，`src/test`，不引 Robolectric；与 CI 的 Android app unit tests 步骤一致）：
+
+```powershell
+.\gradlew.bat :android-app:testDebugUnitTest --stacktrace --rerun-tasks --warning-mode all
+```
+
 ### Android APK 下载与人工安装
 
 CI 在 `:android-app:assembleDebug` 后上传调试 APK 工件，名称为 `android-debug-apk-<sha>`（保留 7 天）。人工验收必须使用固定 SHA 对应的工件；CI 成功不构成 emulator 人工证据已完成。

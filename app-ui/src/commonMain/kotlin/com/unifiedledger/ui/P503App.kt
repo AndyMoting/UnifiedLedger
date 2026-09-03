@@ -175,29 +175,29 @@ fun P503App(
         }
     }
 
+    // P5-04.4: host-behavior decision skeleton (Created/NoChange/Recovered auto-refresh,
+    // UnknownCommit auto-check, manual retry triggers) lives in a pure coordinator so it is
+    // JVM-testable; the callbacks below are the actual IO/dispatch performed in this
+    // composition root. The closures capture the stable state delegate and facade, so the
+    // remembered coordinator stays current across recompositions.
+    val coordinator =
+        remember {
+            P503HostCoordinator(
+                onRefresh = ::refresh,
+                onSubmit = { draft, requestId -> submit(draft, requestId) },
+                onCheck = { draft, requestId -> checkCommitStatus(draft, requestId) },
+            )
+        }
+
     // Authoritative refresh after Created/NoChange/Recovered; never build the list from
     // the submission return value or accumulate balances in the UI.
     LaunchedEffect(state) {
-        val current = state
-        if (current is P503AppState.Created || current is P503AppState.NoChange || current is P503AppState.Recovered) {
-            refresh()
-        }
-        // P5-04.3: exactly one automatic read-only status check per UnknownCommit entry; once
-        // an outcome is recorded the guard no longer matches, so a stay does not re-check.
-        if (current is P503AppState.UnknownCommit) {
-            val draft = current.draft
-            val requestId = current.requestId
-            if (current.lastCheckOutcome == UnknownCommitCheckOutcome.NONE && draft != null && requestId != null) {
-                checkCommitStatus(draft, requestId)
-            }
-        }
+        coordinator.decide(state)
     }
 
     MaterialTheme {
         when (val current = state) {
-            P503AppState.Starting -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
-            P503AppState.StartupError -> P503StartupScreen(P503StartupState.StartupError, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->
                 P503TabShell(
                     selectedTab = current.selectedTab,
@@ -269,12 +269,8 @@ fun P503App(
                 P503UnknownCommitScreen(current) {
                     // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
                     // the state-preserving event and run the read-only check directly.
-                    val draft = current.draft
-                    val requestId = current.requestId
-                    if (draft != null && requestId != null) {
-                        dispatch(P503UiEvent.RetryCommitStatusCheck)
-                        checkCommitStatus(draft, requestId)
-                    }
+                    dispatch(P503UiEvent.RetryCommitStatusCheck)
+                    coordinator.retryCommitStatusCheck(current)
                 }
             is P503AppState.RequestIdentityConflict ->
                 P503EditScreen(
@@ -324,16 +320,21 @@ fun P503App(
                         P503InfrastructureReadScreen(
                             onRetryRefresh = {
                                 dispatch(P503UiEvent.RetryRefresh)
-                                refresh()
+                                coordinator.retryRefresh(current)
                             },
                         )
                     InfrastructureFailureContext.SUBMISSION ->
                         P503InfrastructureSubmissionScreen(
                             onRetry = {
-                                val draft = current.draft ?: return@P503InfrastructureSubmissionScreen
-                                val requestId = current.requestId ?: return@P503InfrastructureSubmissionScreen
+                                // Defensive (P5-04.4 I-001): verify draft/requestId before
+                                // dispatching RetrySubmission, matching the baseline guard.
+                                // The reducer's SUBMISSION branch uses checkNotNull, so the
+                                // retry entry must not dispatch a degraded event.
+                                if (current.draft == null || current.requestId == null) {
+                                    return@P503InfrastructureSubmissionScreen
+                                }
                                 dispatch(P503UiEvent.RetrySubmission)
-                                submit(draft, requestId)
+                                coordinator.retrySubmission(current)
                             },
                             onCancel = { dispatch(P503UiEvent.Cancel) },
                         )

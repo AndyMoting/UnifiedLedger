@@ -63,10 +63,20 @@ fun app() {
     val activity = context as? Activity
     val controller =
         remember(context) {
-            AndroidStartupController {
-                createAndroidLedgerDatabase(context, "ledger.db")
-                    .let { handle -> buildLedgerFacade(handle) }
-            }
+            AndroidStartupController(
+                openDatabase = {
+                    // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak
+                    // the driver, so the handle is closed before rethrowing; the controller
+                    // additionally closes any graph it already holds in its catch block.
+                    val handle = createAndroidLedgerDatabase(context, "ledger.db")
+                    try {
+                        CloseableLedgerGraph(buildLedgerFacade(handle)) { handle.close() }
+                    } catch (failure: Exception) {
+                        handle.close()
+                        throw failure
+                    }
+                },
+            )
         }
     LaunchedEffect(Unit) {
         controller.start()
@@ -94,11 +104,17 @@ fun app() {
 }
 
 /**
- * Testable composition-root startup state (spec section 8). Exposes the shared
- * [P503StartupState] transitions and never exposes a business graph after a failed start.
+ * Testable composition-root startup state (spec section 8) with P5-04.4 fail-closed retry
+ * resource-safety (spec sections 4/5). Exposes the shared [P503StartupState] transitions and
+ * never exposes a business graph after a failed start. The ledger connection is carried as a
+ * [CloseableLedgerGraph] so a retry can close the previous connection and a mid-failure open
+ * is closed too.
  */
 internal class AndroidStartupController(
-    private val openDatabase: () -> P503LedgerFacade,
+    private val openDatabase: () -> CloseableLedgerGraph,
+    // P5-04.4 I-002: the default channel logs the full stack via the three-argument
+    // Log.w overload; tests inject a counting/recording lambda (never android.util.Log).
+    private val logFailure: (Exception) -> Unit = { failure -> Log.w(LOG_TAG, "startup failed", failure) },
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -106,19 +122,52 @@ internal class AndroidStartupController(
     var facade: P503LedgerFacade? by mutableStateOf(null)
         private set
 
+    /** The currently held (Ready or mid-open) ledger connection; closed before rebuild. */
+    private var activeGraph: CloseableLedgerGraph? = null
+
+    /**
+     * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
+     * so the guard needs this flag to distinguish the initial call (which must proceed) from a
+     * reentrant call while an open is in flight (which is dropped).
+     */
+    private var startedOnce = false
+
     fun start() {
+        // P5-04.4 reentrancy guard: a double "Retry" tap while already starting is ignored so
+        // it neither rebuilds the graph nor double-closes a connection.
+        if (startedOnce && state == P503StartupState.Starting) return
+        startedOnce = true
         state = P503StartupState.Starting
+        // Close any connection left over from a previous Ready or an interrupted mid-open.
+        activeGraph?.close()
+        activeGraph = null
         facade = null
-        state =
-            try {
-                facade = openDatabase()
-                P503StartupState.Ready
-            } catch (failure: Exception) {
-                Log.w("UnifiedLedger", "startup failed", failure)
-                P503StartupState.StartupError
-            }
+        try {
+            val graph = openDatabase()
+            activeGraph = graph
+            facade = graph.facade
+            state = P503StartupState.Ready
+        } catch (failure: Exception) {
+            // A failure part-way through the open must not leak the half-opened driver.
+            activeGraph?.close()
+            activeGraph = null
+            logFailure(failure)
+            state = P503StartupState.StartupError
+        }
     }
 }
+
+/**
+ * P5-04.4 S3: a freshly-built ledger graph wrapped with its close action so the composition
+ * root can release the underlying driver connection on retry or mid-failure without leaking
+ * it. `close` is idempotent for the underlying drivers (SQLDelight / JDBC).
+ */
+internal data class CloseableLedgerGraph(
+    val facade: P503LedgerFacade,
+    val close: () -> Unit,
+)
+
+private const val LOG_TAG = "UnifiedLedger"
 
 private fun buildLedgerFacade(handle: AndroidLedgerDatabaseHandle): P503LedgerFacade {
     val database = handle.database

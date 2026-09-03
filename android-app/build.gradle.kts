@@ -48,4 +48,9 @@ dependencies {
     implementation(compose.runtime)
     // D-128: compose.foundation supplies Box/fillMaxSize/statusBarsPadding for the root status bar padding.
     implementation(compose.foundation)
+
+    // P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric; the
+    // controller's ledger-open lambda and log channel are injected, so no Android framework
+    // is needed at test time). Standard Kotlin test over the JUnit runner only.
+    testImplementation(kotlin("test-junit"))
 }

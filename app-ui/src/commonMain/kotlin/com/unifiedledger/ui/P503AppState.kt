@@ -7,20 +7,17 @@ import com.unifiedledger.domain.CategoryId
 import kotlin.time.Instant
 
 /**
- * P5-03 shared UI state machine (spec sections 7.1-7.2). Exactly fourteen states.
+ * P5-03 shared UI state machine (spec sections 7.1-7.2). Exactly twelve states.
  *
- * `OverviewEmpty` carries the authoritative current state: an empty ledger renders the
- * empty state, a non-empty ledger renders the transaction list and per-account balances.
- * `Created`/`NoChange`/`Recovered` are transient result states followed by an authoritative
- * refresh back to `OverviewEmpty`.
+ * `Ready` is the platform-startup-concluded entry state that consumes the initial
+ * authoritative load. `OverviewEmpty` carries the authoritative current state: an empty
+ * ledger renders the empty state, a non-empty ledger renders the transaction list and
+ * per-account balances. `Created`/`NoChange`/`Recovered` are transient result states
+ * followed by an authoritative refresh back to `OverviewEmpty`. Startup retry ownership
+ * belongs to the platform composition roots and their `P503StartupState`, not this machine.
  */
 sealed interface P503AppState {
-    data object Starting : P503AppState
-
     data object Ready : P503AppState
-
-    /** LocalDatabaseUnavailable: the demo has exactly one startup failure mode (finding P503Q-011). */
-    data object StartupError : P503AppState
 
     data class OverviewEmpty(
         val state: LedgerCurrentState,

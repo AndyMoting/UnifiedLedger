@@ -64,6 +64,10 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
       - name: Compile Android
         run: ./gradlew --no-daemon --max-workers=1 :ledger-data:compileAndroidMain --warning-mode all
+      - name: Android app unit tests
+        # P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric). The
+        # task set must match docs/CONTRIBUTING.md verification commands.
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:testDebugUnitTest --warning-mode all
       - name: Android app assemble debug
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
       - name: Upload debug APK

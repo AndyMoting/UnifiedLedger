@@ -77,6 +77,38 @@ class ExecuteManualExpenseSubmissionTest {
     }
 
     @Test
+    fun commitOnceEntrySetsHandoffMarkerBeforeResult() {
+        // P5-04.4 S4 T-H1: entering commitOnce sets the handoff marker before the delegate
+        // returns, so an exception after the entry is post-handoff (classified as unknown, not
+        // retryable), while an exception before the entry remains InfrastructureFailure.
+        val recordingPort = RecordingCommitPort()
+        val tracker = CommitOnceInvocationTracker(recordingPort)
+        recordingPort.markerProbe = { tracker.commitOnceInvoked }
+        val submission =
+            ExecuteManualExpenseSubmission(
+                executeSave =
+                    ExecuteManualExpenseSave(
+                        ExecuteConfirmedManualExpense(
+                            commitPort = tracker,
+                            idSource = SubmissionFailOnCallIdSource(),
+                            createFormalTransaction = SubmissionFailOnCallTransactionFactory(),
+                        ),
+                    ),
+                tracker = tracker,
+                resolver = ResolveManualExpenseCommitStatus(SubmissionFixedReadPort(null)),
+            )
+
+        val result = submission.submit(fixture.input())
+
+        // The delegate port returns its own receipt; T-H1's point is the handoff marker, not
+        // the payload: the submission completes as an Application result.
+        assertTrue(result is ManualExpenseSubmissionResult.Application)
+        assertTrue(tracker.commitOnceInvoked)
+        assertEquals(1, recordingPort.invocationCount)
+        assertTrue(recordingPort.commitOnceInvokedAtEntry)
+    }
+
+    @Test
     fun invalidInputWrapsAsApplicationWithoutInvokingCommitOnce() {
         val recordingPort = RecordingCommitPort()
         val harness = SubmissionHarness(recordingPort, SubmissionFixedReadPort(null))
@@ -297,12 +329,19 @@ private class RecordingCommitPort : ConfirmedManualExpenseCommitPort {
     var invocationCount = 0
         private set
 
+    /** Set by tests to probe the tracker's handoff marker at commit entry (P5-04.4 S4 T-H1). */
+    var markerProbe: (() -> Boolean)? = null
+
+    var commitOnceInvokedAtEntry = false
+        private set
+
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         invocationCount += 1
+        commitOnceInvokedAtEntry = markerProbe?.invoke() ?: false
         return ConfirmedManualExpenseResult.Created(
             ConfirmedExpenseReceipt(ConfirmationId("confirmation-unused"), TransactionId("tx-unused")),
         )

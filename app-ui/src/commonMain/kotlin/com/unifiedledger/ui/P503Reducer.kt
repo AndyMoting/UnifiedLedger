@@ -30,9 +30,7 @@ class P503ReducerImpl(
         event: P503UiEvent,
     ): P503AppState =
         when (state) {
-            is P503AppState.Starting -> reduceStarting(event)
             is P503AppState.Ready -> reduceReady(event)
-            is P503AppState.StartupError -> reduceStartupError(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
@@ -46,28 +44,12 @@ class P503ReducerImpl(
             is P503AppState.UnknownCommit -> reduceUnknownCommit(state, event)
         }
 
-    private fun reduceStarting(event: P503UiEvent): P503AppState =
-        when (event) {
-            P503UiEvent.StartupCompleted -> P503AppState.Ready
-            P503UiEvent.StartupFailed -> P503AppState.StartupError
-            else -> unhandled(P503AppState.Starting, event)
-        }
-
     private fun reduceReady(event: P503UiEvent): P503AppState =
         when (event) {
             // The authoritative load always lands on the home tab (D-122).
             is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
             P503UiEvent.InitialLoadFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             else -> unhandled(P503AppState.Ready, event)
-        }
-
-    private fun reduceStartupError(event: P503UiEvent): P503AppState =
-        when (event) {
-            P503UiEvent.StartRetry -> P503AppState.Starting
-            // Exit closes the process/window; the host handles the callback and the
-            // reducer keeps the state unchanged (no transition row exists).
-            P503UiEvent.Exit -> P503AppState.StartupError
-            else -> unhandled(P503AppState.StartupError, event)
         }
 
     private fun reduceOverviewEmpty(

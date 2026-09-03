@@ -15,8 +15,6 @@ import kotlin.time.Instant
  */
 sealed interface P503UiEvent {
     // ---- user-initiated events ----
-    data object StartRetry : P503UiEvent
-
     data object Exit : P503UiEvent
 
     data object StartNewExpense : P503UiEvent
@@ -70,10 +68,6 @@ sealed interface P503UiEvent {
     data object Back : P503UiEvent
 
     // ---- async result events ----
-    data object StartupCompleted : P503UiEvent
-
-    data object StartupFailed : P503UiEvent
-
     data class InitialLoadResult(
         val currentState: LedgerCurrentState,
     ) : P503UiEvent

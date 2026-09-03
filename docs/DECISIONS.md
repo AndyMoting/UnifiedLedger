@@ -2138,3 +2138,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-03）：** 实施提交 `f973808`（4 文件 +47/−13：`MainActivity` `enableEdgeToEdge()` + Android 组合根根级 `statusBarsPadding()` + `compose.foundation` 显式声明 + 本条目），push `f6fa19c..f973808`（trace valid:true 后，2026-09-03），CI run 33695788010 success（APK SHA-256 `1fd481fa99c210eeb18f9f0cde28eee103a2eb4d741fb670985553f6f6b36385`）。实机复验（该修复版 APK 装模拟器 pixel_7 API 36 实测，uiautomator 判定）：①根布局出现 [0,136] 状态栏 padding 节点（修复前 [0,0]）；②关闭按钮 a11y bounds 随根 padding 下移至 [886,200][1038,326]；③按钮文字中心 (962,262) 首击即关闭编辑页（修复前 (962,127) 4 次全死）；④系统返回回归通过；⑤完整支出链路通过（选单选、输入 35.80 与 2026-01-15T00:30:00Z、继续、确认页渲染、取消保留草稿、确认提交、Created、权威刷新回首页，分录 expense 35.80 / payment -35.80，余额符号正确）；⑥底部 Tab/FAB 原坐标正常（无双倍底部 padding）；⑦标题位置 [42,178] = 状态栏 inset 136 + 页面 padding 42，单次应用精确。**A1 人工门模拟器侧关闭。**遗留（已披露观察项）：E2E-R-001（评审 LOW）系统浅色模式下状态栏图标对比度未显式验证（当前模拟器暗色模式正常），可后续批显式 `SystemBarStyle` 处理；E2E-R-002（评审 LOW）API 34 设备（minSdk 34）行为未经门验证，登记为未验证面；用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）待用户执行。
 
 **关联决定：** `D-127`。
+
+## D-129 P5-04.4 fail-closed 重试策略与启动/加载/提交失败状态单一来源
+
+**状态：** 已批准（2026-09-03）。
+
+**决定：** 按 D-121 规划授权与用户 2026-09-02 启动指令实施 P5-04.4，范围 S1-S5：**S1** 删除共享 `app-ui` 不可达启动状态机（`P503AppState.Starting`/`StartupError` 状态、`StartRetry`/`StartupCompleted`/`StartupFailed` 事件、`reduceStarting`/`reduceStartupError` 与 `P503App` 对应渲染分支），共享层保留 `P503AppState.Ready` 作为「平台已就绪后」的种子入口态；启动失败/重试呈现与重试所有权完全归平台 `P503StartupState` + 两端 controller。**S2** 为 `AndroidStartupController` 补 JVM 单测（新 `src/test` 源集、任务 `:android-app:testDebugUnitTest`，不引 Robolectric；日志抽象为可注入 `logFailure: (String) -> Unit`）。**S3** 重试资源安全：`openDatabase` 契约升级为 `() -> CloseableLedgerGraph(facade, close)`，Android 经既有 `AndroidLedgerDatabaseHandle`（ledger-data 零新 API）接线 close、desktop 保留 `JdbcSqliteDriver` 引用包 close；两端 `start()` 重试/重建前关闭旧连接、失败中途关闭新开 driver、成功仅一个活跃连接；`state == P503StartupState.Starting` 防重入守卫。**S4** `commitOnce` 入口即置位 handoff 标记显式钉住（T-H1），不改任何行为。**S5** 抽取纯 Kotlin `P503HostCoordinator`（`internal fun decide(state): HostAction?` + per-instance「已出货动作」守卫），把 `P503App` 的 host 接线判定外移到纯 JVM 可测层，回调实际执行仍留 `P503App`，不改 reducer/状态机语义。**P5044-S-001**：`:android-app:testDebugUnitTest` 为新增本地与 CI 验证步骤，`ci.yml` Android job 与 `docs/CONTRIBUTING.md` 同步登记。
+
+**实施规格：** `docs/specs/2026-09-03-p5-04-4-fail-closed-retry-design.md`（224 行；冻结 SHA-256 `9e7e4f5705ee14d6c3bf725976ee88bea5f09a1488f2963d8bb67c82e884342b`；独立规格评审首评 APPROVE-WITH-FINDINGS 4 条 → 修订 → 终局 CLOSURE APPROVE，主代理按推荐权批准）。
+
+**边界（非目标）：** 不新增收入/转账/借贷正式类型；不引入导航库；不新增第三方依赖或新 Gradle 模块（Android 启动测试落 JVM 单测、不引 Robolectric）；零 DDL、零 schema、零 `ledger-domain`/`ledger-data` 语义变更；不改变 P5-03/P5-04.1/.2/.3 已交付的账务与正式交易语义、提交编排语义（D-119 冻结恢复顺序）、「权威刷新恒回首页」不变量与 `UnknownCommit` 吸收语义；任何形式自动重试被明确禁止（启动重试为手工按钮；SUBMISSION/`UnknownCommit` 无自动重试）；`UnknownCommit`/冲突/领域拒绝的 Back/退出语义维持吸收；视觉与导航不做变更；桌面窗口管理差异化与 P5-04.5 回归收口不在本批。
+
+**实施登记（待合并后状态同步提交补全）：** （留空，由主代理合入后补全实施提交、verifier 实测与 CI 结果。）
+
+**关联决定：** `D-121`。

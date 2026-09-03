@@ -79,7 +79,7 @@ private fun createDemoDatabaseUrl(): String {
 
 @Composable
 internal fun DesktopRoot(
-    openDatabase: () -> P503LedgerFacade,
+    openDatabase: () -> CloseableLedgerGraph,
     onExit: () -> Unit,
 ) {
     val controller = remember { DesktopStartupController(openDatabase).also { it.start() } }
@@ -133,12 +133,14 @@ internal fun DesktopEscBackHandler(
 }
 
 /**
- * Testable composition-root startup state (spec section 8). Exposes the shared
- * [P503StartupState] transitions and never exposes a business graph or database handle
- * after a failed start.
+ * Testable composition-root startup state (spec section 8) with P5-04.4 fail-closed retry
+ * resource-safety (spec sections 4/5). Exposes the shared [P503StartupState] transitions and
+ * never exposes a business graph or database handle after a failed start. The ledger
+ * connection is carried as a [CloseableLedgerGraph] so a retry can close the previous driver
+ * and a mid-failure open is closed too.
  */
 internal class DesktopStartupController(
-    private val openDatabase: () -> P503LedgerFacade,
+    private val openDatabase: () -> CloseableLedgerGraph,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -146,20 +148,51 @@ internal class DesktopStartupController(
     var facade: P503LedgerFacade? by mutableStateOf(null)
         private set
 
+    /** The currently held (Ready or mid-open) ledger connection; closed before rebuild. */
+    private var activeGraph: CloseableLedgerGraph? = null
+
+    /**
+     * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
+     * so the guard needs this flag to distinguish the initial call (which must proceed) from a
+     * reentrant call while an open is in flight (which is dropped).
+     */
+    private var startedOnce = false
+
     fun start() {
+        // P5-04.4 reentrancy guard: a double "Retry" / Esc tap while already starting is
+        // ignored so it neither rebuilds the graph nor double-closes a connection.
+        if (startedOnce && state == P503StartupState.Starting) return
+        startedOnce = true
         state = P503StartupState.Starting
+        // Close any connection left over from a previous Ready or an interrupted mid-open.
+        activeGraph?.close()
+        activeGraph = null
         facade = null
-        state =
-            try {
-                facade = openDatabase()
-                P503StartupState.Ready
-            } catch (failure: Exception) {
-                System.err.println("UnifiedLedger startup failed: " + failure)
-                failure.printStackTrace()
-                P503StartupState.StartupError
-            }
+        try {
+            val graph = openDatabase()
+            activeGraph = graph
+            facade = graph.facade
+            state = P503StartupState.Ready
+        } catch (failure: Exception) {
+            // A failure part-way through the open must not leak the half-opened driver.
+            activeGraph?.close()
+            activeGraph = null
+            System.err.println("UnifiedLedger startup failed: " + failure)
+            failure.printStackTrace()
+            state = P503StartupState.StartupError
+        }
     }
 }
+
+/**
+ * P5-04.4 S3: a freshly-built ledger graph wrapped with its close action so the composition
+ * root can release the underlying driver connection on retry or mid-failure without leaking
+ * it. `close` is idempotent for the underlying JdbcSqliteDriver.
+ */
+internal data class CloseableLedgerGraph(
+    val facade: P503LedgerFacade,
+    val close: () -> Unit,
+)
 
 internal data class DesktopLedgerGraph(
     val database: LedgerDatabase,
@@ -266,11 +299,23 @@ internal fun buildLedgerGraph(
     )
 }
 
-/** Opens (creating the current schema only when the file does not exist) and returns the facade. */
-internal fun openDesktopLedger(databaseUrl: String): P503LedgerFacade {
+/**
+ * Opens (creating the current schema only when the file does not exist) and returns the
+ * facade wrapped as a [CloseableLedgerGraph] so the composition root can close the driver on
+ * retry or shutdown (P5-04.4 S3).
+ */
+internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
     val driver = JdbcSqliteDriver(databaseUrl)
     val filePath = databaseUrl.removePrefix("jdbc:sqlite:")
-    return buildLedgerGraph(driver, createSchema = !Files.exists(Path.of(filePath))).facade
+    return try {
+        // P5-04.4 S3: keep the driver reference so the retry/shutdown path can close it.
+        val graph = buildLedgerGraph(driver, createSchema = !Files.exists(Path.of(filePath)))
+        CloseableLedgerGraph(graph.facade) { driver.close() }
+    } catch (failure: Exception) {
+        // A failure mid-open (schema create/open) must not leak the half-opened driver.
+        driver.close()
+        throw failure
+    }
 }
 
 private fun syntheticCatalog(
