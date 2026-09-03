@@ -41,13 +41,13 @@
 
 ## 当前阶段
 
-阶段 5 为“双端最小外壳与稳定 Android MVP”。P5-01、P5-02、P5-03、P5-04.1（三 Tab 与中央新增入口，D-122）、P5-04.2（新增记账全屏编辑页，D-125）与 P5-04.3（完善既有手工支出流程，D-126）已交付；当前技术基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。P5-04 其余子批仅规划稳定 Android 基础交互，不提前修改主皮库、Backdrop、Liquid Glass 或 SDK 依赖。
+阶段 5 为“双端最小外壳与稳定 Android MVP”，已于 2026-09-03 按 `D-130` 完成收口。P5-01、P5-02、P5-03、P5-04.1（三 Tab 与中央新增入口，D-122）、P5-04.2（新增记账全屏编辑页，D-125）、P5-04.3（完善既有手工支出流程，D-126）、P5-04.4（fail-closed 重试策略与失败状态单一来源，D-129）与 P5-04.5（Android 与现有 Desktop 回归验证收口，D-130）已全部交付；当前技术基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36，schema 维持 v27。主皮库、Backdrop、Liquid Glass 与 SDK 依赖变更按路线图归阶段 6。
 
 - P5-04.1：三 Tab（首页、账户、分析）与新增入口。（已交付，D-122；布局经 D-123 调整为 Tab 左组 + 底右圆形新增按钮，并经 D-124 悬浮胶囊样式与水平对齐）
 - P5-04.2：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。（已交付，D-125）
 - P5-04.3：完善既有手工支出流程，不新增收入、转账或借贷正式类型。（已交付，D-126）
-- P5-04.4：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。
-- P5-04.5：Android 与现有 Desktop 回归验证并完成阶段 5 收口。
+- P5-04.4：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。（已交付，D-129，实施 `208e3cf`；CI 新增 `:android-app:testDebugUnitTest` 步骤）
+- P5-04.5：Android 与现有 Desktop 回归验证并完成阶段 5 收口。（已收口，D-130，2026-09-03；Android 与 Desktop 回归门全过，阶段 5 完成）
 
 ## 未完成门槛
 
@@ -60,8 +60,12 @@
 - 阶段 4 收口登记的 correction/successor invalidation 延期已由 D-113 交付解除：规格经用户批准（UQ-1..UQ-8 按推荐），实施 23 文件 +3150/-99（commit `10ebd17`，merge `a3d11bb`，schema v26→v27），双独立评审 14 findings 全部回修闭环（登记于 D-113 实施登记段），distinct verifier 五命令全部 exit 0，trace `valid:true`（353 commits）；D-103:1639 / D-109 O-5 登记的该项延期就此解除，RL-07 银行 parser 门延期由 BP-01（D-116）解除，见下条。
 - BP-01 银行 parser 门承接批（D-116）已交付并推送（2026-08-29，实施 merge `0c4a634`/`19a2c95`，push `779d529..0c83f7b`）：CMB 网银 CSV 与 CCB 网银 XLS 解析器（CCB 采用 POI HSSF，为既有依赖传递依赖，证据门继承 D-099）、`BankStatementTransferFlowFormalFactory` 银行侧方向门变体（P4-04 钱包视角冻结 oracle 逐值不变）、余额镜像非阻断 `note` 诊断（`SPINE_BANK_BALANCE_CONTINUITY`/`SPINE_BANK_BALANCE_MISSING`）与 RL-07 镜像代表路径（复用 P4-08 `confirmLink` + D-112 READY 投影；E-11 双形状门：原始 `+08:00` 形状进 `confirmLink` 被 `P408_POSTING_TIME_UNRESOLVED` 类型化拒绝且零写入，镜像适配层 UTC `Z` 规范化后单笔正式转账、bank posting `CHECKED`、零第二笔/零收入）。fixtures 21、解析测试 57、E2E 5 全绿；独立双评审 APPROVE、distinct verifier 19/19 PASS、六命令全量 exit 0、合并后 `verify-project` full `valid:true`；零 schema/迁移变更（schema 维持 v27）、D-103 matcher 组合不变、无 `.external/` 与真实账单值入仓。银行 parser 门（D-109 O-8 / D-099:1540）就此关闭；PDF/其他银行/信用卡未提供样本，属 D-116 边界外待用户。
 - P5-03 演示面 B 实施批已交付（D-120，merge `85a4138`，2026-08-30 推送 `origin/main`）；Android APK 工件 + emulator 人工门已关闭（模拟器 `ul_p5_test`，API 36 headless，2026-08-30 真实证据）：CI APK 工件 `android-debug-apk-<sha>` 下载并安装；首次启动渲染空总览（账本：ledger-local-test / 账本为空 / 新增支出），应用私有 `ledger.db` 以 current-schema 创建（user_version=27、215 张表）；force-stop 后同版本重开数据库完好（v27/215 表）且总览重渲染；完整手工支出流程走通（支付账户 asset-payment-local CNY + 类别 expense-category-breakfast，金额 35.80，occurredAt 2026-01-15T00:30:00Z → 继续 → 待确认快照 → 确认提交 → Created → 权威刷新 → 总览显示 EXPENSE 交易 + 两条分录（expense 35.80 / payment -35.80）+ 各账户余额 normal-balance 符号正确）；DB 精确持久化（1 transaction / 1 transaction_version / 2 postings / 1 posting_set / 1 manual_expense_request / 1 confirmed_expense_receipt，零重复；postings = asset-payment-local -3580 minor、expense-account-local +3580 minor）；重启恢复（force-stop + 重启后总览仍显示该交易，正式结果由 DB 恢复）。门期间三个缺陷修复提交经 CI 验证并推送 `origin/main`：`4ee52fa` 组合根启动失败日志化 / `2cde3a7` Android 组合根改接 `AndroidLedgerDatabaseHandle` / `d616d2e` 移除 `ledger-data` androidMain `ForeignKeysCallback.onConfigure` 的 `PRAGMA busy_timeout`（桌面 JDBC 保留）。Desktop 键盘/焦点人工门已通过：用户全程不使用鼠标，使用 `Tab`、`Enter`、空格键完成新增支出流程并出现 Created；Android TalkBack 人工门已通过：用户使用 CI 固定 APK 完成 TalkBack 流程，控件可聚焦/激活、输入可用、提交结果可感知。P5-03 双端人工流程门全部完成；R-9 本地 `:android-app:assembleDebug` OOM（APK 经 CI artifact）；R-17 本地聚合 Gradle `check` 在 1 GB Kotlin daemon 上限下 OOM（聚合 check 归 CI）；P5-04 基础交互计划待执行。
-- D-121 已批准登记阶段映射与 P5-04 基础交互规划；当前阶段仍为 P5，唯一下一步为进入 P5-04 计划。
+- D-121 已批准登记阶段映射与 P5-04 基础交互规划；P5-04 各子批已按 D-122/D-125/D-126/D-129 交付，阶段 5 已按 D-130 收口。
 
 ## 唯一下一步
 
-阶段 5 当前 P5-04.1..P5-04.4 均已交付：P5-04.3（D-126）实施提交 `35ae40e`/merge `f5ea663`、D-127 缺陷修复提交 `1d30b75` 与 D-128 平台集成缺陷修复提交 `f973808` 均已推送 `origin/main` 并经 CI 验证；P5-04.4（D-129，fail-closed 重试策略与启动/加载/提交失败状态单一来源）实施提交 `208e3cf`（17 文件 +981/−110，含规格 225 行落库，fast-forward 合并）已合入**本地** `main`，**未 push**（本地 main=208e3cf，领先 origin/main=2ef5200 一个提交）。D-128（enableEdgeToEdge + 根级 statusBarsPadding，CI run 33695788010）经模拟器 pixel_7 API 36 实机复验 A1 模拟器侧关闭；用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）与桌面 Esc 人工门（A2）均已收（A2 已通过）。P5-04.4（D-129）实施评审 CLOSURE APPROVE，distinct verifier 全量实测 ALL PASS（W1-W9：app-ui jvmTest 46、desktop-app jvmTest 5、android-app testDebugUnitTest 4、ledger-application jvmTest 370、compileDebugKotlin/ktlintCheck/project_docs 零失败）。**唯一下一步 = 用户 push 授权（2ef5200..208e3cf + 本登记提交随主代理 push）→ CI 验证 → P5-04.5（D-121）Android 与现有 Desktop 回归收口待启动。**
+阶段 5 已于 2026-09-03 按 `D-130` 完成收口。P5-04.1..P5-04.5 均已交付并推送：D-129（实施 `208e3cf`）已推送，基线本地 main=origin/main=`62b8625`（CI run 33738850660 success）；D-127 缺陷修复 `1d30b75` 与 D-128 平台集成缺陷修复 `f973808` 均已推送并经 CI 验证。P5-04.5 回归门全部通过：Android（API 36 模拟器 + CI APK artifact，APK SHA-256 `b2b5a9f385ddd88bbe2308b09ee95cb55295e5a87b3db9218d89fc96d3b693bd`）11 项与 Desktop（`:desktop-app:run` 于 `62b8625`）8 项，含两端完整手工支出链（权威刷新回首页 Tab、EXPENSE 分录与余额符号正确）、关闭/Esc/取消语义回归、持久化与 DB 冷副本核验（integrity_check=ok、user_version=27、215 表，与 2026-08-30 门一致）。ROADMAP 阶段 5 完成条件逐项满足（两端以 ledger-local-test 打开本地测试账本并完成共享核心支出流；Android 基础 Tab、入口、返回、手工支出和失败状态流程通过回归验证，失败状态行为由 D-129 的 app-ui 与 android 单测钉住）。
+
+遗留披露（不阻塞收口，均已登记）：`P5-04.5-FOUND-001`（平台层行为分歧，D-130）——Android 端 ledger.db 文件损坏时 androidx SupportSQLite 静默删除并重建空库（无 StartupError、无数据可恢复提示），桌面端同场景 fail-closed 进入 StartupError；与 fail-closed 意图相悖，留待后续独立决策批处置，本批零代码修复、仅登记披露。用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）待用户执行（D-128 遗留）。D-128 已披露观察项继续有效：浅色模式状态栏图标对比度未显式验证（E2E-R-001）与 API 34 设备（minSdk 34）行为未经门验证（E2E-R-002）。
+
+**唯一下一步 = 阶段 6（Android 视觉与平台适配，P6）进入门与用户裁决**：进入条件见 ROADMAP 阶段 6——阶段 5 完成（已满足）、SDK/工具链与目标依赖（`compileSdk 37` 等）的官方证据门通过、且有可重复的 Android 基线验收；是否启动与证据门安排由用户裁决。

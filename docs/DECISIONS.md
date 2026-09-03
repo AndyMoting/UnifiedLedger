@@ -2152,3 +2152,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-03）：** 实施提交 `208e3cf`（17 文件 +981/−110，含冻结规格 224 行落库），fast-forward 合入本地 `main`（**未 push**，待用户授权）。规格冻结 SHA-256 `9e7e4f5705ee14d6c3bf725976ee88bea5f09a1488f2963d8bb67c82e884342b`（`docs/specs/2026-09-03-p5-04-4-fail-closed-retry-design.md`；首评 APPROVE-WITH-FINDINGS 4 条 → 修订 → 终局 CLOSURE APPROVE，主代理按推荐权批准）。实施评审 APPROVE-WITH-FINDINGS（P5044-I-001 恢复 `RetrySubmission` 防御性验空、P5044-I-002 `logFailure` 三参 `Log.w` 保留堆栈，均修复闭环绕账）终局 CLOSURE APPROVE。distinct verifier 全量实测 ALL PASS（W1-W9）：`:app-ui:jvmTest` 46 tests（`P503ReducerTest` 39 + `P503DraftValidationTest` 2 + `P503HostCoordinatorTest` 5）0 failures、`:desktop-app:jvmTest` 5 tests（基线 4 + T-D1）0 failures、`:android-app:testDebugUnitTest` 4 tests（新设 `AndroidStartupControllerTest`）0 failures、`:ledger-application:jvmTest` 370 tests 0 failures、`:android-app:compileDebugKotlin` 0、三模块 `ktlintCheck` 0、`project_docs` 0；主代理合并后复跑聚焦证明确认。边界（非目标）保持：零 DDL/零 schema/零新正式交易类型/不引 Robolectric/禁自动重试/`UnknownCommit` 冲突拒绝语义不变/视觉导航未动。
 
 **关联决定：** `D-121`。
+
+## D-130 P5-04.5 Android 与现有 Desktop 回归验证并收口阶段 5
+
+**状态：** 已批准并交付（2026-09-03）。
+
+**决定：** 按 D-121 规划授权实施 P5-04.5（D-121 规划授权的最终批）：Android 与现有 Desktop 回归验证并完成阶段 5 收口。本批零代码、零 schema、零依赖变更，纯回归验证与文档收口；验证基线为本地 main=origin/main=`62b8625`（D-129 已推送，CI run 33738850660 success）。
+
+**Android 门（API 36 模拟器 + CI APK artifact，APK SHA-256 `b2b5a9f385ddd88bbe2308b09ee95cb55295e5a87b3db9218d89fc96d3b693bd`）全部通过：** ①首启空态总览与底栏布局（Tab 左组 + 右侧红色圆形新增按钮，D-123/D-124）；②三 Tab 切换（首页/账户/分析）；③「+」入口打开全屏编辑页；④编辑页「关闭」按钮文字中心 (962,263) 首击即关、回来源 Tab（D-127/D-128 修复回归；a11y 单层可点击节点 [886,200][1038,326] 与 D-128 登记一致）；⑤完整手工支出链：选账户/分类 → 35.80 → 2026-01-15T00:30:00Z → 继续 → 确认页显示名快照（支付账户：asset-payment-local / 费用分类：expense-category-breakfast，D-126 R3）→ 确认提交 → Created → 权威刷新回首页 Tab（D-122 不变量），EXPENSE 交易、分录 expense 35.80 / asset -35.80、余额符号正确；⑥确认页「取消」→ 回编辑页且全部字段保留（草稿保留语义）；⑦有草稿按系统返回 → 关闭编辑页回来源 Tab，应用不退出；⑧账户 Tab（ASSET -35.80 / EXPENSE 35.80）与分析 Tab（交易总笔数 1、EXPENSE：1、CNY 支出 35.80 收入 0.00）渲染正确；⑨force-stop 重开持久化完好；⑩模拟器整机冷启后数据完好；⑪DB 冷副本核验（exec-out 原始通道拉取，本地与设备端 SHA-256 一致 `5a28adfc63ad3dea934d73491f9340104d0e3f4b8ca09c7c9621efb52f765eea`）：PRAGMA integrity_check=ok、user_version=27、215 表（与 2026-08-30 门一致）。
+
+**Desktop 门（`:desktop-app:run` 于 `62b8625` + 键鼠自动化）全部通过：** ①启动正常，总览 + 底栏三 Tab + 右「+」（共享 `app-ui` 与 Android 同构）；②三 Tab 切换；③完整手工支出链（12.00，2026-02-01T08:00:00Z）→ 确认页显示名快照/金额币种/时间正确 → 确认提交 → 权威刷新回首页 Tab，EXPENSE 交易 + 分录（expense 12.00 / asset -12.00）+ 余额符号正确；④确认页 Esc → 关闭编辑流回来源 Tab（草稿丢弃语义）；⑤编辑页 Esc → 关闭编辑页回来源 Tab（A2 回归）；⑥确认页「取消」→ 回编辑页全部字段保留；⑦编辑页「关闭」按钮渲染可点、关闭回总览（A2 回归）；⑧窗口 X 关闭 → `:desktop-app:run` 退出码 0，进程干净退出（onCloseRequest 行为不变）。说明：桌面演示库为每次启动新建临时目录（`Files.createTempDirectory("unifiedledger-demo-")` + `ledger-local-test.db`），「账本为空」是 P5-03 规格 §8/10.1 定义的演示面行为，桌面持久化由 `DesktopCurrentSchemaReopenTest` 证明——非缺陷，如实说明。
+
+**阶段 5 完成判据对照（ROADMAP 阶段 5 完成条件）：** ①两端可打开本地测试账本、调用共享用例——通过（Android 模拟器与 Desktop 均以 ledger-local-test 完成共享核心完整支出流）；②Android 基础 Tab、入口、返回、手工支出和失败状态流程通过回归验证——通过（模拟器实机门全过；失败状态行为由 D-129 的 46 app-ui 测试 + 4 android 单测钉住，本批实机探针额外执行并披露 P5-04.5-FOUND-001）。收口结论：阶段 5 收口完成，下一阶段 P6 待用户门禁（进入条件见 ROADMAP 阶段 6）。
+
+**验证证据：** 上述 Android 11 项与 Desktop 8 项回归门逐项实测通过；验证用 APK SHA-256 与 DB 冷副本 SHA-256 逐值核验一致；全程零代码、零 schema（v27 与 26 个迁移文件不变）、零依赖变更。
+
+**回归发现与披露（P5-04.5-FOUND-001，平台层行为分歧）：** Android 端 ledger.db 文件损坏时（实机故障注入：以非 SQLite 内容替换后重启应用），androidx SupportSQLite 记录 "Corruption reported by sqlite"/"deleting the database file" 后静默删除并重建空库，应用正常启动为空账本（全新 schema v27 空库），无 StartupError、无数据可恢复提示；桌面端同场景 JDBC 抛异常 → `DesktopStartupController` → StartupError（fail-closed，Retry/Exit）。定性：D-129 的 fail-closed 启动契约文字未被破坏（异常未到达 controller 端口——框架层先静默重建），但「损坏即静默弃数据」与 fail-closed 意图相悖；建议级别 Low-Medium（损坏本身已使数据不可读，但静默删除剥夺了诊断/恢复机会）。处置：留待后续独立决策批（方向示例：自定义 SupportSQLiteOpenHelper 错误处理/预开完整性检查），本批不做代码修复、仅登记披露；实验后已还原备份并实机验证数据完好（35.80 EXPENSE 与余额恢复）。
+
+**边界：** 零代码/零 schema/零依赖；不修 P5-04.5-FOUND-001；不改写历史决定（D-117..D-129 登记原样保留）；模拟器与本机操作细节仅为本批验证证据，不构成产品契约；遗留继续有效：用户 Android 16 实机最终确认（f973808 APK 单击关闭）待用户执行，D-128 已披露的浅色模式状态栏图标对比度（E2E-R-001）与 API 34 未验证面（E2E-R-002）未关闭。
+
+**关联决定：** `D-121`、`D-122`、`D-126`、`D-127`、`D-128`、`D-129`。
