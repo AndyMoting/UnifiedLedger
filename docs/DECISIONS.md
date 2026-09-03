@@ -2135,6 +2135,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 不改共享 `app-ui` 与桌面端、不改主题 XML、零新依赖；不做 IME/`safeDrawingPadding()` 全量处理（属后续批次）；热区行为与 D-127 相同无单测覆盖（无 compose ui-test harness），修复必须经实机人工门复验（API 36 模拟器与用户 Android 16 实机），本批不为此引入新测试框架。
 
-**实施登记：** 留待交付提交补全。
+**实施登记（2026-09-03）：** 实施提交 `f973808`（4 文件 +47/−13：`MainActivity` `enableEdgeToEdge()` + Android 组合根根级 `statusBarsPadding()` + `compose.foundation` 显式声明 + 本条目），push `f6fa19c..f973808`（trace valid:true 后，2026-09-03），CI run 33695788010 success（APK SHA-256 `1fd481fa99c210eeb18f9f0cde28eee103a2eb4d741fb670985553f6f6b36385`）。实机复验（该修复版 APK 装模拟器 pixel_7 API 36 实测，uiautomator 判定）：①根布局出现 [0,136] 状态栏 padding 节点（修复前 [0,0]）；②关闭按钮 a11y bounds 随根 padding 下移至 [886,200][1038,326]；③按钮文字中心 (962,262) 首击即关闭编辑页（修复前 (962,127) 4 次全死）；④系统返回回归通过；⑤完整支出链路通过（选单选、输入 35.80 与 2026-01-15T00:30:00Z、继续、确认页渲染、取消保留草稿、确认提交、Created、权威刷新回首页，分录 expense 35.80 / payment -35.80，余额符号正确）；⑥底部 Tab/FAB 原坐标正常（无双倍底部 padding）；⑦标题位置 [42,178] = 状态栏 inset 136 + 页面 padding 42，单次应用精确。**A1 人工门模拟器侧关闭。**遗留（已披露观察项）：E2E-R-001（评审 LOW）系统浅色模式下状态栏图标对比度未显式验证（当前模拟器暗色模式正常），可后续批显式 `SystemBarStyle` 处理；E2E-R-002（评审 LOW）API 34 设备（minSdk 34）行为未经门验证，登记为未验证面；用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）待用户执行。
 
 **关联决定：** `D-127`。
