@@ -126,7 +126,7 @@ fun parseExactDecimalLenient(
 ### 2.6 测试
 
 - **domain 层**（`ledger-domain` commonTest，新增）：`parseExactDecimalLenient` 独立测试——§2.4 全向量、`precision` 边界 0/18、越界 `precision`（-1/19）返回 null、溢出防护、负号与 `-0`。
-- **application 层**（`ledger-application` commonTest）：`ParseManualExpenseAmountTest` 扩展——§2.4 全向量（含错误类型断言）；JPY(0) 有效/拒绝向量；`" 35.8\t"`（trim + lenient 组合，→ 3580）。
+- **application 层**（`ledger-application` commonTest）：`ParseManualExpenseAmountTest` 改造——既有 `"35.8"`/`"35.800"` 拒绝断言按 §2.4 反转（移入有效向量），其余既有断言保留，并追加 §2.4 新向量（含错误类型断言）；JPY(0) 有效/拒绝向量；`" 35.8\t"`（trim + lenient 组合，→ 3580）。
 - **UI 层不回归**：`P503DraftValidationTest` 既有两用例必须保持绿——CNY(2) 下 `"35.80"` 合法；JPY(0) 下 `"35.80"` 拒绝（d=2 > 0 且超出位 `"80"` 非零，lenient 同样拒绝，语义不变）。
 - **UI 层补充用例**（`P503DraftValidationTest` 新增）：CNY(2) 下 `"35.8"`、`"11"` 合法（`isValid` true）；CNY(2) 下 `"35.812"`、`"011"` 不合法（`amountFormatError` 非 null）；JPY(0) 下 `"358.0"`、`"35.00"` 合法。
 - `P503ReducerTest` 既有用例全部不回归（reducer `UpdateAmount` 仅存文本，本批零改动，见 :84-85/:224-225/:250-251）。
@@ -135,15 +135,17 @@ fun parseExactDecimalLenient(
 
 ### 3.1 依赖与证据门
 
-**声明：** `app-ui/src/commonMain` 增加 `implementation(kotlinx.datetime)`——即 `org.jetbrains.kotlinx:kotlinx-datetime:0.7.1`。这是本批**唯一新直接依赖**；两端组合根（`desktop-app`/`android-app`）零构建脚本改动（经 app-ui 传递）。
+**声明：** `app-ui/src/commonMain` 增加 `implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")`（显式坐标）。这是本批**唯一新直接依赖**；两端组合根（`desktop-app`/`android-app`）零构建脚本改动（经 app-ui 传递）。
 
 **证据门三条（本批规划已核实，规格复述）：**
 
 1. **官方维护**：`kotlinx-datetime` 是 JetBrains 官方 Kotlin 库（`org.jetbrains.kotlinx` 组织），与 `kotlin.time.Instant`（stdlib 2.4.10，无时区能力，`kotlin/time` 包内无 TimeZone 类）互补，是本仓库获取 `TimeZone`/`LocalDateTime` 能力的标准来源。
 2. **许可**：Apache-2.0，与本仓库既有依赖许可族一致。
-3. **非新增入图（传递约束对齐）**：仓库实际解析坐标 `org.jetbrains.compose.material3:material3:1.9.0`（CMP 1.11.1 解析；仓库无 version catalog，`gradle/` 下只有 wrapper）的 `.module` 元数据 `metadataApiElements` variant **requires kotlinx-datetime 0.7.1**——kotlinx-datetime 已作为传递依赖存在于解析图内（本地 Gradle 缓存含 `kotlinx-datetime/0.7.1` 与 `material3-desktop-1.9.0.jar` 内含 96 个 DatePicker/TimePicker 相关类，如 `DatePickerDialog_skikoKt`、`TimePickerDialogKt`、`AnalogTimePickerState` 等）。声明为直接 implementation 只改变依赖的可见性，不改变解析图内容，零版本协商风险。
+3. **非新增入图（传递约束对齐，按 target 分述）**：
+   - **desktop/jvm 侧（非新增）**：仓库实际解析坐标 `org.jetbrains.compose.material3:material3:1.9.0`（CMP 1.11.1 解析；仓库无 version catalog，`gradle/` 下只有 wrapper）的 `.module` 元数据 `metadataApiElements` variant **requires kotlinx-datetime 0.7.1**——kotlinx-datetime 已作为传递依赖存在于该侧解析图内（本地 Gradle 缓存含 `kotlinx-datetime/0.7.1` 与 `material3-desktop-1.9.0.jar`，后者内含 96 个 DatePicker/TimePicker 相关类，如 `DatePickerDialog_skikoKt`、`TimePickerDialogKt`、`AnalogTimePickerState` 等）。声明为直接 implementation 只改变依赖的可见性，不改变该侧解析图内容，零版本协商风险。
+   - **Android 侧（本批新增）**：解析新增 `kotlinx-datetime-android 0.7.1` 及其传递 `kotlinx-serialization-core 1.6.2`；版本由本批显式坐标单一来源指定，与 desktop/jvm 侧传递版本一致，无版本冲突。
 
-**类型换算注意（写入规格供实施对照）：** `kotlinx.datetime.Instant` 与 `kotlin.time.Instant` 是不同类型；换算链固定为：`LocalDateTime.toInstant(TimeZone.of("Asia/Shanghai"))` 得到 `kotlinx.datetime.Instant`，经 `toKotlinInstant()` 互转扩展转为 `kotlin.time.Instant` 后走既有 `onUpdateOccurredAt(Instant)` 通道。
+**类型换算注意（写入规格供实施对照）：** kotlinx-datetime 0.7.1 中 `kotlinx.datetime.Instant` 是 `kotlin.time.Instant` 的 typealias（0.7.0 移除原类、0.7.1 以别名回归），不存在 `toKotlinInstant()` 互转扩展；换算链固定为与 §3.3 同款：`LocalDateTime.toInstant(TimeZone.of("Asia/Shanghai"))` 直接返回 `kotlin.time.Instant`，无需任何互转，直接走既有 `onUpdateOccurredAt(Instant)` 通道。实施须直接使用 `kotlin.time.Instant`，避免引用已废弃的 `kotlinx.datetime.Instant` 别名（产生 deprecated 告警）。
 
 ### 3.2 交互冻结
 
@@ -166,6 +168,7 @@ fun parseExactDecimalLenient(
 **`发生时间：2026-01-15 08:30（UTC+8）＝ 2026-01-15T00:30:00Z`**
 
 - 格式定义：`YYYY-MM-DD HH:mm`（Asia/Shanghai 本地 24 小时制，由 `Instant.toLocalDateTime(TimeZone.of("Asia/Shanghai"))` 得出）+ `（UTC+8）` + `＝ ` + 原 ISO UTC 串（`draft.occurredAt.toString()`）。
+- **（UTC+8）标注限定：** 该标注对 1991 年后日期精确（Asia/Shanghai 自 1991 年起无夏令时）；1986–1991 DST 窗口内仅显示本地墙钟（偏移标注不适用），且此类日期若落在 gap 内本就按 §3.3 拒绝。
 - 本地时间展示仅用于人类可读性；存储/提交/校验仍用 `Instant`（UTC），与 domain `TransactionTimes.occurredAt: Instant`（`Values.kt:61`）与 `ManualExpenseSaveInput.kt:15` 保持一致。
 - 建议将本地时间格式化与换算做成 app-ui 纯函数（JVM 可测），不内联在 composable 中。
 
@@ -185,7 +188,7 @@ fun parseExactDecimalLenient(
 
 ### 3.7 人工门计划
 
-- **Android 模拟器**（API 36，`ul_p5_test` 头less 先例）：安装 CI APK（`android-debug-apk-<sha>` 工件，随授权 push 后生成，D-127 先例）——尾随入口打开 DatePicker → 选日期 → TimePicker → 选时间 → 确认后文本框同步为 ISO 串 → Continue 通过 → 确认页显示冻结格式 → 提交链完整；系统返回在对话框打开时不关闭编辑页；TalkBack 走查（入口可聚焦/可读、对话框控件可感知、确认后焦点行为）。
+- **Android 模拟器**（既有 API 36 模拟器先例，`CURRENT_STATE.md:62` / D-127、D-128）：安装 CI APK（`android-debug-apk-<sha>` 工件，随授权 push 后生成，D-127 先例）——尾随入口打开 DatePicker → 选日期 → TimePicker → 选时间 → 确认后文本框同步为 ISO 串 → Continue 通过 → 确认页显示冻结格式 → 提交链完整；系统返回在对话框打开时不关闭编辑页；TalkBack 走查（入口可聚焦/可读、对话框控件可感知、确认后焦点行为）。
 - **桌面**（`:desktop-app:run` + Win32 自动化）：选择器交互全流程；**Esc 语义必验**——对话框打开按 Esc 仅关对话框、编辑页保持打开且 draft 完整；对话框关闭后编辑页 Esc 语义恢复（既有行为）。
 - 人工门随授权 push 后按 CI APK 执行；CI 成功不构成人工证据已完成（CONTRIBUTING 既有纪律）。
 
@@ -212,6 +215,10 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat --stop
 .\gradlew.bat :app-ui:jvmTest --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
 .\gradlew.bat --stop
+.\gradlew.bat :desktop-app:jvmTest --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
+.\gradlew.bat --stop
+.\gradlew.bat :desktop-app:build --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
+.\gradlew.bat --stop
 .\gradlew.bat :android-app:compileDebugKotlin --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
 .\gradlew.bat --stop
 .\gradlew.bat ktlintCheck --no-daemon --max-workers=1 '-Dkotlin.daemon.jvmargs=-Xmx1024m' --stacktrace --rerun-tasks --warning-mode all
@@ -223,6 +230,8 @@ python -m project_docs .
 - `:ledger-domain:jvmTest`：新 lenient 函数测试 + strict 既有测试回归。
 - `:ledger-application:jvmTest`：wrapper 全向量 + 更正/RG-12 相关既有测试回归。
 - `:app-ui:jvmTest`：`P503DraftValidationTest` 既有 + 新增用例、`P503ReducerTest` 不回归、时间换算/格式纯函数新测试。
+- `:desktop-app:jvmTest`：桌面侧回归（空库引导、一次手工支出 Created、UUIDv7 文本、逐币种平衡与重放 NoChange，CONTRIBUTING 既有步骤）。
+- `:desktop-app:build`：Desktop 构建门（与 A10 对齐；与 CI 的 Desktop app build 步骤一致）。
 - `:android-app:compileDebugKotlin`：Android 编译门（本地 assembleDebug 按 R-9 既有登记归 CI，APK 工件用于人工门）。
 - `ktlintCheck`：全部模块（与 CI Ktlint check 步骤一致；本批受影响为 ledger-domain/ledger-application/app-ui/desktop-app/android-app）。
 - `project_docs`：正式文档验证。
@@ -249,6 +258,6 @@ python -m project_docs .
 本批实施完成后登记 **D-131（录入体验批：R1 金额宽容解析 + R2 时间选择器）**，登记内容至少包括：
 
 - 四项已裁决方向（§1）与实施落点（R1：`parseExactDecimalLenient` + wrapper strict 优先回退；R2：material3 官方选择器 + kotlinx-datetime 0.7.1 固定 Asia/Shanghai 换算 + 文本兜底保留）。
-- **对 D-119 §3.3 的窄替代声明：** 在手工支出 wrapper（`ParseManualExpenseAmount`）范围内，D-119 §3.3 固定拒绝向量中的 `"35.8"`、`"35.800"` 转为有效（补零/整除），其余全部冻结向量与错误类型不变；strict 领域函数及更正/RG-12 路径不受影响；wrapper 的 trim/EMPTY/内部空白语义与 precision 来源不变。该替代经用户裁决（裁决方向①）与本规格冻结，登记时引用本规格文件名与状态。
+- **对 D-119 §3.3 的窄替代声明：** 在手工支出 wrapper（`ParseManualExpenseAmount`）范围内，D-119 §3.3 固定拒绝向量中的 `"35.8"`、`"35.800"` 转为有效（补零/整除），其余全部冻结向量与错误类型不变；strict 领域函数及更正/RG-12 路径不受影响；wrapper 的 trim/EMPTY/内部空白语义与 precision 来源不变。该窄替代同时覆盖 D-120 实施规格（`docs/specs/2026-08-30-p5-03-demo-surface-b-implementation-design.md`）§4.1（:141 同款固定向量）与 §6.3（:438-441 固定金额向量）的相应条目，一并声明按本规格反转；实施与登记以本规格 §2.4 冻结向量表为准。该替代经用户裁决（裁决方向①）与本规格冻结，登记时引用本规格文件名与状态。
 - 验证证据（A1..A12）与边界声明（§4）。
 - 关联决定：`D-119`、`D-120`（P5-03 承接边界）。
