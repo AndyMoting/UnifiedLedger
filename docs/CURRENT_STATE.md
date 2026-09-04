@@ -68,4 +68,4 @@
 
 遗留披露（不阻塞收口，均已登记）：`P5-04.5-FOUND-001`（平台层行为分歧，D-130）——Android 端 ledger.db 文件损坏时 androidx SupportSQLite 静默删除并重建空库（无 StartupError、无数据可恢复提示），桌面端同场景 fail-closed 进入 StartupError；与 fail-closed 意图相悖，留待后续独立决策批处置，本批零代码修复、仅登记披露。用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）待用户执行（D-128 遗留）。D-128 已披露观察项继续有效：浅色模式状态栏图标对比度未显式验证（E2E-R-001）与 API 34 设备（minSdk 34）行为未经门验证（E2E-R-002）。
 
-**唯一下一步 = 阶段 6（Android 视觉与平台适配，P6）进入门与用户裁决**：进入条件见 ROADMAP 阶段 6——阶段 5 完成（已满足）、SDK/工具链与目标依赖（`compileSdk 37` 等）的官方证据门通过、且有可重复的 Android 基线验收；是否启动与证据门安排由用户裁决。
+**唯一下一步 = 录入体验批（D-131）push 授权与人工门**：D-131（R1 金额宽容解析 + R2 发生时间选择器）已交付合入本地 main（merge `ba6d554`，规格冻结 SHA-256 `f3867040…80ad`，评审双 CLOSURE APPROVE，verifier 13/13 PASS，13 文件 +803/−20），本地 main 领先 origin/main 五个提交待授权 push；push 后按规格 §3.7 执行人工门（模拟器选择器全流程 + 系统返回、桌面 Esc 仅关对话框且关闭后恢复、TalkBack 走查、Android ICU tzdb 抽查 1991-04-14T02:30 拒绝路径）。随后 **P6（Android 视觉与平台适配）进入门与用户裁决**：进入条件见 ROADMAP 阶段 6——阶段 5 完成（已满足）、SDK/工具链与目标依赖（`compileSdk 37` 等）的官方证据门通过、且有可重复的 Android 基线验收。

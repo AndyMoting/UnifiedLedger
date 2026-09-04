@@ -2172,3 +2172,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 零代码/零 schema/零依赖；不修 P5-04.5-FOUND-001；不改写历史决定（D-117..D-129 登记原样保留）；模拟器与本机操作细节仅为本批验证证据，不构成产品契约；遗留继续有效：用户 Android 16 实机最终确认（f973808 APK 单击关闭）待用户执行，D-128 已披露的浅色模式状态栏图标对比度（E2E-R-001）与 API 34 未验证面（E2E-R-002）未关闭。
 
 **关联决定：** `D-121`、`D-122`、`D-126`、`D-127`、`D-128`、`D-129`。
+
+## D-131 录入体验批：R1 金额宽容解析 + R2 发生时间选择器
+
+**状态：** 已批准并交付（2026-09-05）。
+
+**决定：** 录入体验批，一批两件事，用户 2026-09-04 本批规划四项裁决（①金额放宽=补零全量；②时间控件=material3 官方 DatePicker+TimePicker 且文本输入兜底保留；③本地时间→UTC 按固定 Asia/Shanghai（+08:00）换算，不跟随设备时区；④一批两件事）。R1 金额宽容解析：`ledger-domain` 新增 `parseExactDecimalLenient`（语法 `-?(0|[1-9][0-9]*)(\.[0-9]+)?`；小数位不足按账户币种精度右补零；超精度仅当超出位全为 `0` 时精确整除接受；溢出/前导零/正号/逗号/指数/内部空白照拒），`ParseManualExpenseAmount` wrapper strict 优先、失败才回退 lenient；`parseExactDecimal` 本体及更正（PostingFactsCorrection）/RG-12 调用方保持严格。R2 时间选择器：发生时间字段尾随入口（contentDescription「选择发生时间」）→ DatePickerDialog → TimePicker → 固定时区换算为 `kotlin.time.Instant` → 既有 `onUpdateOccurredAt` 通道写入（reducer 零改动）；DST gap（1991 前）round-trip fail-closed 拒绝；确认页显示冻结格式「发生时间：2026-01-15 08:30（UTC+8）＝ 2026-01-15T00:30:00Z」（1991 前仅墙钟）；桌面 Esc 在对话框打开期间无条件让渡（对话框自吸收）。唯一新直接依赖 kotlinx-datetime 0.7.1（显式坐标；desktop/jvm 侧已由 material3 1.9.0 传递入图，Android 侧为新增、版本单一来源无冲突）。金额提示文案改为「金额示例：11、35.8 或 35.80」。
+
+**对 D-119 §3.3 / D-120 实施规格 §4.1、§6.3 的窄替代声明：** 在手工支出 wrapper（`ParseManualExpenseAmount`）范围内，固定拒绝向量中的 `"35.8"`、`"35.800"` 转为有效（补零/整除，→ 3580），其余全部冻结向量与错误类型不变；strict 领域函数及更正/RG-12 路径不受影响；wrapper 的 trim/EMPTY/内部空白语义与 precision 来源（所选账户）不变。实施与登记以本批规格 §2.4 冻结向量表为准。
+
+**实施：** 冻结规格 `docs/specs/2026-09-03-input-ux-amount-time-design.md`（SHA-256 `f3867040e4ee119a620b17f7c9d729a95736dd0e1db27bebecfcd8c4ba7f80ad`，规格评审 APPROVE-WITH-FINDINGS（INPUTUX-SPEC-001..006）→ delta 闭环 CLOSURE APPROVE）。实施 commit `ce15bff` + 修复 delta `28dedad`（INPUTUX-IMPL-001 DatePicker 初始日期改上海本地日换算、002 桌面 Esc 改无条件对话框检测）+ merge `ba6d554`，13 文件 +803/−20；`OccurredAtPicker.kt` 纯函数（固定时区换算、round-trip fail-closed、初始日期、显示格式）；编辑页选择器流 + `dismissOnEscape` 双保险；reducer 三件套零改动；schema v27 与全部迁移不变。
+
+**验证证据：** 实施评审 APPROVE-WITH-FINDINGS（INPUTUX-IMPL-001/002）→ delta 修复 → 原评审 CLOSURE APPROVE；distinct verifier 13/13 PASS——`:ledger-domain:jvmTest` 119/0（含新 `ExactDecimalLenientTest`）、`:ledger-application:jvmTest` 370/0（向量反转+新增）、`:app-ui:jvmTest` 57/0（OccurredAtPickerTest 9 / P503DraftValidationTest 4 / P503ReducerTest 39 / P503HostCoordinatorTest 5）、`:desktop-app:jvmTest` 5/0、`:desktop-app:build` 0、`:android-app:compileDebugKotlin` 0、`ktlintCheck` 0、`project_docs` 0（全部 XML 取证）；主代理批判性复检（ExactDecimal/ParseManualExpenseAmount/OccurredAtPicker/Main/EditScreen）+ 关键证明复跑。
+
+**已知卫生项（登记延后，D-114 先例）：** `P503EditScreen.kt` 使用 kotlinx-datetime 0.7.1 已弃用的 `monthNumber`/`dayOfMonth`（建议改 `month`/`day`）——仅编译警告，exit 0，随后续触及批处置。
+
+**边界：** 不改 `parseExactDecimal` 本体与更正/RG-12 调用方；`PeriodicAllocation` 零触碰；reducer 状态机/事件集零改动；零 schema/迁移；不引入 compose ui-test harness；设备时区不参与任何换算；除 kotlinx-datetime 0.7.1 外零新依赖。
+
+**关联决定：** `D-119`、`D-120`。
+
+**遗留：** 桌面 Esc 语义与选择器交互的最终行为经人工门确认（规格 §3.7——模拟器选择器全流程+系统返回、桌面 Esc 仅关对话框且关闭后恢复、TalkBack 走查、Android ICU tzdb 抽查 1991-04-14T02:30 拒绝路径），随授权 push 后按 CI APK 执行。
