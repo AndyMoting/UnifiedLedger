@@ -220,8 +220,12 @@ fun P503EditScreen(
     }
 
     if (datePickerOpen) {
-        val initialInstant = draft.occurredAt ?: ledgerClock.now()
-        val dateState = rememberDatePickerState(initialSelectedDateMillis = initialInstant.toEpochMilliseconds())
+        val dateState =
+            rememberDatePickerState(
+                // The initial calendar day is the Asia/Shanghai local day of the draft
+                // instant (or now), never the UTC day (finding INPUTUX-IMPL-001).
+                initialSelectedDateMillis = occurredAtPickerInitialMillis(draft.occurredAt ?: ledgerClock.now()),
+            )
         DatePickerDialog(
             onDismissRequest = { datePickerOpen = false },
             confirmButton = {

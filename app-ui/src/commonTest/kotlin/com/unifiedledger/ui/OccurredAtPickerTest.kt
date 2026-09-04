@@ -63,6 +63,21 @@ class OccurredAtPickerTest {
     }
 
     @Test
+    fun pickerInitialMillisUsesTheShanghaiLocalDate() {
+        // 18:30Z is 02:30 on 01-16 in Shanghai: the DatePicker must open on 01-16, not on
+        // the UTC calendar day 01-15 (review finding INPUTUX-IMPL-001).
+        assertEquals(
+            Instant.parse("2026-01-16T00:00:00Z").toEpochMilliseconds(),
+            occurredAtPickerInitialMillis(Instant.parse("2026-01-15T18:30:00Z")),
+        )
+        // A morning UTC instant stays on the same Shanghai calendar day.
+        assertEquals(
+            Instant.parse("2026-01-15T00:00:00Z").toEpochMilliseconds(),
+            occurredAtPickerInitialMillis(Instant.parse("2026-01-15T00:30:00Z")),
+        )
+    }
+
+    @Test
     fun displayFormatShowsLocalWallClockAndUtcAfter1991() {
         assertEquals(
             "2026-01-15 08:30（UTC+8）＝ 2026-01-15T00:30:00Z",

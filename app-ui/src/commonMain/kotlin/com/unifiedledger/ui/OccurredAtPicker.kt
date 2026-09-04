@@ -3,6 +3,7 @@ package com.unifiedledger.ui
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
@@ -25,6 +26,18 @@ internal val occurredAtTimeZone: TimeZone = TimeZone.of("Asia/Shanghai")
 internal fun occurredAtFromLocalDateTime(local: LocalDateTime): Instant? {
     val instant = local.toInstant(occurredAtTimeZone)
     return if (instant.toLocalDateTime(occurredAtTimeZone) == local) instant else null
+}
+
+/**
+ * Initial DatePicker millis for the picker entry (spec 3.2): the calendar day shown must
+ * be the Asia/Shanghai local day of [instant], never the UTC day — an instant late in a
+ * Shanghai day (e.g. 2026-01-15T18:30:00Z = 01-16 02:30 local) must open the picker on
+ * 01-16. The Shanghai local date is converted back to a UTC-midnight epoch value that
+ * DatePickerState interprets as exactly that calendar date.
+ */
+internal fun occurredAtPickerInitialMillis(instant: Instant): Long {
+    val localDate = instant.toLocalDateTime(occurredAtTimeZone).date
+    return localDate.atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
 }
 
 /**
