@@ -38,7 +38,7 @@ fun P503ConfirmationScreen(
         Text("支付账户：$paymentAccountLabel", style = MaterialTheme.typography.bodyMedium)
         Text("费用分类：$categoryLabel", style = MaterialTheme.typography.bodyMedium)
         Text("金额：${draft.amountText} $currencyCode", style = MaterialTheme.typography.bodyMedium)
-        Text("发生时间：${draft.occurredAt ?: "—"}", style = MaterialTheme.typography.bodyMedium)
+        Text("发生时间：${draft.occurredAt?.let(::occurredAtDisplayText) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onCancel) {

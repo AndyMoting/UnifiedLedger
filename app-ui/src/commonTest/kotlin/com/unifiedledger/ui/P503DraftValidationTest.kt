@@ -42,4 +42,32 @@ class P503DraftValidationTest {
         // "35.80" is an invalid amount under a zero-precision currency.
         assertFalse(validation.isValid(draft, CurrencyUnit("JPY", 0)))
     }
+
+    // D-131 R1: lenient amounts are valid under their currency precision and lenient
+    // rejections still carry the amount-format error (spec 2.6).
+    @Test
+    fun lenientAmountsAreValidUnderCnyAndJpy() {
+        val cny = CurrencyUnit("CNY", 2)
+        val jpy = CurrencyUnit("JPY", 0)
+
+        assertTrue(validation.isValid(amountDraft("35.8"), cny))
+        assertTrue(validation.isValid(amountDraft("11"), cny))
+        assertTrue(validation.isValid(amountDraft("358.0"), jpy))
+        assertTrue(validation.isValid(amountDraft("35.00"), jpy))
+    }
+
+    @Test
+    fun lenientRejectionsStillCarryTheAmountFormatError() {
+        val cny = CurrencyUnit("CNY", 2)
+        assertTrue(validation.errors(amountDraft("35.812"), cny).amountFormatError != null)
+        assertTrue(validation.errors(amountDraft("011"), cny).amountFormatError != null)
+    }
+
+    private fun amountDraft(amountText: String): ManualExpenseDraft =
+        ManualExpenseDraft(
+            paymentAccountId = AccountId("asset-payment-local"),
+            categoryId = CategoryId("expense-category-breakfast"),
+            amountText = amountText,
+            occurredAt = occurredAt,
+        )
 }

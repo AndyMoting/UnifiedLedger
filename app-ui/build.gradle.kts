@@ -43,6 +43,10 @@ kotlin {
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
+            // D-131 R2: fixed Asia/Shanghai TimeZone/LocalDateTime conversion for the
+            // occurred-at picker and the confirmation display (spec 3.1; the only new
+            // direct dependency of this batch).
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
         }
 
         commonTest.dependencies {

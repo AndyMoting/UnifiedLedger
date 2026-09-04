@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import app.cash.sqldelight.db.SqlDriver
@@ -90,7 +91,9 @@ internal fun DesktopRoot(
                 P503App(
                     facade,
                     onExit = onExit,
-                    backHandler = { enabled, onBack -> DesktopEscBackHandler(enabled, onBack) },
+                    backHandler = { enabled, onBack ->
+                        DesktopEscBackHandler(enabled, onBack, mainWindow = window)
+                    },
                 )
             else ->
                 P503StartupScreen(
@@ -108,21 +111,30 @@ internal fun DesktopRoot(
  * events pass through untouched and are never read or recorded. The dispatcher callback
  * runs on the AWT event-dispatch thread, which is also the Compose Desktop UI thread, so
  * [onBack] may touch Compose state directly. The JVM-level KeyboardFocusManager consumes
- * Escape for any window of this process while enabled; the demo has a single window and no
- * dialogs in the editor flow. Window closing is unchanged.
+ * Escape for any window of this process while enabled, so [mainWindow] bounds it: while a
+ * picker dialog (a separate AWT window) owns the keyboard focus, Escape is yielded to the
+ * dialog and the edit page stays open (D-131 spec 3.5); once the dialog closes and focus
+ * returns to the main window, the existing edit-page Escape semantics resume. Window
+ * closing is unchanged.
  */
 @Composable
 internal fun DesktopEscBackHandler(
     enabled: Boolean,
     onBack: () -> Unit,
+    mainWindow: ComposeWindow? = null,
 ) {
     val latestOnBack by rememberUpdatedState(onBack)
-    DisposableEffect(enabled) {
+    DisposableEffect(enabled, mainWindow) {
         val dispatcher =
             KeyEventDispatcher { event ->
                 if (enabled && event.id == KeyEvent.KEY_PRESSED && event.keyCode == KeyEvent.VK_ESCAPE) {
-                    latestOnBack()
-                    true
+                    val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
+                    if (mainWindow != null && focusedWindow !== mainWindow) {
+                        false
+                    } else {
+                        latestOnBack()
+                        true
+                    }
                 } else {
                     false
                 }

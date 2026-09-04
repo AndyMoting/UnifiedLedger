@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -7,17 +8,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,13 +34,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseOptions
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
@@ -45,13 +65,22 @@ import kotlin.time.Instant
  * conflict before continuing). A non-null [onClose] shows the visible close button
  * (P5-04.3); it dispatches the same Back event as the system back: drop the draft and
  * return to the originating overview tab.
+ *
+ * D-131 R2: the occurred-at field gains a picker entry (DatePickerDialog then TimePicker,
+ * spec 3.2); the selected local date-time converts through the fixed Asia/Shanghai zone
+ * and is written via [onUpdateOccurredAt] (the reducer is untouched). The initial picker
+ * value is the draft instant or the composition-root-injected [ledgerClock]'s current
+ * instant; a conversion that fails the round-trip check (historical DST gap) surfaces the
+ * field error and dispatches nothing (fail-closed, spec 3.3).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun P503EditScreen(
     draft: ManualExpenseDraft,
     options: ManualExpenseOptions,
     validation: P503DraftValidation,
     currency: CurrencyUnit,
+    ledgerClock: LedgerClock,
     onUpdateAmount: (String) -> Unit,
     onUpdatePaymentAccount: (AccountId) -> Unit,
     onUpdateCategory: (CategoryId) -> Unit,
@@ -62,6 +91,9 @@ fun P503EditScreen(
 ) {
     var occurredAtText by remember(draft.occurredAt) { mutableStateOf(draft.occurredAt?.toString() ?: "") }
     var occurredAtParseError by remember { mutableStateOf(false) }
+    var datePickerOpen by remember { mutableStateOf(false) }
+    var timePickerOpen by remember { mutableStateOf(false) }
+    var pickedLocalDate by remember { mutableStateOf<LocalDate?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -141,7 +173,7 @@ fun P503EditScreen(
                 when {
                     errors.missingAmount -> Text("请输入金额")
                     errors.amountFormatError != null -> Text("金额格式无效")
-                    else -> Text("精确金额，两位小数")
+                    else -> Text("金额示例：11、35.8 或 35.80")
                 }
             },
         )
@@ -164,6 +196,7 @@ fun P503EditScreen(
                     onUpdateOccurredAt(parsed)
                 }
             },
+            onPickerEntryClick = { datePickerOpen = true },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -185,7 +218,109 @@ fun P503EditScreen(
             }
         }
     }
+
+    if (datePickerOpen) {
+        val initialInstant = draft.occurredAt ?: ledgerClock.now()
+        val dateState = rememberDatePickerState(initialSelectedDateMillis = initialInstant.toEpochMilliseconds())
+        DatePickerDialog(
+            onDismissRequest = { datePickerOpen = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val millis = dateState.selectedDateMillis
+                        if (millis != null) {
+                            pickedLocalDate = occurredAtPickerLocalDate(millis)
+                            datePickerOpen = false
+                            timePickerOpen = true
+                        }
+                    },
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { datePickerOpen = false }) {
+                    Text("取消")
+                }
+            },
+            modifier = Modifier.dismissOnEscape { datePickerOpen = false },
+        ) {
+            DatePicker(state = dateState)
+        }
+    }
+
+    if (timePickerOpen) {
+        val initialLocal = (draft.occurredAt ?: ledgerClock.now()).toLocalDateTime(occurredAtTimeZone)
+        val timeState =
+            rememberTimePickerState(
+                initialHour = initialLocal.hour,
+                initialMinute = initialLocal.minute,
+                is24Hour = true,
+            )
+        Dialog(onDismissRequest = { timePickerOpen = false }) {
+            Surface(
+                modifier = Modifier.dismissOnEscape { timePickerOpen = false },
+                shape = MaterialTheme.shapes.extraLarge,
+                tonalElevation = 6.dp,
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text("选择时间", style = MaterialTheme.typography.titleLarge)
+                    TimePicker(state = timeState)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { timePickerOpen = false }) {
+                            Text("取消")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                val pickedDate = pickedLocalDate
+                                if (pickedDate != null) {
+                                    val local =
+                                        LocalDateTime(
+                                            pickedDate.year,
+                                            pickedDate.monthNumber,
+                                            pickedDate.dayOfMonth,
+                                            timeState.hour,
+                                            timeState.minute,
+                                        )
+                                    // Fail-closed (spec 3.3): a local time inside a historical
+                                    // DST gap converts to a different instant and is rejected
+                                    // as a field error instead of being guessed.
+                                    val instant = occurredAtFromLocalDateTime(local)
+                                    occurredAtParseError = instant == null
+                                    if (instant != null) {
+                                        onUpdateOccurredAt(instant)
+                                    }
+                                }
+                                timePickerOpen = false
+                            },
+                        ) {
+                            Text("确定")
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
+
+/**
+ * D-131 R2 (spec 3.5): desktop Escape closes only the picker dialog while it owns focus.
+ * The JVM-level back dispatcher yields Escape to dialog windows; this deterministic
+ * dismissal also covers platforms where the dialog window does not map Escape itself.
+ */
+private fun Modifier.dismissOnEscape(onDismiss: () -> Unit): Modifier =
+    onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+            onDismiss()
+            true
+        } else {
+            false
+        }
+    }
 
 /**
  * Selector field with a field-level error that is semantically associated with the field:
@@ -219,6 +354,7 @@ private fun OccurredAtField(
     isError: Boolean,
     supportingMessage: String,
     onTextChange: (String) -> Unit,
+    onPickerEntryClick: () -> Unit,
 ) {
     OutlinedTextField(
         value = text,
@@ -227,6 +363,18 @@ private fun OccurredAtField(
         supportingText = { Text(supportingMessage) },
         isError = isError,
         singleLine = true,
+        trailingIcon = {
+            // D-131 R2 picker entry (spec 3.6): material3 1.9.0 has no icons transitive
+            // dependency, so the entry is a focusable text control carrying the frozen
+            // contentDescription. Do not stack minimumInteractiveComponentSize() on it:
+            // material3 already applies the 48dp touch-target enforcement (D-127).
+            TextButton(
+                onClick = onPickerEntryClick,
+                modifier = Modifier.semantics { contentDescription = "选择发生时间" },
+            ) {
+                Text("选择")
+            }
+        },
     )
 }
 
