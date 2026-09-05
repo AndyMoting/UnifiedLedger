@@ -24,6 +24,10 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 将 `<task>` 替换为本节列出的单个 Gradle task；一次只运行一个命令。不要在同一主机上同时运行 `check` 与模块测试。
 
+## 本机与 CI 的验证分工
+
+本机推送前优先执行受影响模块的定向测试、`ktlintCheck`、`project_docs` 和干净工作树上的 Harness trace 检查。完整 `check`、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build 与 migration verifier 已由 `.github/workflows/ci.yml` 在资源更充足的 CI runner 上执行；同一提交的 CI 成功结果是这些聚合门禁的发布证据。只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
+
 ## Kotlin 验证
 
 确认 Gradle 使用 JDK 21：
