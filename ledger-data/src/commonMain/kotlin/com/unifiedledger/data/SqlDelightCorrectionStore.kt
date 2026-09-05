@@ -119,10 +119,10 @@ class SqlDelightCorrectionStore private constructor(
                             requireNotNull(request.projectionRuleVersion).toLong() != projection.ruleVersion.toLong() ||
                             request.normalizedAmountMinor != projection.normalizedAmountMinor ||
                             request.rawAmountMinor != projection.rawAmountMinor ||
-                            request.rawCurrencyPrecision != projection.rawCurrencyPrecision.toInt() ||
+                            request.rawCurrencyPrecision != projection.rawCurrencyPrecision ||
                             successor.amountMinor != projection.normalizedAmountMinor ||
                             successor.currencyCode != projection.currencyCode ||
-                            successor.currencyPrecision != projection.currencyPrecision.toInt() ||
+                            successor.currencyPrecision != projection.currencyPrecision ||
                             successor.direction != projection.directionToken ||
                             successor.accountId != projection.targetAccountId ||
                             sourceOccurredAt != successor.sourceOccurredAt

@@ -29,6 +29,8 @@ fun P503ConfirmationScreen(
     categoryLabel: String,
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
+    confirmEnabled: Boolean = true,
+    cancelEnabled: Boolean = true,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -41,10 +43,10 @@ fun P503ConfirmationScreen(
         Text("发生时间：${draft.occurredAt?.let(::occurredAtDisplayText) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCancel) {
+            OutlinedButton(onClick = onCancel, enabled = cancelEnabled) {
                 Text("取消")
             }
-            Button(onClick = onConfirm) {
+            Button(onClick = onConfirm, enabled = confirmEnabled) {
                 Text("确认提交")
             }
         }

@@ -171,8 +171,6 @@ class CreditFlowFormalFactory(
                     is DomainResult.Failure -> DomainResult.Failure(result.violation)
                 }
             }
-
-            else -> DomainResult.Failure(com.unifiedledger.domain.DomainViolation.InvalidFormalTransaction)
         }
     }
 }

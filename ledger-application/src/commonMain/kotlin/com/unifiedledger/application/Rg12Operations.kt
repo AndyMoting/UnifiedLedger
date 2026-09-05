@@ -806,7 +806,7 @@ class Rg12Runtime(
                 }
                 newConsumption =
                     Rg12ConsumptionRecord(
-                        id = ids.consumptionRecordId!!,
+                        id = checkNotNull(ids.consumptionRecordId),
                         expensePostingId = newPosting.id,
                         categoryId = item.facts.categoryId,
                         amountText = item.facts.amountText,

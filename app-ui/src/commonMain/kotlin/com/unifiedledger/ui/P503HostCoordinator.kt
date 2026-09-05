@@ -2,6 +2,19 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.RequestId
 
+/** Runs on the UI event thread without suspension; obsolete screen callbacks do no work. */
+internal fun dispatchCurrentP503Action(
+    expectedState: P503AppState,
+    currentState: P503AppState,
+    event: () -> P503UiEvent,
+    dispatch: (P503UiEvent) -> Unit,
+    afterDispatch: () -> Unit = {},
+) {
+    if (currentState !== expectedState) return
+    dispatch(event())
+    afterDispatch()
+}
+
 /**
  * P5-04.4 S5: pure Kotlin host-behavior coordinator (spec section 7).
  *

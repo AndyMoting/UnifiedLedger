@@ -122,6 +122,24 @@ class P503ReducerTest {
     }
 
     @Test
+    fun duplicateConfirmAndContinueEventsAreIdempotent() {
+        val awaiting =
+            reduceFrom(
+                P503AppState.OverviewEmpty(emptyState),
+                P503UiEvent.StartNewExpense,
+                P503UiEvent.UpdatePaymentAccount(paymentAccountId),
+                P503UiEvent.UpdateCategory(categoryId),
+                P503UiEvent.UpdateAmount("35.80"),
+                P503UiEvent.UpdateOccurredAt(occurredAt),
+                P503UiEvent.Continue(requestId1),
+            )
+        val confirming = reducer.reduce(awaiting, P503UiEvent.Confirm)
+        assertEquals(confirming, reducer.reduce(confirming, P503UiEvent.Confirm))
+        assertEquals(confirming, reducer.reduce(confirming, P503UiEvent.RetrySubmission))
+        assertEquals(awaiting, reducer.reduce(awaiting, P503UiEvent.Continue(requestId2)))
+    }
+
+    @Test
     fun cancelFromAwaitingReturnsToEditingWithoutWritingAndDropsTheIntentId() {
         val state =
             reduceFrom(

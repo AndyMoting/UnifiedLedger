@@ -285,8 +285,8 @@ fun P503EditScreen(
                                     val local =
                                         LocalDateTime(
                                             pickedDate.year,
-                                            pickedDate.monthNumber,
-                                            pickedDate.dayOfMonth,
+                                            pickedDate.month.ordinal + 1,
+                                            pickedDate.day,
                                             timeState.hour,
                                             timeState.minute,
                                         )

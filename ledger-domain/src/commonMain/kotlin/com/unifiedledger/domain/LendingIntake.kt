@@ -194,6 +194,16 @@ fun confirmLendingCandidate(
     if (formalEffectCount < 0) {
         return DomainResult.Failure(LendingViolation.InvalidFormalEffectCount)
     }
+    if (historyId.isBlank()) {
+        return DomainResult.Failure(LendingViolation.HistoryMustBeAppendOnly)
+    }
+    if (candidate.statusHistory.any { it.id == historyId }) {
+        return DomainResult.Failure(LendingViolation.HistoryMustBeAppendOnly)
+    }
+    val lastHistoryEntry = candidate.statusHistory.lastOrNull()
+    if (lastHistoryEntry != null && confirmedAt <= lastHistoryEntry.occurredAt) {
+        return DomainResult.Failure(LendingViolation.HistoryMustBeAppendOnly)
+    }
     val missing = LendingConfirmationGateField.ALL.firstOrNull { it !in confirmedGates }
     if (missing != null) {
         return DomainResult.Failure(LendingViolation.ConfirmationRequired(missing))

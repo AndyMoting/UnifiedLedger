@@ -556,7 +556,7 @@ class P408ProjectionSixKindMaterializationTest {
                 ),
             )
         assertIs<SqlDelightEvidenceProjectionStore.EnsureReadyResult.NotReady>(outcome)
-        assertEquals(SqlDelightEvidenceProjectionStore.CODE_PROJECTION_ABSENT, (outcome as SqlDelightEvidenceProjectionStore.EnsureReadyResult.NotReady).code)
+        assertEquals(SqlDelightEvidenceProjectionStore.CODE_PROJECTION_ABSENT, outcome.code)
         assertEquals(0L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
     }
 

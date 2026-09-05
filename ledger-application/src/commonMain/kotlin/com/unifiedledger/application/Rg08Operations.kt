@@ -43,6 +43,7 @@ import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.confirmLendingCandidate
 import com.unifiedledger.domain.createLendingCandidate
 import com.unifiedledger.domain.createLendingConfirmationProvenance
 import com.unifiedledger.domain.createLendingEvidence
@@ -1881,11 +1882,24 @@ class Rg08Runtime(
         input: Rg08ConfirmImportedInput,
         ids: Rg08ConfirmImportedIds,
     ): LendingCandidate? {
+        val lifecycle =
+            confirmLendingCandidate(
+                candidate = pending,
+                confirmedGates = LendingConfirmationGateField.ALL.toSet(),
+                historyId = ids.candidateConfirmedHistoryId,
+                confirmedAt = input.confirmedAt,
+                formalEffectCount = 1,
+            )
+        val confirmed =
+            when (lifecycle) {
+                is DomainResult.Success -> lifecycle.value
+                is DomainResult.Failure -> return null
+            }
         val result =
             createLendingCandidate(
-                id = pending.id,
-                type = pending.type,
-                status = LendingCandidateStatus.CONFIRMED,
+                id = confirmed.id,
+                type = confirmed.type,
+                status = confirmed.status,
                 proposedTotalReceivedMinor = pending.proposedTotalReceivedMinor,
                 proposedPrincipalAmountMinor = input.principalAmount.minorUnits,
                 proposedInterestAmountMinor = input.interestAmount.minorUnits,
@@ -1895,17 +1909,10 @@ class Rg08Runtime(
                 proposedActualReceiptAt = input.actualReceiptAt,
                 proposedBehaviorCode = LendingBehaviorCode.COLLECT,
                 proposedCounterpartyId = input.counterpartyId,
-                sourceIds = pending.sourceIds,
-                ruleVersion = pending.ruleVersion,
-                confidence = pending.confidence,
-                statusHistory =
-                    pending.statusHistory +
-                        LendingCandidateStatusHistoryEntry(
-                            id = ids.candidateConfirmedHistoryId,
-                            status = LendingCandidateStatus.CONFIRMED,
-                            occurredAt = input.confirmedAt,
-                            formalEffectCount = 1,
-                        ),
+                sourceIds = confirmed.sourceIds,
+                ruleVersion = confirmed.ruleVersion,
+                confidence = confirmed.confidence,
+                statusHistory = confirmed.statusHistory,
             )
         return when (result) {
             is DomainResult.Success -> result.value

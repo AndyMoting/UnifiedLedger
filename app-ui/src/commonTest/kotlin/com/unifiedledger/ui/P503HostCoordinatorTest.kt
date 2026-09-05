@@ -1,12 +1,16 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.time.Instant
 
 /**
@@ -22,6 +26,95 @@ class P503HostCoordinatorTest {
     private val occurredAt = Instant.parse("2026-01-15T00:30:00Z")
     private val requestId = RequestId("request-uuid-v7-1")
     private val draft = ManualExpenseDraft(paymentAccountId, categoryId, "35.80", occurredAt)
+
+    @Test
+    fun duplicateConfirmAndRetrySubmitOncePerLiveState() {
+        val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
+        val confirmation = P503AppState.AwaitingConfirmation(draft, requestId)
+        var state: P503AppState = confirmation
+        var submissions = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { error("unused") },
+                onSubmit = { submittedDraft, submittedRequestId ->
+                    assertSame(draft, submittedDraft)
+                    assertEquals(requestId, submittedRequestId)
+                    assertIs<P503AppState.Submitting>(state)
+                    submissions += 1
+                },
+                onCheck = { _, _ -> error("unused") },
+            )
+
+        fun dispatch(event: P503UiEvent) {
+            state = reducer.reduce(state, event)
+        }
+        repeat(2) {
+            dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Confirm }, ::dispatch) {
+                submissions += 1
+            }
+        }
+        assertEquals(1, submissions)
+        dispatch(P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure))
+        val failure = assertIs<P503AppState.InfrastructureFailure>(state)
+        repeat(2) {
+            dispatchCurrentP503Action(failure, state, { P503UiEvent.RetrySubmission }, ::dispatch) {
+                coordinator.retrySubmission(failure)
+            }
+        }
+        assertEquals(2, submissions)
+        dispatch(P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure))
+        val nextFailure = assertIs<P503AppState.InfrastructureFailure>(state)
+        dispatchCurrentP503Action(failure, state, { P503UiEvent.RetrySubmission }, ::dispatch) { error("stale retry") }
+        assertSame(nextFailure, state)
+        dispatchCurrentP503Action(nextFailure, state, { P503UiEvent.RetrySubmission }, ::dispatch) {
+            coordinator.retrySubmission(nextFailure)
+        }
+        assertEquals(3, submissions)
+    }
+
+    @Test
+    fun cancelledConfirmationCannotSubmitOrCancelANewerIntent() {
+        val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
+        val confirmation = P503AppState.AwaitingConfirmation(draft, requestId)
+        var state: P503AppState = confirmation
+
+        fun dispatch(event: P503UiEvent) {
+            state = reducer.reduce(state, event)
+        }
+        dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Cancel }, ::dispatch)
+        val editing = assertIs<P503AppState.Editing>(state)
+        dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Confirm }, ::dispatch) { error("cancelled submit") }
+        dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Cancel }, ::dispatch)
+        assertSame(editing, state)
+        state = confirmation.copy()
+        val newConfirmation = state
+        dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Confirm }, ::dispatch) { error("old submit") }
+        dispatchCurrentP503Action(confirmation, state, { P503UiEvent.Cancel }, ::dispatch)
+        assertSame(newConfirmation, state)
+    }
+
+    @Test
+    fun duplicateContinueAllocatesOneRequestAndStaleContinueAllocatesNone() {
+        val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
+        val editing = P503AppState.Editing(draft, null)
+        var state: P503AppState = editing
+        var allocations = 0
+        repeat(2) {
+            dispatchCurrentP503Action(
+                editing,
+                state,
+                {
+                    allocations += 1
+                    P503UiEvent.Continue(requestId)
+                },
+                { state = reducer.reduce(state, it) },
+            )
+        }
+        assertEquals(1, allocations)
+        assertEquals(requestId, assertIs<P503AppState.AwaitingConfirmation>(state).requestId)
+        state = editing.copy(draft = draft.copy(amountText = "42.00"))
+        dispatchCurrentP503Action(editing, state, { error("stale allocation") }, { error("stale dispatch") })
+    }
 
     @Test
     fun retryRefreshInvokesRefreshCallback() {

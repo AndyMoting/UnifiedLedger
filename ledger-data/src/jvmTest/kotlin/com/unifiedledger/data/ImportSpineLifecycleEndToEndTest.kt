@@ -1,5 +1,9 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlCursor
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ExecuteImportIntake
@@ -69,6 +73,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 /**
  * P4-02 spine end-to-end oracle (spec section 9, T-01..T-30). The spec's operation
@@ -164,6 +169,35 @@ class ImportSpineLifecycleEndToEndTest {
                 postingIds = postingIds.map(::PostingId),
             ),
     )
+
+    private class IdentityQueryFailureDriver(
+        private val delegate: SqlDriver,
+    ) : SqlDriver by delegate {
+        var nextFailure: SQLException? = null
+        var identityQueries = 0
+            private set
+
+        override fun <R> executeQuery(
+            identifier: Int?,
+            sql: String,
+            mapper: (SqlCursor) -> QueryResult<R>,
+            parameters: Int,
+            binders: (SqlPreparedStatement.() -> Unit)?,
+        ): QueryResult<R> {
+            if (
+                sql.contains("FROM import_source_record AS source") &&
+                sql.contains("WHERE source.ledger_id = ? AND source.input_ref = ? AND source.record_ordinal = ?")
+            ) {
+                identityQueries++
+                val failure = nextFailure
+                if (failure != null) {
+                    nextFailure = null
+                    throw failure
+                }
+            }
+            return delegate.executeQuery(identifier, sql, mapper, parameters, binders)
+        }
+    }
 
     private class BatchIntakeIdSource(
         private val batches: List<ImportIntakeIds>,
@@ -1134,6 +1168,112 @@ class ImportSpineLifecycleEndToEndTest {
     }
 
     @Test
+    fun ordinarySourceIdConstraintFailureWithExistingWinnerIsNotMisclassifiedAsReplay() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val winner =
+                Executor(
+                    database,
+                    driver,
+                    catalog(),
+                    BatchIntakeIdSource(listOf(intakeIds("winner", "status-winner"))),
+                    BatchCommitIdSource(emptyList()),
+                    BatchStatusIdSource(emptyList()),
+                )
+            assertIs<ImportIntakeResult.Accepted>(winner.intake(r1()))
+            val spineBefore = spineCounts(database)
+            val formalBefore = formalCounts(database)
+
+            // A different raw identity is forced to reuse the winner's source id. This is an
+            // ordinary UNIQUE(source_id) failure, not the identity race handled by commitIntake.
+            val collision =
+                Executor(
+                    database,
+                    driver,
+                    catalog(),
+                    BatchIntakeIdSource(listOf(intakeIds("winner", "status-collision"))),
+                    BatchCommitIdSource(emptyList()),
+                    BatchStatusIdSource(emptyList()),
+                )
+            assertFailsWith<SQLException> { collision.intake(r2()) }
+            assertEquals(spineBefore, spineCounts(database))
+            assertEquals(formalBefore, formalCounts(database))
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun existingWinnerOnlyReplaysForIdentityConstraintAndPropagatesOtherSqlErrors() {
+        val rawDriver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = IdentityQueryFailureDriver(rawDriver)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val store = SqlDelightImportSpineStore(database, driver)
+            val winner =
+                assertIs<ImportIntakeResult.Accepted>(
+                    ExecuteImportIntake(
+                        store,
+                        BatchIntakeIdSource(listOf(intakeIds("winner", "status-winner"))),
+                        ImportContentFingerprint(),
+                    ).execute(r1()),
+                )
+            val spineBefore = spineCounts(database)
+            val formalBefore = formalCounts(database)
+            val retryIds = BatchIntakeIdSource(emptyList())
+            val intake = ExecuteImportIntake(store, retryIds, ImportContentFingerprint())
+
+            // The lookup follows the request claim and precedes the existing-winner replay.
+            // Only the identity constraint may recover by re-reading the committed winner.
+            listOf(
+                SQLException("database connection interrupted"),
+                SQLException("UNIQUE constraint failed: import_source_record.ledger_id, import_source_record.source_id"),
+            ).forEachIndexed { index, ordinaryFailure ->
+                val queriesBefore = driver.identityQueries
+                driver.nextFailure = ordinaryFailure
+                assertSame(
+                    ordinaryFailure,
+                    assertFailsWith<SQLException> { intake.execute(r1("req-ordinary-$index")) },
+                )
+                assertNull(driver.nextFailure)
+                assertEquals(queriesBefore + 1, driver.identityQueries)
+                assertEquals(spineBefore, spineCounts(database))
+                assertEquals(formalBefore, formalCounts(database))
+                assertEquals(0, retryIds.calls.get())
+            }
+
+            val identityFailure =
+                SQLException("UNIQUE constraint failed: import_source_record.ledger_id, import_source_record.input_ref, import_source_record.record_ordinal")
+            val queriesBeforeReplay = driver.identityQueries
+            driver.nextFailure = identityFailure
+            val replay = assertIs<ImportIntakeResult.NoChange>(intake.execute(r1("req-identity")))
+            assertNull(driver.nextFailure)
+            assertEquals(queriesBeforeReplay + 2, driver.identityQueries)
+            assertEquals(winner.returnedIds, replay.returnedIds)
+            assertEquals("equivalent_replay", replay.reasonCode)
+            assertNull(replay.receipt)
+            assertEquals(spineBefore, spineCounts(database))
+            assertEquals(formalBefore, formalCounts(database))
+            assertEquals(0, retryIds.calls.get())
+
+            val queriesBeforeCollision = driver.identityQueries
+            driver.nextFailure = identityFailure
+            val collision = assertIs<ImportIntakeResult.Rejected>(intake.execute(r1Prime("req-identity-collision")))
+            assertNull(driver.nextFailure)
+            assertEquals(queriesBeforeCollision + 2, driver.identityQueries)
+            assertEquals("SPINE_IDENTITY_COLLISION", collision.diagnostic.code)
+            assertEquals(spineBefore, spineCounts(database))
+            assertEquals(formalBefore, formalCounts(database))
+            assertEquals(0, retryIds.calls.get())
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
     fun winningClaimWithStaleExpectedHashRejectsWithZeroWritesAndIdentityStaysUsable() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
@@ -1381,7 +1521,7 @@ class ImportSpineLifecycleEndToEndTest {
                     com.unifiedledger.application.ImportDuplicateReviewRequest(
                         ImportRequestIdentity(ledgerId, ImportRequestId("review-p407-block")),
                         com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-block"),
-                        candidateFingerprint!!,
+                        checkNotNull(candidateFingerprint),
                         com.unifiedledger.application.ImportDuplicateStatus.CONFIRMED_DUPLICATE,
                         "exact",
                         "2026-08-19T12:00:00+08:00",
@@ -1396,7 +1536,7 @@ class ImportSpineLifecycleEndToEndTest {
             val candidateHistoryBefore = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne()
             val blocked = executor.confirm(confirmRequest("confirm-p407-block", "candidate-p407-block-b", hashR1))
             assertIs<ImportCandidateDecisionResult.Rejected>(blocked)
-            assertEquals("SPINE_DUPLICATE_NOT_CONFIRMABLE", (blocked as ImportCandidateDecisionResult.Rejected).diagnostic.code)
+            assertEquals("SPINE_DUPLICATE_NOT_CONFIRMABLE", blocked.diagnostic.code)
             assertEquals(before, formalCounts(database))
             assertEquals(0L, database.ledgerQueries.countImportConfirmations().executeAsOne())
             assertEquals(candidateHistoryBefore, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())

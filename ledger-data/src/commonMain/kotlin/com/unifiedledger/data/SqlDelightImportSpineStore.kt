@@ -302,10 +302,11 @@ class SqlDelightImportSpineStore private constructor(
                     )
                 }
             }
-        } catch (unexpected: Throwable) {
+        } catch (unexpected: Exception) {
             // Defensive UNIQUE(ledger_id, input_ref, record_ordinal) race handling: the
             // transaction already rolled back, so any pre-existing source row belongs to
             // a committed winner; re-read and re-judge (spec section 8 intake order).
+            if (!isImportIdentityUniqueConstraint(unexpected)) throw unexpected
             val existing =
                 database.ledgerQueries
                     .selectImportSourceByIdentity(
@@ -321,6 +322,22 @@ class SqlDelightImportSpineStore private constructor(
                 )
             }
         }
+    }
+
+    private fun isImportIdentityUniqueConstraint(failure: Throwable): Boolean {
+        var current: Throwable? = failure
+        while (current != null) {
+            val message = current.message.orEmpty().lowercase()
+            if (
+                message.contains("unique constraint failed: import_source_record") &&
+                message.contains("input_ref") &&
+                message.contains("record_ordinal")
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     override fun commitReviewOnce(request: ImportDuplicateReviewRequest): ImportDuplicateReviewResult {
@@ -525,7 +542,9 @@ class SqlDelightImportSpineStore private constructor(
                 // leg is insufficient decision data (not a candidate state) — reject with
                 // zero writes, the claim rolls back and stays retryable.
                 val mixedFields = decisionFields as? ImportConfirmDecisionFields.MixedPaymentFlow
-                if (candidateKind == "mixed_payment" && (mixedFields?.assetLegMinor == null || mixedFields?.creditLegMinor == null)) {
+                if (candidateKind == "mixed_payment" &&
+                    (mixedFields == null || mixedFields.assetLegMinor == null || mixedFields.creditLegMinor == null)
+                ) {
                     abortImportSpine(
                         ImportCandidateDecisionResult.Rejected(
                             SpineDiagnostics.candidateIncomplete(snapshot.candidateId),

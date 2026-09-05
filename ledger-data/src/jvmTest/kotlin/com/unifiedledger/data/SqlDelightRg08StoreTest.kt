@@ -616,6 +616,42 @@ class SqlDelightRg08StoreTest {
         }
     }
 
+    @Test
+    fun importedConfirmationHistoryValidationRejectsWithoutChangingPendingGraph() {
+        val fixture = loadFixture()
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val store = store(database, driver, fixture)
+            assertIs<Rg08ExecutionResult.Accepted>(store.commit(fixture.operations.first { it.id == "lend" }.operation))
+            assertIs<Rg08ExecutionResult.Accepted>(store.commit(fixture.operations.first { it.id == "import-candidate" }.operation))
+            val confirm = fixture.operations.first { it.id == "confirm-import" }.operation as Rg08Operation.ConfirmImportedCollection
+            val baseline = store.snapshot(fixture.ledgerId)
+            val invalid =
+                listOf(
+                    confirm.copy(input = confirm.input.copy(requestId = com.unifiedledger.application.RequestId("rg08-blank-history")), ids = confirm.ids.copy(candidateConfirmedHistoryId = "")),
+                    confirm.copy(input = confirm.input.copy(requestId = com.unifiedledger.application.RequestId("rg08-duplicate-history")), ids = confirm.ids.copy(candidateConfirmedHistoryId = "history-rg08-import-pending")),
+                    confirm.copy(input = confirm.input.copy(requestId = com.unifiedledger.application.RequestId("rg08-earlier-history"), confirmedAt = Instant.parse("2025-12-31T00:00:00Z"))),
+                )
+            invalid.forEach { operation ->
+                assertIs<Rg08ExecutionResult.Rejected>(store.commit(operation))
+                assertPersistedSnapshotEquals(baseline, store.snapshot(fixture.ledgerId))
+            }
+            assertIs<Rg08ExecutionResult.Accepted>(store.commit(confirm))
+            assertEquals(
+                LendingCandidateStatus.CONFIRMED,
+                store
+                    .snapshot(fixture.ledgerId)
+                    .candidates
+                    .single()
+                    .status,
+            )
+        } finally {
+            driver.close()
+        }
+    }
+
     private fun store(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,

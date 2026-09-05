@@ -133,6 +133,9 @@ class P503ReducerImpl(
                     overview = state.overview,
                     originTab = state.originTab,
                 )
+            // A second confirm can arrive from a queued UI event after the first event has
+            // already been handled. Keep the intent locked to the existing confirmation.
+            is P503UiEvent.Continue -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
             P503UiEvent.Back ->
@@ -173,6 +176,10 @@ class P503ReducerImpl(
                         P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
                     is ManualExpenseSubmissionResult.Recovered -> P503AppState.Recovered
                 }
+            // Submission is single-flight; duplicate confirm/retry events are harmless.
+            P503UiEvent.Confirm,
+            P503UiEvent.RetrySubmission,
+            -> state
             else -> unhandled(state, event)
         }
 

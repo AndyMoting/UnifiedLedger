@@ -52,11 +52,12 @@ fun P503App(
     val options = remember(facade) { facade.optionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
+    val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
     var statusCheckInFlight by remember { mutableStateOf(false) }
 
     fun dispatch(event: P503UiEvent) {
-        state = reducer.reduce(state, event)
+        state = reducer.reduce(state, event).also { latestState.value = it }
     }
 
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
@@ -67,7 +68,7 @@ fun P503App(
         // P5-04.3 double-fire guard: re-check at dispatch time and only dispatch while the
         // state is still Back-legal, so a repeated back (fast double Esc / double system
         // back) is ignored instead of crashing on (OverviewEmpty, Back).
-        if (isBackDispatchSafe(state)) dispatch(P503UiEvent.Back)
+        if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back)
     }
 
     // The parse/display currency follows the selected payment account (spec section 4.1);
@@ -222,10 +223,10 @@ fun P503App(
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
                     onContinue = {
-                        // requestId single rule (spec 7.4): allocate unconditionally when the
-                        // draft has none, reuse it otherwise; never reallocate mid-intent.
-                        val requestId = current.requestId ?: facade.requestIdSource.next()
-                        dispatch(
+                        dispatchCurrentP503Action(current, latestState.value, {
+                            // requestId single rule (spec 7.4): allocate unconditionally when the
+                            // draft has none, reuse it otherwise; never reallocate mid-intent.
+                            val requestId = current.requestId ?: facade.requestIdSource.next()
                             P503UiEvent.Continue(
                                 requestId,
                                 // P5-04.3: display labels resolved from the options; absent
@@ -234,12 +235,12 @@ fun P503App(
                                     options.paymentAccounts.firstOrNull { it.accountId == current.draft.paymentAccountId }?.label,
                                 categoryLabel =
                                     options.expenseCategories.firstOrNull { it.categoryId == current.draft.categoryId }?.label,
-                            ),
-                        )
+                            )
+                        }, ::dispatch)
                     },
                     onClose =
                         if (current.overview != null) {
-                            { if (isBackDispatchSafe(state)) dispatch(P503UiEvent.Back) }
+                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
                         } else {
                             null
                         },
@@ -255,10 +256,13 @@ fun P503App(
                             ?: facade.currency.code,
                     paymentAccountLabel = current.paymentAccountLabel,
                     categoryLabel = current.categoryLabel,
-                    onCancel = { dispatch(P503UiEvent.Cancel) },
+                    onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
+                    confirmEnabled = latestState.value === current,
+                    cancelEnabled = latestState.value === current,
                     onConfirm = {
-                        dispatch(P503UiEvent.Confirm)
-                        submit(current.draft, current.requestId)
+                        dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Confirm }, ::dispatch) {
+                            submit(current.draft, current.requestId)
+                        }
                     },
                 )
             is P503AppState.Submitting -> P503SubmittingScreen()
@@ -270,8 +274,9 @@ fun P503App(
                 P503UnknownCommitScreen(current) {
                     // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
                     // the state-preserving event and run the read-only check directly.
-                    dispatch(P503UiEvent.RetryCommitStatusCheck)
-                    coordinator.retryCommitStatusCheck(current)
+                    dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryCommitStatusCheck }, ::dispatch) {
+                        coordinator.retryCommitStatusCheck(current)
+                    }
                 }
             is P503AppState.RequestIdentityConflict ->
                 P503EditScreen(
@@ -292,7 +297,7 @@ fun P503App(
                     },
                     onClose =
                         if (current.overview != null) {
-                            { if (isBackDispatchSafe(state)) dispatch(P503UiEvent.Back) }
+                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
                         } else {
                             null
                         },
@@ -312,7 +317,7 @@ fun P503App(
                     banner = { P503RejectedBanner() },
                     onClose =
                         if (current.overview != null) {
-                            { if (isBackDispatchSafe(state)) dispatch(P503UiEvent.Back) }
+                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
                         } else {
                             null
                         },
@@ -322,8 +327,9 @@ fun P503App(
                     InfrastructureFailureContext.READ ->
                         P503InfrastructureReadScreen(
                             onRetryRefresh = {
-                                dispatch(P503UiEvent.RetryRefresh)
-                                coordinator.retryRefresh(current)
+                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryRefresh }, ::dispatch) {
+                                    coordinator.retryRefresh(current)
+                                }
                             },
                         )
                     InfrastructureFailureContext.SUBMISSION ->
@@ -336,10 +342,11 @@ fun P503App(
                                 if (current.draft == null || current.requestId == null) {
                                     return@P503InfrastructureSubmissionScreen
                                 }
-                                dispatch(P503UiEvent.RetrySubmission)
-                                coordinator.retrySubmission(current)
+                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetrySubmission }, ::dispatch) {
+                                    coordinator.retrySubmission(current)
+                                }
                             },
-                            onCancel = { dispatch(P503UiEvent.Cancel) },
+                            onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
                         )
                 }
         }

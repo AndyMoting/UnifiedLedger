@@ -459,6 +459,7 @@ private fun adaptIntake(
     val creditSource = context.source("source-rg08-import-credit")
     val agreementSource = context.source(context.id("source-rg08-import-credit", "agreement_source_id"))
     val currency = context.currency(creditSource.currency ?: "CNY")
+    val creditValueAt = creditSource.valueAt ?: error("RG-08 intake credit value_at missing")
     val operation =
         Rg08Operation.IngestImportedCollectionCandidate(
             ledgerId = context.ledgerId,
@@ -491,12 +492,10 @@ private fun adaptIntake(
                     candidateId = Rg08CandidateId(context.id("source-rg08-import-credit", "candidate_id")),
                     candidateType = context.id("source-rg08-import-credit", "candidate_type"),
                     // Proposed facts projected from the frozen bank credit source (projection rule 2).
-                    proposedTotalReceivedMinor =
-                        creditSource.amountText?.toMinor()
-                            ?: error("RG-08 intake credit amount missing"),
-                    proposedDestinationAccountId = AccountId(creditSource.accountId ?: error("RG-08 intake credit account missing")),
-                    proposedActualReceiptAt = creditSource.valueAt ?: error("RG-08 intake credit value_at missing"),
-                    proposedActualReceiptAtText = creditSource.valueAtText ?: error("RG-08 intake credit value_at missing"),
+                    proposedTotalReceivedMinor = creditSource.amountText.toMinor(),
+                    proposedDestinationAccountId = AccountId(creditSource.accountId),
+                    proposedActualReceiptAt = creditValueAt,
+                    proposedActualReceiptAtText = creditSource.valueAtText,
                     ruleVersion = context.id("source-rg08-import-credit", "rule_version").toInt(),
                     confidence = context.id("source-rg08-import-credit", "confidence"),
                 ),

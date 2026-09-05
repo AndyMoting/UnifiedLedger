@@ -111,11 +111,11 @@ class O2PrecisionRescaleDataTest {
                 object : ImportCandidateFormalFactory {
                     override fun create(
                         input: ImportCandidateFormalizationInput,
-                        allocated: ImportCommitIds,
+                        ids: ImportCommitIds,
                     ): DomainResult<ImportFormalCommit> {
                         val trusted =
                             assertIs<DomainResult.Success<ImportFormalCommit>>(
-                                CreditFlowFormalFactory(catalog) { null }.create(input, allocated),
+                                CreditFlowFormalFactory(catalog) { null }.create(input, ids),
                             ).value
                         val originalPostings =
                             trusted.transaction.postingSets
@@ -146,8 +146,8 @@ class O2PrecisionRescaleDataTest {
                             ).value
                         return DomainResult.Success(
                             ImportFormalCommit(
-                                allocated.confirmationId,
-                                allocated.statusHistoryId,
+                                ids.confirmationId,
+                                ids.statusHistoryId,
                                 wrongGraph,
                             ),
                         )

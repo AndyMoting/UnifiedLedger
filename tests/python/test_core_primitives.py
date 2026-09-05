@@ -23,6 +23,30 @@ class MoneyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Money(Decimal("-0.01"), "CNY")
 
+    def test_rejects_amounts_with_unrelated_surrounding_text(self):
+        for value in (
+            "oops 1.23 junk", "1.23 USD extra", "1.2 3.4", "bad 1.23",
+            "fee 12.34", "abc 4.56", "USD 1.23", "1234,567", "CNY 1234,567",
+            "1,23.45", "1,234,56", "CNY 1.23 4.56",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_decimal(value)
+
+    def test_preserves_exact_plain_numbers_and_well_formed_export_groups(self):
+        for value, expected in (
+            (".5", ".5"), ("1.", "1"), ("+1.25", "1.25"), ("-1e-3", "-.001"),
+            ("1,234,567.89", "1234567.89"), (" CNY -1,234.50 ", "-1234.50"),
+            ("CNY 1234.50", "1234.50"),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(parse_decimal(value), Decimal(expected))
+
+    def test_rejects_nonfinite_text_and_decimal_values(self):
+        for text in ("NaN", "sNaN", "Infinity", "-Infinity"):
+            for value in (text, Decimal(text)):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    parse_decimal(value)
+
     def test_money_arithmetic_requires_matching_currency(self):
         self.assertEqual(Money.of("1.20", "CNY") + Money.of("2.30", "CNY"), Money.of("3.50", "CNY"))
         with self.assertRaises(ValueError):

@@ -6,7 +6,7 @@ import re
 
 
 _CENT = Decimal("0.01")
-_AMOUNT_PATTERN = re.compile(r"-?\d+(?:\.\d+)?")
+_AMOUNT_PATTERN = re.compile(r"(?:CNY\s+)?([-+]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?)")
 
 
 def parse_decimal(value: str | int | Decimal) -> Decimal:
@@ -14,18 +14,23 @@ def parse_decimal(value: str | int | Decimal) -> Decimal:
     if isinstance(value, float):
         raise TypeError("binary floating-point values are not accepted")
     if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("amount must be finite")
         return value
     if isinstance(value, int):
         return Decimal(value)
 
-    text = str(value).strip().replace(",", "")
+    text = str(value).strip()
     try:
-        return Decimal(text)
+        amount = Decimal(text)
     except InvalidOperation:
-        match = _AMOUNT_PATTERN.search(text)
+        match = _AMOUNT_PATTERN.fullmatch(text)
         if not match:
             raise ValueError(f"invalid amount: {value!r}") from None
-        return Decimal(match.group(0))
+        amount = Decimal(match.group(1).replace(",", ""))
+    if not amount.is_finite():
+        raise ValueError("amount must be finite")
+    return amount
 
 
 @dataclass(frozen=True, slots=True)

@@ -140,10 +140,10 @@ class SqlDelightP408ReconciliationStore private constructor(
                         v2RuleVersion.toLong() != projection.ruleVersion.toLong() ||
                         v2NormalizedAmount != projection.normalizedAmountMinor ||
                         v2RawAmount != projection.rawAmountMinor ||
-                        v2RawPrecision != projection.rawCurrencyPrecision.toInt() ||
+                        v2RawPrecision != projection.rawCurrencyPrecision ||
                         request.amountMinor != projection.normalizedAmountMinor ||
                         request.currencyCode != projection.currencyCode ||
-                        request.currencyPrecision != projection.currencyPrecision.toInt() ||
+                        request.currencyPrecision != projection.currencyPrecision ||
                         request.direction != projection.directionToken ||
                         request.accountId != projection.targetAccountId ||
                         sourceOccurredAt != request.sourceOccurredAt
