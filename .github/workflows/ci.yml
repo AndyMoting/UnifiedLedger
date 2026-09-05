@@ -71,7 +71,7 @@ jobs:
       - name: Android app assemble debug
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
       - name: Upload debug APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: android-debug-apk-${{ github.sha }}
           path: android-app/build/outputs/apk/debug/*.apk
