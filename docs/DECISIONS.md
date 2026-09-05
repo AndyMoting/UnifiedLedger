@@ -2192,3 +2192,30 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **关联决定：** `D-119`、`D-120`。
 
 **遗留：** 桌面 Esc 语义与选择器交互的最终行为经人工门确认（规格 §3.7——模拟器选择器全流程+系统返回、桌面 Esc 仅关对话框且关闭后恢复、TalkBack 走查、Android ICU tzdb 抽查 1991-04-14T02:30 拒绝路径），随授权 push 后按 CI APK 执行。
+
+## D-132 P5-04.5-FOUND-001 决策批：Android 损坏数据库 fail-closed（onCorruption 覆盖，禁删原文件）
+
+**状态：** 已批准（2026-09-06；实施批待执行）。
+
+**决定：** 按 D-130 处置条款（「留待后续独立决策批」）实施 P5-04.5-FOUND-001 决策批：decision-only（零实现、零 schema、零依赖），冻结 Android 端数据库损坏处置六项决定（规格 §4，批局部编号 D-1..D-6）：
+
+- **D-1**：SQLite 栈检出的数据库损坏一律异常上抛 → `P503StartupState.StartupError`，禁止任何形式的「静默删除原文件并重建空库后正常启动为空账本」。
+- **D-2**：`ForeignKeysCallback` override `onCorruption`（该回调无异常参数，无可 rethrow 的原始异常）抛出**固定新异常类型**（ledger-data androidMain 定义，类型名/message 由实施批冻结），阻止 androidx 默认删除；原始损坏 `SQLiteException` 独立上浮——androidx 约 500 ms 后重试 open 一次、对原样保留的损坏文件再次失败，`allowDataLossOnRecovery=false`（保持默认）使 `innerGetDatabase` 重新抛出该异常，controller 仍收到真实 `SQLiteException`；不设 `allowDataLossOnRecovery=true`（为 true 时 androidx 自行删除重建，直接违反本条）。
+- **D-3**：原文件（含 `-wal`/`-shm`）原位原样保留——不删除、不改写、不重命名、不备份、不导出；诊断仅经既有 `logFailure` 端口；恢复为应用外人工操作；rename-aside/自动备份/应用内恢复延后，触发条件 = 未来批对备份/恢复/诊断导出作出产品裁决（rename-aside 无官方背书，仅 Google Issue Tracker 开放 feature request）。
+- **D-4**：不新增 open 前 `PRAGMA integrity_check`/`quick_check`（或副本等价检查）预检：两种 PRAGMA 均为整库扫描量级（精确渐近值由实施批复核），副本方案再叠加全库复制双倍 IO 与空间峰值；损坏检出完全依赖被覆盖的 `onCorruption`。
+- **D-5**：损坏/普通打开（schema、迁移、IO）/权限失败在阻止删除后同为「`openDatabase` 抛异常」路径，统一映射既有 `StartupError`；不引入新的异常分类体系（D-2 固定覆盖异常为单一类型、无分支消费者，不属分类）、新错误枚举或用户可见错误分级，三类区分仅存在于 `logFailure` 记录的原始异常类型/堆栈（诊断层）。
+- **D-6**：Android 与 Desktop 统一 fail-closed（异常 → `StartupError` → 仅重试/退出）：Desktop JDBC 抛异常 → `DesktopStartupController` 现状已满足，Android 经 D-2 到达同一语义；共享 `P503StartupScreen` 契约零改动。
+
+**实施规格：** `docs/specs/2026-09-06-found001-corrupt-db-failclosed-design.md`（approved，2026-09-06；独立规格评审 FOUND-SPEC-001..006 为 APPROVE-WITH-FINDINGS → delta 修订 → 闭环复审全部 CLOSED，余项 FOUND-SPEC-007 为 LOW 非阻塞、已按建议于规格 D-5 与本条吸收，评审 FOUND-SPEC-001..007 全部闭环；主代理按常设授权批准）。
+
+**边界：** 零实现/零 schema（v27 与全部迁移文件不变）/零 RG、导入、对账、账务规则变更；无恢复 UI、无备份/恢复/诊断导出、无应用内文件管理；无预开完整性检查；共享 `app-ui` 与 `desktop-app` 零改动；零新依赖、零新 Gradle 模块（`android-app/src/androidTest` 为新测试源集，不进产品构建）；CI 零改动（无模拟器、无 `connectedAndroidTest`，instrumented 四路径为本地受管模拟器人工门证据，APK 核对 SHA-256）；`.external/` 零触碰。
+
+**实施登记：** 实施批已授权、待执行；独立 worktree、单一 bounded writer、独立评审、主代理最终验收，持久化变更高风险路由按主检出 `AGENTS.md` 与 `unifiedledger-harness` 执行。冻结范围（规格 §5）：
+
+- 代码：`AndroidLedgerDatabaseHandle.kt` `onCorruption` 覆盖 + ledger-data androidMain 固定异常类型（`private` → `internal` 可见性放宽为唯一附带改动）；App.kt 零改动；零 schema。
+- 测试：T-A（ledger-data 新增 `androidUnitTest`，JVM 无 Robolectric：`onCorruption` 抛固定类型、零删除/零文件操作）；T-B（`AndroidStartupControllerTest` 扩展：损坏形态 → `StartupError`、`logFailure` 记录、映射类型无关）；T-C（androidTest 四路径——正常打开、损坏注入（`StartupError` 且原文件字节级保留，FOUND-001 直接反证）、迁移失败注入、权限失败注入——本地受管模拟器人工门）；T-D（`StartupError` 重试行为断言）。
+- CI：零改动（`:android-app:testDebugUnitTest` 维持，无模拟器/`connectedAndroidTest`）；T-C 证据随实施登记。
+
+实施完成时在本条登记实施提交、resolved androidx.sqlite 版本复核（评审核对基线 2.6.2）与全部测试证据；本条不预记任何实施证据。
+
+**关联决定：** `D-129`、`D-130`。
