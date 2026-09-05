@@ -2219,3 +2219,34 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 实施完成时在本条登记实施提交、resolved androidx.sqlite 版本复核（评审核对基线 2.6.2）与全部测试证据；本条不预记任何实施证据。
 
 **关联决定：** `D-129`、`D-130`。
+## D-133 阶段 6 入口证据与 SDK/视觉裁决批（compileSdk 37 条件升级、targetSdk 36 保持、视觉架构与主题缺陷登记）
+
+**状态：** 已批准（2026-09-06）。编号承接：D-132 已由并行 FOUND-001（P5-04.5 Android 损坏数据库）决策批先行占用并先合并入库；本条按登记基线取下一全局空闲编号。
+
+**决定：** 阶段 6 入口证据与 SDK/视觉裁决批（contract/decision-only：零代码、零 schema、零依赖、零 CI 变更），按批准规格冻结以下六项决定：
+
+1. **P6-D1 compileSdk 36→37**：D1 工具链批将 `android-app`/`app-ui`/`ledger-data` 三模块 `compileSdk` 升至 37；AGP `9.1.0`、Kotlin `2.4.10`、CMP `1.11.1`、Gradle `9.5.0`、JDK 21 与全部依赖坐标不变，`minSdk 34` 不变（v14 `DROP COLUMN` 需系统 SQLite ≥ 3.35.0，API 34 起满足）；compileSdk 37 下 CMP 1.11.1 material3 实际解析工件须经 CI android job 复验并登记（规格 E-3 口径差异注记），不可解决的编译失败回退 36 并登记阻断项。
+2. **P6-D2 targetSdk 保持 36**：升级 targetSdk 37 须同时满足 (a) sw≥600dp 大屏 orientation/resizability/aspect-ratio 行为审计、(b) Android 14/15/16/17 模拟器回归全 PASS、(c) targetSdk 37 官方行为变化清单逐项核对（规格 E-4；sw≥600dp opt-out 移除为主要风险项）；任一不足保持 36 并记录缺口。
+3. **P6-D3 视觉架构**：Material3 为稳定基线与默认回退；玻璃/Backdrop 封装独立主题与组件层，效果不可用/性能不达标/平台异常时回退，账务状态、导航、提交与失败状态不依赖玻璃组件；主皮库（D-117 所指的指定皮肤主皮库，命名见规格）整套换肤本阶段落选，不关闭 D-117 未来皮肤批方向；玻璃库版本锁定延后至 D2 采纳门——强制核对 E-8/E-9 缺失六维项（维护、传递依赖、包体影响、Android 14-17 兼容）并钉死与 CMP `1.11.1` 兼容的版本，或声明 fallback-only（ROADMAP 完成条件允许收口）。
+4. **P6-D4 CI 矩阵**：android job 同 job 于 compileSdk 37 复验（现有步骤隐式覆盖，无步骤级变更则 `ci.yml` 零改动）；不新增模拟器 job、不新增 `connectedAndroidTest`（人工门边界延续 D-127/D-128/D-130）。
+5. **P6-D5 性能判据**：D2/D3 验收门先行冻结定性行门槛（冷启动、滚动/转场帧稳定、内存、低端设备可用性；数值判据与测量方法由 D2/D3 冻结）；视觉效果不得阻塞记账（创建/提交/确认）、返回、关闭或错误处理流程。
+6. **P6-D6 主题缺陷登记（归 D2）**：`P6-ENTRY-THEME-001` 浅色模式状态栏深图标 on 深窗口背景（像素对比度 1.41:1；修复 = 显式 `SystemBarStyle` + 主题自适应窗口背景）；`P6-ENTRY-THEME-002` 首页/编辑页主题错位（activity 主题 parent=`android:Theme.Material.NoActionBar` + `MaterialTheme{}` 未传 colorScheme 恒浅色；修复 = 双 colorScheme + 主题 parent）。
+
+**Android 14-17 回归矩阵时点快照（2026-09-06；详见规格 §4 附表）：**
+
+| API / Android | 状态 | 证据 |
+| --- | --- | --- |
+| API 34 / Android 14 | PASS（2026-09-06，模拟器） | E2E-R-002 全项通过并关闭 |
+| API 35 / Android 15 | 未执行 | targetSdk 37 决策前置要求 |
+| API 36 / Android 16 | PASS | D-130 模拟器门（11 项）+ 2026-09-06 关闭按钮人工确认（API 36 模拟器面） |
+| API 37 / Android 17 | 未执行 | targetSdk 37 决策前置要求；本机已有 API 37 `ps16k` 镜像可用于后续验证 |
+
+**门状态联动（2026-09-06）：** E2E-R-001 保持未关闭至 D2 修复并实机复验；E2E-R-002 关闭（API 34 回归 PASS）；关闭按钮人工确认关闭（API 36 模拟器面，CI APK `98fc242`，按本地规划 §C.1 执行方式承接 D-128「用户 Android 16 实机最终确认」原文，实机复验由用户保留触发）；D-131 TalkBack 走查关闭。
+
+**实施规格：** `docs/specs/2026-09-06-phase6-entry-sdk-visual-design.md`（状态 approved；规格落盘 SHA-256 `3e4d6b8f7157938712ad12055d34358cadee8bbc81ad4aea3de5fb2875085481`，2026-09-06 登记时点）。独立规格评审 P6SPEC-001..005 APPROVE-WITH-FINDINGS → delta 修订 → 闭环复核全部 CLOSED、终局 APPROVE；主代理按常设授权批准（2026-09-06）。
+
+**边界：** 证据/裁决批零代码、零 schema、零依赖、零 CI 变更、零主题修复；targetSdk 37 升级、主皮库采用与整套换肤、玻璃/Backdrop 依赖引入与实现细节、API 35/37 回归执行均不做（归 D2/D3 或另立批）；D1 冻结写入路径 = 三处 `compileSdk` 升级与按需的 `ci.yml`/`docs/CONTRIBUTING.md`/`README.md` 同步及 `platforms;android-37` 安装前置（规格 §5）；D-114/D-117/D-119/D-125/D-128/D-129/D-130/D-131 语义零改动；并行 FOUND-001 批零交集。
+
+**实施登记（2026-09-06）：** 本批交付物 = 冻结规格落库与本条登记，本批自身零代码。D1 实施批授权待执行；实施与验证证据随 D1 批登记（验收判据见规格 §5.3：三处 compileSdk=37 逐值零变化、本机聚焦验证 exit 0、CI android job 于 compileSdk 37 绿并含 APK 组装证据、零 schema/零依赖/零账务行为变更）。
+
+**关联决定：** `D-117`、`D-128`、`D-130`、`D-131`。
