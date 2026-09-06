@@ -2305,3 +2305,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记（2026-09-06）：** 验证用 APK 为本地构建（main `52bf836` 内容），SHA-256 `30a2b073f21a77b1d956f43ef2e72f10004b211fd3165a56b4883b6e4ee6e291`（存于 `local/artifacts/d3/`，相对引用）；截图与像素证据存于 `local/artifacts/p6-gates/`（相对引用）。性能数字汇总：API 34 冷启 3219ms / PSS ≈104MB；API 35 冷启 6721ms（全新 AVD 首启）/ 热启 0ms / PSS ≈98MB；API 36 冷启 2994ms / PSS ≈119MB；gfxinfo 滚动采样 0 帧（空总览页无滚动内容，如实登记）。
 
 **关联决定：** `D-133`、`D-134`、`D-130`。
+
+## D-136 玻璃启用批：backdrop 玻璃层启用、底部胶囊接线与 D2IMPL-Q-001 内容裁切修复
+
+**状态：** 已批准（2026-09-06）。实施批随本登记后执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**批准与依据：** 用户于 2026-09-06 批准玻璃启用批立项（含建议阈值冷启 ≤+10% 与 PSS ≤+15MB）；数值判据冻结权威 D-135（D3）已完成，D-134 批准条件「启用批先于 D3 开批须自带冻结条款」就此满足；回退许可依据 docs/ROADMAP.md:67（玻璃效果失败但回退路径稳定时允许阶段 6 收口）。
+
+**决定：** 按批准规格实施玻璃启用批，冻结六项条款：
+
+1. **启用旗标**：`app-ui` `ui/theme/glass` 的 `GLASS_ENABLED` 由 `false` 翻转为 `true`，玻璃路径成为激活渲染路径；旗标保持编译期常量与 `internal` 可见性。
+2. **接线（挂点唯一）**：`P503TabShell.kt:61-66` 底部胶囊 `Surface`（`RoundedCornerShape(percent = 50)`、`tonalElevation 3.dp`、`shadowElevation 6.dp`）为唯一玻璃挂点。接线设计演进（本批登记）：GlassLayer 原自包含 API（backdrop 与 content 同框渲染）在该挂点无法产生有效效果——玻璃必须采样胶囊后方的应用内容，而内容不在胶囊自身的布局框内；故 `ui/theme/glass` 演进为两件式封装：`GlassBackdropSource`（内容侧注册 layerBackdrop 源；回退态为透明直通 Box）与 `GlassSurface`（胶囊侧 drawBackdrop 玻璃绘制；回退态与现 Surface 参数逐值一致）。全部玻璃代码收敛于 `ui/theme/glass` 包内，`P503TabShell` 仅组合该封装组件、不直接 import `com.kyant.backdrop` 库符号（D-133 分层不变量延续）；玻璃效果参数沿用 D-134 冻结值（`vibrancy()` + `blur(2.dp)` + `lens(12.dp, 24.dp)`）零改动。
+3. **D2IMPL-Q-001 关闭**：玻璃路径内容 Box 补 `Modifier.clip(shape)`，玻璃路径与回退路径的内容裁切语义对齐（D-134 验收注记 ③ 移交义务就此履行）。
+4. **数值判据冻结（对 D-135 基线，测量口径与 D-135 一致：`adb shell am start -W` TotalTime；`adb shell dumpsys meminfo` TOTAL PSS）**：API 34（模拟器 `ul_p6_api34`）：冷启 TotalTime ≤ 3541ms（基线 3219ms × 1.10）、TOTAL PSS ≤ 119MB（基线 104MB + 15MB）；API 36（模拟器 `ul_p5_test`）：冷启 TotalTime ≤ 3294ms（基线 2994ms × 1.10）、TOTAL PSS ≤ 134MB（基线 119MB + 15MB）。执行口径：fresh install 首次启动为预热不计入判定，随后连续 3 次冷启动逐值登记，以第 3 次（末值）判定，任一超限即判 FAIL。
+5. **视觉门与回归**：API 34 模拟器浅/深双模式（首页 + 编辑页）截图证据入 `local/artifacts/p6-gates/`（`glass-` 前缀命名）；状态栏对比度按 D-134 像素级方法复验 ≥ 3:1；E2E-R-002 迷你回归（启动 → 三 Tab 切换 → 进入编辑 → 提交一笔手工支出 → Created → 总览出现交易行与两侧余额正确）证明 D-133 硬不变量「视觉效果不阻塞记账、返回、关闭或错误处理流程」。
+6. **FAIL 即回退**：任一门失败 → `GLASS_ENABLED` 回退 `false`（单常量回退）+ 缺陷候选登记，阶段 6 按稳定 Material3 回退路径收口；`:app-ui:jvmTest`、`:desktop-app:jvmTest`（含 DesktopSkeletonSmokeTest）或 `:android-app:testDebugUnitTest` 失败同属 FAIL；依赖解析冲突不可收敛 → 移除 backdrop 依赖与封装文件、采纳门结论降级 fallback-only 并登记。
+
+**实施规格：** `docs/specs/2026-09-06-glass-enablement-design.md`（状态 approved；批准记录 = 本登记批准与依据——用户 2026-09-06 立项批准，规格条款为本决定条款的实施面冻结）。
+
+**边界：** 零账务/RG/导入/对账/schema/迁移变更；共享 UI 交互与状态机语义零改动（编辑流 Back/Esc、关闭入口、fail-closed 重试、「权威刷新恒回首页」延续 D-125/D-126/D-129）；`desktop-app` 模块文件零改动（共享 `app-ui` 玻璃路径随桌面运行属本批登记事项，桌面 jvmTest 为其回归门）；零 CI 变更；`.external/` 零触碰；D-114/D-117/D-119/D-125/D-128/D-129/D-130/D-131/D-132/D-133/D-134/D-135 语义零改动。
+
+**实施登记（待实施批完成后登记）：** 本条为占位——实施批完成后在此登记六项条款逐项落地情况、模拟器双门证据与数值、FAIL 回退结论（如有）；实施面以规格「实施范围（冻结）」为准。
+
+**关联决定：** `D-133`、`D-134`、`D-135`。
