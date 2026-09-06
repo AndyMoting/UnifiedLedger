@@ -1,7 +1,6 @@
 package com.unifiedledger.ui.theme.glass
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -111,12 +110,7 @@ internal fun GlassSurface(
                         },
                     ),
         ) {
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .clip(shape),
-            ) {
+            Box(modifier = Modifier.clip(shape)) {
                 content()
             }
         }
