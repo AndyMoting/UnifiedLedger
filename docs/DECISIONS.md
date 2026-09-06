@@ -2276,3 +2276,32 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **验收注记（2026-09-06，实施评审处置）：** ①冻结范围与验收以规格 §5.1–§5.3 为准（补 D2IMPL-L-001）；②§5.1/§5.3-1 的「DECISIONS.md 零改动」按规格 §8 登记授权为本批 lex specialis，与 D-133 先例一致（补 D2IMPL-L-002）；③GlassLayer 已知不对称——fallback 路径按 shape 裁切内容、玻璃路径仅对背景效果应用 shape 且内容未裁切——零调用点故零运行时影响，启用批必须补内容裁切（如 `Modifier.clip(shape)`）或保持等价语义（补 D2IMPL-Q-001，义务归启用批）；④API 34 模拟器底部导航对比条为系统在透明导航栏上强制对比的既有行为（D-128 默认 navigationBarStyle，D2 前已存在），非本批回归（补 D2IMPL-Q-003）。
 
 **关联决定：** `D-133`、`D-125`。
+
+## D-135 D3 平台回归批：Android 14/15/16 模拟器回归与性能采样、targetSdk 37 行为审计、API 37 环境阻塞登记
+
+**状态：** 已执行并登记（2026-09-06；模拟器面证据，真机门由用户保留）。
+
+**决定：** 按 D-133（P6-D2 targetSdk 37 三前置、P6-D5 性能判据）与 D-134（D2-D3/D2-D5 数值判据冻结权威归 D3）执行 D3 平台回归批；本批零代码、零 schema、零依赖、零 CI 变更，纯验证与登记。结果逐面登记：
+
+- **API 34 / Android 14（模拟器 `ul_p6_api34`）——full regression PASS**：E2E-R-002 同项（启动/三 Tab/编辑/返回/关闭/手工支出/失败态，2026-09-06 早前执行）+ D2 主题视觉门（浅/深首页与编辑页主题一致；状态栏像素对比度 浅 5.64:1 / 深 18.59:1）+ 性能采样（冷启 TotalTime 3219ms；TOTAL PSS ≈104MB；gfxinfo 滚动采样在空总览页得 0 帧——静态空列表无滚动内容，数值滚动证据留待内容充实面，如实登记）。
+- **API 35 / Android 15（新建镜像 `system-images;android-35;google_apis;x86_64` + AVD `ul_p6_api35`）——full regression PASS**：全新安装启动、三 Tab、编辑页表单（账户/分类单选、金额 12.5、时间 UTC ISO 输入）、确认页冻结格式「2026-09-06 14:00（UTC+8）＝ 2026-09-06T06:00:00Z」、提交后总览 EXPENSE 分录与余额平衡（expense +12.50 / asset −12.50）、空表单错误态（金额/时间红框红字，保留输入零 dispatch）、浅色主题 + 深图标状态栏 5.64:1；性能采样：冷启 6721ms（全新 AVD 首启）、热启 0ms（进程存活）、TOTAL PSS ≈98MB。
+- **API 36 / Android 16（模拟器 `ul_p5_test`）——compact regression PASS**：签名冲突旧包卸载后全新安装、启动（冷启 2994ms）、浅色首页 + 深色编辑页主题一致（D-134 修复在 16 上验证）、状态栏像素对比度 浅 5.64:1 / 深 18.59:1；启动早期出现系统「System UI isn't responding」ANR 弹窗（系统进程侧，Wait 放过后消失，与本应用无关，如实登记）；性能：TOTAL PSS ≈119MB。
+- **API 37 / Android 17——环境阻塞（三次尝试均失败，如实登记）**：① `google_apis_playstore_ps16k` 镜像首启 25 分钟未达 adb（swiftshader 与 `-gpu auto` 两种 GPU 后端相同）；② 标准 `google_apis` 37.0 镜像被本机 cmdline-tools 19.0（SDK XML v3）下载后无法安装为有效包路径；③ 手工 AVD 因镜像抽取不完整缺 kernel-ranchu 无法启动。结论：API 37 模拟器回归需更新版 cmdline-tools/Android Studio 或其他宿主，登记为延后项；不阻塞编译侧证据（CI 已在 compileSdk 37 编译测试）。
+
+**targetSdk 37 行为审计（基于 A-1 批已登记的官方 behavior-changes-17 证据，对本应用逐项）：**
+
+- 大屏 orientation/resizability opt-out 移除——manifest 无 orientation/resizeableActivity 限制且布局自适应（三 Tab + 编辑页）→ 无影响。
+- MessageQueue 无锁实现——应用无 Looper/MessageQueue 反射 → 无影响。
+- static final 反射/JNI——无；后台 Activity 启动——无。
+- `ACCESS_LOCAL_NETWORK` 强制——应用无网络权限（本地优先）→ 无影响。
+- 后台音频/keystore 上限/内存限制器/明文流量/OTP-SMS——不触及。
+- 16KB 页——纯 Kotlin/Compose、无自带 `.so`（SQLDelight 用系统 SQLite）→ 合规（Play 截止 2027-02）。
+- 结论：未来 targetSdk 37 升级无技术阻塞；升级本身仍为独立裁决（D-133 P6-D2），剩余触发 = 用户侧真机回归确认。
+
+**阶段 6 收口判定：** ROADMAP 完成条件「Android 14-17 证据 + 性能证据」未全部满足——API 34/35/36 模拟器证据完整、API 37 模拟器环境阻塞、真机门用户侧；视觉功能 + 稳定 M3 回退路径判据已满足（玻璃旗标关闭、回退路径即当前发布形态，不阻塞核心账务流程）。阶段 6 保持开启，剩余项登记为：API 37 模拟器回归（环境修复后）、真机确认（用户侧）、数值性能冻结（玻璃启用批，D3 权威）。
+
+**边界：** 真机门由用户保留，本批不代行；API 37 模拟器回归延后至环境修复（更新版 cmdline-tools/Android Studio 或其他宿主）另批执行；targetSdk 37 升级保持独立裁决（D-133 P6-D2 前置未全部满足前 targetSdk 保持 36）；零代码、零 schema（v27 与全部迁移文件不变）、零依赖、零 CI 变更；模拟器操作细节仅为本批验证证据，不构成产品契约；既有决定语义零改动。
+
+**实施登记（2026-09-06）：** 验证用 APK 为本地构建（main `52bf836` 内容），SHA-256 `30a2b073f21a77b1d956f43ef2e72f10004b211fd3165a56b4883b6e4ee6e291`（存于 `local/artifacts/d3/`，相对引用）；截图与像素证据存于 `local/artifacts/p6-gates/`（相对引用）。性能数字汇总：API 34 冷启 3219ms / PSS ≈104MB；API 35 冷启 6721ms（全新 AVD 首启）/ 热启 0ms / PSS ≈98MB；API 36 冷启 2994ms / PSS ≈119MB；gfxinfo 滚动采样 0 帧（空总览页无滚动内容，如实登记）。
+
+**关联决定：** `D-133`、`D-134`、`D-130`。
