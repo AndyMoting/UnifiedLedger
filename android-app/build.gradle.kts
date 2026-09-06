@@ -21,7 +21,7 @@ ktlint {
 
 android {
     namespace = "com.unifiedledger.android"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.unifiedledger.android"

@@ -34,7 +34,7 @@ kotlin {
     android {
         namespace = "com.unifiedledger.ui"
         minSdk = 34
-        compileSdk = 36
+        compileSdk = 37
     }
 
     sourceSets {
