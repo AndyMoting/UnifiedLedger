@@ -49,6 +49,13 @@
 - P5-04.4：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。（已交付，D-129，实施 `208e3cf`；CI 新增 `:android-app:testDebugUnitTest` 步骤）
 - P5-04.5：Android 与现有 Desktop 回归验证并完成阶段 5 收口。（已收口，D-130，2026-09-03；Android 与 Desktop 回归门全过，阶段 5 完成）
 
+阶段 6 当前状态（2026-09-06）：
+
+- 阶段 6 入口已过：D-133 登记入口证据与 SDK/视觉裁决；compileSdk 已升至 37（targetSdk 保持 36）。
+- FOUND-001 已按 D-132 闭环（fail-closed，四路径 instrumented 实机证据），Android 与 Desktop 损坏行为统一。
+- 人工门状态：E2E-R-002 已关闭（API 34 模拟器回归全项通过 2026-09-06）；关闭按钮人工确认已按计划 §C.1 以 API 36 模拟器面完成（D-128 实机措辞由计划承接，实机复验由用户保留）；D-131 TalkBack 走查通过；E2E-R-001 显式验证不通过（浅色状态栏深图标对深背景 1.41:1），登记 P6-ENTRY-THEME-001/002 由 D2 主题批修复后复验。
+- 待办：D2 主题与组件批（双主题修复、玻璃候选 D2 采纳门六维核对、M3 fallback）；API 35/37 回归与 targetSdk 37 行为审计；D-131 桌面 Esc 门待用户解锁会话后执行。
+
 ## 未完成门槛
 
 - `D-075` 只批准 RG-05 expected，不授权 adapter 实现或 fixture 迁移；RG-05 的 v2 发布由 `D-086` 另行授权。
@@ -64,8 +71,4 @@
 
 ## 唯一下一步
 
-阶段 5 已于 2026-09-03 按 `D-130` 完成收口。P5-04.1..P5-04.5 均已交付并推送：D-129（实施 `208e3cf`）已推送，基线本地 main=origin/main=`62b8625`（CI run 33738850660 success）；D-127 缺陷修复 `1d30b75` 与 D-128 平台集成缺陷修复 `f973808` 均已推送并经 CI 验证。P5-04.5 回归门全部通过：Android（API 36 模拟器 + CI APK artifact，APK SHA-256 `b2b5a9f385ddd88bbe2308b09ee95cb55295e5a87b3db9218d89fc96d3b693bd`）11 项与 Desktop（`:desktop-app:run` 于 `62b8625`）8 项，含两端完整手工支出链（权威刷新回首页 Tab、EXPENSE 分录与余额符号正确）、关闭/Esc/取消语义回归、持久化与 DB 冷副本核验（integrity_check=ok、user_version=27、215 表，与 2026-08-30 门一致）。ROADMAP 阶段 5 完成条件逐项满足（两端以 ledger-local-test 打开本地测试账本并完成共享核心支出流；Android 基础 Tab、入口、返回、手工支出和失败状态流程通过回归验证，失败状态行为由 D-129 的 app-ui 与 android 单测钉住）。
-
-遗留披露（不阻塞收口，均已登记）：`P5-04.5-FOUND-001`（平台层行为分歧，D-130）——Android 端 ledger.db 文件损坏时 androidx SupportSQLite 静默删除并重建空库（无 StartupError、无数据可恢复提示），桌面端同场景 fail-closed 进入 StartupError；与 fail-closed 意图相悖，留待后续独立决策批处置，本批零代码修复、仅登记披露。用户 Android 16 实机最终确认（安装 f973808 的 CI APK 单击关闭）待用户执行（D-128 遗留）。D-128 已披露观察项继续有效：浅色模式状态栏图标对比度未显式验证（E2E-R-001）与 API 34 设备（minSdk 34）行为未经门验证（E2E-R-002）。
-
-**唯一下一步 = 录入体验批（D-131）push 授权与人工门**：D-131（R1 金额宽容解析 + R2 发生时间选择器）已交付合入本地 main（merge `ba6d554`，规格冻结 SHA-256 `f3867040…80ad`，评审双 CLOSURE APPROVE，verifier 13/13 PASS，13 文件 +803/−20），本地 main 领先 origin/main 五个提交待授权 push；push 后按规格 §3.7 执行人工门（模拟器选择器全流程 + 系统返回、桌面 Esc 仅关对话框且关闭后恢复、TalkBack 走查、Android ICU tzdb 抽查 1991-04-14T02:30 拒绝路径）。随后 **P6（Android 视觉与平台适配）进入门与用户裁决**：进入条件见 ROADMAP 阶段 6——阶段 5 完成（已满足）、SDK/工具链与目标依赖（`compileSdk 37` 等）的官方证据门通过、且有可重复的 Android 基线验收。
+**唯一下一步 = 完成 D2 主题与组件批（双主题修复 P6-ENTRY-THEME-001/002、玻璃候选 D2 采纳门六维核对、M3 fallback）**，随后 API 35/37 回归与 targetSdk 行为审计；D-131 桌面 Esc 门待用户解锁会话后执行。

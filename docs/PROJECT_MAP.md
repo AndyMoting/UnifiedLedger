@@ -30,7 +30,7 @@
 
 P5-03 演示面 B 已在两端组合根接通：`app-ui` 提供启动、总览、编辑、确认和结果屏幕，以及纯 reducer 驱动的异步状态转场；Desktop 的鼠标流程和键盘/焦点流程、Android 的模拟器启动/重开/持久化流程与 TalkBack 流程均已完成人工验证。P5-04.2（D-125）将编辑流状态机扩展 `overview`/`originTab` 穿线与 `Back` 事件：编辑流各态系统返回关闭回来源 Tab，`app-ui` 暴露 `backHandler` 平台钩子，Android 组合根以 activity-compose `BackHandler` 接入（零依赖）。Android 调试 APK 由 CI artifact 提供，当前版本的数据库 schema 为 v27。
 
-阶段路线与当前检查点分别见[路线图](ROADMAP.md)和[当前状态](CURRENT_STATE.md)；当前阶段为 P5-04 基础交互计划。
+阶段路线与当前检查点分别见[路线图](ROADMAP.md)和[当前状态](CURRENT_STATE.md)；当前阶段为阶段 6（Android 视觉与平台适配）：入口证据与 D1 工具链批已完成（D-133），主题与组件批待执行。
 
 ## 跨模块契约
 
