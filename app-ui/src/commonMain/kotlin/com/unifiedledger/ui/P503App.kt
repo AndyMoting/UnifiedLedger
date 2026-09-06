@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +38,29 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
 import kotlinx.coroutines.launch
+
+/**
+ * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
+ * system mode plus a full-size background paint, so screens without their own background
+ * (edit, startup, infrastructure failure) never expose the platform window default
+ * (P6-ENTRY-THEME-002; spec section 4/D2-D1). Shared by Android and Desktop; the platform
+ * root may wrap its whole content with this composable (MainActivity pre-Ready path) —
+ * nesting is harmless, while a bare inner MaterialTheme would reset to the default light
+ * scheme.
+ */
+@Composable
+fun P503Theme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            content()
+        }
+    }
+}
 
 /**
  * P5-03 shared demo surface entry (spec sections 4.7/7/8). The composition root builds the
@@ -196,7 +223,7 @@ fun P503App(
         coordinator.decide(state)
     }
 
-    MaterialTheme {
+    P503Theme {
         when (val current = state) {
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->

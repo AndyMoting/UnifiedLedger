@@ -47,6 +47,10 @@ kotlin {
             // occurred-at picker and the confirmation display (spec 3.1; the only new
             // direct dependency of this batch).
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
+            // D-134 D2-D3: glass effect layer, pinned exactly per the D2 adoption gate
+            // (spec section 3/E-1). The flag defaults off with zero call sites in this
+            // batch, so this artifact is compiled against but never executed.
+            implementation("io.github.kyant0:backdrop:2.0.0")
         }
 
         commonTest.dependencies {
