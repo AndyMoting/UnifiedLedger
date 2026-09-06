@@ -2254,3 +2254,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **D1 实施登记（2026-09-06）：** commit `29f7425`（android-app/app-ui/ledger-data 三处 compileSdk 36→37）经 merge `eb53bbe` 合入本地 main。验证：AGP 9.1.0 以可扩展 `platforms;android-37.0` 包解析 compileSdk 37（无需别名）；`:android-app:compileDebugKotlin`、`:app-ui:compileAndroidMain`/`:ledger-data:compileAndroidMain` 在 37 下编译通过；`:android-app:testDebugUnitTest` 绿；合并树（37 + withHostTest）在合并后 main 复验（compileAndroidMain + testAndroidHostTest + testDebugUnitTest exit 0）。AGP 对 37.0 发出预期非致命警告 "tested up to compile SDK version 36.1"，已登记；targetSdk 按 P6-D2 保持 36（升级触发条件不变：API 35/37 回归与行为审计仍未执行）。
 
 **关联决定：** `D-117`、`D-128`、`D-130`、`D-131`。
+
+## D-134 D2 主题与组件批：双主题修复（P6-ENTRY-THEME-001/002）+ backdrop 2.0.0 玻璃层封装（旗标关闭）
+
+**状态：** 已批准（2026-09-06）。实施批随本登记后执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**决定：** 按 D-133（P6-D3 采纳门、P6-D5 性能判据、P6-D6 主题缺陷登记）与批准规格实施 D2 主题与组件批，冻结五项决定：
+
+1. **D2-D1 双主题修复（P6-ENTRY-THEME-002）**：app-ui 新增共享 `P503Theme`（`isSystemInDarkTheme()` 双 colorScheme + `colorScheme.background` 全尺寸涂底，覆盖 pre-Ready 与裸 Column 屏），`P503App` 内层与 Android 组合根 `MainActivity.setContent` 均经其包裹；activity 主题 parent 改 `android:Theme.Material.Light.NoActionBar` 并新增 `values-night/themes.xml` 保持深色 parent，窗口背景随系统明暗（纯框架无 `Theme.Material.DayNight`；`Theme.DeviceDefault.DayNight` 属 OEM 别名落选，appcompat 方案因新依赖落选）。
+2. **D2-D2 状态栏（P6-ENTRY-THEME-001）**：`MainActivity` 显式 `enableEdgeToEdge(statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT))`——auto 随系统明暗给出浅色模式深图标、深色模式浅图标，透明 scrim 在 minSdk 34（> API 29）不生效；对比度实质修复由 D2-D1 窗口背景承载；E2E-R-001 复验判据 = 双模式像素对比度 ≥ 3:1，PASS 后关闭。
+3. **D2-D3 玻璃层采纳**：采纳 `io.github.kyant0:backdrop:2.0.0` 精确钉扎（CMP 1.11.0 构建、本仓 1.11.1 patch 收敛；kotlin-stdlib 2.3.21 向前兼容；KMP android+desktop 双目标；Apache-2.0；传递依赖 shapes 1.2.0 + org.jetbrains:annotations；维护活跃；Android 14-17 无已知问题报告；1.x 线 Android-only AAR 落选，Haze 1.7.2（CMP 1.10.0 钉定）与 2.0.0-beta01（pre-release + 渲染缺陷 #1258）落选）；封装于 app-ui `ui/theme/glass` 单文件（单包装 composable + Material3 回退形态），旗标默认关闭、零调用点，账务状态、导航、提交与失败状态不依赖玻璃组件；启用批数值判据冻结权威为 D3，先于 D3 开批须自带冻结条款并作为批准条件。
+4. **D2-D4 桌面一致性**：desktop-app 零改动；共享涂底使 Ready 路径全部屏不依赖桌面窗口默认底色，桌面预就绪屏维持现状（观察项）。
+5. **D2-D5 性能判据执行**：旗标关闭期运行时零变更；P6-D5 定性行门槛在 D2 人工门执行；数值判据冻结权威为 D3（P6-D5 授权 D2/D3 承接）。
+
+**实施规格：** `docs/specs/2026-09-06-d2-theme-components-design.md`（状态 approved；独立评审 D2SPEC-001..007 APPROVE-WITH-FINDINGS → delta 修订 → 闭环复核全部 CLOSED、终局 APPROVE；主代理按常设授权批准 2026-09-06）。
+
+**边界：** 零账务/RG/导入/对账/schema/迁移变更；共享 UI 交互与状态机语义零改动（编辑流 Back/Esc、关闭入口、fail-closed 重试、「权威刷新恒回首页」延续 D-125/D-126/D-129）；desktop-app 零改动；玻璃层零接线（旗标默认关闭）；主皮库整套换肤不做（D-133 裁决延续）；零 targetSdk/compileSdk/minSdk 变更；API 35/37 回归不因本批执行（归 D3）；CI 零改动；`.external/` 零触碰；D-114/D-117/D-119/D-125/D-128/D-129/D-130/D-131/D-132/D-133 语义零改动。
+
+**实施登记（2026-09-06）：** 实施批已在独立 worktree 按规格 §5.1 冻结范围执行（`P503App.kt` 新增 `P503Theme`、`values/themes.xml` parent 对齐 + 新增 `values-night/themes.xml`、`MainActivity.kt` 显式 `SystemBarStyle` + 根级 `P503Theme` 包裹、app-ui `ui/theme/glass/GlassLayer.kt` 单文件封装 + `io.github.kyant0:backdrop:2.0.0` 依赖、desktop-app 零改动），经 distinct verifier 验证：依赖收敛审计新增工件仅 `io.github.kyant0:backdrop:2.0.0` + shapes 1.2.0 + `org.jetbrains:annotations` 26.1.0（无 1.12 线工件）；`:android-app:assembleDebug` exit 0（GRADLE_OPTS 3GB），APK SHA-256 `a690eb0511dd525eb2d967ca5ca005077363c195f8d538c19a8b7f8e073dc3e9`；JVM 编译（离线）通过；`:app-ui:jvmTest` 61 tests 绿；`:android-app:testDebugUnitTest` 7 tests 绿；`ktlintCheck` 全模块 exit 0（`GLASS_ENABLED` 重命名与 `GlassLayer` 多行表达式换行两处修复后复跑）；模拟器视觉门双模式像素证据浅色 5.64:1 / 深色 18.59:1（判据 ≥ 3:1 满足）——P6-ENTRY-THEME-001/002 关闭、E2E-R-001 复验通过。
+
+**验收注记（2026-09-06，实施评审处置）：** ①冻结范围与验收以规格 §5.1–§5.3 为准（补 D2IMPL-L-001）；②§5.1/§5.3-1 的「DECISIONS.md 零改动」按规格 §8 登记授权为本批 lex specialis，与 D-133 先例一致（补 D2IMPL-L-002）；③GlassLayer 已知不对称——fallback 路径按 shape 裁切内容、玻璃路径仅对背景效果应用 shape 且内容未裁切——零调用点故零运行时影响，启用批必须补内容裁切（如 `Modifier.clip(shape)`）或保持等价语义（补 D2IMPL-Q-001，义务归启用批）；④API 34 模拟器底部导航对比条为系统在透明导航栏上强制对比的既有行为（D-128 默认 navigationBarStyle，D2 前已存在），非本批回归（补 D2IMPL-Q-003）。
+
+**关联决定：** `D-133`、`D-125`。
