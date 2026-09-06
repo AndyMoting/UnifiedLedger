@@ -35,7 +35,7 @@ kotlin {
         // v13→v14 uses ALTER TABLE DROP COLUMN (SQLite >= 3.35.0); Android
         // system SQLite satisfies it only from API 34 (Android 14).
         minSdk = 34
-        compileSdk = 36
+        compileSdk = 37
 
         // P5-04.5-FOUND-001 T-A: AGP 9's KMP library plugin disables Android host unit tests by
         // default; opting in creates the androidHostTest source set (this plugin renamed the
