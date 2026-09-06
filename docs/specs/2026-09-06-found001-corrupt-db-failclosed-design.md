@@ -2,6 +2,8 @@
 
 **状态：** approved — 本文件为 P5-04.5-FOUND-001 的决定批规格（decision-only：零实现、零 schema、零生产代码、零依赖）。冻结 Android 端数据库损坏的六项处置决定（§4 D-1..D-6）与后续实施批的冻结范围与验收（§5）。实施、备份/恢复产品语义、恢复 UI 明确不在本批（§6）。
 
+**修订 A-1（2026-09-06，R-1 触发）：** 实施批评审（FOUND-IMPL-S-001/S-002/Q-001/Q-002/Q-005，两个独立评审）实证：SQLDelight 2.3.2 `AndroidSqliteDriver` 为**惰性打开**——`createAndroidLedgerDatabase` 仅构造 driver、从不触碰 SQLite（App.kt:66-81 组合根 `openDatabase` lambda 无 driver 访问）；生产启动中真正的打开发生在 `Ready` 之后首个 UI 查询（P503App.kt:172-178 首查询 → QueryLedgerCurrentState.kt:57-61 `catch Exception → Unavailable` → InitialLoadFailed），损坏异常因此永远达不到 controller 的 `StartupError` 映射——D-130 机制上移一层复现；T-C 原设想的 `createAndroidLedgerDatabase(...).close()` 同样不触发打开。按本规格 §5「不得静默变更」与 R-1 回退触发条件，修订回归本决定批：D-1 增补急切探针打开、D-2 上浮异常叙事修正、T-C 以探针语句为真实打开（见 §4「增补与修订」及 §5.1/§5.2 修订标注）；fail-closed 行为与文件保留不变量不变。
+
 ## Authority And Boundary
 
 本文件全部条款对齐以下权威（tracked 文件行号为当前 worktree 基线 `98fc242` 的行号；`.external/` 只读）：
@@ -80,13 +82,13 @@
 - **理由**：D-129 契约意图是失败必须可见、可重试、可退出；D-130 实测证明缺陷机制是异常未达 controller 端口——框架层先静默重建（E-1/E-3）；「损坏即静默弃数据」使用户失去数据出过事的全部信号，与「只有显式确认才创建或替换正式账本事务」的项目边界相悖。
 - **备选与落选理由**：维持默认删除重建并依赖空库提示（落选：静默、不可见、剥夺诊断/恢复机会，即 FOUND-001 本身）；为损坏提供专用错误页或分级错误呈现（落选：本批不改共享 UI 契约，用户面单一 `StartupError` 由 D-5 冻结；分级呈现属未来 UI 批）。
 
-### D-2 禁止删除或改写原始数据库文件：覆盖 `onCorruption` 为抛出固定异常；`allowDataLossOnRecovery` 保持默认 false；打开失败以原始 SQLite 异常呈现
+### D-2 禁止删除或改写原始数据库文件：覆盖 `onCorruption` 为抛出固定异常；`allowDataLossOnRecovery` 保持默认 false；打开失败同步上浮——损坏路径为固定异常、迁移/权限路径为原始 SQLiteException（修订 A-1 修正上浮异常叙事）
 
 - **决定**：
   - 在既有 `ForeignKeysCallback`（AndroidLedgerDatabaseHandle.kt）中 override `onCorruption(db: SupportSQLiteDatabase)`：**抛出一个固定的新的异常类型**（在 ledger-data androidMain 定义；类型名与 message 由实施批冻结），替代 androidx 默认的「删除数据库文件」实现（E-1/E-3）；回调体内零文件操作。签名事实：`onCorruption` **不携带异常参数**（评审对解析版本 androidx.sqlite 2.6.2 的核对），回调内没有可 rethrow 的原始异常——固定异常类型是阻止默认删除的覆盖形态。
-  - **原始损坏 `SQLiteException` 仍然独立上浮（controller 的实际接收物）**：androidx 在首次 open 失败后经 `onCorruption`（本覆盖不删除文件）于约 500 ms 后重试一次 open，重试对原样保留的损坏文件再次失败；`allowDataLossOnRecovery = false`（保持默认，E-3/E-4）使 `innerGetDatabase` 将该重试异常重新抛出——`openDatabase` 调用方与 controller 最终收到真实 `SQLiteException`（E-7），既有 `logFailure` 端口（App.kt:117）的诊断保真度不变。
+  - **controller 的实际接收物（修订 A-1 叙事修正）**：损坏路径上浮的最可能是本覆盖抛出的固定 `LedgerDatabaseCorruptionException`（非 SQLiteException）：androidx `innerGetDatabase` 吞掉首次失败的 open 尝试、sleep ≈500 ms 后重试一次，重试对原样保留的损坏文件再次失败，第二次失败后将非 SQLiteException **原样重抛**（`allowDataLossOnRecovery = false` 保持默认，E-3/E-4）——本句替换初稿「controller 最终收到真实 `SQLiteException`」的错误表述；迁移/权限路径上浮的仍是原始 `SQLiteException`（E-7）。既有 `logFailure` 端口（App.kt:117）在损坏路径记录固定异常、其余路径记录原始异常，诊断结论不变。
   - 不设置 `allowDataLossOnRecovery = true`：保持默认 `false`（E-4）。若为 `true`，androidx 将自行删除并重建数据库文件，直接违反本条不变量。
-- **理由**：controller 的 catch 类型无关（`catch Exception` → `StartupError`，App.kt:150-156），固定异常类型与重试路径上浮的原始 `SQLiteException` 都映射 `StartupError`；固定类型的唯一职责是让「不删除」成为显式、可单测（T-A）的覆盖行为；诊断层仍由 E-7 官方异常自描述。
+- **理由**：controller 的 catch 类型无关（`catch Exception` → `StartupError`，App.kt:150-156），固定异常类型与各路径上浮的异常（损坏路径固定类型、迁移/权限路径原始 `SQLiteException`）都映射 `StartupError`；固定类型的唯一职责是让「不删除」成为显式、可单测（T-A）的覆盖行为；诊断层在迁移/权限路径由 E-7 官方异常自描述，损坏路径由固定异常承载（修订 A-1）。
 - **备选与落选理由**：
   - 「原样 rethrow 传入异常」——落选且不可实现：`onCorruption(SupportSQLiteDatabase)` 无异常参数（修正本规格初稿该错误表述）。
   - 自定义 `SupportSQLiteOpenHelper`/工厂错误处理（计划 §B 技术评估第 1 项）——落选：能力上是 `onCorruption` 覆盖的超集，需新增工厂与配置面；E-2 已证明框架删除路径唯一转接点即该回调，覆盖已足够时为过度设计。
@@ -106,7 +108,7 @@
 
 ### D-5 三类打开失败共用既有 StartupError 映射；不新增异常分类体系
 
-- **决定**：完整性/损坏失败、普通打开失败（schema/迁移/IO）、权限失败（如 `SQLiteAccessPermException`）在阻止删除（D-2）后均为「`openDatabase` 抛异常」这一同一路径，全部由 `AndroidStartupController` 既有 catch 映射为 `StartupError`（既有行为，App.kt:150-156）。本批不引入新的异常分类体系（D-2 的固定覆盖异常为单一类型、无分支消费者，不属分类）、新错误枚举或新的用户可见错误分级；三类区分仅存在于 `logFailure` 记录的原始异常类型/堆栈（诊断层）。用户面维持 `P503StartupScreen` 现契约：「无法打开本地账本（本地数据库不可用）」+ 重试/退出（P503StartupScreen.kt:60-74）。
+- **决定**：完整性/损坏失败、普通打开失败（schema/迁移/IO）、权限失败（如 `SQLiteAccessPermException`）在阻止删除（D-2）后均为「`openDatabase` 抛异常」这一同一路径，全部由 `AndroidStartupController` 既有 catch 映射为 `StartupError`（既有行为，App.kt:150-156）。本批不引入新的异常分类体系（D-2 的固定覆盖异常为单一类型、无分支消费者，不属分类）、新错误枚举或新的用户可见错误分级；三类区分存在于 `logFailure` 记录的异常类型/堆栈（诊断层；修订 A-1：损坏路径记录固定覆盖异常，迁移/权限路径记录原始 `SQLiteException`）。用户面维持 `P503StartupScreen` 现契约：「无法打开本地账本（本地数据库不可用）」+ 重试/退出（P503StartupScreen.kt:60-74）。
 - **理由**：controller 契约本就类型无关，且已被 D-129 既有 JVM 测试钉住；E-7 官方异常分类已足够诊断用；新增分类体系无消费者，且扩大共享 UI 面。
 - **备选与落选理由**：按异常类型映射不同错误文案/恢复建议——落选：属共享 UI 契约变更（未来 UI 批）；且错误分级可能诱导用户在应用内自行「修复」损坏文件，与 D-3 的应用外人工恢复语义冲突。
 
@@ -116,6 +118,12 @@
 - **理由**：D-130 披露的正是平台层行为分歧；统一语义消除「哪一端会丢数据」的分歧面；共享 `P503StartupScreen` 契约零改动即成立。
 - **备选与落选理由**：Android 端在 `StartupError` 下单独提供「重建空账本」第三动作——落选：静默弃数据的显式化仍是无显式确认弃数据，违背项目边界；且改共享 UI 契约（同 D-1/D-5 落选理由）。
 
+### 增补与修订（修订 A-1，2026-09-06，R-1 触发）
+
+- **D-1 增补（急切探针打开）**：`createAndroidLedgerDatabase` 必须在返回前强制一次急切打开——构造 driver 后执行一条最小探针语句（如经 SQLDelight driver API 的平凡 `SELECT 1`；探针语句的精确形态由实施批冻结），使 onCreate/onUpgrade/损坏失败同步地从组合根 `openDatabase` lambda 上浮进 `AndroidStartupController.start()` 的 catch → `StartupError`。理由：惰性打开会把失败推迟到 `Ready` 之后首个 UI 查询——那里被 `QueryLedgerCurrentState.query()` 的 `catch Exception → Unavailable` 吞掉（评审核对：App.kt:66-81 组合根 lambda 无 driver 访问；P503App.kt:172-178 首查询；QueryLedgerCurrentState.kt:57-61 catch），损坏因此绕过 controller 的 `StartupError` 映射，D-130 机制上移一层复现。App.kt 保持零改动；探针不得改写 schema 或数据。
+- **D-2 叙事修正**：见 D-2 修订标注——损坏路径上浮的异常最可能是固定的 `LedgerDatabaseCorruptionException`（固定类型实施形态，即初稿「类型名由实施批冻结」的落地；androidx `innerGetDatabase` 吞首次失败、sleep ≈500 ms 重试、第二次失败后原样重抛非 SQLiteException），迁移/权限路径为原始 `SQLiteException`；fail-closed 行为与文件保留不变量不变。
+- **T-C 验收修正**：见 §5.2 修订标注——探针语句即 instrumented 测试（路径 2/3/4）内 `assertOpens` 形态断言必须执行的「真实打开」（assertThrows 包裹 `createAndroidLedgerDatabase(...).use { it.<探针> }`），路径 4 setup 须先强制打开再作摘要，并按 D-3 增补 `-wal`/`-shm` 伴随文件保留断言。
+
 ## 5. 实施批冻结范围与验收
 
 实施批尚未批准；本节为本批批准后实施批的冻结范围。实施批不得扩大本节；发现承载缺口须先回本批修订并过评审门，不得静默变更。
@@ -123,6 +131,7 @@
 ### 5.1 代码范围（冻结）
 
 - ledger-data/src/androidMain/kotlin/com/unifiedledger/data/AndroidLedgerDatabaseHandle.kt：`ForeignKeysCallback` 增加 `onCorruption` override（抛出固定新异常类型；零文件操作）+ 同模块新增小型固定异常类型（类型名与 message 由实施批冻结；置于同文件或同模块单文件均可）。为使同模块 `androidUnitTest` 可达，回调与异常类型可见性可从 `private` 放宽至 `internal`（唯一允许的附带改动；Kotlin `internal` 为模块作用域，跨模块不可见）。除此之外无结构性改动。
+- （修订 A-1，D-1 增补）急切探针打开：`createAndroidLedgerDatabase` 在构造 driver 后、返回 handle 前执行一条最小探针语句（如平凡 `SELECT 1`，精确形态由实施批冻结），强制 onCreate/onUpgrade/损坏失败同步上抛至组合根；仍在同一文件内，App.kt 零改动，探针零 schema/数据变更。
 - android-app/src/main/kotlin/com/unifiedledger/android/App.kt：**零改动**（任意 openDatabase 异常已映射 `StartupError`）。
 - 零 schema 变更（v27 与全部迁移文件不变）；零 RG/导入/对账行为变更；零新依赖、零新 Gradle 模块。
 
@@ -130,11 +139,11 @@
 
 - **T-A callback 单测（JVM，无 Robolectric、无 Android 框架）**：以 fake `SupportSQLiteDatabase` 调用 `onCorruption`，断言：(a) 抛出固定类型的异常（非删除行为）；(b) fake 记录显示零删除调用、零文件操作。落位冻结：ledger-data 新增 `androidUnitTest` 源集承载（Kotlin `internal` 为模块作用域，android-app 测试不可见——「经 android-app 既有 `src/test` 覆盖」的备选不可行，已删除）。
 - **T-B `AndroidStartupControllerTest` 扩展（既有 JVM 测试类，无 Robolectric）**：注入模拟损坏异常 → 断言 `StartupError`、`facade` 为 null、`logFailure` 收到该异常；并断言映射与异常类型无关（与 D-5 一致，普通失败与损坏形态走同一状态）。
-- **T-C Android instrumented 测试（android-app/src/androidTest，新源集；现状不存在，实施批创建）**：四条路径，各带验收判据：
+- **T-C Android instrumented 测试（android-app/src/androidTest，新源集；现状不存在，实施批创建）**：四条路径，各带验收判据（修订 A-1：SQLDelight driver 惰性打开——各注入路径的「真实打开」必须是探针语句，`close()` 不触发打开）：
   1. **正常打开**：健康库启动 → `Ready`，且数据库文件字节摘要前后一致（未被触碰）。
-  2. **损坏注入**：以非 SQLite 字节替换 ledger.db 后启动 → 显示 `StartupError`（重试/退出可用），**且原文件字节逐字节保留**（前后摘要一致）——FOUND-001 直接反证：D-130 实测的「静默重建空库」不得再发生。
-  3. **迁移失败注入**：预置旧 schema 版本/不完整 schema 使迁移路径抛出 → `StartupError` 且原文件字节保留。
-  4. **权限失败注入**：以不可读权限（mode/world 语义）放置数据库文件 → `StartupError` 且文件存在性与位置不变（权限受限下字节断言以存在性 + 不变性为准）。
+  2. **损坏注入**：以非 SQLite 字节替换 ledger.db 后启动 → 显示 `StartupError`（重试/退出可用），**且原文件字节逐字节保留**（前后摘要一致）——FOUND-001 直接反证：D-130 实测的「静默重建空库」不得再发生。（修订 A-1）打开经探针语句真实执行：assertThrows 包裹 `createAndroidLedgerDatabase(...).use { it.<探针> }`（`assertOpens` 形态）；`-wal`/`-shm` 伴随文件保留断言一并成立（D-3 原位不变量覆盖伴随文件）。
+  3. **迁移失败注入**：预置旧 schema 版本/不完整 schema 使迁移路径抛出 → `StartupError` 且原文件字节保留。（修订 A-1）同以探针语句为真实打开（assertThrows 形态同上）。
+  4. **权限失败注入**：以不可读权限（mode/world 语义）放置数据库文件 → `StartupError` 且文件存在性与位置不变（权限受限下字节断言以存在性 + 不变性为准）。（修订 A-1）setup 须先经探针语句强制打开（预期抛出）后再作摘要/存在性断言，避免惰性打开使断言空转。
 - **T-D StartupError/重试行为断言（并入 T-B/T-C）**：`StartupError` 下重试在文件仍损坏时仍为 `StartupError` 且文件仍保留；文件被人工恢复（应用外操作）后重试达 `Ready`。重试资源安全（单活跃连接、mid-open 关闭）由 D-129 S3 既有测试继续钉住，零新增断言面。
 - **执行通道与前提**：T-C 仅在本地受管模拟器作为人工门证据执行；APK 为固定提交的 CI artifact 或本地 `assembleDebug` 产物，执行前核对 SHA-256 一致；模拟器属环境前提，非产品依赖。T-A/T-B 为本机常规 JVM 验证步骤。
 - **CI 边界（冻结）**：CI 零改动——无模拟器、无 `connectedAndroidTest`（与 docs/CONTRIBUTING.md 验证分工一致，:27-29；ci.yml:70 维持 `:android-app:testDebugUnitTest`）。T-C 四路径证据登记于实施决定条目。若未来 CI 引入模拟器，须同步修订 `docs/CONTRIBUTING.md` 与 `.github/workflows/ci.yml`（同步约束），另行立批。
@@ -168,7 +177,7 @@ python -m project_docs .
 
 | # | 风险 | 影响 | 缓解/登记 |
 | --- | --- | --- | --- |
-| R-1 | 固定异常覆盖 + 500 ms 重试路径的行为在设备/版本差异下偏离评审核对的 2.6.2 机制（异常不达 controller） | 损坏仍可能不呈现为 `StartupError` | T-C 路径 2 为硬验收实证；若实证失败，回本批修订（禁止实施批静默改方案，D-2 回退触发条件） |
+| R-1 | 固定异常覆盖 + 500 ms 重试路径的行为在设备/版本差异下偏离评审核对的 2.6.2 机制（异常不达 controller） | 损坏仍可能不呈现为 `StartupError` | T-C 路径 2 为硬验收实证；若实证失败，回本批修订（禁止实施批静默改方案，D-2 回退触发条件）。修订 A-1 登记：本触发条件已于 2026-09-06 经实施批评审成立（惰性打开——异常不达 controller 的另一机制，见页首修订记录），修正回归本批 A-1 处置 |
 | R-2 | androidx.sqlite 传递版本（经 android-driver 2.3.2）随依赖升级移动 | E-3/E-4/D-2 的机制描述需随版本复核 | 评审已核对当前解析版本 2.6.2（sqlite.aar）；实施批登记实施时点 resolved 版本并复核 E-3/E-4 语义（该语义自 2.3.0-alpha01 起稳定） |
 | R-3 | 阻止删除后，损坏库用户完全无法进入应用（可用性损失） | 数据保留但不可用，恢复全为人工 | 产品语义有意 fail-closed 优先（D-1/D-3）；登记为已知产品行为，不做静默缓解 |
 | R-4 | 权限/磁盘 IO 失败形态存在 OEM/设备差异 | T-C 路径 4 未覆盖的设备面 | 权限路径覆盖主要面；OEM 差异登记为未验证面（延续 D-130 未验证面登记方式）。**busy/locked（数据库文件被锁）为登记的非路径**：Android 侧单连接模型无 busy 竞争（AndroidLedgerDatabaseHandle.kt:43-48 busy_timeout 注记——`PRAGMA busy_timeout` 不能经 execSQL/execute 设置，单连接演示面无竞争），busy/locked 失败形态不单列；未来引入多连接时另行立批 |
@@ -188,6 +197,6 @@ python -m project_docs .
 
 ## 边界断言（本批不含）
 
-- 本批规格阶段唯一写入 = 本新文件；批准后登记动作仅限 §8 所列两项（本文件状态行翻转与批准记录、`docs/DECISIONS.md` 追加 D-132）。`docs/specs/` 既有文档、全部模块源码/测试/构建脚本与 CI 零改动。
+- 本批规格阶段唯一写入 = 本新文件；批准后登记动作仅限 §8 所列两项（本文件状态行翻转与批准记录、`docs/DECISIONS.md` 追加 D-132），另加 R-1 触发的修订 A-1（本文件页首修订记录与 §4「增补与修订」、§5 修订标注）及 D-132 实施规格段的修订注一行——均为已授权写入。`docs/specs/` 既有文档、其余全部模块源码/测试/构建脚本与 CI 零改动。
 - 本文件为决定草案：未经批准不构成实施授权；实施批在独立 worktree、单一 bounded writer、独立评审与主代理最终验收之下。
 - 本文件不含本机绝对路径、个人数据、账务锚点、agent/会话痕迹；`.external/` 内容除本节门声明外零引用。

@@ -36,6 +36,14 @@ kotlin {
         // system SQLite satisfies it only from API 34 (Android 14).
         minSdk = 34
         compileSdk = 36
+
+        // P5-04.5-FOUND-001 T-A: AGP 9's KMP library plugin disables Android host unit tests by
+        // default; opting in creates the androidHostTest source set (this plugin renamed the
+        // legacy androidUnitTest source set) so the corruption override stays module-visible.
+        // No extra settings: the T-A test calls no android.jar methods (returnDefaultValues
+        // stays false) and uses no Android resources.
+        withHostTest {
+        }
     }
 
     sourceSets {
@@ -46,6 +54,12 @@ kotlin {
 
         androidMain.dependencies {
             implementation("app.cash.sqldelight:android-driver:2.3.2")
+        }
+
+        getByName("androidHostTest") {
+            dependencies {
+                implementation(kotlin("test-junit"))
+            }
         }
 
         jvmTest.dependencies {
