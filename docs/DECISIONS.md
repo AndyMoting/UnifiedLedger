@@ -2195,7 +2195,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-132 P5-04.5-FOUND-001 决策批：Android 损坏数据库 fail-closed（onCorruption 覆盖，禁删原文件）
 
-**状态：** 已批准（2026-09-06；实施批待执行）。
+**状态：** 已批准并实施（2026-09-06；实施证据见实施登记）。
 
 **决定：** 按 D-130 处置条款（「留待后续独立决策批」）实施 P5-04.5-FOUND-001 决策批：decision-only（零实现、零 schema、零依赖），冻结 Android 端数据库损坏处置六项决定（规格 §4，批局部编号 D-1..D-6）：
 
@@ -2212,13 +2212,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 零实现/零 schema（v27 与全部迁移文件不变）/零 RG、导入、对账、账务规则变更；无恢复 UI、无备份/恢复/诊断导出、无应用内文件管理；无预开完整性检查；共享 `app-ui` 与 `desktop-app` 零改动；零新依赖、零新 Gradle 模块（`android-app/src/androidTest` 为新测试源集，不进产品构建）；CI 零改动（无模拟器、无 `connectedAndroidTest`，instrumented 四路径为本地受管模拟器人工门证据，APK 核对 SHA-256）；`.external/` 零触碰。
 
-**实施登记：** 实施批已授权、待执行；独立 worktree、单一 bounded writer、独立评审、主代理最终验收，持久化变更高风险路由按主检出 `AGENTS.md` 与 `unifiedledger-harness` 执行。冻结范围（规格 §5）：
+**实施登记（2026-09-06）：** 实施已完成并登记：实施 worktree `UL-found001-impl`，提交 `fc0802d`（A-1 文档修订）+ `5dc7034`（实施）经 merge `3461111` 合入本地 main。验证证据（distinct verifier 实测，精确命令见证据日志）：`:ledger-data:compileAndroidMain` 于 compileSdk 36 exit 0，随后在合并后 main 上以 compileSdk 37 复验 exit 0；T-A `:ledger-data:testAndroidHostTest` 2/2（`ForeignKeysCallbackCorruptionTest`：`onCorruption` 抛固定 `LedgerDatabaseCorruptionException`、零 db-surface 调用；`onConfigure` FK 钉住）；T-B/T-D `:android-app:testDebugUnitTest` 7/7（含损坏→`StartupError`+重试、重复失败 fail-closed、映射类型无关）；ktlintCheck 全模块 exit 0（首次全量通过，含 androidMain 与 androidHostTest source sets）；T-C `:android-app:connectedDebugAndroidTest` 4/4（API 34 模拟器：normalOpen 未触碰文件；corruptedFile fail-closed 且 main/-wal/-shm 字节保留；incompatibleSchema 迁移失败 fail-closed；unreadableFile 权限失败 fail-closed）——StartupError 呈现与字节级保留均由通过测试断言。R-2：resolved androidx.sqlite 2.6.2 已确认（字节码复核 + Gradle metadata），`allowDataLossOnRecovery=false` 语义已验证。经评审接受的披露偏差：(a) T-A source set 为 `androidHostTest`（AGP 9 KMP 将既有 `androidUnitTest` 更名；withHostTest opt-in）；(b) androidTest 测试专用依赖 androidx.test:runner 1.7.0 与 androidx.test.ext:junit 1.3.0（androidTestImplementation scope，产品作用域零变化）；(c) T-B 以模拟损坏形态断言（按 D-5 映射类型无关）；(d) 规格 §5.2 pre-unification probe 措辞由已实施的 probe-before-return 形态吸收。主机注记：`mergeExtDexDebug`/APK 组装在本机 1 GB profile 下停滞（D-118 R-9 signature，再次确认）；instrumented 门以 CI-parity `-Xmx3g` GRADLE_OPTS 运行一次。
+
+冻结范围（规格 §5）：
 
 - 代码：`AndroidLedgerDatabaseHandle.kt` `onCorruption` 覆盖 + ledger-data androidMain 固定异常类型（`private` → `internal` 可见性放宽为唯一附带改动）；App.kt 零改动；零 schema。
 - 测试：T-A（ledger-data 新增 `androidUnitTest`，JVM 无 Robolectric：`onCorruption` 抛固定类型、零删除/零文件操作）；T-B（`AndroidStartupControllerTest` 扩展：损坏形态 → `StartupError`、`logFailure` 记录、映射类型无关）；T-C（androidTest 四路径——正常打开、损坏注入（`StartupError` 且原文件字节级保留，FOUND-001 直接反证）、迁移失败注入、权限失败注入——本地受管模拟器人工门）；T-D（`StartupError` 重试行为断言）。
 - CI：零改动（`:android-app:testDebugUnitTest` 维持，无模拟器/`connectedAndroidTest`）；T-C 证据随实施登记。
-
-实施完成时在本条登记实施提交、resolved androidx.sqlite 版本复核（评审核对基线 2.6.2）与全部测试证据；本条不预记任何实施证据。
 
 **关联决定：** `D-129`、`D-130`。
 ## D-133 阶段 6 入口证据与 SDK/视觉裁决批（compileSdk 37 条件升级、targetSdk 36 保持、视觉架构与主题缺陷登记）
@@ -2249,6 +2249,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 证据/裁决批零代码、零 schema、零依赖、零 CI 变更、零主题修复；targetSdk 37 升级、主皮库采用与整套换肤、玻璃/Backdrop 依赖引入与实现细节、API 35/37 回归执行均不做（归 D2/D3 或另立批）；D1 冻结写入路径 = 三处 `compileSdk` 升级与按需的 `ci.yml`/`docs/CONTRIBUTING.md`/`README.md` 同步及 `platforms;android-37` 安装前置（规格 §5）；D-114/D-117/D-119/D-125/D-128/D-129/D-130/D-131 语义零改动；并行 FOUND-001 批零交集。
 
-**实施登记（2026-09-06）：** 本批交付物 = 冻结规格落库与本条登记，本批自身零代码。D1 实施批授权待执行；实施与验证证据随 D1 批登记（验收判据见规格 §5.3：三处 compileSdk=37 逐值零变化、本机聚焦验证 exit 0、CI android job 于 compileSdk 37 绿并含 APK 组装证据、零 schema/零依赖/零账务行为变更）。
+**实施登记（2026-09-06）：** 本批交付物 = 冻结规格落库与本条登记，本批自身零代码。D1 实施批已执行，实施与验证证据见下方 D1 实施登记（验收判据见规格 §5.3：三处 compileSdk=37 逐值零变化、本机聚焦验证 exit 0、CI android job 于 compileSdk 37 绿并含 APK 组装证据、零 schema/零依赖/零账务行为变更）。
+
+**D1 实施登记（2026-09-06）：** commit `29f7425`（android-app/app-ui/ledger-data 三处 compileSdk 36→37）经 merge `eb53bbe` 合入本地 main。验证：AGP 9.1.0 以可扩展 `platforms;android-37.0` 包解析 compileSdk 37（无需别名）；`:android-app:compileDebugKotlin`、`:app-ui:compileAndroidMain`/`:ledger-data:compileAndroidMain` 在 37 下编译通过；`:android-app:testDebugUnitTest` 绿；合并树（37 + withHostTest）在合并后 main 复验（compileAndroidMain + testAndroidHostTest + testDebugUnitTest exit 0）。AGP 对 37.0 发出预期非致命警告 "tested up to compile SDK version 36.1"，已登记；targetSdk 按 P6-D2 保持 36（升级触发条件不变：API 35/37 回归与行为审计仍未执行）。
 
 **关联决定：** `D-117`、`D-128`、`D-130`、`D-131`。

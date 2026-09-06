@@ -61,7 +61,7 @@
 
 ## 阶段 6：Android 视觉与平台适配
 
-在阶段 5 稳定基线上完成 Android 视觉和平台适配。包括 SDK/工具链证据门、以 `compileSdk 37` 为目标（minSdk 34 保持）；`targetSdk 37` 只有在官方兼容性证据、行为审计和 Android 14-17 回归全部通过后才升级，未通过则保持 targetSdk 36。阶段 6 再验证稳定主皮库双主题、AndroidLiquidGlass/Backdrop、Material3 回退路径，以及 Android 14-17 的设备、性能和人工验收；阶段 5 不提前修改这些依赖。
+在阶段 5 稳定基线上完成 Android 视觉和平台适配。包括 SDK/工具链证据门、以 `compileSdk 37` 为目标（minSdk 34 保持）；`targetSdk 37` 只有在官方兼容性证据、行为审计和 Android 14-17 回归全部通过后才升级，未通过则保持 targetSdk 36。阶段 6 再验证稳定主皮库双主题、AndroidLiquidGlass/Backdrop、Material3 回退路径，以及 Android 14-17 的设备、性能和人工验收；阶段 5 不提前修改这些依赖。阶段 6 进入条件已满足（D-133）；D1 工具链批完成（compileSdk 37，targetSdk 36 保持）；主题与组件批（D2）待执行。
 
 - 进入条件：阶段 5 完成，SDK/工具链与目标依赖的官方证据门通过，且有可重复的 Android 基线验收。
 - 完成条件：Android 14-17 设备上的视觉功能或稳定 Material3 回退路径、平台证据和性能证据通过验收；玻璃效果失败但回退路径稳定时允许阶段 6 收口，且不阻塞核心账务流程。
