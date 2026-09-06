@@ -29,6 +29,7 @@ import com.unifiedledger.ui.P503StartupState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 
@@ -80,6 +81,92 @@ class AndroidStartupControllerTest {
         assertEquals(P503StartupState.StartupError, controller.state)
         assertNull(controller.facade)
         assertEquals(0, closeCount)
+    }
+
+    @Test
+    fun corruptionShapedOpenFailureMapsToStartupErrorAndRetryReachesReady() {
+        // P5-04.5-FOUND-001 T-B: the real fixed corruption type is internal to ledger-data and
+        // android framework SQLite exceptions are android.jar stubs without Robolectric, so the
+        // corruption shape is injected as a plain RuntimeException subclass; D-5 freezes the
+        // StartupError mapping as type-independent.
+        val failure = SimulatedCorruptionOpenFailure("injected corruption open failure")
+        var shouldFail = true
+        var closeCount = 0
+        val loggedFailures = mutableListOf<Exception>()
+        val controller =
+            AndroidStartupController(
+                openDatabase = {
+                    if (shouldFail) {
+                        throw failure
+                    }
+                    CloseableLedgerGraph(fakeFacade()) { closeCount += 1 }
+                },
+                logFailure = { loggedFailures += it },
+            )
+
+        controller.start()
+        assertEquals(P503StartupState.StartupError, controller.state)
+        assertNull(controller.facade)
+        assertSame(failure, loggedFailures.single())
+        assertEquals(0, closeCount)
+
+        // T-D retry path: once the "file is manually restored" (the injected failure stops),
+        // the retry re-invokes openDatabase and reaches Ready.
+        shouldFail = false
+        controller.start()
+        assertEquals(P503StartupState.Ready, controller.state)
+        assertTrue(controller.facade != null)
+    }
+
+    @Test
+    fun repeatedCorruptionShapedFailureStaysFailClosedAndRetriesOpen() {
+        val failure = SimulatedCorruptionOpenFailure("corruption persists across retries")
+        var openCount = 0
+        val loggedFailures = mutableListOf<Exception>()
+        val controller =
+            AndroidStartupController(
+                openDatabase = {
+                    openCount += 1
+                    throw failure
+                },
+                logFailure = { loggedFailures += it },
+            )
+
+        controller.start()
+        controller.start()
+
+        // T-D retry path: while the file is still corrupted, every retry surfaces StartupError
+        // again, keeps the facade unexposed and re-invokes openDatabase (manual retry only).
+        assertEquals(P503StartupState.StartupError, controller.state)
+        assertNull(controller.facade)
+        assertEquals(2, openCount)
+        assertEquals(listOf<Exception>(failure, failure), loggedFailures)
+    }
+
+    @Test
+    fun corruptionShapedAndGenericOpenFailuresMapToTheSameStartupErrorState() {
+        // D-5: corruption, schema/migration and IO/permission-shaped failures all ride the same
+        // "openDatabase threw" path, so the mapping must not branch on the exception type.
+        val shapes =
+            listOf(
+                SimulatedCorruptionOpenFailure("corruption shape"),
+                IllegalStateException("schema/migration shape"),
+                IllegalArgumentException("io/permission shape"),
+            )
+        for (failure in shapes) {
+            val loggedFailures = mutableListOf<Exception>()
+            val controller =
+                AndroidStartupController(
+                    openDatabase = { throw failure },
+                    logFailure = { loggedFailures += it },
+                )
+
+            controller.start()
+
+            assertEquals(P503StartupState.StartupError, controller.state)
+            assertNull(controller.facade)
+            assertSame(failure, loggedFailures.single())
+        }
     }
 
     @Test
@@ -189,3 +276,14 @@ class AndroidStartupControllerTest {
         )
     }
 }
+
+/**
+ * P5-04.5-FOUND-001 T-B: the real fixed corruption type (ledger-data's internal
+ * LedgerDatabaseCorruptionException) is deliberately invisible across modules, and Android
+ * SQLite exception types are android.jar stubs without Robolectric; a plain RuntimeException
+ * subclass carries the corruption shape, because D-5 freezes the StartupError mapping as
+ * type-independent.
+ */
+private class SimulatedCorruptionOpenFailure(
+    message: String,
+) : RuntimeException(message)
