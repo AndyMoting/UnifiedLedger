@@ -1,6 +1,5 @@
 package com.unifiedledger.ui
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,7 +18,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -34,6 +32,9 @@ import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.ui.theme.glass.GlassBackdropSource
+import com.unifiedledger.ui.theme.glass.GlassSurface
+import com.unifiedledger.ui.theme.glass.rememberGlassBackdrop
 
 /**
  * P5-04.1 overview shell (D-122, bottom-bar layout deltas D-123/D-124): a material3 scaffold
@@ -52,17 +53,17 @@ fun P503TabShell(
     onStartNewExpense: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val glassBackdrop = rememberGlassBackdrop()
     Scaffold(
         bottomBar = {
             Row(
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 12.dp, end = 24.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(
+                GlassSurface(
+                    backdrop = glassBackdrop,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(percent = 50),
-                    tonalElevation = 3.dp,
-                    shadowElevation = 6.dp,
                 ) {
                     NavigationBar(
                         containerColor = Color.Transparent,
@@ -98,7 +99,10 @@ fun P503TabShell(
             }
         },
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        GlassBackdropSource(
+            backdrop = glassBackdrop,
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+        ) {
             content()
         }
     }
