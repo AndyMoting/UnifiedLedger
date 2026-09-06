@@ -2208,6 +2208,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施规格：** `docs/specs/2026-09-06-found001-corrupt-db-failclosed-design.md`（approved，2026-09-06；独立规格评审 FOUND-SPEC-001..006 为 APPROVE-WITH-FINDINGS → delta 修订 → 闭环复审全部 CLOSED，余项 FOUND-SPEC-007 为 LOW 非阻塞、已按建议于规格 D-5 与本条吸收，评审 FOUND-SPEC-001..007 全部闭环；主代理按常设授权批准）。
 
+**修订 A-1（2026-09-06，R-1 触发）：** 增加急切探针打开（D-1 增补）、D-2 上浮异常叙事修正、T-C 以探针语句为真实打开；评审 FOUND-IMPL-S-001/S-002/Q-001/Q-002/Q-005 闭环。
+
 **边界：** 零实现/零 schema（v27 与全部迁移文件不变）/零 RG、导入、对账、账务规则变更；无恢复 UI、无备份/恢复/诊断导出、无应用内文件管理；无预开完整性检查；共享 `app-ui` 与 `desktop-app` 零改动；零新依赖、零新 Gradle 模块（`android-app/src/androidTest` 为新测试源集，不进产品构建）；CI 零改动（无模拟器、无 `connectedAndroidTest`，instrumented 四路径为本地受管模拟器人工门证据，APK 核对 SHA-256）；`.external/` 零触碰。
 
 **实施登记：** 实施批已授权、待执行；独立 worktree、单一 bounded writer、独立评审、主代理最终验收，持久化变更高风险路由按主检出 `AGENTS.md` 与 `unifiedledger-harness` 执行。冻结范围（规格 §5）：
