@@ -2341,3 +2341,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界核查：** 实施提交 `1a0b2e2` + 修复 `afad34e` 仅触达 §2.1 表列三路径（Glass.kt 新增 / GlassLayer.kt 删除 / P503TabShell.kt 接线）；依赖坐标、AGP/Kotlin/CMP/Gradle/JDK、minSdk/targetSdk/compileSdk、`desktop-app`、`android-app`、schema/迁移、CI 配置零变更；`.external/` 零触碰。
 
 **关联决定：** `D-133`、`D-134`、`D-135`。
+
+## D-137 缺陷修复批 D131DESKESC-001：桌面选择器对话框打开时 Esc 关闭整个编辑流（共享状态驱动 back 禁用 + 确定性对话框侧 Esc 关闭）
+
+**状态：** 已登记（2026-09-07）。缺陷 D131DESKESC-001 经人工门 FAIL 成立（判定记录 `local/artifacts/d131-desktop-esc/gate-verdict-2026-09-07.md`）；修复路线（人工门规程两条预批路线之 (a)）经用户批准；修复规格处于 proposal，规格冻结 SHA-256 占位由主代理在规格冻结/提交时填入（见下）。实施批随规格批准后执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**缺陷（D131DESKESC-001，FAIL 证据与机制结论）：** 2026-09-07 桌面 Esc 人工门（main `818baf6` 新启演示实例、单一输入源、逐帧截图）判定**门 FAIL**：A8-1 FAIL（日期对话框打开按一次 Esc → 对话框与编辑页同关回总览「账本为空」，账户/分类/金额草稿丢失，G04→G05）、A8-2 FAIL（TimePicker 同形，G07→G08）、③ PASS（重选 09-15 + 表盘 08:30 → 字段精确 `2026-09-15T00:30:00Z`，G09/G10/G11）、② PASS（无对话框裸 Esc 正确关编辑页回首页 Tab、草稿丢弃，G11→G12）。机制结论（门证据与规程机制注记一致）：`desktop-app/.../Main.kt` `DesktopEscBackHandler` 的 `AwtWindow.getWindows().any { it is Dialog && it.isShowing }` 让渡启发式在当前 Compose Multiplatform 栈**探测不到** material3 选择器对话框（compose 选择器对话框不映射为可见 AWT `Dialog` HWND——对话框打开期间 Win32 EnumWindows 仅一个可见顶层窗口；G07/G08 实证对话框打开期间 Esc 仍落入 back 通道）；`P503EditScreen` 的 `dismissOnEscape` 要求焦点在对话框内容内而未触发（焦点仍在主窗口内容）；② PASS 证明 back 通道本身正常——组合复现「AWT 探测失效 → Esc 落入 back 通道 → 编辑页关闭」，违背 D-131 规格 §3.5「Esc 不得关闭底层编辑页」。
+
+**决定（修复路线 (a)，规程既定、用户批准）：** 共享状态驱动 back 禁用 + 确定性对话框侧 Esc 关闭；AWT 窗口启发式证明失效并移除。冻结五项机制：
+
+1. **app-ui `P503EditScreen`**：签名末位追加可选参数 `onDialogVisibilityChanged: (Boolean) -> Unit = {}`（默认参数 → 既有调用点与测试零影响）；经 `LaunchedEffect(datePickerOpen, timePickerOpen)` 上报 `datePickerOpen || timePickerOpen`（`rememberUpdatedState` 防陈旧回调；`DisposableEffect(Unit)` onDispose 防御性补报 false 自愈）。
+2. **app-ui `P503App`**：新增 `var editDialogOpen by remember { mutableStateOf(false) }`；三个 `P503EditScreen` 调用点（Editing/RequestIdentityConflict/DomainRejected）传回调；有效 back enabled = `isEditFlowBackEnabled(state) && !editDialogOpen`；back 派发体（P5-04.3 双重触发守卫、`isBackDispatchSafe`）逐字节不变。
+3. **确定性对话框侧 Esc 关闭**：编辑页根 `Column` 修饰链追加 `onPreviewKeyEvent`——仅当选择器对话框打开且 Escape KeyDown 时关闭开着的对话框并消费事件（覆盖焦点在主窗口内容路径）；既有 `dismissOnEscape`（:250/:266）保留（覆盖焦点在对话框内路径）。两处 handler 位于独立 subcomposition/焦点链，同一 KeyDown 恰被其一接收，**不可能双触发**（规格 §3.1 论证）。
+4. **desktop-app `DesktopEscBackHandler`**：移除 AWT Dialog 让渡启发式（门证据证明其不可触发，即缺陷机制根因），dispatcher 简化为 `enabled && KEY_PRESSED && VK_ESCAPE → onBack + consume`，其余 pass；组合 API（enabled/onBack）不变；doc 注释重写（enabled 旗标现为 back 通道唯一权威门控，D-137）；移除随之失效的 `java.awt.Dialog`/`java.awt.Window as AwtWindow` 两个 import。
+5. **Android 零代码变更、零语义变化**：`App.kt:94` `BackHandler(enabled, onBack)` 原样；对话框打开期间 back 禁用 → 系统返回由官方 Compose `Dialog` 原生吸收（仅关对话框、草稿保留），二次返回经 `BackHandler` 关编辑页——D-131 §3.5 既有认定，本批使该路径确定性成立，模拟器抽查复验。
+
+**实施规格：** `docs/specs/2026-09-07-d131deskesc-001-dialog-escape-fix-design.md`（状态 approved，2026-09-07 批准；独立规格评审 APPROVE-with-notes 与冻结哈希登记见下）。
+
+**规格冻结与批准登记（2026-09-07）：** 独立规格评审 **APPROVE-with-notes**（无 P0/P1）：P2-1 冻结登记措辞并入批准翻转闭环；P3-1（§3.1 矩阵缺 Android 硬件 Esc 与桌面无焦点边界两行）登记为「机制蕴含」，复门与模拟器抽查覆盖；P3-2（长按 Esc 键重复 = 对话框关闭后的第二次 Esc）为 ② 延续语义，预期行为；P3-3（状态上报为组合后帧延迟，~1-2 帧窗口）登记为人类尺度不可达；P3-4（进程级 KeyEventDispatcher 跨应用聚焦遗留特性）为非本批范围。用户 2026-09-07「批准」指令授权整批（R-1 规格增量，D-132 先例）。规格 SHA-256（UTF-8+LF 工作副本字节域）：proposal 冻结 `7B991C0597235161C3FE7BC5ED02A17A98D4CCA4DB22829B438E13D0563F30F1`（commit `92b890d`）→ 批准翻转后 `3D3288E206742E14E2F1C7772CEFC3D2BCD311D43AC8F63A39395B9F7FFDF57A`（翻转增量 = 状态行 + §9 登记措辞；§3/§4 冻结构造条款逐字节不变；git blob SHA-1 `76abd10672d47b2971821648a32632a820b75143`）。
+
+**范围：** app-ui（`P503EditScreen.kt`/`P503App.kt`）与 desktop-app（`Main.kt`）两模块三文件为唯一代码触点；android-app 零代码（仅模拟器抽查验证）；docs = 本规格 + 本条登记；测试**零新增**（本批为组合接线，无纯 JVM 测试缝；`dismissOnEscape`/`DesktopEscBackHandler` 迄今仅由桌面键盘人工门覆盖，论证见规格 §5.2）。零 schema（*.sq/*.sqm、v27 与全部迁移）、零 ledger-domain/application/data、零 reducer/事件集/状态机（`isEditFlowBackEnabled`/`isBackDispatchSafe` 本体零改动）、零导航库、零 compose ui-test harness、零新依赖、零 gradle 构建脚本、零 CI、零主题/玻璃、零 `DesktopEscBackHandler` API 变更。
+
+**验证与复门计划：** 受影响既有套件全绿——`:app-ui:jvmTest`（61）、`:desktop-app:jvmTest`（5）、`:android-app:testDebugUnitTest`（7）、`ktlintCheck`（app-ui + desktop-app）0 违规、`:android-app:compileDebugKotlin` exit 0、`project_docs` 通过（本机串行、单 worker、1 GB heap 纪律，命令见规格 §5.1）；**桌面复门** = 按 `local/artifacts/d131-desktop-esc/manual-gate-procedure.md` 重跑（`:desktop-app:run`）：A8-1 PASS（仅对话框关、草稿保留）、A8-2 PASS（仅对话框关、时间未写入）、③ PASS（`2026-09-15T00:30:00Z` 精确）、② PASS（裸 Esc 关编辑页回首页 Tab、草稿丢弃），证据存 `local/artifacts/d131-desktop-esc/`；**Android 模拟器抽查** = android-emulator MCP，AVD `ul_p6_api37` 首选或 `ul_p5_test`，本地 `:android-app:assembleDebug` 按 D-136 登记的 CI 全口径 GRADLE_OPTS（`'-Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g -Dorg.gradle.workers.max=1'` + `--no-daemon --max-workers=1`，R-9 修订纪律）并登记 APK SHA-256：开选择器 → 设备返回 → 仅对话框关闭且草稿保留 → 再返回 → 编辑页关闭；同提交 CI 成功为聚合门发布证据（AGENTS 验证路由）。
+
+**关闭判据：** 复门四项（A8-1/A8-2/③/②）全 PASS + Android 模拟器抽查 PASS + §5.1 套件/静态/文档门全绿 + 实施评审与独立验证通过 + 同提交 CI 绿 → D131DESKESC-001 关闭、A8 人工门关闭；阶段 6 收口登记随主代理流程（与 D-131 遗留项 3 一并处理）。
+
+**关联决定：** `D-131`（机制来源、§3.5 权威条款与 A8 判据）、`D-126`（裸 Esc 既有语义）、`D-136`（本地 APK 组装口径先例）。

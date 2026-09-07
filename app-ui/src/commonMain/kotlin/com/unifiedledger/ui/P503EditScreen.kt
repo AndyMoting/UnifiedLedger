@@ -28,9 +28,12 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +91,7 @@ fun P503EditScreen(
     onContinue: (() -> Unit)?,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
+    onDialogVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     var occurredAtText by remember(draft.occurredAt) { mutableStateOf(draft.occurredAt?.toString() ?: "") }
     var occurredAtParseError by remember { mutableStateOf(false) }
@@ -95,8 +99,40 @@ fun P503EditScreen(
     var timePickerOpen by remember { mutableStateOf(false) }
     var pickedLocalDate by remember { mutableStateOf<LocalDate?>(null) }
 
+    val latestOnDialogVisibilityChanged by rememberUpdatedState(onDialogVisibilityChanged)
+    LaunchedEffect(datePickerOpen, timePickerOpen) {
+        latestOnDialogVisibilityChanged(datePickerOpen || timePickerOpen)
+    }
+    // 防御性自愈：编辑屏离开组合时补报关闭，防止 editDialogOpen 陈旧滞留
+    DisposableEffect(Unit) {
+        onDispose { latestOnDialogVisibilityChanged(false) }
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+                .onPreviewKeyEvent { event ->
+                    // D-137: 仅当选择器对话框打开且 Escape KeyDown 时，关闭开着的对话框并消费；
+                    // 焦点在主窗口内容时由本 handler 兜底（对话框内容路径由 dismissOnEscape 覆盖）。
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        when {
+                            timePickerOpen -> {
+                                timePickerOpen = false
+                                true
+                            }
+                            datePickerOpen -> {
+                                datePickerOpen = false
+                                true
+                            }
+                            else -> false
+                        }
+                    } else {
+                        false
+                    }
+                },
     ) {
         banner?.invoke()
         Spacer(Modifier.height(8.dp))
