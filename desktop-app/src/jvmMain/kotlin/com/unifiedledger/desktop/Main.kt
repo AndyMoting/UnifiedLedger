@@ -45,7 +45,6 @@ import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
-import java.awt.Dialog
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
@@ -54,7 +53,6 @@ import java.nio.file.Path
 import java.security.SecureRandom
 import kotlin.io.path.absolutePathString
 import kotlin.time.Clock
-import java.awt.Window as AwtWindow
 
 private const val LOCAL_TEST_LEDGER_FILE_NAME = "ledger-local-test.db"
 
@@ -111,10 +109,17 @@ internal fun DesktopRoot(
  * [onBack] (the shared P503App back channel; Submitting already swallows there). Non-Escape
  * events pass through untouched and are never read or recorded. The dispatcher callback
  * runs on the AWT event-dispatch thread, which is also the Compose Desktop UI thread, so
- * [onBack] may touch Compose state directly. While any dialog of this process is showing,
- * Escape is yielded unconditionally (regardless of which window holds focus) so the picker
- * dialog absorbs it and the edit page stays open (D-131 spec 3.5); once the dialog closes,
- * the existing edit-page Escape semantics resume. Window closing is unchanged.
+ * [onBack] may touch Compose state directly.
+ *
+ * D-137: [enabled] is now the sole gate of the back channel. P503App disables it while a
+ * picker dialog is open, so Escape reaches only the dialog layer and the edit page stays
+ * open. The former AWT window-yield heuristic (yield Escape while any AWT Dialog of this
+ * process is showing) is removed: gate evidence E-1 (G07/G08 + gate procedure note) shows
+ * that compose picker dialogs do not map to a visible AWT Dialog HWND on the current
+ * Compose Multiplatform stack, so the probe could not fire and only masked the defect.
+ * Escape dismissal while focus is inside the dialog content is handled by
+ * P503EditScreen's `dismissOnEscape`; the composition-root [onBack] channel only receives
+ * Escape when the editing flow's back is Back-legal. Window closing is unchanged.
  */
 @Composable
 internal fun DesktopEscBackHandler(
@@ -126,12 +131,8 @@ internal fun DesktopEscBackHandler(
         val dispatcher =
             KeyEventDispatcher { event ->
                 if (enabled && event.id == KeyEvent.KEY_PRESSED && event.keyCode == KeyEvent.VK_ESCAPE) {
-                    if (AwtWindow.getWindows().any { it is Dialog && it.isShowing }) {
-                        false
-                    } else {
-                        latestOnBack()
-                        true
-                    }
+                    latestOnBack()
+                    true
                 } else {
                     false
                 }

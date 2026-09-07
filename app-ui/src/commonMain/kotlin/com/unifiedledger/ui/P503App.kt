@@ -82,6 +82,7 @@ fun P503App(
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
     var statusCheckInFlight by remember { mutableStateOf(false) }
+    var editDialogOpen by remember { mutableStateOf(false) }
 
     fun dispatch(event: P503UiEvent) {
         state = reducer.reduce(state, event).also { latestState.value = it }
@@ -90,8 +91,10 @@ fun P503App(
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
     // overview snapshot needed to close back to the originating tab. Submitting swallows the
     // back to avoid exiting the process mid-submission; only non-Submitting states dispatch.
+    // D-137: while a picker dialog is open, the back channel is additionally disabled, so
+    // Esc / system back reaches only the dialog layer and the edit page stays open.
     val editFlowBackEnabled = isEditFlowBackEnabled(state)
-    backHandler?.invoke(editFlowBackEnabled) {
+    backHandler?.invoke(editFlowBackEnabled && !editDialogOpen) {
         // P5-04.3 double-fire guard: re-check at dispatch time and only dispatch while the
         // state is still Back-legal, so a repeated back (fast double Esc / double system
         // back) is ignored instead of crashing on (OverviewEmpty, Back).
@@ -271,6 +274,7 @@ fun P503App(
                         } else {
                             null
                         },
+                    onDialogVisibilityChanged = { editDialogOpen = it },
                 )
             is P503AppState.AwaitingConfirmation ->
                 P503ConfirmationScreen(
@@ -328,6 +332,7 @@ fun P503App(
                         } else {
                             null
                         },
+                    onDialogVisibilityChanged = { editDialogOpen = it },
                 )
             is P503AppState.DomainRejected ->
                 P503EditScreen(
@@ -348,6 +353,7 @@ fun P503App(
                         } else {
                             null
                         },
+                    onDialogVisibilityChanged = { editDialogOpen = it },
                 )
             is P503AppState.InfrastructureFailure ->
                 when (current.context) {
