@@ -2356,9 +2356,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 4. **desktop-app `DesktopEscBackHandler`**：移除 AWT Dialog 让渡启发式（门证据证明其不可触发，即缺陷机制根因），dispatcher 简化为 `enabled && KEY_PRESSED && VK_ESCAPE → onBack + consume`，其余 pass；组合 API（enabled/onBack）不变；doc 注释重写（enabled 旗标现为 back 通道唯一权威门控，D-137）；移除随之失效的 `java.awt.Dialog`/`java.awt.Window as AwtWindow` 两个 import。
 5. **Android 零代码变更、零语义变化**：`App.kt:94` `BackHandler(enabled, onBack)` 原样；对话框打开期间 back 禁用 → 系统返回由官方 Compose `Dialog` 原生吸收（仅关对话框、草稿保留），二次返回经 `BackHandler` 关编辑页——D-131 §3.5 既有认定，本批使该路径确定性成立，模拟器抽查复验。
 
-**实施规格：** `docs/specs/2026-09-07-d131deskesc-001-dialog-escape-fix-design.md`（状态 proposal；待独立规格评审闭环后由主代理按常设授权批准并翻转 approved）。
+**实施规格：** `docs/specs/2026-09-07-d131deskesc-001-dialog-escape-fix-design.md`（状态 approved，2026-09-07 批准；独立规格评审 APPROVE-with-notes 与冻结哈希登记见下）。
 
-规格冻结 SHA-256：`7B991C0597235161C3FE7BC5ED02A17A98D4CCA4DB22829B438E13D0563F30F1`（2026-09-07 主代理冻结）
+**规格冻结与批准登记（2026-09-07）：** 独立规格评审 **APPROVE-with-notes**（无 P0/P1）：P2-1 冻结登记措辞并入批准翻转闭环；P3-1（§3.1 矩阵缺 Android 硬件 Esc 与桌面无焦点边界两行）登记为「机制蕴含」，复门与模拟器抽查覆盖；P3-2（长按 Esc 键重复 = 对话框关闭后的第二次 Esc）为 ② 延续语义，预期行为；P3-3（状态上报为组合后帧延迟，~1-2 帧窗口）登记为人类尺度不可达；P3-4（进程级 KeyEventDispatcher 跨应用聚焦遗留特性）为非本批范围。用户 2026-09-07「批准」指令授权整批（R-1 规格增量，D-132 先例）。规格 SHA-256（UTF-8+LF 工作副本字节域）：proposal 冻结 `7B991C0597235161C3FE7BC5ED02A17A98D4CCA4DB22829B438E13D0563F30F1`（commit `92b890d`）→ 批准翻转后 `3D3288E206742E14E2F1C7772CEFC3D2BCD311D43AC8F63A39395B9F7FFDF57A`（翻转增量 = 状态行 + §9 登记措辞；§3/§4 冻结构造条款逐字节不变；git blob SHA-1 `76abd10672d47b2971821648a32632a820b75143`）。
 
 **范围：** app-ui（`P503EditScreen.kt`/`P503App.kt`）与 desktop-app（`Main.kt`）两模块三文件为唯一代码触点；android-app 零代码（仅模拟器抽查验证）；docs = 本规格 + 本条登记；测试**零新增**（本批为组合接线，无纯 JVM 测试缝；`dismissOnEscape`/`DesktopEscBackHandler` 迄今仅由桌面键盘人工门覆盖，论证见规格 §5.2）。零 schema（*.sq/*.sqm、v27 与全部迁移）、零 ledger-domain/application/data、零 reducer/事件集/状态机（`isEditFlowBackEnabled`/`isBackDispatchSafe` 本体零改动）、零导航库、零 compose ui-test harness、零新依赖、零 gradle 构建脚本、零 CI、零主题/玻璃、零 `DesktopEscBackHandler` API 变更。
 
