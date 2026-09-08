@@ -2393,3 +2393,37 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **关联决定：** `D-131`（R1 宽容解析先例、R2 选择器与冻结换算/显示语义）、`D-137`（编辑屏结构：根 onPreviewKeyEvent/onDialogVisibilityChanged，本批零改动）。
 
 **实施登记（2026-09-08）：** 实施 11 文件 +463/-15（commit `226fe32`：`ParseManualExpenseOccurredAt.kt` 新文件（四互斥正则 + round-trip + DST_GAP）、`ledger-application/build.gradle.kts` 增 kotlinx-datetime 0.7.1、facade/校验/编辑屏/装配/两组合根注入、`ParseManualExpenseOccurredAtTest` 新 6 用例 + `P503DraftValidationTest` +3 + `P503ReducerTest` +2）。合并评审 **APPROVE**（无 P0/P1/P2；P3 两条记录性意见 F-1 Unicode 空白盲区登记为既有约定、F-2 冗余 runCatching 登记为卫生项，均不构成变更）；三项实施裁决核验成立（闰年向量勘误 `2028-02-29T00:30:00Z` 与机制一致、构造默认参数 fail-fast 且产品路径 R-4 单实例由构造保证、新文件 LF 经 ktlint/归一化无影响）。distinct verifier 8/8 exit 0：`:ledger-application:jvmTest` 376、`:app-ui:jvmTest` 66（61+5）、`:desktop-app:jvmTest` 5、`:android-app:testDebugUnitTest` 7（0 failures/errors，XML 逐文件计数）、ktlintCheck（ledger-application + app-ui）0 违规、`:android-app:compileDebugKotlin`、`project_docs`、规格 SHA-256 与登记终值 `A3BFBE82…` 一致。merge `a721cd0`（`--no-ff`）合入 `main`，push 前 trace `valid:true`，已推送 `origin/main`；**CI run 34193788395 三 job 全绿**。**双端人工门四项全 PASS**（证据 `local/artifacts/d131-desktop-esc/d138-01…07` 桌面、`d138-a01…a09` Android）：①手输 `2026-09-15 08:30` → 继续 → 确认页 `2026-09-15 08:30（UTC+8）＝ 2026-09-15T00:30:00Z`；②无效输入（桌面 `昨天 20:00` 中文向量 / Android `2026/09/15 08:30` ASCII 向量——adb 中文注入不支持，共享解析器中文向量由 376 套件覆盖）→ 冻结错误文案 + 继续被拦；③选择器覆盖错误态写入 ISO 串、错误清除；④D-137 Esc/返回对话框语义零回归。Android APK（a721cd0 组装）SHA-256 `44F95FA17E5D7EA2C245B2C00A66D4F54ED605F779120D92591146363CD0E568`。**D-138 关闭判据 A-1..A-6 全部满足，本批关闭。**
+## D-139 发生时间键入保留缺陷修复批（缺陷 D138TYPING-001）
+
+**状态：** 已登记（2026-09-08）。缺陷 D138TYPING-001 经用户真实设备报告成立（症状原文照录见缺陷登记节）；修复机制与范围冻结（见决定节与范围冻结节）；实施规格 = `docs/specs/2026-09-08-d139-occurred-at-typing-preserve-fix-design.md`（已冻结 approved 2026-09-09：独立评审 REJECT → 处方闭环 → CLOSURE-APPROVE，无新增 P0/P1；冻结 SHA-256 = `8F1C62AB54E03CC3290CD50C258DB8B9075BFB3DD4EC7B8C55D7F2E9FEA2D0DE`，见实施规格节）。实施批即行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**缺陷登记（D138TYPING-001，用户真实设备报告与机制结论）：** 2026-09-08 用户真实设备报告，症状原文照录（verbatim，作为缺陷判据）：「我输入2026-09-15的时候，输入到数字"5"的时候，它会自动补全后面的时间，然后选择2026-09-01的时候，点到"1"的时候，会直接变成2026-08-31和时间编码」。该行为违反 D-138 规格 §2.4 冻结条款「手工键入的文本原样保留在文本框中（不重写为 ISO 串）」：键入途中发生时间文本框被改写为时间编码（含用户观测到的 2026-08-31），手工键入前缀未被原样保留。双端人工门漏检原因：D-138 复门为注入式连发（整串一次性注入，前缀阶段改写在终态断言下不可见）；复门规程改为逐键注入 + 逐键截图。根因：app-ui `P503EditScreen.kt` 的发生时间文本状态为 `remember(draft.occurredAt)` keyed 状态（初值 `draft.occurredAt?.toString() ?: ""`）——parse-on-type 首个有效前缀派发 `UpdateOccurredAt` 时 `draft.occurredAt` 变化，keyed 文本状态被重新初始化为 ISO 串，覆盖用户正在键入的前缀。
+
+**决定（机制冻结，与实施规格一致）：** 冻结三项机制：
+
+1. **发生时间文本状态去除 `draft.occurredAt` key**：改为无 key `remember`，初值保持 `draft.occurredAt?.toString() ?: ""`；主编辑流（Editing）组合实例内键入路径任何情况下不重置文本，手工键入原样保留在文本框中。范围边界：冲突/拒绝流（RequestIdentityConflict/DomainRejected）的 `UpdateOccurredAt` 跨 when 分支转 Editing（`P503Reducer.kt:237-238`/`:263-264`）→ 组合实例重建仍会改写文本，去 key 修不了该路径——登记为遗留缺陷 D138TYPING-002（见遗留缺陷登记节），扩范围与否留用户裁决，不在本批。
+2. **选择器确认条件回写**：确认回调在派发 `onUpdateOccurredAt(instant)` 的同时，`instant != draft.occurredAt` 时把文本写为 `instant.toString()`（等值选择保持当前文本，D-138 §2.4 等值子条款零语义变更；D-138「选择器仍写 ISO 串」显示语义不变）。
+3. **零改动面**：parse-on-type 三分支、Continue 门（`occurredAtTextReconciles`，P503IMPL-Q-001 不变量）、错误/辅助文案、`P503Reducer`、`P503DraftValidation`、`ParseManualExpenseOccurredAt`、facade、组合根、D-137 Esc/back 路径全部零改动。
+
+**实施规格：** `docs/specs/2026-09-08-d139-occurred-at-typing-preserve-fix-design.md`（状态 approved，已冻结 2026-09-09；冻结 SHA-256 = `8F1C62AB54E03CC3290CD50C258DB8B9075BFB3DD4EC7B8C55D7F2E9FEA2D0DE`）。哈希链续接：上一环 = D-138 条目登记终值 `A3BFBE821540C233657818B51471C0603AAECFF708968BA8CA425A436CB7D86B`（D-138 实施期勘误，D-138 实施登记以该终值核验规格一致性）；本批规格冻结 SHA-256 自该环续链登记。
+
+**范围冻结：** 仅 app-ui `P503EditScreen.kt` 发生时间文本状态机制；零 schema 变更、零新依赖、零解析器语义变化、零 reducer/事件集/Continue 门变更、零 Esc/back 行为变更、零 CI/主题/玻璃变更、`.external/` 零触碰。
+
+**遗留缺陷登记（D138TYPING-002，不在本批）：** 冲突/拒绝流（RequestIdentityConflict/DomainRejected）编辑屏键入前缀首次有效后，reducer 跨分支转 Editing（`P503Reducer.kt:237-238`/`:263-264`）→ when 分支切换 → `P503EditScreen` 组合实例重建 → 文本按初值从新 draft.occurredAt 显示 ISO 串，与 D138TYPING-001 同类症状；去 key 修不了（根因是实例重建非 keyed remember）；修复需宿主级状态提升或 reducer 重设计，超出本批冻结授权；本批以记录性人工门观察项照实登记现状，扩范围与否与修复路线留用户裁决，裁决后按既有规格增量路由另批执行。
+
+**验收与人工门计划（镜像实施规格 §4/§5）：** 受影响既有套件全绿、ktlintCheck 0 违规、`:android-app:compileDebugKotlin` exit 0、project_docs 通过；双端人工门改逐键注入 + 逐键截图，向量含用户两原始向量（键入 `2026-09-15` 至「5」、键入 `2026-09-01` 至「1」，逐键断言文本框保持手输前缀、不被改写为 ISO 串或回退日期）与 D-137 Esc 抽查。
+
+**关闭判据：** 验收节全部通过 + 独立实施评审通过 + distinct verifier 复验 + 同提交 CI 绿 → D138TYPING-001 关闭、本批关闭。
+
+**批准登记（2026-09-08）：** 本批方向已获用户批级批准（2026-09-08，「批准 D-139 修复批（缺陷登记 + 规格增量 + 独立评审 + 实施 + 复验 + 双端人工门 + 合入）」）。规格已翻转 approved 并回填冻结 SHA-256（2026-09-09，主代理）；实施登记待实施完成后由主代理补齐。
+
+**实施登记（占位结构，待实施后由主代理补登）：**
+
+1. **实施提交与触达文件：** 待实施后登记（冻结范围 = 仅 `P503EditScreen.kt` 发生时间文本状态机制）。
+2. **独立实施评审：** 待评审后登记结论与 finding 闭环。
+3. **distinct verifier：** 待验证后登记命令清单与结果（命令集 = 验收节所列）。
+4. **merge/push/CI：** 待主代理合入后登记。
+5. **双端人工门逐键向量结果：** 待复验后登记（含证据相对路径）。
+6. **关闭判定：** 待上述全部通过后登记。
+
+**关联决定：** `D-138`（被违反的 §2.4 冻结条款与解析器/Continue 门冻结语义）、`D-137`（Esc/back 路径零改动前提与人工门先例）、`D-131`（发生时间选择器与「选择器写 ISO 串、手输原样保留」显示语义来源）。
