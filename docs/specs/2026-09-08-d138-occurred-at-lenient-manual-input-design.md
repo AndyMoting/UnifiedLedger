@@ -1,6 +1,6 @@
 # 发生时间手工输入宽容解析批 D-138（设计规格）
 
-**状态：** proposal — 本文件为发生时间手工输入宽容解析批（D-138）的实施规格草案，也是本次派发（part 1 of 2）的唯一写入物；配套决定条目（part 2）由另一派发单独写入，不属本文件。等待独立评审与用户批准；冻结前不授权任何代码实施。批准后按既有实施路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理验收）。
+**状态：** approved — 本文件为发生时间手工输入宽容解析批（D-138）的**已批准实施规格**。批次由用户 2026-09-08 发起并授权（手输友好时间诉求 + 范围裁决「不要支持"昨天 20:00"这种相对表达」+ 继续指令）；独立规格评审 2026-09-08 出具 REJECT（P1-1/P1-2 必改 + P2-1..P2-5 + P3-1..P3-4 处方）→ 处方闭环 → 同评审 CLOSURE-APPROVE（4 项 P3 文档残留 R-A..R-D 随批准翻转折入）。批次决定与冻结哈希登记见 `docs/DECISIONS.md` **D-138**。批准后按既有实施路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理验收）。
 
 ## Authority And Boundary
 
@@ -59,7 +59,7 @@ class ParseManualExpenseOccurredAt {
 - **空白与内部空白（冻结）**：仅 trim 两端 ASCII 空白（space/tab/CR/LF）；trim 后空串 → `Invalid(INVALID_FORMAT)`；除 (b)/(c) 语法中唯一允许的单个空格分隔符外，出现任何其他 ASCII 空白（如双空格）→ `Invalid(INVALID_FORMAT)`。调用方（编辑屏）约定在解析前拦截空白文本（既有 missing-field 路径），此返回仅为总函数性防御。
 - **年补齐（格式 (c) 用）**：补齐年 = `clock.now()` 在 Asia/Shanghai 的本地年（`clock.now().toLocalDateTime(TimeZone.of("Asia/Shanghai")).year`）——墙钟输入与补齐同在 Asia/Shanghai 墙钟帧内，此为文档化选择。
 - **换算（冻结，与选择器同款语义）**：所有墙钟格式先构造 `LocalDateTime`，再按固定 `TimeZone.of("Asia/Shanghai")`（与 `occurredAtTimeZone` 同值，+08:00）执行选择器同款 round-trip 一致性检查（`occurredAtFromLocalDateTime` 结构：`toInstant` 后回推 `toLocalDateTime` 逐字段相等才接受）：一致 → `Valid(instant)`；不一致（本地时刻不存在，即历史 DST 空档）→ `Invalid(DST_GAP)`（fail-closed，绝不猜测、绝不静默偏移）。
-- **DST 空档路径的覆盖方式（结构保证）**：Asia/Shanghai 自 1991 年起无夏令时，1991 年后墙钟到 instant 的换算为双射，`DST_GAP` 对现代日期不可达；该路径由结构与测试双重覆盖：(i) 结构上，拒绝是 round-trip 检查的内建结果而非特判分支，与选择器实现同构（同一 zone 数据源，任何时区数据变化对两侧同等生效，不存在单侧漂移）；(ii) 测试上，冻结既有已测量日期向量（OccurredAtPickerTest.kt:33-36 已冻结）：`1986-05-04 02:30` 与 `1991-04-14 02:30` 解析为 `Invalid(DST_GAP)`（见 §2.3 拒绝向量）；邻近接受向量同日 `01:30`/`03:30`（选择器侧先例 OccurredAtPickerTest.kt:40-48）同为解析器测试集。UTC 格式（(a)）无 gap 概念，天然不受影响。
+- **DST 空档路径的覆盖方式（结构保证）**：Asia/Shanghai 自 1991 年起无夏令时，1991 年后墙钟到 instant 的换算为双射，`DST_GAP` 对现代日期不可达；该路径由结构与测试双重覆盖：(i) 结构上，拒绝是 round-trip 检查的内建结果而非特判分支，与选择器实现同构（同一 zone 数据源，任何时区数据变化对两侧同等生效，不存在单侧漂移）；(ii) 测试上，冻结既有已测量日期向量（OccurredAtPickerTest.kt:33-36 已冻结）：`1986-05-04 02:30` 与 `1991-04-14 02:30` 解析为 `Invalid(DST_GAP)`（见 §2.2 拒绝向量）；邻近接受向量同日 `01:30`/`03:30`（选择器侧先例 OccurredAtPickerTest.kt:40-48）同为解析器测试集。UTC 格式（(a)）无 gap 概念，天然不受影响。
 - **实现落点（冻结）**：换算规则在 app-ui（`OccurredAtPicker.kt`，选择器零改动）与 ledger-application（新解析器）各有一份实现——模块边界所致，故意重复；两侧 DST 向量（本节冻结日期）为一致性纽带；未来若抽取共享 helper 需触碰 D-131 已交付代码，另立批次。
 
 ### 2.2 接受格式（冻结，附示例）
@@ -73,7 +73,7 @@ class ParseManualExpenseOccurredAt {
 
 格式细则（冻结）：
 
-- 月/日必须两位数（`MM`/`DD` 零填充；`2026-9-5` 拒绝）；年必须四位数；时允许 `H`/`HH`，分/秒必须两位数。
+- 月/日必须两位数（`MM`/`DD` 零填充；`2026-9-5` 拒绝）；年必须四位数；时允许 `H`/`HH`（格式 (a) 必须 `HH`，单位数小时仅限 (b) 墙钟格式），分/秒必须两位数。
 - (a) 仅接受 `Z` 结尾；不带 `Z` 的 `T` 分隔形式属于 (b) 墙钟格式；(b) 不接受 `Z` 结尾（`2026-09-15 08:30Z` 拒绝）。小数秒、其他偏移（如 `+08:00`）不在任何格式内（拒绝）。
 - (d) 与 (c) 的 `MM-DD` 均取 00:00 墙钟开始时刻并走 §2.1 换算。
 
@@ -143,7 +143,7 @@ class ParseManualExpenseOccurredAt {
 
 资源旗标遵循 `docs/CONTRIBUTING.md`：本机 16 GB 主机串行、单 worker、1 GB heap（`GRADLE_OPTS=-Xmx1024m`、`-Dkotlin.daemon.jvmargs=-Xmx1024m`、`--no-daemon`、`--max-workers=1`、`--rerun-tasks`、`--warning-mode all`），验证前后 `.\gradlew.bat --stop`，一次只运行一个命令。受影响集合（按顺序）：
 
-- `:ledger-application:jvmTest`：新 `ParseManualExpenseOccurredAtTest` 全矩阵（含 §3.1 冻结矩阵五向量与 DST 冻结日期）+ 既有回归。
+- `:ledger-application:jvmTest`：新 `ParseManualExpenseOccurredAtTest` 全矩阵（含 §3.1 冻结矩阵六向量与 DST 冻结日期）+ 既有回归。
 - `:app-ui:jvmTest`（既有 61 用例 + 新增 Δ）：`P503DraftValidationTest` 新增用例、`P503ReducerTest` 新增与不回归。
 - `:desktop-app:jvmTest`（既有 5 用例）：桌面侧回归（新增测试不涉及桌面源集）。
 - `:android-app:testDebugUnitTest`（既有 7 用例）：Android 侧回归。
@@ -181,9 +181,9 @@ class ParseManualExpenseOccurredAt {
 
 批准后（本文件由 proposal 翻转为 approved，批准记录由主代理按既有流程写入）：
 
-1. **决定条目（part 2）**：配套派发在 `docs/DECISIONS.md` 登记 **D-138**，内容 = 本规格冻结机制（§2 四项）、范围（§1.2）与验收（§5）——该写入不属本文件、不属本次派发。
+1. **决定条目（part 2，已完成）**：配套派发已在 `docs/DECISIONS.md` 登记 **D-138**，内容 = 本规格冻结机制（§2 四项）、范围（§1.2）与验收（§5）；冻结哈希对账（C289E28D… → F1141AAE… → 批准后终值）见该条目。
 2. **对 D-131 §3.2 文本兜底接受集的窄幅超限声明（D-131 §7 风格）**：在手工输入发生时间文本通道范围内，D-131 §3.2 文本输入兜底（`Instant.parse` 全接受集）中的偏移（`+08:00` 等）与小数秒形式由接受改为拒绝（不在本规格格式 (a)–(d) 内），其余保留——格式 (a) 覆盖 `YYYY-MM-DDTHH:mm(:ss)?Z`（含秒与无秒），选择器产物（整分钟 ISO 串）逐字节保持解析（P503IMPL-Q-001）。该窄幅超限随本批登记同步写入 DECISIONS 条目范围段。
-3. **实施批另开（待执行）**：独立 worktree、单一 bounded writer、独立评审与主代理最终验收；实施时完成 §4 全部验证与人工门并登记 R-2 向量与 R-3 固定时钟钩子。
+3. **实施批另开（待执行）**：独立 worktree、单一 bounded writer、独立评审与主代理最终验收；实施时完成 §4 全部验证与人工门并登记 R-2 向量与 R-3 固定时钟钩子。本文件的批准翻转（proposal→approved）与评审残留 R-A..R-D 折入已于 2026-09-08 完成（git blob 见 DECISIONS 条目哈希链）。
 4. 批准与登记不触发提交、推送或 CI 变更；push 由主代理按既有授权流程执行。
 
 ## 边界断言（本批不含）
