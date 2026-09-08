@@ -2369,3 +2369,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **关联决定：** `D-131`（机制来源、§3.5 权威条款与 A8 判据）、`D-126`（裸 Esc 既有语义）、`D-136`（本地 APK 组装口径先例）。
 
 **实施登记（2026-09-07）：** 实施提交 `048efcf`（三文件：`P503EditScreen.kt` 上报回调 + 根 Escape 关闭、`P503App.kt` `editDialogOpen` 门控、`Main.kt` dispatcher 简化 + AWT import 清理）；独立合并评审对冻结候选出具 REJECT（仅 2 处 P1 ktlint：import ASCII 排序、链式续行），原 writer 按处方回修为 `ca24fd9`，同评审 delta 复查 **CLOSURE-APPROVE**。distinct verifier 六命令全 exit 0：`:app-ui:jvmTest` 61 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7（XML 逐文件计数，0 failures）、`ktlintCheck`（app-ui + desktop-app）0 违规、`:android-app:compileDebugKotlin` exit 0、`project_docs` exit 0；主代理关键 diff 复查确认（dismissOnEscape/派发体/API 不变量逐字节保持）。merge `0dc79c0`（`--no-ff`）合入 `main`，push 前 trace `valid:true`（463 commits），已推送 `origin/main`；CI run 34105953528 三 job 全绿。**桌面复门**（规程全项，独占输入、逐帧核验）：A8-1 PASS、A8-2 PASS、③ PASS（`2026-09-15T00:30:00Z` 精确）、② PASS——复门尝试 1 因并发人工输入污染作废（详见判定记录），尝试 2 全 PASS；**Android 模拟器抽查**：AVD `ul_p6_api37`，本地 assembleDebug exit 0（APK SHA-256 `48FADF06…`），日期对话框返回仅关对话框草稿保留、TimePicker 返回同形、无对话框返回关编辑页，全 PASS（IME 首次返回收起为标准 Android 行为，非缺陷）。**D131DESKESC-001 就此关闭，D-131 A8 桌面人工门关闭**；证据：`local/artifacts/d131-desktop-esc/gate-verdict-2026-09-07.md`（复门与抽查节）、`recheck2-*` 截图。阶段 6 剩余 = D-131 遗留项 3（真机确认 + targetSdk 37 裁决，用户保留）。
+
+## D-138 发生时间手工输入宽容解析批：手输友好时间格式（仅绝对格式，禁相对表达）
+
+**状态：** 已登记（2026-09-08）。
+
+**背景/授权：** 用户请求手输友好时间（"我如果就是想手写输入这样的呢？"）；用户裁决原文（verbatim，作为冻结边界）：「不要支持"昨天 20:00"这种相对表达」；D-131 R1 金额宽容解析为同类先例；主代理按既有批次流程执行。
+
+**机制摘要（冻结）：** ledger-application 新增纯解析器 `ParseManualExpenseOccurredAt`（sealed Result Valid/Invalid + `OccurredAtFormatError{INVALID_FORMAT,DST_GAP}`，镜像 ParseManualExpenseAmount）；接受格式（a）ISO 8601 instant `YYYY-MM-DDTHH:mm(:ss)?Z`（超集，保 P503IMPL-Q-001）、（b）`YYYY-MM-DD[ 或 T]HH:mm(:ss)`（允许单位数小时）、（c）省年 `MM-DD HH:mm(:ss)`/`MM-DD`（按 LedgerClock 补年）、（d）`YYYY-MM-DD`（当日 00:00 本地）；相对/自然语言表达与一切其他 locale 格式一律 Invalid（用户裁决）；墙钟输入按固定 Asia/Shanghai 走选择器同款 round-trip 换算，DST 空档 Invalid(DST_GAP) fail-closed；parse-on-type 三条分支（空白→既有 missing 路径；有效→派发既有 `UpdateOccurredAt`（选择器同通道，reducer 零改动）；无效非空→不派发 + 内联错误文案冻结「无法识别的时间格式，示例：2026-09-15 08:30 或 2026-09-15T00:30:00Z」）；Continue 门 `occurredAtTextReconciles` 换用同一解析器实例（P503IMPL-Q-001 不变量保持）；显示语义不变（选择器仍写 ISO 串、手输原样保留）；零 schema、零 ledger-domain、零 Esc/back 行为（D-137 不动）、零新依赖。
+
+**实施规格：** `docs/specs/2026-09-08-d138-occurred-at-lenient-manual-input-design.md`（状态 proposal；冻结 SHA-256 占位由主代理在规格冻结/提交时填入）。规格冻结 SHA-256：`C289E28D4A5E7EFF470F92010B893B9AF5DE4ED012485F8A82960C654B68C795`（2026-09-08 主代理冻结，UTF-8+LF 工作副本字节域）
+
+**范围：** ledger-application（新解析器文件）+ app-ui（facade/装配/校验/编辑屏接线）+ 两组合根注入；测试 = 新 `ParseManualExpenseOccurredAtTest`（格式矩阵、相对表达拒绝、固定时钟年补齐、ISO superset、DST gap）+ `P503DraftValidationTest`/`P503ReducerTest` 新增；零 schema（v27 不变）、零 reducer 状态机/事件集变更、零依赖、零 CI、零主题/玻璃、零 Esc/back。
+
+**验证与人工门计划：** `:ledger-application:jvmTest`、`:app-ui:jvmTest`（61+Δ）、`:desktop-app:jvmTest` 5、`:android-app:testDebugUnitTest` 7、ktlintCheck（ledger-application + app-ui）、`:android-app:compileDebugKotlin`、project_docs；双端人工门四项（键入 `2026-09-15 08:30` → 继续 → 确认页 `2026-09-15 08:30（UTC+8）＝ 2026-09-15T00:30:00Z`；键入 `昨天 20:00` → 冻结错误文案 + 继续被拦；选择器流程不回归；D-137 Esc 行为不受影响）。
+
+**关闭判据：** A-1..A-6（套件含新增全绿、ktlint 0、compile、docs、双端人工门四项 PASS、独立评审 + distinct verifier + 同提交 CI 绿）→ 本批关闭。
+
+**关联决定：** `D-131`（R1 宽容解析先例、R2 选择器与冻结换算/显示语义）、`D-137`（编辑屏结构：根 onPreviewKeyEvent/onDialogVisibilityChanged，本批零改动）。
