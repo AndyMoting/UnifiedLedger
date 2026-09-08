@@ -95,7 +95,8 @@ fun P503EditScreen(
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
 ) {
-    var occurredAtText by remember(draft.occurredAt) { mutableStateOf(draft.occurredAt?.toString() ?: "") }
+    // D-139 (spec 2.1): the text state carries no key — typing never resets it; the picker path syncs it explicitly (spec 2.2).
+    var occurredAtText by remember { mutableStateOf(draft.occurredAt?.toString() ?: "") }
     var occurredAtParseError by remember { mutableStateOf(false) }
     var datePickerOpen by remember { mutableStateOf(false) }
     var timePickerOpen by remember { mutableStateOf(false) }
@@ -337,6 +338,10 @@ fun P503EditScreen(
                                     val instant = occurredAtFromLocalDateTime(local)
                                     occurredAtParseError = instant == null
                                     if (instant != null) {
+                                        // D-139 (spec 2.2): the text state has no key, so the picker product must be synced explicitly; an equal selection keeps the current text (D-138 spec 2.4).
+                                        if (instant != draft.occurredAt) {
+                                            occurredAtText = instant.toString()
+                                        }
                                         onUpdateOccurredAt(instant)
                                     }
                                 }
