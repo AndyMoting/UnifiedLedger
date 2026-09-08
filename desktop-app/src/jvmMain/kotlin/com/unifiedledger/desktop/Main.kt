@@ -19,6 +19,7 @@ import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryManualExpenseOptions
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
@@ -289,6 +290,7 @@ internal fun buildLedgerGraph(
             currency = currency,
             catalog = catalog,
             parseAmount = ParseManualExpenseAmount(),
+            parseOccurredAt = ParseManualExpenseOccurredAt(),
             optionsProvider = QueryManualExpenseOptions(ledgerId, catalog),
             queryCurrentState = queryCurrentState,
             resolveCommitStatus = resolver,

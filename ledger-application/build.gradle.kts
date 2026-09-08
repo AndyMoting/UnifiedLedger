@@ -32,6 +32,11 @@ kotlin {
         commonMain.dependencies {
             api(project(":ledger-domain"))
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+            // D-138: the lenient occurred-at parser converts wall-clock input through the
+            // fixed Asia/Shanghai zone (spec 2.1). The coordinate is already gated by D-131
+            // section 3.1 and present in the app-ui resolution graph; this declares it for
+            // the application layer instead of adding a new dependency.
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
         }
 
         commonTest.dependencies {

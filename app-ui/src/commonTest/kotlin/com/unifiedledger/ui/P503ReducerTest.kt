@@ -87,6 +87,43 @@ class P503ReducerTest {
         vararg events: P503UiEvent,
     ): P503AppState = events.fold(state) { current, event -> reducer.reduce(current, event) }
 
+    // D-138: 手输文本解析出的 instant 沿既有 UpdateOccurredAt 写通道替换 draft.occurredAt
+    // 规格 §2.3；reducer 零改动，文本→instant 解析在解析器/编辑屏侧覆盖。
+    @Test
+    fun typingOccurredAtReplacesTheDraftInstant() {
+        val typing = Instant.parse("2026-09-15T00:30:00Z")
+        val editing =
+            assertIs<P503AppState.Editing>(
+                reduceFrom(
+                    P503AppState.OverviewEmpty(emptyState),
+                    P503UiEvent.StartNewExpense,
+                    P503UiEvent.UpdatePaymentAccount(paymentAccountId),
+                    P503UiEvent.UpdateCategory(categoryId),
+                    P503UiEvent.UpdateAmount("35.80"),
+                    P503UiEvent.UpdateOccurredAt(typing),
+                ),
+            )
+        assertEquals(typing, editing.draft.occurredAt)
+    }
+
+    // D-138: 文本→选择器→文本 顺序组合下最终 instant 为最后一次写入（不回归）。
+    @Test
+    fun typedPickerTypedOccurredAtSequenceKeepsTheLastInstant() {
+        val typed = Instant.parse("2026-09-15T00:30:00Z")
+        val picked = Instant.parse("2026-10-01T02:00:00Z")
+        val typedAgain = Instant.parse("2026-10-02T03:04:00Z")
+        val editing =
+            assertIs<P503AppState.Editing>(
+                reduceFrom(
+                    P503AppState.Editing(fullDraft(), requestId1),
+                    P503UiEvent.UpdateOccurredAt(typed),
+                    P503UiEvent.UpdateOccurredAt(picked),
+                    P503UiEvent.UpdateOccurredAt(typedAgain),
+                ),
+            )
+        assertEquals(typedAgain, editing.draft.occurredAt)
+    }
+
     @Test
     fun emptyToEditToAwaitingToCreatedThenAuthoritativeRefresh() {
         val state =

@@ -5,6 +5,7 @@ import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseOptionsProvider
 import com.unifiedledger.application.ManualExpenseRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.SummarizeLedgerActivity
@@ -22,6 +23,10 @@ class P503LedgerFacade(
     val currency: CurrencyUnit,
     val catalog: LedgerCatalog,
     val parseAmount: ParseManualExpenseAmount,
+    // D-138: lenient occurred-at parser, injected alongside parseAmount (spec 3). The
+    // default exists only so the Android startup test keeps constructing the facade
+    // unchanged; product roots always inject the real instance.
+    val parseOccurredAt: ParseManualExpenseOccurredAt = ParseManualExpenseOccurredAt(),
     val optionsProvider: ManualExpenseOptionsProvider,
     val queryCurrentState: QueryLedgerCurrentState,
     val resolveCommitStatus: ResolveManualExpenseCommitStatus,
