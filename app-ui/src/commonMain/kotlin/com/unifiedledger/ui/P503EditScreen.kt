@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseOptions
+import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -84,6 +85,7 @@ fun P503EditScreen(
     validation: P503DraftValidation,
     currency: CurrencyUnit,
     ledgerClock: LedgerClock,
+    parseOccurredAt: ParseManualExpenseOccurredAt,
     onUpdateAmount: (String) -> Unit,
     onUpdatePaymentAccount: (AccountId) -> Unit,
     onUpdateCategory: (CategoryId) -> Unit,
@@ -220,16 +222,19 @@ fun P503EditScreen(
             isError = occurredAtParseError || errors.missingOccurredAt,
             supportingMessage =
                 when {
-                    occurredAtParseError -> "时间格式无效"
+                    occurredAtParseError -> "无法识别的时间格式，示例：2026-09-15 08:30 或 2026-09-15T00:30:00Z"
                     errors.missingOccurredAt -> "请输入发生时间"
-                    else -> "ISO 8601，如 2026-01-15T00:30:00Z"
+                    else -> "示例：2026-09-15 08:30 或 2026-09-15T00:30:00Z"
                 },
             onTextChange = { newText ->
                 occurredAtText = newText
-                val parsed = runCatching { Instant.parse(newText) }.getOrNull()
-                occurredAtParseError = parsed == null && newText.isNotBlank()
-                if (parsed != null) {
-                    onUpdateOccurredAt(parsed)
+                // D-138 parse-on-type (spec 2.3): lenient parsing with the same parser and
+                // clock instances as the Continue gate; blank keeps the missing-field path,
+                // invalid non-blank text never dispatches and surfaces the inline error.
+                val parsed = parseOccurredAt.parse(newText, ledgerClock)
+                occurredAtParseError = parsed is ParseManualExpenseOccurredAt.Result.Invalid && newText.isNotBlank()
+                if (parsed is ParseManualExpenseOccurredAt.Result.Valid) {
+                    onUpdateOccurredAt(parsed.instant)
                 }
             },
             onPickerEntryClick = { datePickerOpen = true },

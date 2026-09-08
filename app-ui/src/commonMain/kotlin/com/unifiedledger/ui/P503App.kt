@@ -75,7 +75,7 @@ fun P503App(
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
 ) {
     val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency) }
-    val validation = remember(facade) { P503DraftValidation(facade.parseAmount) }
+    val validation = remember(facade) { P503DraftValidation(facade.parseAmount, facade.parseOccurredAt, facade.ledgerClock) }
     val options = remember(facade) { facade.optionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -248,6 +248,7 @@ fun P503App(
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
+                    parseOccurredAt = facade.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
@@ -316,6 +317,7 @@ fun P503App(
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
+                    parseOccurredAt = facade.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
@@ -341,6 +343,7 @@ fun P503App(
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
+                    parseOccurredAt = facade.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
