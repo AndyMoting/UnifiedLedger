@@ -2430,7 +2430,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-140 冲突/拒绝流键入保留修复批（缺陷 D138TYPING-002）
 
-**状态：** 已登记（2026-09-09）。缺陷 D138TYPING-002 系 D-139 批独立评审发现并登记的遗留缺陷（见缺陷登记节），修复批经用户批级批准（2026-09-09，「批准D138TYPING-002」，见批准登记节）；修复路线取 D-139 规格 §2.6 所列「宿主级状态提升」选项（reducer 零改动）；实施规格 = `docs/specs/2026-09-09-d140-conflict-typing-preserve-design.md`（已冻结 approved 2026-09-09：独立评审 APPROVE，P1-1 与 P2-1..P2-5 文档级处方已在冻结前折入，机制本体无 P0/P1 阻断；冻结 SHA-256 = `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`，见实施规格节）；实施批即行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+**状态：** 已关闭（2026-09-09）。缺陷 D138TYPING-002 系 D-139 批独立评审发现并登记的遗留缺陷（见缺陷登记节），经 D-140 批修复并双端逐键复验关闭（见实施登记节）；修复批经用户批级批准（2026-09-09，「批准D138TYPING-002」，见批准登记节）；修复路线取 D-139 规格 §2.6 所列「宿主级状态提升」选项（reducer 零改动）；实施规格 = `docs/specs/2026-09-09-d140-conflict-typing-preserve-design.md`（已冻结 approved 2026-09-09：独立评审 APPROVE，P1-1 与 P2-1..P2-5 文档级处方已在冻结前折入，机制本体无 P0/P1 阻断；冻结 SHA-256 = `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`，见实施规格节）；实施批即行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
 
 **缺陷登记（D138TYPING-002，D-139 批独立评审 P0-1 发现）：** 缺陷来源于 D-139 批独立评审的 P0-1 发现；登记依据 = D-139 条目「遗留缺陷登记（D138TYPING-002，不在本批）」节原文（`docs/DECISIONS.md:2412`，基线 `68312e8`；D-139 规格 §2.6 与 §2.5 向量 8 同为该现状的照实登记）。机制（与该登记一致）：RequestIdentityConflict/DomainRejected 两态的 `UpdateOccurredAt` 跨 when 分支转 Editing（`P503Reducer.kt:237-238`/`:263-264`）→ when 分支切换 → `P503EditScreen` 组合实例重建 → 文本按初值从新 `draft.occurredAt` 显示 ISO 串，与 D138TYPING-001 同类症状；去 key 修不了（根因是实例重建，非 keyed remember）。
 
@@ -2452,13 +2452,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **批准登记（2026-09-09）：** 本批获用户批级批准，用户指令原文照录（verbatim）：「批准D138TYPING-002」。实施批按既有批次路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
 
-**实施登记（待实施后由主代理补登）：** 按 D-139 条目实施登记形状预留六项占位；本批尚未实施，以下各项无一完成，全部照实待登记：
+**实施登记（2026-09-09，主代理补登；全部通过）：**
 
-1. **实施提交与触达文件：** 待实施后由主代理补登。
-2. **独立实施评审结论：** 待评审后由主代理补登。
-3. **distinct verifier 命令集结果：** 待验证后由主代理补登。
-4. **merge/push/CI 证据：** 待实施合入后由主代理补登。
-5. **双端人工门逐键向量结果：** 待验证后由主代理补登。
-6. **关闭判定：** 待全部判据满足后由主代理补登。
+1. **实施提交与触达文件：** 实施提交 `47c072d`（代码：`P503App.kt` + `P503EditScreen.kt`，+14/-4：宿主 hoisted 状态、dispatch 漏斗 `StartNewExpense` 重置、三调用点接线、签名两参数、两写通道改 setter）；登记提交 `572fc87`（规格冻结 approved + 本条目）；合并提交 `c2305fc`。
+2. **独立实施评审结论：** APPROVE（同评审 delta 复查，零 P0/P1/P2；`current.draft` 适配与规格「按各分支当前 draft 求值」语义一致核验通过；冻结哈希 `CE817EC9…` 独立复算一致）。
+3. **distinct verifier 命令集结果：** 12 条命令全 exit 0；A-1 = `:app-ui:jvmTest` 66 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7 全绿（`--rerun-tasks`，JUnit XML 汇总，零增删）；A-2 = `:app-ui:ktlintCheck` 零告警（报告工件生成时间晚于源码 mtime 且为空）；A-3 = `:android-app:compileDebugKotlin` exit 0（签名变更调用点遗漏的 R-3 编译门实际生效）；A-4 = `project_docs` exit 0。
+4. **merge/push/CI 证据：** `c2305fc` 推送 origin/main；CI run `34366379090` 三 job（Python tests / Kotlin tests / Android compile）全绿（25m17s），同提交聚合门证据成立。
+5. **双端人工门逐键向量结果：** 桌面 1-8 全 PASS（d140-01…18）+ Android 1-8 全 PASS（d140-a01…a07，APK SHA-256 `3EB74BF0…`，emulator-5680 高位端口 + 5038 隔离 server 全程，用户 MuMu 零触碰）；向量 9 记录性观察双端照实登记（冲突/拒绝流演示库不可达——§2.5 证据链，机制等价向量 4 覆盖）。**偏差登记**：桌面向量 6 因宿主进程持续锁写剪贴板（Set-Clipboard 两次 ExternalException，用户剪贴板内容从未被覆盖）改用 ASCII locale 拒绝向量 `2026/09/15 08:30` 逐键（Android 同款先例；中文向量 `昨天 20:00` 由 app-ui 66 套件断言 Invalid）。判定与证据：`local/artifacts/d131-desktop-esc/d140-gate-verdict-2026-09-09.md` 及 `d140-*` 截图（本地存证）。
+6. **关闭判定：** A-1..A-6 全部通过 → **D138TYPING-002 关闭、D-140 批关闭**。冲突/拒绝流修复正确性由「机制等价（向量 4，同一 hoisted 状态同一恢复路径）+ 源码机制论证」保证，覆盖边界照实登记于规格 §2.5。
 
 **关联决定：** `D-139`（缺陷来源与遗留缺陷登记）、`D-138`（被违反/被恢复的 §2.4 冻结条款）、`D-137`（Esc 零改动前提与人工门先例）。
