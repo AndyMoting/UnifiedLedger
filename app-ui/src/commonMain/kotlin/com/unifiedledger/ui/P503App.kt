@@ -83,8 +83,12 @@ fun P503App(
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
     var statusCheckInFlight by remember { mutableStateOf(false) }
     var editDialogOpen by remember { mutableStateOf(false) }
+    // D-140 (spec 2.1): 键入文本宿主级提升；null = 未初始化，显示按 draft 派生。
+    var hoistedOccurredAtText by remember { mutableStateOf<String?>(null) }
 
     fun dispatch(event: P503UiEvent) {
+        // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。
+        if (event is P503UiEvent.StartNewExpense) hoistedOccurredAtText = null
         state = reducer.reduce(state, event).also { latestState.value = it }
     }
 
@@ -253,6 +257,8 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = {
                         dispatchCurrentP503Action(current, latestState.value, {
                             // requestId single rule (spec 7.4): allocate unconditionally when the
@@ -322,6 +328,8 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = null,
                     banner = {
                         P503ConflictBanner(
@@ -348,6 +356,8 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = null,
                     banner = { P503RejectedBanner() },
                     onClose =
