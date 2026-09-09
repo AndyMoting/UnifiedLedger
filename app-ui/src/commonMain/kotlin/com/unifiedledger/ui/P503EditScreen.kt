@@ -90,13 +90,13 @@ fun P503EditScreen(
     onUpdatePaymentAccount: (AccountId) -> Unit,
     onUpdateCategory: (CategoryId) -> Unit,
     onUpdateOccurredAt: (Instant) -> Unit,
+    occurredAtText: String,
+    onOccurredAtTextChange: (String) -> Unit,
     onContinue: (() -> Unit)?,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
 ) {
-    // D-139 (spec 2.1): the text state carries no key — typing never resets it; the picker path syncs it explicitly (spec 2.2).
-    var occurredAtText by remember { mutableStateOf(draft.occurredAt?.toString() ?: "") }
     var occurredAtParseError by remember { mutableStateOf(false) }
     var datePickerOpen by remember { mutableStateOf(false) }
     var timePickerOpen by remember { mutableStateOf(false) }
@@ -228,7 +228,7 @@ fun P503EditScreen(
                     else -> "示例：2026-09-15 08:30 或 2026-09-15T00:30:00Z"
                 },
             onTextChange = { newText ->
-                occurredAtText = newText
+                onOccurredAtTextChange(newText)
                 // D-138 parse-on-type (spec 2.3): lenient parsing with the same parser and
                 // clock instances as the Continue gate; blank keeps the missing-field path,
                 // invalid non-blank text never dispatches and surfaces the inline error.
@@ -340,7 +340,7 @@ fun P503EditScreen(
                                     if (instant != null) {
                                         // D-139 (spec 2.2): the text state has no key, so the picker product must be synced explicitly; an equal selection keeps the current text (D-138 spec 2.4).
                                         if (instant != draft.occurredAt) {
-                                            occurredAtText = instant.toString()
+                                            onOccurredAtTextChange(instant.toString())
                                         }
                                         onUpdateOccurredAt(instant)
                                     }
