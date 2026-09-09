@@ -2427,3 +2427,38 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **关闭判定：** A-1..A-6 全部通过 → **D138TYPING-001 关闭、D-139 批关闭**。遗留 D138TYPING-002 保持登记，扩范围与否与修复路线留用户裁决。
 
 **关联决定：** `D-138`（被违反的 §2.4 冻结条款与解析器/Continue 门冻结语义）、`D-137`（Esc/back 路径零改动前提与人工门先例）、`D-131`（发生时间选择器与「选择器写 ISO 串、手输原样保留」显示语义来源）。
+
+## D-140 冲突/拒绝流键入保留修复批（缺陷 D138TYPING-002）
+
+**状态：** 已登记（2026-09-09）。缺陷 D138TYPING-002 系 D-139 批独立评审发现并登记的遗留缺陷（见缺陷登记节），修复批经用户批级批准（2026-09-09，「批准D138TYPING-002」，见批准登记节）；修复路线取 D-139 规格 §2.6 所列「宿主级状态提升」选项（reducer 零改动）；实施规格 = `docs/specs/2026-09-09-d140-conflict-typing-preserve-design.md`（已冻结 approved 2026-09-09：独立评审 APPROVE，P1-1 与 P2-1..P2-5 文档级处方已在冻结前折入，机制本体无 P0/P1 阻断；冻结 SHA-256 = `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`，见实施规格节）；实施批即行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**缺陷登记（D138TYPING-002，D-139 批独立评审 P0-1 发现）：** 缺陷来源于 D-139 批独立评审的 P0-1 发现；登记依据 = D-139 条目「遗留缺陷登记（D138TYPING-002，不在本批）」节原文（`docs/DECISIONS.md:2412`，基线 `68312e8`；D-139 规格 §2.6 与 §2.5 向量 8 同为该现状的照实登记）。机制（与该登记一致）：RequestIdentityConflict/DomainRejected 两态的 `UpdateOccurredAt` 跨 when 分支转 Editing（`P503Reducer.kt:237-238`/`:263-264`）→ when 分支切换 → `P503EditScreen` 组合实例重建 → 文本按初值从新 `draft.occurredAt` 显示 ISO 串，与 D138TYPING-001 同类症状；去 key 修不了（根因是实例重建，非 keyed remember）。
+
+**决定（机制冻结，与规格文件 `docs/specs/2026-09-09-d140-conflict-typing-preserve-design.md` 一致——已冻结 approved 2026-09-09，冻结 SHA-256 = `CE817EC9…`，全值见实施规格节）：** 冻结五项机制：
+
+1. **发生时间文本状态上移 `P503App` 宿主层**：hoisted 状态为 `String?` 无 key `remember`（null = 未初始化，按 `draft.occurredAt` 派生显示）；宿主级单一状态源使键入文本不再随 `P503EditScreen` 组合实例重建而丢失。
+2. **`P503EditScreen` 签名改为接收 `occurredAtText`/`onOccurredAtTextChange`**，三个调用点（`P503App.kt:245`/`:314`/`:340`，Editing/RequestIdentityConflict/DomainRejected）统一传值。
+3. **新草稿流事件派发时重置 hoisted 状态**（实读结论：重置集 = {`P503UiEvent.StartNewExpense`} 唯一——规格 §2.2 全转换枚举表；`AbandonConflict` 转换目标为同 draft 仅丢 requestId，非新草稿、不重置，保留用户在冲突屏的键入），同流内一切跨分支往返（含 RequestIdentityConflict/DomainRejected ↔ Editing）保留键入文本。
+4. **选择器确认条件回写逻辑保持**（D-139 §2.2 语义零变更）。
+5. **行为语义修订显式登记**：D-139 规格 §2.5 向量 7「取消返回后文本 = draft ISO 串」修订为「取消返回后文本 = 键入文本原样保留」（原预期为「文本恢复为 draft instant 的 ISO 串」的初值语义；宿主级保留语义下随本批修订，属显式登记的行为语义修订，非回归）。
+
+**实施规格：** `docs/specs/2026-09-09-d140-conflict-typing-preserve-design.md`（状态 approved，已冻结 2026-09-09；冻结 SHA-256 = `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`，冻结字节域 = UTF-8+LF 规范域，与链上环节一致）。哈希链续接：上一环 = D-139 规格冻结 SHA-256 `8F1C62AB54E03CC3290CD50C258DB8B9075BFB3DD4EC7B8C55D7F2E9FEA2D0DE`（D-139 条目登记终值，已自文件实读核验）；本批规格冻结 SHA-256 自该环续链登记。
+
+**范围冻结：** 仅 app-ui `P503App.kt` + `P503EditScreen.kt` 两文件为唯一代码触点；零 reducer/validation/parser/facade/组合根变更（`P503Reducer.kt`、`P503DraftValidation`、`ParseManualExpenseOccurredAt`、facade、两组合根全部零改动）、零 Esc 路径变更（D-137 机制零改动）、零文案变更；零 schema、零新依赖；零新增单元测试（Compose 语义，D-137/D-139 先例——当前测试栈无 compose-ui-test 基建，正确性由双端人工门逐键向量保证）；`.external/` 零触碰。
+
+**验收与人工门计划（镜像实施规格 §4/§5）：** 受影响既有套件全绿——`:app-ui:jvmTest` 66 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7（零增删）、ktlintCheck（app-ui）0 违规、`:android-app:compileDebugKotlin` exit 0、`project_docs` 通过；双端人工门逐键纪律（每键 ≥350ms、关键键位后立即截图断言、单一输入源独占），向量含：主编辑流不回归（D-139 §2.5 向量语义保持）、跨分支持久（可达路径：同流内跨分支往返键入文本原样保留）、取消返回新语义（修订后向量 7）、选择器同步（D-139 §2.2 条件回写）、拒绝向量、Esc 抽查（D-137 零回归）；冲突/拒绝流可达性以实施规格实读调查结论为准（D-139 双端门实证演示库路径不可达），不可达则机制等价覆盖 + 记录性观察照实登记。
+
+**关闭判据：** 验收节全部通过 + 独立实施评审通过 + distinct verifier 复验 + 同提交 CI 绿 → D138TYPING-002 关闭、本批关闭。
+
+**批准登记（2026-09-09）：** 本批获用户批级批准，用户指令原文照录（verbatim）：「批准D138TYPING-002」。实施批按既有批次路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、主代理最终验收）。
+
+**实施登记（待实施后由主代理补登）：** 按 D-139 条目实施登记形状预留六项占位；本批尚未实施，以下各项无一完成，全部照实待登记：
+
+1. **实施提交与触达文件：** 待实施后由主代理补登。
+2. **独立实施评审结论：** 待评审后由主代理补登。
+3. **distinct verifier 命令集结果：** 待验证后由主代理补登。
+4. **merge/push/CI 证据：** 待实施合入后由主代理补登。
+5. **双端人工门逐键向量结果：** 待验证后由主代理补登。
+6. **关闭判定：** 待全部判据满足后由主代理补登。
+
+**关联决定：** `D-139`（缺陷来源与遗留缺陷登记）、`D-138`（被违反/被恢复的 §2.4 冻结条款）、`D-137`（Esc 零改动前提与人工门先例）。
