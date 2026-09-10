@@ -2465,7 +2465,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-141 技术栈升级批（CMP 1.12 + backdrop 2.0.1 + Kotlin 2.4.20 + AGP 9.3.1 + targetSdk 37 + datetime 0.8.0）
 
-**状态：** 已批准（2026-09-10；先按用户指令「D-141先记录吧」完成 docs-only 登记，批准时用户裁定 kotlinx-datetime 0.8.0 并入升级项、并授权启动规格与实施流程）。
+**状态：** 已批准（2026-09-10；先按用户指令「D-141先记录吧」完成 docs-only 登记，批准时用户裁定 kotlinx-datetime 0.8.0 并入升级项、并授权启动规格与实施流程）。实施规格已冻结（见下方「实施规格」节）。
 
 **背景与依据（2026-09-10 官方源实查，登记为已核实证据）：**
 
@@ -2497,11 +2497,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **范围冻结：** 零 schema/迁移/账务语义变更；app-ui/ledger-* 业务代码零改动（仅构建坐标与 targetSdk 声明）；`.external/` 零触碰。
 
+**披露项（D141-SPEC-01，本批不改）：** 升级后 `docs/CONTRIBUTING.md:10`、`docs/CURRENT_STATE.md:35`/`:44`、`docs/ROADMAP.md:45`、`docs/ARCHITECTURE.md:158`、`README.md:7` 及描述性源码注释 `android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt:14`、`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/UuidV7Generator.kt:15` 中的版本/ SDK 陈述将过时；本批冻结 8 行构建坐标 diff（不含上述文档），统一随阶段 6 收口登记（D4）文档同步处置；`docs/DECISIONS.md` 与既有 specs 中的历史版本陈述属冻结历史，永不变更。
+
 **已知回归面（升级批必验清单）：** 桌面 Esc/ComposeDialog 语义（D-137）；编辑页 verticalScroll 桌面行为（CMP 1.12 无限约束测量变化）；玻璃视觉门（D-136）；`:app-ui:jvmTest` 66 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7；`ktlintCheck`；`:android-app:compileDebugKotlin`；`project_docs`；双端人工门；CI 三 job。
 
 **批 B 关联登记（不属本批）：** 主皮库（D-117 所指、命名见规格的指定皮肤主皮库）采用方向——触发条件 = 其 0.9.4 稳定版转正（Maven Central 最新稳定仍 0.9.3，0.9.4-rc01 面向 CMP 1.12 预发布）+ 六维证据门（D-133 P6-D3 沿用）+ D-133「指定皮肤主皮库整套换肤本阶段落选」决定的反转裁决；D-117 选型证据保留为历史输入。
 
-**验收与实施批计划：** 批准后按既有路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、双端人工门、CI）；实施规格冻结 SHA-256 届时自 D-140 规格冻结终值 `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE` 续链登记（本批 docs-only 无规格哈希）。
+**验收与实施批计划：** 批准后按既有路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、双端人工门、CI）。
+
+**实施规格（已冻结 2026-09-10）：** `docs/specs/2026-09-10-d141-stack-upgrade-design.md`（状态 approved）。独立规格评审：APPROVE，D141-SPEC-01..05 五项 P2/P3 披露/完整性项已在冻结前折入并经同评审 delta CLOSURE APPROVE（零 P0/P1；D141-SPEC-01 = 追踪文档/注释内的过时版本陈述显式披露并延后至阶段 6 收口文档同步 D4，不改本批 8 行构建坐标 diff；D141-SPEC-02 = 补登 R-9/R-10 风险；D141-SPEC-03 = 保持项锚点补齐 compileSdk 37/minSdk 34；D141-SPEC-04 = 人工门向量 2 覆盖 Dialog 与 DatePickerDialog 两条关闭路径；D141-SPEC-05 = 在线构建记录实解析版本）。冻结 SHA-256 = `A19F6473876A6F69BF95844645733D6CFF029D01760BC1DC91775126E9EA10FC`（冻结字节域 = UTF-8+LF 规范域，与链上环节一致；文件实为 LF-only，raw 与规范域同值）。哈希链续接：上一环 = D-140 规格冻结终值 `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`；本批规格冻结 SHA-256 自该环续链登记。
 
 **实施登记（占位，待实施后由主代理补登）：** 照 D-139/D-140 条目形状列六项占位，如实登记为空、不预填任何结果：
 
