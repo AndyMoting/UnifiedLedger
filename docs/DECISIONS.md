@@ -2465,7 +2465,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-141 技术栈升级批（CMP 1.12 + backdrop 2.0.1 + Kotlin 2.4.20 + AGP 9.3.1 + targetSdk 37 + datetime 0.8.0）
 
-**状态：** 已批准（2026-09-10；先按用户指令「D-141先记录吧」完成 docs-only 登记，批准时用户裁定 kotlinx-datetime 0.8.0 并入升级项、并授权启动规格与实施流程）。实施规格已冻结（见下方「实施规格」节）。
+**状态：** 已批准（2026-09-10；先按用户指令「D-141先记录吧」完成 docs-only 登记，批准时用户裁定 kotlinx-datetime 0.8.0 并入升级项、并授权启动规格与实施流程）。实施规格已冻结（见下方「实施规格」节）。**代码侧已交付**（实施提交 `870de1f`，已合入本地 main `c2376a8`）并完成独立评审、distinct verifier 与主代理全量复跑；**本批尚未关闭**——push/CI 与双端人工门（规格 §2.7 向量 1-9）待用户 push 授权后执行并补登终态（见「实施登记」节）。
 
 **背景与依据（2026-09-10 官方源实查，登记为已核实证据）：**
 
@@ -2507,13 +2507,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施规格（已冻结 2026-09-10）：** `docs/specs/2026-09-10-d141-stack-upgrade-design.md`（状态 approved）。独立规格评审：APPROVE，D141-SPEC-01..05 五项 P2/P3 披露/完整性项已在冻结前折入并经同评审 delta CLOSURE APPROVE（零 P0/P1；D141-SPEC-01 = 追踪文档/注释内的过时版本陈述显式披露并延后至阶段 6 收口文档同步 D4，不改本批 8 行构建坐标 diff；D141-SPEC-02 = 补登 R-9/R-10 风险；D141-SPEC-03 = 保持项锚点补齐 compileSdk 37/minSdk 34；D141-SPEC-04 = 人工门向量 2 覆盖 Dialog 与 DatePickerDialog 两条关闭路径；D141-SPEC-05 = 在线构建记录实解析版本）。冻结 SHA-256 = `A19F6473876A6F69BF95844645733D6CFF029D01760BC1DC91775126E9EA10FC`（冻结字节域 = UTF-8+LF 规范域，与链上环节一致；文件实为 LF-only，raw 与规范域同值）。哈希链续接：上一环 = D-140 规格冻结终值 `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`；本批规格冻结 SHA-256 自该环续链登记。
 
-**实施登记（占位，待实施后由主代理补登）：** 照 D-139/D-140 条目形状列六项占位，如实登记为空、不预填任何结果：
+**实施登记（2026-09-10，主代理补登；代码侧全部通过，人工门与 CI 待 push 授权后闭合）：**
 
-1. 实施提交与触达文件——待实施后由主代理补登。
-2. 独立实施评审结论——待实施后由主代理补登。
-3. distinct verifier 命令集结果——待实施后由主代理补登。
-4. merge/push/CI 证据——待实施后由主代理补登。
-5. 双端人工门向量结果——待实施后由主代理补登。
-6. 关闭判定——待实施后由主代理补登。
+1. **实施提交与触达文件：** 实施提交 `870de1f`（4 个构建脚本、恰好 8 行坐标/声明替换：根 `build.gradle.kts:2/3/6/7`、`app-ui/build.gradle.kts:49/53`、`ledger-application/build.gradle.kts:39`、`android-app/build.gradle.kts:29`；零源码/测试/schema/迁移/文档改动）；`git diff --stat 25c342c 870de1f` = 4 files changed, 8 insertions(+), 8 deletions(-)，无新增/删除文件。规格冻结提交 `ed4eaf0`、主检出合入合并提交 `c2376a8`。
+2. **独立实施评审结论：** APPROVE（零 P0/P1/P2；仅两条 P3 信息项——IMPL-01 = `app-ui/build.gradle.kts:50-52` backdrop 注记「zero call sites」自 D-136 起已过时（`Glass.kt:27` `GLASS_ENABLED = true`），属批前既有、显式在范围外，随 D4 文档同步处置；IMPL-02 = D141-SPEC-01 已披露的过时版本陈述清单复核一致，无新增遗漏）。
+3. **distinct verifier 命令集结果：** 9 条 claim 全 exit 0，无环境/产品失败。冻结哈希独立复算一致（`A19F6473…`，`git show 870de1f:docs/specs/… | sha256sum`）；A-7 diff 收敛（4 文件/8 行，`git grep` 旧版本字面量零命中）；A-3 冷编译 `:android-app:compileDebugKotlin --rerun-tasks` BUILD SUCCESSFUL（21 executed，非 UP-TO-DATE）；A-1 = `:app-ui:jvmTest` 66 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7 全绿；A-2 `ktlintCheck` 零告警；A-4 `project_docs` exit 0；迁移校验通过；resolved 版本 = material3 **1.9.0**（CMP 1.12.0 坐标仍解析稳定 1.9.0）、kotlinx-datetime 0.8.0、backdrop 2.0.1（D141-SPEC-05 证据成立）。主代理另复跑 `:ledger-domain:jvmTest` 121 / `:ledger-application:jvmTest` 376 / `:ledger-data:jvmTest` 465 全绿（35m56s，零失败零错误），六套件合计 1040 用例与规格冻结计数精确一致；trace 验证 exit 0。
+4. **merge/push/CI 证据：** 已合入本地 main（`c2376a8`，`--no-ff`）；**push 未执行**（等待用户授权）。同提交 CI 三 job 与 CI APK artifact 待 push 后产生。本机 `:android-app:assembleDebug` 经尝试在 `mergeExtDexDebug` 阶段因 16 GB 主机内存不足中止（生成 729 MB 堆转储，已清理；无产品失败），与 D-118 R-9「assembleDebug 归 CI」既有判定一致——人工门 APK 取 push 后 CI artifact。
+5. **双端人工门向量结果：** **待执行**（规格 §2.7 向量 1-9：桌面 1-5 + Android 6-9）。前置 = push 授权后取得 CI debug APK；Android 侧遵守 adb 共享协议（`ANDROID_ADB_SERVER_PORT=5038`、不 `kill-server`、不触碰用户 MuMu/ALas 设备），桌面侧 `:desktop-app:run` 逐键向量。
+6. **关闭判定：** **未关闭**——代码侧 A-1..A-4/A-6/A-7 全部通过，唯余 A-5 双端人工门与同提交 CI（依赖 push 授权）；本批 push 与人工门完成后由主代理补登终态并闭合。
 
 **关联决定：** `D-133`（P6-D2 三前置、P6-D3 视觉架构与指定皮肤主皮库落选）、`D-117`（CMP 1.11.1 栈冻结与主皮库选型证据）、`D-136`（玻璃启用与 backdrop 2.0.0）、`D-135`（行为审计与回归）、`D-140`（键入保留批，最近登记基线）。
