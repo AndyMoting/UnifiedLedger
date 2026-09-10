@@ -26,7 +26,7 @@ android {
     defaultConfig {
         applicationId = "com.unifiedledger.android"
         minSdk = 34
-        targetSdk = 36
+        targetSdk = 37
         // P5-04.5-FOUND-001 T-C: instrumented fail-closed evidence runs as a manual gate on the
         // managed emulator (CI keeps zero connectedAndroidTest); test-only configuration.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
