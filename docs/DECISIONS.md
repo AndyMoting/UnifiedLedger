@@ -2462,3 +2462,58 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **关闭判定：** A-1..A-6 全部通过 → **D138TYPING-002 关闭、D-140 批关闭**。冲突/拒绝流修复正确性由「机制等价（向量 4，同一 hoisted 状态同一恢复路径）+ 源码机制论证」保证，覆盖边界照实登记于规格 §2.5。
 
 **关联决定：** `D-139`（缺陷来源与遗留缺陷登记）、`D-138`（被违反/被恢复的 §2.4 冻结条款）、`D-137`（Esc 零改动前提与人工门先例）。
+
+## D-141 技术栈升级批（CMP 1.12 + backdrop 2.0.1 + Kotlin 2.4.20 + AGP 9.3.1 + targetSdk 37 + datetime 0.8.0）
+
+**状态：** 已批准（2026-09-10；先按用户指令「D-141先记录吧」完成 docs-only 登记，批准时用户裁定 kotlinx-datetime 0.8.0 并入升级项、并授权启动规格与实施流程）。实施规格已冻结（见下方「实施规格」节）。
+
+**背景与依据（2026-09-10 官方源实查，登记为已核实证据）：**
+
+1. **Kotlin 官方 KGP↔AGP 兼容矩阵（kotlinlang.org）**：`2.4.0-2.4.10` 行 = AGP 8.5.2–9.1.0 / Gradle 7.6.3–9.5.0；`2.4.20` 行 = AGP 8.5.2–9.3.1 / Gradle 7.6.3–9.7.0。Kotlin 2.4.20 稳定版于 2026-09-07 发布。
+2. **Google Maven**：AGP 9.3.x 稳定 = 9.3.0/9.3.1/9.3.2；9.4.0 稳定但超出 Kotlin 2.4.20 官方矩阵（上限 9.3.1），按纪律不取。
+3. **矛盾解除**：2026-08-29 技术栈讨论（用户归档记录）曾卡住的矛盾「API 37 需 AGP 9.3+ 但 Kotlin 2.4.10 官方上限 9.1.0」——被 Kotlin 2.4.20 抬上限解除；「全部稳定版 + API 37 + 官方受支持矩阵」首次真实存在。
+4. **CMP 1.12.0 稳定版**（2026-08-25 发布）：release notes 要点——NativeCanvas/NativePaint typealias 弃用转 ERROR、SwingPanel background 弃用、桌面嵌入无限约束测量变化；material3 坐标仍指向稳定 1.9.0，alpha 不自动进入。
+5. **backdrop 2.0.1**（2026-08-26）：构建于 CMP 1.12，为本仓 backdrop 2.0.0（CMP 1.11 兼容线，D-136 接线）的成对升级目标。
+6. **targetSdk 37 三前置（D-133 P6-D2）**：大屏审计 ✓（D-135）；Android 14/15/16/17 模拟器回归全 PASS ✓（D-135 + API 37 闭合 2026-09-07）；官方行为变化逐项核对 ✓（D-135 七域无影响）；真机确认 ✓（用户 2026-09-10「测试好了」+ D-140 真机键入验证）。
+7. **kotlinx-datetime 0.8.0 官方 changelog 实读 + 本仓使用面审计（2026-09-10）**：0.7.1→0.8.0 唯一 breaking = `TimeZone` 序列化弃用（#576），全库 grep 零 `TimeZone` 序列化用法；其余修复（`Instant.until`/`periodUntil`、RFC_1123 输出秒、Kotlin/Native Windows DST）均不触本仓已用 API 或目标平台。本仓全库仅 app-ui 与 ledger-application 两模块 4 个源文件引用 `kotlinx.datetime`，API 面 = `LocalDate`/`LocalDateTime`/`TimeZone`/`atStartOfDayIn`/`toInstant`/`toLocalDateTime`；`Instant` 全库已用 `kotlin.time.Instant`（D-131 引 0.7.1 时已完成硬性迁移），与 0.8.0 将 `kotlinx.datetime.Instant`/`Clock` 移出主构件方向顺路——判定无感升级，用户裁决并入本批。
+
+**决定（冻结升级矩阵，本批范围；已批准实施）：**
+
+**升级六项：**
+1. **CMP 1.11.1→1.12.0**（稳定版，2026-08-25 发布，见背景 4）。
+2. **backdrop 2.0.0→2.0.1**（CMP 1.12 成对升级目标，D-136 玻璃启用线保持，见背景 5）。
+3. **Kotlin 2.4.10→2.4.20**（含 `plugin.compose`）。
+4. **AGP 9.1.0→9.3.1**（android-app 的 `com.android.application` 与 app-ui/ledger-data 的 `com.android.kotlin.multiplatform.library` 三模块同步）。
+5. **targetSdk 36→37**（D-133 P6-D2 三前置与真机确认全部满足，见背景 6）。
+6. **kotlinx-datetime 0.7.1→0.8.0**（背景 7 审计判定无感升级；用户 2026-09-10 裁决并入，app-ui 与 ledger-application 两模块坐标同步）。
+
+**保持清单逐项：**
+1. **Gradle 9.5.0**——矩阵内且满足 AGP 9.3 最低 Gradle 9.5 要求，保持。
+2. **material3**——CMP 1.12 坐标仍指向稳定 1.9.0，alpha 不自动进入，保持。
+3. **SQLDelight 2.3.2**——最新稳定；2.4.0-rc1 未稳，不取。
+4. **kotlinx-serialization 1.11.0**——1.12-RC 未稳，不取。
+5. **activity-compose 1.13.0**——1.14-alpha 未稳，不取。
+6. **POI 5.5.1、ktlint 14.2.0、compileSdk 37、minSdk 34、JDK 21**——保持。
+
+**范围冻结：** 零 schema/迁移/账务语义变更；app-ui/ledger-* 业务代码零改动（仅构建坐标与 targetSdk 声明）；`.external/` 零触碰。
+
+**披露项（D141-SPEC-01，本批不改）：** 升级后 `docs/CONTRIBUTING.md:10`、`docs/CURRENT_STATE.md:35`/`:44`、`docs/ROADMAP.md:45`、`docs/ARCHITECTURE.md:158`、`README.md:7` 及描述性源码注释 `android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt:14`、`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/UuidV7Generator.kt:15` 中的版本/ SDK 陈述将过时；本批冻结 8 行构建坐标 diff（不含上述文档），统一随阶段 6 收口登记（D4）文档同步处置；`docs/DECISIONS.md` 与既有 specs 中的历史版本陈述属冻结历史，永不变更。
+
+**已知回归面（升级批必验清单）：** 桌面 Esc/ComposeDialog 语义（D-137）；编辑页 verticalScroll 桌面行为（CMP 1.12 无限约束测量变化）；玻璃视觉门（D-136）；`:app-ui:jvmTest` 66 / `:desktop-app:jvmTest` 5 / `:android-app:testDebugUnitTest` 7；`ktlintCheck`；`:android-app:compileDebugKotlin`；`project_docs`；双端人工门；CI 三 job。
+
+**批 B 关联登记（不属本批）：** 主皮库（D-117 所指、命名见规格的指定皮肤主皮库）采用方向——触发条件 = 其 0.9.4 稳定版转正（Maven Central 最新稳定仍 0.9.3，0.9.4-rc01 面向 CMP 1.12 预发布）+ 六维证据门（D-133 P6-D3 沿用）+ D-133「指定皮肤主皮库整套换肤本阶段落选」决定的反转裁决；D-117 选型证据保留为历史输入。
+
+**验收与实施批计划：** 批准后按既有路由执行（独立 worktree、单一 bounded writer、独立评审、distinct verifier、双端人工门、CI）。
+
+**实施规格（已冻结 2026-09-10）：** `docs/specs/2026-09-10-d141-stack-upgrade-design.md`（状态 approved）。独立规格评审：APPROVE，D141-SPEC-01..05 五项 P2/P3 披露/完整性项已在冻结前折入并经同评审 delta CLOSURE APPROVE（零 P0/P1；D141-SPEC-01 = 追踪文档/注释内的过时版本陈述显式披露并延后至阶段 6 收口文档同步 D4，不改本批 8 行构建坐标 diff；D141-SPEC-02 = 补登 R-9/R-10 风险；D141-SPEC-03 = 保持项锚点补齐 compileSdk 37/minSdk 34；D141-SPEC-04 = 人工门向量 2 覆盖 Dialog 与 DatePickerDialog 两条关闭路径；D141-SPEC-05 = 在线构建记录实解析版本）。冻结 SHA-256 = `A19F6473876A6F69BF95844645733D6CFF029D01760BC1DC91775126E9EA10FC`（冻结字节域 = UTF-8+LF 规范域，与链上环节一致；文件实为 LF-only，raw 与规范域同值）。哈希链续接：上一环 = D-140 规格冻结终值 `CE817EC9BC418B7AEAE6FF030D6F257DFB3069D4FCA860102748504735CCC0AE`；本批规格冻结 SHA-256 自该环续链登记。
+
+**实施登记（占位，待实施后由主代理补登）：** 照 D-139/D-140 条目形状列六项占位，如实登记为空、不预填任何结果：
+
+1. 实施提交与触达文件——待实施后由主代理补登。
+2. 独立实施评审结论——待实施后由主代理补登。
+3. distinct verifier 命令集结果——待实施后由主代理补登。
+4. merge/push/CI 证据——待实施后由主代理补登。
+5. 双端人工门向量结果——待实施后由主代理补登。
+6. 关闭判定——待实施后由主代理补登。
+
+**关联决定：** `D-133`（P6-D2 三前置、P6-D3 视觉架构与指定皮肤主皮库落选）、`D-117`（CMP 1.11.1 栈冻结与主皮库选型证据）、`D-136`（玻璃启用与 backdrop 2.0.0）、`D-135`（行为审计与回归）、`D-140`（键入保留批，最近登记基线）。
