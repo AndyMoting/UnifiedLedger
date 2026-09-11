@@ -155,7 +155,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | Python | 已确定 | 仅用于迁移、规则原型和黄金结果基线 |
 | 运行方式 | 已确定 | 本地优先；同步与 AI 默认关闭且不影响核心验收 |
 | 当前正式持久化边界的数据库与迁移 | 已确定 | `ledger-data` 使用 SQLDelight `2.3.2`；Android 只使用 system SQLite driver；Desktop（`desktop-app` jvmMain）使用 `app.cash.sqldelight:sqlite-driver:2.3.2`（JDBC，传递 xerial `sqlite-jdbc` 3.51.3.0）；Android system SQLite 不变；D-117。当前 schema v27，迁移链 `1.sqm`~`26.sqm`（26 个文件，v1→v27）均经过验证。迁移链含 `ALTER TABLE DROP COLUMN`（SQLite ≥ 3.35.0），Android system SQLite 自 API 34（Android 14）满足；`ledger-data` 声明 minSdk 34。该选择不预先决定报表、同步或更广泛查询的存储方案 |
-| UI 与导航库 | 部分已确定 | UI 栈已确定 = Compose Multiplatform（CMP `1.11.1` 已实装于 `app-ui`、`desktop-app`/`android-app` 双模块，P5-03）；皮肤库仍延后（皮肤主皮库选型证据已登记于 D-117 契约 §3.2、依赖随皮肤批进入）；导航库仍暂缓决定，Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
+| UI 与导航库 | 部分已确定 | UI 栈已确定 = Compose Multiplatform（CMP `1.12.0`（D-141 起；此前 `1.11.1`）已实装于 `app-ui`、`desktop-app`/`android-app` 双模块，P5-03）；皮肤库仍延后（皮肤主皮库选型证据已登记于 D-117 契约 §3.2、依赖随皮肤批进入）；导航库仍暂缓决定，Android 与 Desktop 的最小工作流、可访问性和预览需求明确后选择 |
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |
 | 产品运行时 ID 算法 | 已确定 | UUIDv7（RFC 9562），在持久化首请求 callback 内惰性物化，P5-02 实装；当前无产品存量 ID 数据、无需迁移；Golden v2 UUID 命名空间与名字布局仍不是产品默认（D-117） |

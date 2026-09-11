@@ -32,7 +32,7 @@
 
 ## 当前环境
 
-- Kotlin Multiplatform 插件版本为 `2.4.10`，Gradle Wrapper 版本为 `9.5.0`，JVM 工具链为 JDK 21。
+- Kotlin Multiplatform 插件版本为 `2.4.20`、Gradle Wrapper 版本为 `9.5.0`、JVM 工具链为 JDK 21；Compose Multiplatform `1.12.0`、Android Gradle Plugin `9.3.1`（D-141 技术栈升级批）。
 - 三个 KMP library 的 JVM 测试和根项目 Gradle 检查可在 Windows 上运行；`ledger-data` 的 SQLDelight 迁移验证与 Android target 编译也可独立运行。
 - 当前 16 GB Windows 主机上 Gradle/Kotlin 验证必须串行，使用单 worker 和 1 GB heap，并在每次运行后停止 Gradle daemon；具体命令见 `docs/CONTRIBUTING.md`。
 - Python 核心测试和文档验证可在 Windows 上运行。
@@ -41,7 +41,7 @@
 
 ## 当前阶段
 
-阶段 5 为“双端最小外壳与稳定 Android MVP”，已于 2026-09-03 按 `D-130` 完成收口。P5-01、P5-02、P5-03、P5-04.1（三 Tab 与中央新增入口，D-122）、P5-04.2（新增记账全屏编辑页，D-125）、P5-04.3（完善既有手工支出流程，D-126）、P5-04.4（fail-closed 重试策略与失败状态单一来源，D-129）与 P5-04.5（Android 与现有 Desktop 回归验证收口，D-130）已全部交付；当前技术基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36，schema 维持 v27。主皮库、Backdrop、Liquid Glass 与 SDK 依赖变更按路线图归阶段 6。
+阶段 5 为“双端最小外壳与稳定 Android MVP”，已于 2026-09-03 按 `D-130` 完成收口。P5-01、P5-02、P5-03、P5-04.1（三 Tab 与中央新增入口，D-122）、P5-04.2（新增记账全屏编辑页，D-125）、P5-04.3（完善既有手工支出流程，D-126）、P5-04.4（fail-closed 重试策略与失败状态单一来源，D-129）与 P5-04.5（Android 与现有 Desktop 回归验证收口，D-130）已全部交付；阶段 5 收口时（2026-09-03）技术基线为 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36，schema v27；技术栈已于阶段 6 按 D-141 升级（Kotlin 2.4.20 / CMP 1.12.0 / AGP 9.3.1 / targetSdk 37）。主皮库、Backdrop、Liquid Glass 与 SDK 依赖变更按路线图归阶段 6。
 
 - P5-04.1：三 Tab（首页、账户、分析）与新增入口。（已交付，D-122；布局经 D-123 调整为 Tab 左组 + 底右圆形新增按钮，并经 D-124 悬浮胶囊样式与水平对齐）
 - P5-04.2：共享状态控制的新增记账全屏编辑页（不引入导航库）；系统返回关闭编辑页，确认/取消行为固定。（已交付，D-125）
@@ -49,13 +49,14 @@
 - P5-04.4：启动、加载、提交和失败状态保持 fail-closed；仅 startup error 或 handoff 前可证明 `commitOnce` 零调用的 `InfrastructureFailure` 可恢复重试，`UnknownCommit`、冲突和领域拒绝禁止自动重试。（已交付，D-129，实施 `208e3cf`；CI 新增 `:android-app:testDebugUnitTest` 步骤）
 - P5-04.5：Android 与现有 Desktop 回归验证并完成阶段 5 收口。（已收口，D-130，2026-09-03；Android 与 Desktop 回归门全过，阶段 5 完成）
 
-阶段 6 当前状态（2026-09-07）：
+阶段 6 当前状态（2026-09-11）：**已收口**（见 D-142）。
 
-- 阶段 6 入口已过：D-133 登记入口证据与 SDK/视觉裁决；compileSdk 已升至 37（targetSdk 保持 36）。
-- FOUND-001 已按 D-132 闭环（fail-closed，四路径 instrumented 实机证据），Android 与 Desktop 损坏行为统一。
-- 人工门状态：E2E-R-002 已关闭（API 34 模拟器回归全项通过 2026-09-06）；关闭按钮人工确认已按计划 §C.1 以 API 36 模拟器面完成（D-128 实机措辞由计划承接，实机复验由用户保留）；D-131 TalkBack 走查通过；E2E-R-001 状态栏对比度已由 D-134 双主题修复、经 D-136 复验通过（浅 5.56 / 深 17.50 ≥3:1），P6-ENTRY-THEME-001/002 关闭。
-- 批次状态：D1 工具链批（D-133）、D2 主题与组件批（D-134）、D3 平台回归批（D-135：Android 14/15/16 模拟器回归与性能采样、targetSdk 37 行为审计；API 37 模拟器回归延后项已于 2026-09-07 闭合）、玻璃启用批（D-136）、D-137 对话框 Esc 修复批与 D-138 发生时间手输宽容解析批均已交付。D-137 关闭缺陷 D131DESKESC-001（桌面复门 A8-1/A8-2/③/② 全 PASS、Android 抽查全 PASS）；D-138 交付手输友好时间（仅绝对格式、禁相对表达——用户裁决；`2026-09-15 08:30` 类格式经同一 Asia/Shanghai 换算通道写入，继续门与解析器同实例，P503IMPL-Q-001 不变量保持），双端人工门四项全 PASS，合并评审 APPROVE + verifier 8/8（376/66/5/7）+ CI 绿（登记见 D-138 实施登记）。
-- 剩余：D-131 遗留项 3 = 真机确认 + targetSdk 36→37 升级裁决（用户保留）；裁决后做阶段 6 收口登记（D4）。
+- 阶段 6 入口已过（D-133）；全部批次 D-133（入口证据与 SDK/视觉裁决）、D-134（D2 主题与组件）、D-135（D3 平台回归）、D-136（玻璃启用）、D-137（对话框 Esc 修复）、D-138（发生时间手输宽容解析）、D-139（键入保留缺陷修复）、D-140（冲突/拒绝流键入保留）、D-141（技术栈升级）均已交付并关闭。
+- FOUND-001 已按 D-132 闭环，Android 与 Desktop 损坏行为统一；E2E-R-001 状态栏对比度已由 D-134 修复、D-136 复验通过；E2E-R-002（API 34 回归）已关闭；D-131 TalkBack 走查通过。
+- 平台与视觉：D-135 完成 Android 14/15/16 模拟器回归与性能采样、targetSdk 37 行为审计七域无影响，API 37 模拟器回归延后项于 2026-09-07 闭合；Material3 稳定基线与玻璃独立回退层均可用。
+- 技术栈升级：D-141 交付 CMP `1.12.0` + backdrop `2.0.1` + Kotlin `2.4.20` + AGP `9.3.1` + targetSdk `36→37` + kotlinx-datetime `0.8.0`；双端人工门向量 1-9 全 PASS，CI run `34555111003` 三 job 绿。
+- 当前基线：Kotlin `2.4.20` / CMP `1.12.0` / AGP `9.3.1` / Material3 `1.9.0` / min·compile·target SDK `34/37/37`，schema v27。
+- 阶段 6 收口完成（D-142）；阶段 7（Android 日常工作流）待用户门禁。
 
 ## 未完成门槛
 
@@ -72,4 +73,4 @@
 
 ## 唯一下一步
 
-**唯一下一步 = D-131 遗留项 3：真机确认 + targetSdk 36→37 升级裁决（用户保留）**；裁决后即做阶段 6 收口登记（D4），阶段 6 代码侧批次（D-133/D-134/D-135/D-136/D-137）均已交付。
+**唯一下一步 = 阶段 7（Android 日常工作流）规划与用户门禁**；阶段 6 已按 D-142 收口（全部批次 D-133…D-141 交付并关闭）。

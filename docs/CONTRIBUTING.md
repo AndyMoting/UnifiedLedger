@@ -7,7 +7,9 @@
 - PowerShell 7
 - JDK 21
 - Gradle Wrapper 9.5.0
-- Kotlin Multiplatform 插件 2.4.10
+- Kotlin Multiplatform 插件 2.4.20
+- Compose Multiplatform 1.12.0
+- Android Gradle Plugin 9.3.1
 
 所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 与 `app-ui` 带 Android 编译目标。桌面应用运行命令（启动 P5-03 演示面 B 并打开本地测试账本）：
 

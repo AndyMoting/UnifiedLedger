@@ -12,7 +12,7 @@ import kotlin.time.Clock
  * source is the only platform-sensitive input, so each composition root injects its platform
  * secure-random provider while this pure bit-packing algorithm stays shared in commonMain.
  *
- * The default [timestampMillis] reads [Clock.System.now], which is stable in Kotlin 2.4.10
+ * The default [timestampMillis] reads [Clock.System.now], which is stable in Kotlin 2.4.20
  * without opt-in. Tests inject a fixed timestamp and a fixed byte source to obtain a fixed
  * output.
  */
