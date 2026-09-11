@@ -72,6 +72,66 @@ class DesktopCatalogMigrationTest {
         }
     }
 
+    @Test
+    fun populatedLedgerWithNoVersionStampOpensAndGetsStampedInsteadOfFailing() {
+        val path: Path = Files.createTempFile("p7-01-desktop-untagged-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            // A3: a file already carrying the full current schema but with user_version == 0
+            // (written before the version stamp existed) must be stamped, not handed to
+            // Schema.create (which would fail with "table ... already exists").
+            JdbcSqliteDriver(url).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                driver.execute(null, "PRAGMA user_version = 0", 0)
+            }
+            assertEquals(0L, queryUserVersion(url))
+
+            JdbcSqliteDriver(url).use { driver ->
+                migrateToCurrentSchema(driver)
+                assertEquals(28L, driver.userVersion())
+            }
+            // The same file still open through the real path, and it still has its tables.
+            val graph = openDesktopLedger(url)
+            graph.close()
+            assertEquals(true, Files.exists(path))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun legacyPopulatedLedgerWithNoVersionStampMigratesInPlace() {
+        val path: Path = Files.createTempFile("p7-01-desktop-legacy-untagged-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            // A shell with only a core table stands in for a pre-catalog ledger that was never
+            // stamped: the version-less path must run the v27 migration rather than Schema.create.
+            JdbcSqliteDriver(url).use { driver ->
+                driver.execute(
+                    null,
+                    "CREATE TABLE ledger_transaction (transaction_id TEXT NOT NULL PRIMARY KEY, ledger_id TEXT NOT NULL, kind TEXT NOT NULL, canonical_kind TEXT, UNIQUE (transaction_id, ledger_id))",
+                    0,
+                )
+                driver.execute(null, "PRAGMA user_version = 0", 0)
+            }
+
+            JdbcSqliteDriver(url).use { driver ->
+                migrateToCurrentSchema(driver)
+                assertEquals(28L, driver.userVersion())
+                assertEquals(
+                    1L,
+                    queryLong(
+                        driver,
+                        "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'",
+                    ),
+                )
+            }
+            assertEquals(true, Files.exists(path))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
     /**
      * Builds a genuine v27 file from the current schema by dropping the six additive `catalog_*`
      * product tables `27.sqm` introduces (the migration is structure-only, so the remainder is
@@ -108,4 +168,20 @@ class DesktopCatalogMigrationTest {
         )
         return version
     }
+
+    private fun queryLong(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 }

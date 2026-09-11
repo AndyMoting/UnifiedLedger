@@ -54,6 +54,58 @@ class CatalogV27ToV28MigrationTest {
     }
 
     @Test
+    fun versionTwentySevenToTwentyEightPreservesExistingPostingAndEvidenceValues() {
+        val path = Files.createTempFile("catalog-v27-v28-values-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            seedVersionOne(url)
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 1, 27)
+                // B3: a pre-existing formal posting and an import evidence row, so the additive
+                // migration can be checked for value preservation, not only row counts.
+                driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('tx-legacy','ledger-a','EXPENSE',NULL)", 0)
+                driver.execute(null, "INSERT INTO posting_set VALUES ('set-legacy','ledger-a')", 0)
+                driver.execute(
+                    null,
+                    "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('v-legacy','tx-legacy','ledger-a',1,'set-legacy','2026-01-01T00:00:00+08:00','2026-01-01T00:00:00+08:00','2026-01-01T00:00:00+08:00',NULL)",
+                    0,
+                )
+                driver.execute(null, "INSERT INTO posting VALUES ('p-legacy','set-legacy','ledger-a',0,'account-legacy',-1234,'CNY',2)", 0)
+                driver.execute(null, "INSERT INTO import_request VALUES ('ledger-a','request-legacy','intake')", 0)
+                driver.execute(
+                    null,
+                    "INSERT INTO import_source_record(ledger_id,source_id,owner_request_id,input_ref,record_ordinal,record_kind,content_hash,contract_version,completeness,amount_minor,currency_code,currency_precision,occurred_at,direction_token,status_token) VALUES ('ledger-a','source-legacy','request-legacy','ref-1',0,'ordinary_flow_source','hash-legacy',1,'valid_complete',-1234,'CNY',2,'2026-01-01T00:00:00+08:00','out','success')",
+                    0,
+                )
+                driver.execute(null, "INSERT INTO import_evidence VALUES ('ledger-a','evidence-legacy','source-legacy','source_observation','2026-01-01T00:00:00+08:00')", 0)
+            }
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 27, 28)
+                assertEquals(
+                    "-1234",
+                    queryString(driver, "SELECT amount_minor FROM posting WHERE posting_id = 'p-legacy'"),
+                )
+                assertEquals("CNY", queryString(driver, "SELECT currency_code FROM posting WHERE posting_id = 'p-legacy'"))
+                assertEquals("account-legacy", queryString(driver, "SELECT account_id FROM posting WHERE posting_id = 'p-legacy'"))
+                assertEquals(
+                    "-1234",
+                    queryString(driver, "SELECT amount_minor FROM import_source_record WHERE source_id = 'source-legacy'"),
+                )
+                assertEquals(
+                    "hash-legacy",
+                    queryString(driver, "SELECT content_hash FROM import_source_record WHERE source_id = 'source-legacy'"),
+                )
+                assertEquals(
+                    "source_observation",
+                    queryString(driver, "SELECT evidence_kind FROM import_evidence WHERE evidence_id = 'evidence-legacy'"),
+                )
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun versionTwentyEightToTwentyEightReopenIsANoOp() {
         val path = Files.createTempFile("catalog-v28-reopen-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"

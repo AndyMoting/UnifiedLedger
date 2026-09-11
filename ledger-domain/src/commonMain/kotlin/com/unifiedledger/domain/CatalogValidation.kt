@@ -16,6 +16,11 @@ package com.unifiedledger.domain
  * the frozen `rg-10` runtime catalog contains a level-2 category whose parent is absent, and
  * management commands enforce those rules with `CategoryLevelNotSupported` /
  * `CategoryParentRequired` instead.
+ *
+ * B2 reachability: this load path is the only producer of
+ * [CatalogViolation.CategoryPostingAccountInvalid]. A product command mints its hidden posting
+ * account internally (same ledger, hidden, kind-matched), so the command path can never
+ * construct a bad mapping; the spec 6.3 command mapping is narrowed accordingly.
  */
 fun validateProductCatalog(catalog: LedgerCatalog): DomainResult<Unit> {
     val accountsById = catalog.accounts.associateBy { it.id }

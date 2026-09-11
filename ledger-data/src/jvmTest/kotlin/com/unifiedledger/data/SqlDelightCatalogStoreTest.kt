@@ -473,6 +473,231 @@ class SqlDelightCatalogStoreTest {
         }
     }
 
+    @Test
+    fun deletingACategoryReferencedOnlyBySemanticOrConfirmationTablesIsRejectedAndLeavesEverything() {
+        withStore { store, driver ->
+            assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
+            insertPosting(driver, accountId = "asset-payment-local")
+            // A1 negative path: no manual/decision row exists; only an rg03 posting-semantic row
+            // and an rg12 consumption (confirmation-class) row reference the leaf.
+            driver.execute(
+                null,
+                "INSERT INTO rg03_transfer_posting_semantic VALUES ('ledger-a','p-x','TRANSFER_FEE','expense-category-breakfast',0)",
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO rg12_consumption_record VALUES ('ledger-a','record-ref','p-x','expense-category-breakfast','100','CNY',2,'2026-01-01T00:00:00Z')",
+                0,
+            )
+
+            val command = commandExecutor(store, singleRequestId("request-delete-semantic"), fixedIds())
+            val rejected =
+                assertIs<CatalogCommandResult.Rejected>(
+                    command.deleteCategory(ledgerId, CategoryId("expense-category-breakfast"), expectedCatalogVersion = 1L),
+                )
+            assertEquals(CatalogFailureCode.CATEGORY_HAS_REFERENCES, rejected.failureCode)
+            // Category row, name history and the hidden posting account all survive.
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_category WHERE category_id = 'expense-category-breakfast'"))
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_account WHERE account_id = 'expense-account-local'"))
+            assertEquals(
+                1L,
+                queryLong(driver, "SELECT count(*) FROM catalog_name_history WHERE owner_kind = 'category' AND owner_id = 'expense-category-breakfast'"),
+            )
+            assertEquals(
+                1L,
+                queryLong(driver, "SELECT count(*) FROM catalog_name_history WHERE owner_kind = 'account' AND owner_id = 'expense-account-local'"),
+            )
+        }
+    }
+
+    @Test
+    fun deletingACategoryWhoseHiddenPostingAccountIsReferencedIsRejectedByTheAccountFallback() {
+        withStore { store, driver ->
+            assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
+            // No category-referencing row; a formal posting already points at the leaf's hidden
+            // posting account, so deleting the leaf would orphan that posting (C-10).
+            insertPosting(driver, accountId = "expense-account-local")
+
+            val command = commandExecutor(store, singleRequestId("request-delete-posting-account"), fixedIds())
+            val rejected =
+                assertIs<CatalogCommandResult.Rejected>(
+                    command.deleteCategory(ledgerId, CategoryId("expense-category-breakfast"), expectedCatalogVersion = 1L),
+                )
+            assertEquals(CatalogFailureCode.CATEGORY_HAS_REFERENCES, rejected.failureCode)
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_category WHERE category_id = 'expense-category-breakfast'"))
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_account WHERE account_id = 'expense-account-local'"))
+        }
+    }
+
+    @Test
+    fun bootstrapFailsClosedWhenAnExistingManualEntryCategoryReferenceIsUnknown() {
+        withStore { store, driver ->
+            // A2: the product manual entry points are part of the bootstrap reference surface.
+            driver.execute(
+                null,
+                "INSERT INTO manual_expense_request VALUES ('ledger-a','request-manual','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO manual_income_request VALUES ('ledger-a','request-income','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
+                0,
+            )
+
+            assertEquals(CatalogBootstrapResult.UnknownReference, store.bootstrap(ledgerId, defaultCatalogSeed()))
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM catalog_account WHERE ledger_id = 'ledger-a'"))
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM catalog_category WHERE ledger_id = 'ledger-a'"))
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM catalog_version WHERE ledger_id = 'ledger-a'"))
+        }
+    }
+
+    @Test
+    fun equivalentRenameReplayDoesNotAppendASecondNameHistoryRow() {
+        withStore { store, driver ->
+            assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
+            val command = commandExecutor(store, singleRequestId("request-rename-once"), fixedIds())
+            val accepted =
+                assertIs<CatalogCommandResult.Accepted>(
+                    command.renameCategory(ledgerId, CategoryId("expense-category-breakfast"), "早餐改", expectedCatalogVersion = 1L),
+                )
+            assertEquals(2L, accepted.receipt.newCatalogVersion)
+            val historyAfterFirstRename =
+                queryLong(driver, "SELECT count(*) FROM catalog_name_history WHERE owner_kind = 'category' AND owner_id = 'expense-category-breakfast'")
+            assertEquals(2L, historyAfterFirstRename)
+
+            // B3: the same requestId with an equivalent snapshot replays the original receipt and
+            // must not append another name-history version.
+            val replay =
+                assertIs<CatalogCommandResult.NoChange>(
+                    command.renameCategory(ledgerId, CategoryId("expense-category-breakfast"), "早餐改", expectedCatalogVersion = 1L),
+                )
+            assertEquals(2L, replay.receipt.newCatalogVersion)
+            assertEquals(
+                historyAfterFirstRename,
+                queryLong(driver, "SELECT count(*) FROM catalog_name_history WHERE owner_kind = 'category' AND owner_id = 'expense-category-breakfast'"),
+            )
+        }
+    }
+
+    @Test
+    fun createIncomeCategoryGroupThroughTheProductStoreWritesBothLevelsAndAHiddenIncomeAccount() {
+        withStore { store, _ ->
+            assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
+            val command = commandExecutor(store, singleRequestId("request-income-group"), fixedIds())
+            assertIs<CatalogCommandResult.Accepted>(
+                command.createCategoryGroup(ledgerId, CategoryKind.INCOME, "工资", "月薪", expectedCatalogVersion = 1L),
+            )
+            val catalog = requireNotNull(store.load(ledgerId)).catalog
+            val group = catalog.categories.single { it.id.value == "expense-category-1" }
+            val child = catalog.categories.single { it.id.value == "expense-category-2" }
+            assertEquals(CategoryKind.INCOME, group.kind)
+            assertEquals(null, group.parentId)
+            assertEquals(group.id, child.parentId)
+            assertEquals(CategoryKind.INCOME, child.kind)
+            val postingAccount = catalog.accounts.single { it.id.value == "expense-account-1" }
+            assertEquals(AccountKind.INCOME, postingAccount.kind)
+            assertEquals(false, postingAccount.ownedByUser)
+            assertEquals(false, postingAccount.realAccount)
+            assertEquals("月薪", postingAccount.name)
+        }
+    }
+
+    @Test
+    fun submitRevalidationRejectsADraftWhosePaymentAccountWasDeactivatedWithZeroFormalWrites() {
+        withStore { store, driver ->
+            assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
+            val factory = admissionFactory(store)
+            val useCase = confirmedExpenseUseCase(driver, factory)
+
+            // The draft was prepared against an active account; deactivate it behind the draft.
+            driver.execute(
+                null,
+                "UPDATE catalog_account SET active = 0 WHERE account_id = 'asset-payment-local'",
+                0,
+            )
+
+            val result =
+                useCase.execute(
+                    com.unifiedledger.application.ExplicitlyConfirmedManualExpense(
+                        ledgerId = ledgerId,
+                        requestId = com.unifiedledger.application.RequestId("request-v2-account"),
+                        amount =
+                            com.unifiedledger.domain.Money
+                                .ofMinor(100L, com.unifiedledger.domain.CurrencyUnit("CNY", 2)),
+                        categoryId = CategoryId("expense-category-breakfast"),
+                        paymentAccountId = AccountId("asset-payment-local"),
+                        occurredAt = kotlin.time.Instant.parse("2026-01-15T00:30:00Z"),
+                        note = "",
+                        confirmation = com.unifiedledger.application.ExplicitManualSave,
+                    ),
+                )
+            val rejected = assertIs<com.unifiedledger.application.ConfirmedManualExpenseResult.Rejected>(result)
+            assertEquals(com.unifiedledger.domain.CatalogAdmissionRejection.PaymentAccountInactive, rejected.violation)
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM ledger_transaction"))
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM posting"))
+            assertEquals(0L, queryLong(driver, "SELECT count(*) FROM manual_expense_request"))
+        }
+    }
+
+    private fun admissionFactory(store: SqlDelightCatalogStore) =
+        com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory(
+            admissionReader = store,
+            delegate =
+                com.unifiedledger.application.ConfirmedExpenseTransactionFactory { request, ids ->
+                    val catalog = requireNotNull(store.load(request.ledgerId)).catalog
+                    when (
+                        val created =
+                            com.unifiedledger.domain.createAssetPaidOrdinaryExpense(
+                                catalog = catalog,
+                                command =
+                                    com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand(
+                                        ledgerId = request.ledgerId,
+                                        amount = request.amount,
+                                        categoryId = request.categoryId,
+                                        paymentAccountId = request.paymentAccountId,
+                                        times =
+                                            com.unifiedledger.domain.TransactionTimes
+                                                .collapsed(request.occurredAt),
+                                    ),
+                                ids = ids.expenseIds,
+                            )
+                    ) {
+                        is com.unifiedledger.domain.DomainResult.Success ->
+                            com.unifiedledger.domain.DomainResult.Success(
+                                com.unifiedledger.application.ConfirmedManualExpenseCommit(
+                                    confirmationId = ids.confirmationId,
+                                    transaction = created.value,
+                                ),
+                            )
+                        is com.unifiedledger.domain.DomainResult.Failure -> created
+                    }
+                },
+        )
+
+    private fun confirmedExpenseUseCase(
+        driver: JdbcSqliteDriver,
+        factory: com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory,
+    ): com.unifiedledger.application.ExecuteConfirmedManualExpense =
+        com.unifiedledger.application.ExecuteConfirmedManualExpense(
+            commitPort = SqlDelightConfirmedManualExpenseCommitPort(LedgerDatabase(driver), driver),
+            idSource =
+                com.unifiedledger.application.ConfirmedManualExpenseIdSource {
+                    com.unifiedledger.application.ConfirmedManualExpenseCommitIds(
+                        confirmationId = com.unifiedledger.application.ConfirmationId("confirmation-v2"),
+                        expenseIds =
+                            com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds(
+                                transactionId = com.unifiedledger.domain.TransactionId("tx-v2"),
+                                versionId = com.unifiedledger.domain.TransactionVersionId("version-v2"),
+                                postingSetId = com.unifiedledger.domain.PostingSetId("set-v2"),
+                                expensePostingId = com.unifiedledger.domain.PostingId("posting-v2-expense"),
+                                paymentPostingId = com.unifiedledger.domain.PostingId("posting-v2-bank"),
+                            ),
+                    )
+                },
+            createFormalTransaction = factory,
+        )
+
     private fun commandExecutor(
         store: SqlDelightCatalogStore,
         requestIdSource: CatalogManagementRequestIdSource,

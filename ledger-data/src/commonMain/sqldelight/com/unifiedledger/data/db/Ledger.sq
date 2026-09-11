@@ -8767,14 +8767,34 @@ selectCatalogCurrentNamesByKind:
 SELECT owner_id, name FROM catalog_name_history
 WHERE ledger_id = ? AND owner_kind = ? AND status = 'CURRENT';
 
-countCatalogCategoryRefManualExpense:
-SELECT count(*) FROM manual_expense_request WHERE ledger_id = ? AND category_id = ?;
+-- Spec 5.3/6.3 (A1/A2): the bootstrap unknown-reference scan and the C-7 delete-reference
+-- probe intentionally share this reference surface, so a category that bootstrap would treat
+-- as referenced can never be deleted (and vice versa). Adding a new category-referencing
+-- table means adding it to exactly one of these queries.
+catalogReferencedManualCategoryIds:
+SELECT DISTINCT category_id FROM manual_expense_request WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM manual_income_request WHERE ledger_id = ? AND category_id IS NOT NULL;
 
-countCatalogCategoryRefManualIncome:
-SELECT count(*) FROM manual_income_request WHERE ledger_id = ? AND category_id = ?;
+catalogReferencedConfirmationCategoryIds:
+SELECT DISTINCT category_id FROM rg04_mixed_expense_snapshot WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg04_import_confirmation_snapshot WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg05_confirmation_allocation WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg05_item_snapshot WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg05_relation_item WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg06_confirmation WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg06_lifecycle WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg07_refund_relationship WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg11_schedule WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg12_consumption_record WHERE ledger_id = ? AND category_id IS NOT NULL;
 
-countCatalogCategoryRefDecision:
-SELECT count(*) FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND category_id = ?;
-
-countCatalogCategoryRefRg04:
-SELECT count(*) FROM rg04_mixed_expense_snapshot WHERE ledger_id = ? AND category_id = ?;
+catalogReferencedStagingCategoryIds:
+SELECT DISTINCT category_id FROM rg06_operation WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT fee_category_id FROM rg03_manual_transfer_request_snapshot WHERE ledger_id = ? AND fee_category_id IS NOT NULL
+UNION SELECT DISTINCT fee_category_id FROM rg03_source_intake_request_snapshot WHERE ledger_id = ? AND fee_category_id IS NOT NULL
+UNION SELECT DISTINCT fee_category_id FROM rg03_complete_transfer_source_detail WHERE ledger_id = ? AND fee_category_id IS NOT NULL
+UNION SELECT DISTINCT fee_category_id FROM rg03_transfer_candidate WHERE ledger_id = ? AND fee_category_id IS NOT NULL
+UNION SELECT DISTINCT suggested_category_id FROM rg04_import_source_snapshot WHERE ledger_id = ? AND suggested_category_id IS NOT NULL
+UNION SELECT DISTINCT suggested_category_id FROM rg05_source_record WHERE ledger_id = ? AND suggested_category_id IS NOT NULL
+UNION SELECT DISTINCT suggested_category_id FROM rg05_candidate_item WHERE ledger_id = ? AND suggested_category_id IS NOT NULL
+UNION SELECT DISTINCT proposed_category_id FROM rg07_candidate WHERE ledger_id = ? AND proposed_category_id IS NOT NULL
+UNION SELECT DISTINCT interest_category_id FROM rg08_settlement WHERE ledger_id = ? AND interest_category_id IS NOT NULL;

@@ -56,6 +56,33 @@ sealed interface CatalogViolation : DomainViolation {
 }
 
 /**
+ * B4 (review): typed V-2 admission rejection tokens. A catalog-consuming commit that fails
+ * revalidation (inactive/unknown/wrong-kind/not-leaf reference) must stay a typed rejection with
+ * zero formal writes, but it must also be diagnosable instead of collapsing every shape into one
+ * token. These tokens are consumed by the application [CatalogAdmissionViolation] mapping.
+ */
+sealed interface CatalogAdmissionRejection : DomainViolation {
+    data object PaymentAccountNotFound : CatalogAdmissionRejection
+
+    data object PaymentAccountInactive : CatalogAdmissionRejection
+
+    data object PaymentAccountNotManageableFinancial : CatalogAdmissionRejection
+
+    data object PaymentAccountWrongKind : CatalogAdmissionRejection
+
+    data object CategoryNotFound : CatalogAdmissionRejection
+
+    data object CategoryInactive : CatalogAdmissionRejection
+
+    data object CategoryNotLeaf : CatalogAdmissionRejection
+
+    data object CategoryKindMismatch : CatalogAdmissionRejection
+
+    /** No authoritative catalog could be loaded inside the write transaction (fail closed). */
+    data object CatalogUnavailable : CatalogAdmissionRejection
+}
+
+/**
  * Storage-neutral mutation vocabulary. The application layer derives an ordered list of these
  * from a pure transition; the store applies them in a single claim-first transaction.
  */
@@ -260,6 +287,12 @@ fun appendCategoryChild(
     if (parent.postingAccountId != null) {
         // D-066: a category that carries a posting account but no parent identity cannot be
         // confirmed as a level-1 group, so its level is "to be confirmed" rather than guessed.
+        //
+        // B2 reachability: this guard is kept for the domain contract, but the product path
+        // cannot construct the shape. `catalog_category` CHECK forbids a level-1 row with a
+        // non-null posting_account_id, and `validateProductCatalog` (load path) reasserts that
+        // before any command sees the catalog. So `CategoryParentRequired` is load/domain-only,
+        // not reachable from a product command (spec 6.3 mapping narrowed accordingly).
         return DomainResult.Failure(CatalogViolation.CategoryParentRequired)
     }
     val normalized =
@@ -421,6 +454,12 @@ private fun categoryFailure(
     categoryId: CategoryId,
 ): DomainResult.Failure {
     val exists = catalog.categories.any { it.id == categoryId }
+    // B2 reachability: `CategoryNotManageable` is the domain answer for an existing category
+    // that belongs to another ledger. The product load path scopes `selectCatalogCategories`
+    // to one ledger and constructs every row with that ledger id, so a loaded product catalog
+    // can never contain a foreign-ledger category; a missing category therefore always reports
+    // `CatalogObjectNotFound`. The branch is retained for the domain contract; the spec 6.3
+    // command mapping is narrowed accordingly.
     return DomainResult.Failure(
         if (exists) CatalogViolation.CategoryNotManageable else CatalogViolation.CatalogObjectNotFound,
     )

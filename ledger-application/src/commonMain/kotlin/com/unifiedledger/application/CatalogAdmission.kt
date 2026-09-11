@@ -3,8 +3,10 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CatalogAdmissionRejection
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 
@@ -79,9 +81,9 @@ fun validateManualExpenseAdmission(
 /**
  * V-2 wrapper around a raw formal-transaction factory. It re-reads the authoritative catalog
  * through [admissionReader] immediately before delegating, so a stale option snapshot cannot
- * admit an inactive/deleted/mismatched reference. A typed [CatalogAdmissionViolation] is mapped
- * to the domain `CategoryInactive` violation so the existing commit port rejects the whole
- * request with zero formal writes.
+ * admit an inactive/deleted/mismatched reference. The typed [CatalogAdmissionViolation] maps to
+ * a distinguishable [CatalogAdmissionRejection] token (B4) so the rejection is diagnosable while
+ * the commit port still rejects the whole request with zero formal writes.
  */
 class CatalogAdmissionExpenseTransactionFactory(
     private val admissionReader: CatalogAdmissionReader,
@@ -90,12 +92,10 @@ class CatalogAdmissionExpenseTransactionFactory(
     override fun create(
         request: ManualExpenseRequestSnapshot,
         ids: ConfirmedManualExpenseCommitIds,
-    ): com.unifiedledger.domain.DomainResult<ConfirmedManualExpenseCommit> {
+    ): DomainResult<ConfirmedManualExpenseCommit> {
         val catalog =
             admissionReader.loadCurrent(request.ledgerId)
-                ?: return com.unifiedledger.domain.DomainResult.Failure(
-                    com.unifiedledger.domain.OrdinaryExpenseViolation.CategoryInactive,
-                )
+                ?: return DomainResult.Failure(CatalogAdmissionRejection.CatalogUnavailable)
         val violation =
             validateManualExpenseAdmission(
                 catalog = catalog,
@@ -104,13 +104,25 @@ class CatalogAdmissionExpenseTransactionFactory(
                 categoryId = request.categoryId,
             )
         if (violation != null) {
-            return com.unifiedledger.domain.DomainResult.Failure(
-                com.unifiedledger.domain.OrdinaryExpenseViolation.CategoryInactive,
-            )
+            return DomainResult.Failure(violation.toDomainViolation())
         }
         return delegate.create(request, ids)
     }
 }
+
+/** B4: keeps each admission shape distinguishable instead of collapsing to one token. */
+fun CatalogAdmissionViolation.toDomainViolation(): CatalogAdmissionRejection =
+    when (this) {
+        CatalogAdmissionViolation.PaymentAccountNotFound -> CatalogAdmissionRejection.PaymentAccountNotFound
+        CatalogAdmissionViolation.PaymentAccountInactive -> CatalogAdmissionRejection.PaymentAccountInactive
+        CatalogAdmissionViolation.PaymentAccountNotManageableFinancial ->
+            CatalogAdmissionRejection.PaymentAccountNotManageableFinancial
+        CatalogAdmissionViolation.PaymentAccountWrongKind -> CatalogAdmissionRejection.PaymentAccountWrongKind
+        CatalogAdmissionViolation.CategoryNotFound -> CatalogAdmissionRejection.CategoryNotFound
+        CatalogAdmissionViolation.CategoryInactive -> CatalogAdmissionRejection.CategoryInactive
+        CatalogAdmissionViolation.CategoryNotLeaf -> CatalogAdmissionRejection.CategoryNotLeaf
+        CatalogAdmissionViolation.CategoryKindMismatch -> CatalogAdmissionRejection.CategoryKindMismatch
+    }
 
 /** Small helpers kept public for the composition roots that load the current catalog. */
 fun LedgerCatalog.findAccount(id: AccountId): Account? = accounts.firstOrNull { it.id == id }

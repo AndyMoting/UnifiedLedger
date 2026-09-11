@@ -3,6 +3,7 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CatalogAdmissionRejection
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
@@ -249,6 +250,128 @@ class CatalogManagementUseCasesTest {
             )
         assertIs<DomainResult.Failure>(result)
         assertEquals(false, delegated)
+    }
+
+    @Test
+    fun admissionFactoryMapsEachRevalidationShapeToADistinguishableTypedRejection() {
+        val delegate =
+            ConfirmedExpenseTransactionFactory { _, _ ->
+                error("the revalidating factory must not delegate a rejected reference")
+            }
+
+        fun factoryFor(catalog: LedgerCatalog?) = CatalogAdmissionExpenseTransactionFactory(admissionReader = CatalogAdmissionReader { catalog }, delegate = delegate)
+
+        fun createWith(
+            catalog: LedgerCatalog?,
+            account: String,
+            category: String,
+        ): DomainResult<ConfirmedManualExpenseCommit> = factoryFor(catalog).create(admissionSnapshot(account, category), admissionCommitIds())
+
+        val base = catalog()
+        assertEquals(
+            CatalogAdmissionRejection.PaymentAccountInactive,
+            admissionFailure(createWith(base.withAccountActive("asset-payment", false), "asset-payment", "expense-leaf")),
+        )
+        // The hidden EXPENSE posting account is not an ASSET payment account.
+        assertEquals(
+            CatalogAdmissionRejection.PaymentAccountWrongKind,
+            admissionFailure(createWith(base, "expense-hidden", "expense-leaf")),
+        )
+        assertEquals(
+            CatalogAdmissionRejection.PaymentAccountNotFound,
+            admissionFailure(createWith(base, "missing", "expense-leaf")),
+        )
+        assertEquals(
+            CatalogAdmissionRejection.CategoryNotFound,
+            admissionFailure(createWith(base, "asset-payment", "missing")),
+        )
+        assertEquals(
+            CatalogAdmissionRejection.CategoryNotLeaf,
+            admissionFailure(createWith(base, "asset-payment", "expense-group")),
+        )
+        assertEquals(
+            CatalogAdmissionRejection.CategoryInactive,
+            admissionFailure(createWith(base.withCategoryActive("expense-leaf", false), "asset-payment", "expense-leaf")),
+        )
+        // An ASSET account that is neither owned by the user nor a real account is not a valid
+        // payment account (manageability shape, not kind/inactive).
+        val notManageable =
+            catalogOf(
+                accounts =
+                    listOf(
+                        Account(AccountId("asset-payment"), ledgerId, AccountKind.ASSET, cny, true, true, name = "支付账户"),
+                        Account(AccountId("expense-hidden"), ledgerId, AccountKind.EXPENSE, cny, false, false, name = "餐饮过账"),
+                        Account(AccountId("asset-system"), ledgerId, AccountKind.ASSET, cny, false, false, name = "系统资产"),
+                    ),
+                categories = null,
+            )
+        assertEquals(
+            CatalogAdmissionRejection.PaymentAccountNotManageableFinancial,
+            admissionFailure(createWith(notManageable, "asset-system", "expense-leaf")),
+        )
+        // A kind-mismatched category (INCOME leaf) is its own token.
+        val incomeLeaf =
+            catalogOf(
+                accounts = null,
+                categories =
+                    listOf(
+                        Category(CategoryId("income-leaf"), ledgerId, CategoryId("expense-group"), AccountId("expense-hidden"), true, CategoryKind.INCOME, "副业"),
+                    ),
+            )
+        assertEquals(
+            CatalogAdmissionRejection.CategoryKindMismatch,
+            admissionFailure(createWith(incomeLeaf, "asset-payment", "income-leaf")),
+        )
+        // An unloadable catalog fails closed with its own token rather than a member violation.
+        assertEquals(
+            CatalogAdmissionRejection.CatalogUnavailable,
+            admissionFailure(createWith(null, "asset-payment", "expense-leaf")),
+        )
+    }
+
+    private fun admissionSnapshot(
+        account: String,
+        category: String,
+    ): ManualExpenseRequestSnapshot =
+        ManualExpenseRequestSnapshot(
+            ledgerId = ledgerId,
+            amount = Money.ofMinor(100L, cny),
+            categoryId = CategoryId(category),
+            paymentAccountId = AccountId(account),
+            occurredAt = kotlin.time.Instant.parse("2026-01-01T00:00:00Z"),
+            note = "",
+        )
+
+    private fun admissionCommitIds(): ConfirmedManualExpenseCommitIds =
+        ConfirmedManualExpenseCommitIds(
+            confirmationId = ConfirmationId("confirmation-admission"),
+            expenseIds =
+                com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds(
+                    transactionId = com.unifiedledger.domain.TransactionId("tx-admission"),
+                    versionId = com.unifiedledger.domain.TransactionVersionId("version-admission"),
+                    postingSetId = com.unifiedledger.domain.PostingSetId("set-admission"),
+                    expensePostingId = com.unifiedledger.domain.PostingId("posting-admission-expense"),
+                    paymentPostingId = com.unifiedledger.domain.PostingId("posting-admission-payment"),
+                ),
+        )
+
+    private fun admissionFailure(result: DomainResult<ConfirmedManualExpenseCommit>): com.unifiedledger.domain.DomainViolation = (assertIs<DomainResult.Failure>(result)).violation
+
+    private fun catalogOf(
+        accounts: List<Account>?,
+        categories: List<Category>?,
+    ): LedgerCatalog {
+        val base = catalog()
+        return when (
+            val result =
+                LedgerCatalog.create(
+                    accounts = accounts ?: base.accounts,
+                    categories = categories ?: base.categories,
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("test catalog must be valid")
+        }
     }
 
     private fun catalog(): LedgerCatalog =

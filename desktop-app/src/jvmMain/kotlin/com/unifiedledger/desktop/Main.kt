@@ -409,8 +409,33 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
     val currentVersion = LedgerDatabase.Schema.version.toLong()
     val from = driver.readUserVersion()
     when {
-        from == 0L -> {
+        // A3 (review): `user_version == 0` alone does not mean "new file". A populated ledger
+        // written before the version stamp existed must never be handed to `Schema.create`
+        // (that fails with "table ... already exists" and becomes a permanent StartupError).
+        // Probe the actual schema instead and only create when the file is genuinely empty.
+        from == 0L && driver.hasTable("catalog_version") -> {
+            // Already the current product schema, only the version stamp was missing.
+            driver.writeUserVersion(currentVersion)
+        }
+        from == 0L && driver.hasTable("ledger_transaction") -> {
+            // Legacy pre-catalog ledger without a version stamp: treat it as v27 (the last
+            // version before the additive catalog tables) and run the structure-only migration
+            // in one transaction. A failure rolls back and surfaces as StartupError; the file is
+            // never deleted or overwritten.
+            val database = LedgerDatabase(driver)
+            database.transaction {
+                LedgerDatabase.Schema.migrate(driver, LEGACY_UNTAGGED_VERSION, currentVersion)
+                driver.writeUserVersion(currentVersion)
+            }
+        }
+        from == 0L && !driver.hasAnyUserTable() -> {
             LedgerDatabase.Schema.create(driver)
+            driver.writeUserVersion(currentVersion)
+        }
+        from == 0L -> {
+            // Unknown populated schema without a version stamp: never create over it; stamp the
+            // current version so opening is deterministic. Downstream bootstrap fails closed
+            // visibly if the schema does not match.
             driver.writeUserVersion(currentVersion)
         }
         from == currentVersion -> Unit
@@ -425,6 +450,38 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
             "Library schema version $from is newer than the supported version $currentVersion; refusing to open",
         )
     }
+}
+
+/** Last schema version before the additive P7-01 `catalog_*` tables (spec 5.2). */
+private const val LEGACY_UNTAGGED_VERSION = 27L
+
+private fun SqlDriver.hasTable(name: String): Boolean {
+    var found = false
+    executeQuery(
+        null,
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        { cursor ->
+            if (cursor.next().value) found = (cursor.getLong(0) ?: 0L) > 0L
+            app.cash.sqldelight.db.QueryResult.Unit
+        },
+        1,
+        { bindString(0, name) },
+    )
+    return found
+}
+
+private fun SqlDriver.hasAnyUserTable(): Boolean {
+    var found = false
+    executeQuery(
+        null,
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        { cursor ->
+            if (cursor.next().value) found = (cursor.getLong(0) ?: 0L) > 0L
+            app.cash.sqldelight.db.QueryResult.Unit
+        },
+        0,
+    )
+    return found
 }
 
 private fun SqlDriver.writeUserVersion(version: Long) {

@@ -31,6 +31,14 @@ data class LedgerCurrentState(
     val ledgerId: LedgerId,
     val transactions: List<CurrentVersionRow>,
     val balances: List<AccountCurrencyBalance>,
+    /**
+     * B1 (spec 7.3/D-027): current authoritative display names for the accounts referenced by
+     * this state, so the overview renders names instead of bare ids. An empty value (a catalog
+     * row without a name) falls back to the stable id in the UI. Derived from the same injected
+     * catalog as balances, so reloading the catalog after a rename yields the new names while
+     * ids and amounts are unchanged.
+     */
+    val accountNames: Map<AccountId, String> = emptyMap(),
 )
 
 sealed interface LedgerCurrentStateResult {
@@ -73,6 +81,12 @@ class QueryLedgerCurrentState(
                 ledgerId = ledgerId,
                 transactions = rows,
                 balances = balances,
+                accountNames =
+                    buildMap {
+                        accountsById.values
+                            .filter { it.name.isNotEmpty() }
+                            .forEach { put(it.id, it.name) }
+                    },
             ),
         )
     }

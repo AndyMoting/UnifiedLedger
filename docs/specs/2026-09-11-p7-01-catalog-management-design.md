@@ -206,12 +206,21 @@ code 稳定、message 不稳定不比较（沿 D-098 诊断 taxonomy 与 P4-08 c
 | --- | --- |
 | `CreateAccount` | `CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`/`AccountKindNotManageable`/`CatalogVersionConflict`/`RequestIdentityConflict` |
 | `RenameAccount` / `SetAccountActive` | `CatalogObjectNotFound`/`AccountNotManageable`/`CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`（仅改名）/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `CreateCategoryGroup` | `CatalogObjectNotFound`（隐藏账户/父导航）/`CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`/`CategoryPostingAccountInvalid`/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `AppendCategoryChild` | `CatalogObjectNotFound`/`CategoryNotManageable`/`CategoryParentRequired`/`CatalogNameConflict`/`CategoryLevelNotSupported`/`CategoryPostingAccountInvalid`/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `RenameCategory` | `CatalogObjectNotFound`/`CategoryNotManageable`/`CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `SetCategoryActive` | `CatalogObjectNotFound`/`CategoryNotManageable`/`ParentInactive`（启用叶子）/`CategoryHasNoActiveChild`（停用叶子）/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `DeleteCategory` | `CatalogObjectNotFound`/`CategoryNotManageable`/`CategoryHasReferences`/`CatalogVersionConflict`/`RequestIdentityConflict` |
-| `EnableCategoryGroup` | `CatalogObjectNotFound`/`CategoryNotManageable`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `CreateCategoryGroup` | `CatalogObjectNotFound`（隐藏账户/父导航）/`CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `AppendCategoryChild` | `CatalogObjectNotFound`/`CatalogNameConflict`/`CategoryLevelNotSupported`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `RenameCategory` | `CatalogObjectNotFound`/`CatalogNameEmpty`/`CatalogNameTooLong`/`CatalogNameInvalid`/`CatalogNameConflict`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `SetCategoryActive` | `CatalogObjectNotFound`/`ParentInactive`（启用叶子）/`CategoryHasNoActiveChild`（停用叶子）/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `DeleteCategory` | `CatalogObjectNotFound`/`CategoryHasReferences`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+| `EnableCategoryGroup` | `CatalogObjectNotFound`/`CatalogVersionConflict`/`RequestIdentityConflict` |
+
+**映射可达性说明（B2 回修，仅记录可达范围，不改 A-1..A-7/C-1..C-10/V-1/V-2 语义）**：
+
+- **命令层不可达（已从映射收窄）**：
+  - `CategoryNotManageable`：产品装载路径只取本账本 `catalog_category` 行并以该账本 id 构造域对象，产品目录内不存在他账本/非本人分类，缺分类一律 `CatalogObjectNotFound`。该 token 保留于领域层，但不可由产品命令触发。
+  - `CategoryParentRequired`：`catalog_category` 表级 `CHECK` 禁止一级行携带 `posting_account_id`，`validateProductCatalog` 又在装载路径先行拦截，命令路径遇不到「有 posting account 但父身份待确认」的形态。领域守卫保留（D-066）。
+  - `CategoryPostingAccountInvalid`：隐藏过账账户由命令内部铸造（同账本、隐藏、kind 匹配），命令路径无法构造错误映射；该码唯一生产者是装载校验 `validateProductCatalog`。
+- **命令层仍可达**：上表其余码，含 `CategoryLevelNotSupported`（对已存在一级行再挂子、或把有父分类当一级追加）与兜底 `CatalogConstraintViolation`。
+- **仅装载/领域层可达**：`CategoryPostingAccountInvalid`（装载校验）、`CategoryNotManageable`/`CategoryParentRequired`（领域守卫，产品命令路径不可构造）。
 
 零写入契约：任一 Rejected/Conflict 与 unique/FK 冲突沿命令事务全回滚（claim 行亦回滚 → 身份可重试，D-098 领域 4 语义）；等价 replay 返回原 receipt、零新增实体与名称历史。**并发收敛（A5）**：同 `(ledger_id, request_id)` 唯一键冲突 → 读既有 request 行；`request_snapshot` 相等 → `NoChange` 返回原 receipt；不等 → `RequestIdentityConflict`。claim + work + receipt 在**同一事务**内完成，`PENDING` 状态对外不可见（故 `catalog_command_request.outcome` 仅 `ACCEPTED`/`NO_CHANGE` 两值落库）。
 

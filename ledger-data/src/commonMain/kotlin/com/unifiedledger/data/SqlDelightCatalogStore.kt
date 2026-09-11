@@ -490,63 +490,87 @@ class SqlDelightCatalogStore private constructor(
         val ledger = ledgerId.value
         val seededAccounts = seed.accounts.map { it.accountId.value }.toSet()
         val seededCategories = seed.categories.map { it.categoryId.value }.toSet()
-        if (database.ledgerQueries
-                .catalogReferencedPostingAccounts(ledger)
-                .executeAsList()
-                .any { it !in seededAccounts }
-        ) {
-            return true
-        }
-        if (database.ledgerQueries
-                .catalogReferencedProjectionAccounts(ledger)
-                .executeAsList()
-                .any { it !in seededAccounts }
-        ) {
-            return true
-        }
-        val decisionAccounts =
-            database.ledgerQueries
-                .catalogReferencedDecisionAccountIds(
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                ).executeAsList()
-        if (decisionAccounts.any { it !in seededAccounts }) return true
-        if (database.ledgerQueries
-                .catalogReferencedDecisionCategoryIds(ledger)
-                .executeAsList()
-                .any { it !in seededCategories }
-        ) {
-            return true
-        }
-        val semanticCategories =
-            database.ledgerQueries
-                .catalogReferencedSemanticCategoryIds(
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                    ledger,
-                ).executeAsList()
-        if (semanticCategories.any { it !in seededCategories }) return true
-        return false
+        // A2 (review): the scan must include the product manual entry points too, so a ledger
+        // whose existing manual expense/income references a non-default category fails closed.
+        if (referencedAccountIds(ledger).any { it !in seededAccounts }) return true
+        return referencedCategoryIds(ledger).any { it !in seededCategories }
     }
 
+    /**
+     * A1 (review): the C-7 delete-reference probe must be at least as wide as the bootstrap
+     * unknown-reference scan (spec 5.3/6.3), so it shares [referencedCategoryIds] /
+     * [referencedAccountIds] instead of a hand-maintained subset. Deleting a category also
+     * deletes its hidden posting account (C-10), so a formal/product posting that already
+     * references that account blocks the delete as well (fail-closed).
+     */
     private fun categoryHasReferences(
         ledgerId: LedgerId,
         categoryId: CategoryId,
     ): Boolean {
         val ledger = ledgerId.value
-        val category = categoryId.value
-        return database.ledgerQueries.countCatalogCategoryRefManualExpense(ledger, category).executeAsOne() > 0L ||
-            database.ledgerQueries.countCatalogCategoryRefManualIncome(ledger, category).executeAsOne() > 0L ||
-            database.ledgerQueries.countCatalogCategoryRefDecision(ledger, category).executeAsOne() > 0L ||
-            database.ledgerQueries.countCatalogCategoryRefRg04(ledger, category).executeAsOne() > 0L
+        if (categoryId.value in referencedCategoryIds(ledger)) return true
+        val postingAccountId =
+            database.ledgerQueries
+                .selectCatalogCategory(ledger, categoryId.value)
+                .executeAsOneOrNull()
+                ?.posting_account_id
+                ?: return false
+        return postingAccountId in referencedAccountIds(ledger)
     }
+
+    /** Every category id referenced by a product row, across the same surface bootstrap scans. */
+    private fun referencedCategoryIds(ledger: String): Set<String> =
+        buildSet {
+            addAll(database.ledgerQueries.catalogReferencedManualCategoryIds(ledger, ledger).executeAsList())
+            addAll(database.ledgerQueries.catalogReferencedDecisionCategoryIds(ledger).executeAsList())
+            addAll(
+                database.ledgerQueries
+                    .catalogReferencedSemanticCategoryIds(ledger, ledger, ledger, ledger, ledger, ledger, ledger)
+                    .executeAsList(),
+            )
+            addAll(
+                database.ledgerQueries
+                    .catalogReferencedConfirmationCategoryIds(
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                    ).executeAsList(),
+            )
+            addAll(
+                database.ledgerQueries
+                    .catalogReferencedStagingCategoryIds(
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                        ledger,
+                    ).executeAsList(),
+            )
+        }
+
+    /** Every account id referenced by a product row (posting, projection or decision). */
+    private fun referencedAccountIds(ledger: String): Set<String> =
+        buildSet {
+            addAll(database.ledgerQueries.catalogReferencedPostingAccounts(ledger).executeAsList())
+            addAll(database.ledgerQueries.catalogReferencedProjectionAccounts(ledger).executeAsList())
+            addAll(
+                database.ledgerQueries
+                    .catalogReferencedDecisionAccountIds(ledger, ledger, ledger, ledger, ledger)
+                    .executeAsList(),
+            )
+        }
 
     companion object {
         /**
