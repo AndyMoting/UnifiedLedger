@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
@@ -19,9 +20,21 @@ import kotlin.time.Instant
 sealed interface P503AppState {
     data object Ready : P503AppState
 
+    /**
+     * P7-01.D catalog management lives on the overview as optional fields (spec section 7):
+     * when [selectedTab] is ACCOUNTS the shell renders the manageable accounts plus the shared
+     * two-level category tree instead of the read-only balance list. [catalogSnapshot] is the
+     * authoritative projection the host read from the facade (names replacing bare ids);
+     * [catalogDialog] is the open form and [catalogNotice] the last outcome banner. Every
+     * catalog transition stays in the pure reducer. The defaults keep all pre-P7-01 constructor
+     * and copy sites compiling.
+     */
     data class OverviewEmpty(
         val state: LedgerCurrentState,
         val selectedTab: P503Tab = P503Tab.HOME,
+        val catalogSnapshot: CatalogSnapshotView? = null,
+        val catalogDialog: CatalogDialog = CatalogDialog.None,
+        val catalogNotice: CatalogNotice? = null,
     ) : P503AppState
 
     data class Editing(

@@ -151,6 +151,95 @@ CREATE TABLE rg02_category_name_history (
   PRIMARY KEY (ledger_id, category_id, version_number)
 );
 
+-- P7-01 (D-143) product account/category catalog. Non-rgXX_ prefix shared product tables
+-- (D-098 option A). Ledger-scoped monotonic catalog version, manageable account/category
+-- rows, a shared append-only name history and a claim-first request/receipt idempotency pair.
+-- All product DDL here is created verbatim by 27.sqm so fresh and migrated schemas match.
+CREATE TABLE catalog_version (
+  ledger_id TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 0),
+  PRIMARY KEY (ledger_id)
+);
+CREATE TRIGGER catalog_version_guard_update BEFORE UPDATE ON catalog_version BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.version != old.version + 1
+    THEN RAISE(ABORT, 'catalog version must increase by one') END;
+END;
+
+CREATE TABLE catalog_account (
+  ledger_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('ASSET','LIABILITY','EQUITY','INCOME','EXPENSE')),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  owned_by_user INTEGER NOT NULL CHECK (owned_by_user IN (0, 1)),
+  real_account INTEGER NOT NULL CHECK (real_account IN (0, 1)),
+  system_role TEXT,
+  hidden INTEGER NOT NULL CHECK (hidden IN (0, 1)),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (ledger_id, account_id)
+);
+
+CREATE TABLE catalog_category (
+  ledger_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('EXPENSE','INCOME')),
+  parent_id TEXT,
+  posting_account_id TEXT,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (ledger_id, category_id),
+  CHECK ((parent_id IS NULL AND posting_account_id IS NULL)
+      OR (parent_id IS NOT NULL AND posting_account_id IS NOT NULL)),
+  FOREIGN KEY (ledger_id, parent_id) REFERENCES catalog_category(ledger_id, category_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, posting_account_id) REFERENCES catalog_account(ledger_id, account_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX catalog_category_by_parent ON catalog_category(ledger_id, parent_id);
+
+CREATE TABLE catalog_name_history (
+  ledger_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('account','category')),
+  owner_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT','SUPERSEDED')),
+  PRIMARY KEY (ledger_id, owner_kind, owner_id, version_number)
+);
+CREATE TRIGGER catalog_name_history_guard_update BEFORE UPDATE ON catalog_name_history BEGIN
+  SELECT CASE WHEN old.status != 'CURRENT' OR new.status != 'SUPERSEDED'
+      OR new.ledger_id != old.ledger_id OR new.owner_kind != old.owner_kind
+      OR new.owner_id != old.owner_id OR new.version_number != old.version_number
+      OR new.name != old.name
+    THEN RAISE(ABORT, 'cannot update catalog name history') END;
+END;
+
+CREATE TABLE catalog_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  reason_code TEXT,
+  expected_catalog_version INTEGER NOT NULL CHECK (expected_catalog_version >= 0),
+  result_catalog_version INTEGER,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE catalog_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  new_catalog_version INTEGER NOT NULL CHECK (new_catalog_version >= 0),
+  created_manageable_account_id TEXT,
+  created_posting_account_id TEXT,
+  created_parent_category_id TEXT,
+  created_child_category_id TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES catalog_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER catalog_command_receipt_guard_update BEFORE UPDATE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update catalog command receipt'); END;
+CREATE TRIGGER catalog_command_receipt_guard_delete BEFORE DELETE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete catalog command receipt'); END;
+
 CREATE TABLE rg03_operation_request (
   ledger_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -8534,3 +8623,158 @@ JOIN ledger_transaction_current_version AS current_version
 WHERE receipt.ledger_id = ?
   AND receipt.confirmation_id = ?
   AND receipt.transaction_id = ?;
+
+-- P7-01 (D-143) catalog queries. Fresh persistence for the ledger-scoped product catalog:
+-- version probe, catalog rows, shared append-only name history, claim-first request/receipt
+-- idempotency and the bootstrap unknown-reference probes.
+selectCatalogVersion:
+SELECT version FROM catalog_version WHERE ledger_id = ?;
+
+countCatalogVersions:
+SELECT count(*) FROM catalog_version WHERE ledger_id = ?;
+
+insertCatalogVersion:
+INSERT INTO catalog_version(ledger_id, version) VALUES (?, ?)
+ON CONFLICT (ledger_id) DO NOTHING;
+
+advanceCatalogVersion:
+UPDATE catalog_version SET version = version + 1 WHERE ledger_id = ?;
+
+countCatalogAccounts:
+SELECT count(*) FROM catalog_account WHERE ledger_id = ?;
+
+countCatalogCategories:
+SELECT count(*) FROM catalog_category WHERE ledger_id = ?;
+
+selectCatalogAccount:
+SELECT account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, system_role, hidden, active
+FROM catalog_account WHERE ledger_id = ? AND account_id = ?;
+
+selectCatalogAccounts:
+SELECT account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, system_role, hidden, active
+FROM catalog_account WHERE ledger_id = ? ORDER BY account_id;
+
+insertCatalogAccount:
+INSERT INTO catalog_account(ledger_id, account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, system_role, hidden, active)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateCatalogAccountName:
+UPDATE catalog_account SET name = ? WHERE ledger_id = ? AND account_id = ?;
+
+updateCatalogAccountActive:
+UPDATE catalog_account SET active = ? WHERE ledger_id = ? AND account_id = ?;
+
+selectCatalogCategory:
+SELECT category_id, kind, parent_id, posting_account_id, active
+FROM catalog_category WHERE ledger_id = ? AND category_id = ?;
+
+selectCatalogCategories:
+SELECT category_id, kind, parent_id, posting_account_id, active
+FROM catalog_category WHERE ledger_id = ? ORDER BY category_id;
+
+insertCatalogCategory:
+INSERT INTO catalog_category(ledger_id, category_id, kind, parent_id, posting_account_id, active)
+VALUES (?, ?, ?, ?, ?, ?);
+
+updateCatalogCategoryActive:
+UPDATE catalog_category SET active = ? WHERE ledger_id = ? AND category_id = ?;
+
+deleteCatalogCategory:
+DELETE FROM catalog_category WHERE ledger_id = ? AND category_id = ?;
+
+deleteCatalogAccount:
+DELETE FROM catalog_account WHERE ledger_id = ? AND account_id = ?;
+
+countCatalogNameHistory:
+SELECT count(*) FROM catalog_name_history WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ?;
+
+selectCatalogCurrentName:
+SELECT version_number, name FROM catalog_name_history
+WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ? AND status = 'CURRENT';
+
+selectCatalogMaxNameVersion:
+SELECT max(version_number) FROM catalog_name_history WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ?;
+
+supersedeCatalogCurrentName:
+UPDATE catalog_name_history SET status = 'SUPERSEDED'
+WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ? AND status = 'CURRENT';
+
+insertCatalogNameHistory:
+INSERT INTO catalog_name_history(ledger_id, owner_kind, owner_id, version_number, name, status)
+VALUES (?, ?, ?, ?, ?, ?);
+
+deleteCatalogNameHistory:
+DELETE FROM catalog_name_history WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ?;
+
+claimCatalogCommandRequest:
+INSERT INTO catalog_command_request(ledger_id, request_id, command, request_snapshot, input_fingerprint, outcome, reason_code, expected_catalog_version, result_catalog_version)
+VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+selectCatalogCommandRequest:
+SELECT command, request_snapshot, input_fingerprint, outcome, expected_catalog_version, result_catalog_version
+FROM catalog_command_request WHERE ledger_id = ? AND request_id = ?;
+
+updateCatalogCommandRequestOutcome:
+UPDATE catalog_command_request SET outcome = ?, result_catalog_version = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+deleteCatalogCommandRequest:
+DELETE FROM catalog_command_request WHERE ledger_id = ? AND request_id = ?;
+
+insertCatalogCommandReceipt:
+INSERT INTO catalog_command_receipt(ledger_id, request_id, outcome, new_catalog_version, created_manageable_account_id, created_posting_account_id, created_parent_category_id, created_child_category_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectCatalogCommandReceipt:
+SELECT outcome, new_catalog_version, created_manageable_account_id, created_posting_account_id, created_parent_category_id, created_child_category_id
+FROM catalog_command_receipt WHERE ledger_id = ? AND request_id = ?;
+
+countCatalogCommandRequests:
+SELECT count(*) FROM catalog_command_request WHERE ledger_id = ?;
+
+countCatalogCommandReceipts:
+SELECT count(*) FROM catalog_command_receipt WHERE ledger_id = ?;
+
+catalogReferencedPostingAccounts:
+SELECT DISTINCT account_id FROM posting WHERE ledger_id = ?;
+
+catalogReferencedProjectionAccounts:
+SELECT DISTINCT target_account_id FROM evidence_projection WHERE ledger_id = ?;
+
+catalogReferencedDecisionCategoryIds:
+SELECT DISTINCT category_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND category_id IS NOT NULL;
+
+-- Spec 5.3: existing posting.category references (the rgXX_ posting-semantic tables are the
+-- only landing place for a posting-level category id) must resolve against the seeded catalog.
+catalogReferencedSemanticCategoryIds:
+SELECT DISTINCT category_id FROM rg03_transfer_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg04_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg05_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg06_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg07_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg11_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM rg12_posting_semantic WHERE ledger_id = ? AND category_id IS NOT NULL;
+
+catalogReferencedDecisionAccountIds:
+SELECT DISTINCT funding_account_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND funding_account_id IS NOT NULL
+UNION SELECT DISTINCT from_account_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND from_account_id IS NOT NULL
+UNION SELECT DISTINCT to_account_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND to_account_id IS NOT NULL
+UNION SELECT DISTINCT credit_liability_account_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND credit_liability_account_id IS NOT NULL
+UNION SELECT DISTINCT asset_account_id FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND asset_account_id IS NOT NULL;
+
+selectCatalogCurrentNamesByKind:
+SELECT owner_id, name FROM catalog_name_history
+WHERE ledger_id = ? AND owner_kind = ? AND status = 'CURRENT';
+
+countCatalogCategoryRefManualExpense:
+SELECT count(*) FROM manual_expense_request WHERE ledger_id = ? AND category_id = ?;
+
+countCatalogCategoryRefManualIncome:
+SELECT count(*) FROM manual_income_request WHERE ledger_id = ? AND category_id = ?;
+
+countCatalogCategoryRefDecision:
+SELECT count(*) FROM import_candidate_decision_snapshot WHERE ledger_id = ? AND category_id = ?;
+
+countCatalogCategoryRefRg04:
+SELECT count(*) FROM rg04_mixed_expense_snapshot WHERE ledger_id = ? AND category_id = ?;

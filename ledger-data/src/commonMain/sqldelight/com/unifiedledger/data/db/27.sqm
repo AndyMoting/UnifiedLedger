@@ -1,0 +1,97 @@
+-- P7-01 catalog management (D-143): v27 -> v28. Purely additive: six new non-rgXX_ product
+-- tables plus their index and controlled-supersede / immutability triggers. Zero data
+-- backfill; the caller wraps Schema.migrate in one outer transaction (26.sqm discipline), so
+-- any guard failure rolls the whole migration back and the v27 file is left untouched.
+-- Every CREATE statement below matches the fresh Ledger.sq terminal definitions byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+CREATE TABLE catalog_version (
+  ledger_id TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 0),
+  PRIMARY KEY (ledger_id)
+);
+CREATE TRIGGER catalog_version_guard_update BEFORE UPDATE ON catalog_version BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.version != old.version + 1
+    THEN RAISE(ABORT, 'catalog version must increase by one') END;
+END;
+
+CREATE TABLE catalog_account (
+  ledger_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('ASSET','LIABILITY','EQUITY','INCOME','EXPENSE')),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  owned_by_user INTEGER NOT NULL CHECK (owned_by_user IN (0, 1)),
+  real_account INTEGER NOT NULL CHECK (real_account IN (0, 1)),
+  system_role TEXT,
+  hidden INTEGER NOT NULL CHECK (hidden IN (0, 1)),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (ledger_id, account_id)
+);
+
+CREATE TABLE catalog_category (
+  ledger_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('EXPENSE','INCOME')),
+  parent_id TEXT,
+  posting_account_id TEXT,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (ledger_id, category_id),
+  CHECK ((parent_id IS NULL AND posting_account_id IS NULL)
+      OR (parent_id IS NOT NULL AND posting_account_id IS NOT NULL)),
+  FOREIGN KEY (ledger_id, parent_id) REFERENCES catalog_category(ledger_id, category_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, posting_account_id) REFERENCES catalog_account(ledger_id, account_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX catalog_category_by_parent ON catalog_category(ledger_id, parent_id);
+
+CREATE TABLE catalog_name_history (
+  ledger_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('account','category')),
+  owner_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT','SUPERSEDED')),
+  PRIMARY KEY (ledger_id, owner_kind, owner_id, version_number)
+);
+CREATE TRIGGER catalog_name_history_guard_update BEFORE UPDATE ON catalog_name_history BEGIN
+  SELECT CASE WHEN old.status != 'CURRENT' OR new.status != 'SUPERSEDED'
+      OR new.ledger_id != old.ledger_id OR new.owner_kind != old.owner_kind
+      OR new.owner_id != old.owner_id OR new.version_number != old.version_number
+      OR new.name != old.name
+    THEN RAISE(ABORT, 'cannot update catalog name history') END;
+END;
+
+CREATE TABLE catalog_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  reason_code TEXT,
+  expected_catalog_version INTEGER NOT NULL CHECK (expected_catalog_version >= 0),
+  result_catalog_version INTEGER,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE catalog_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  new_catalog_version INTEGER NOT NULL CHECK (new_catalog_version >= 0),
+  created_manageable_account_id TEXT,
+  created_posting_account_id TEXT,
+  created_parent_category_id TEXT,
+  created_child_category_id TEXT,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES catalog_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER catalog_command_receipt_guard_update BEFORE UPDATE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update catalog command receipt'); END;
+CREATE TRIGGER catalog_command_receipt_guard_delete BEFORE DELETE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete catalog command receipt'); END;
+
+-- Late-stage failure hook (26.sqm sentinel discipline): created after the table set, so a
+-- test-occupied catalog_v28_late_sentinel name aborts the migration post-build and proves the
+-- whole transaction rolls back together. Dropped again before the version advances to 28.
+CREATE TABLE catalog_v28_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1));
+DROP TABLE catalog_v28_late_sentinel;

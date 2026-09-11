@@ -45,7 +45,47 @@ class QueryManualExpenseOptionsTest {
         assertEquals(setOf(paymentId), accounts)
         val paymentOption = options.paymentAccounts.single()
         assertEquals(cny, paymentOption.currency)
+        // P7-01: the label is the catalog display name, falling back to the id when unnamed.
         assertEquals(paymentId.value, paymentOption.label)
+    }
+
+    @Test
+    fun optionLabelsUseCatalogNamesAndInactiveAccountsAndCategoriesAreExcluded() {
+        val paymentId = AccountId("asset-payment-named")
+        val inactivePaymentId = AccountId("asset-payment-inactive")
+        val expenseAccountId = AccountId("expense-account-named")
+        val categoryId = CategoryId("expense-category-named")
+        val parentId = CategoryId("expense-category-parent-named")
+        val inactiveCategoryId = CategoryId("expense-category-inactive-named")
+
+        val options =
+            optionsFor(
+                catalog(
+                    accounts =
+                        listOf(
+                            ownedRealAsset(paymentId, ledgerId, cny).copy(name = "现金"),
+                            ownedRealAsset(inactivePaymentId, ledgerId, cny).copy(name = "停用账户", active = false),
+                            Account(
+                                id = expenseAccountId,
+                                ledgerId = ledgerId,
+                                kind = AccountKind.EXPENSE,
+                                currency = cny,
+                                ownedByUser = false,
+                                realAccount = false,
+                                name = "交通过账",
+                            ),
+                        ),
+                    categories =
+                        listOf(
+                            Category(id = parentId, ledgerId = ledgerId, parentId = null, postingAccountId = null, active = true, name = "交通"),
+                            Category(id = categoryId, ledgerId = ledgerId, parentId = parentId, postingAccountId = expenseAccountId, active = true, name = "地铁"),
+                            Category(id = inactiveCategoryId, ledgerId = ledgerId, parentId = parentId, postingAccountId = expenseAccountId, active = false, name = "停用子项"),
+                        ),
+                ),
+            )
+
+        assertEquals("现金", options.paymentAccounts.single().label)
+        assertEquals("地铁", options.expenseCategories.single().label)
     }
 
     @Test

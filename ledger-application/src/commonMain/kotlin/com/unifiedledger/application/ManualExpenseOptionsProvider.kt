@@ -16,6 +16,9 @@ import com.unifiedledger.domain.LedgerId
  * carrying their account currency, and active leaf EXPENSE categories whose posting account
  * is also a same-ledger EXPENSE account. Options are never derived from balances, posting
  * rows or hard-coded ids.
+ *
+ * P7-01 (D-143): labels come from the authoritative catalog display name and fall back to the
+ * stable id only when a catalog row carries no name (for example a frozen golden snapshot).
  */
 data class PaymentAccountOption(
     val accountId: AccountId,
@@ -52,12 +55,13 @@ class QueryManualExpenseOptions(
                     it.ledgerId == ledgerId &&
                         it.kind == AccountKind.ASSET &&
                         it.ownedByUser &&
-                        it.realAccount
+                        it.realAccount &&
+                        it.active
                 }.map { account ->
                     PaymentAccountOption(
                         accountId = account.id,
                         currency = account.currency,
-                        label = account.id.value,
+                        label = account.name.ifEmpty { account.id.value },
                     )
                 }
 
@@ -68,12 +72,13 @@ class QueryManualExpenseOptions(
                         category.active &&
                         category.parentId != null &&
                         category.kind == CategoryKind.EXPENSE &&
-                        isSameLedgerExpensePostingAccount(category.postingAccountId)
+                        isSameLedgerExpensePostingAccount(category.postingAccountId) &&
+                        isLeafOfActiveParent(category)
                 }.map { category ->
                     ExpenseCategoryOption(
                         categoryId = category.id,
                         parentCategoryId = checkNotNull(category.parentId),
-                        label = category.id.value,
+                        label = category.name.ifEmpty { category.id.value },
                         postingAccountId = checkNotNull(category.postingAccountId),
                     )
                 }
@@ -82,6 +87,12 @@ class QueryManualExpenseOptions(
             paymentAccounts = paymentAccounts,
             expenseCategories = expenseCategories,
         )
+    }
+
+    private fun isLeafOfActiveParent(category: com.unifiedledger.domain.Category): Boolean {
+        val parentId = category.parentId ?: return false
+        val parent = catalog.categories.firstOrNull { it.id == parentId } ?: return true
+        return parent.active
     }
 
     private fun isSameLedgerExpensePostingAccount(postingAccountId: AccountId?): Boolean {

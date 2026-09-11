@@ -5,6 +5,7 @@ import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CurrencyUnit
 
 /**
@@ -58,8 +59,16 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             // Tab switching keeps the same authoritative LedgerCurrentState reference; no
-            // data is re-fetched and the selection survives only within the overview.
-            is P503UiEvent.SelectTab -> state.copy(selectedTab = event.tab)
+            // data is re-fetched and the selection survives only within the overview. P7-01.D:
+            // leaving a management tab drops any open dialog/notice; entering ACCOUNTS replaces
+            // the projection with the host-read authoritative snapshot.
+            is P503UiEvent.SelectTab ->
+                state.copy(
+                    selectedTab = event.tab,
+                    catalogSnapshot = event.catalogSnapshot ?: state.catalogSnapshot,
+                    catalogDialog = CatalogDialog.None,
+                    catalogNotice = null,
+                )
             P503UiEvent.StartNewExpense ->
                 P503AppState.Editing(
                     draft =
@@ -73,6 +82,59 @@ class P503ReducerImpl(
                     overview = state.state,
                     originTab = state.selectedTab,
                 )
+            // ---- P7-01.D catalog management transitions (pure; no IO) ----
+            is P503UiEvent.CatalogCommandCompleted ->
+                state.copy(
+                    catalogSnapshot = event.snapshot,
+                    catalogDialog = CatalogDialog.None,
+                    catalogNotice = catalogNoticeFor(event.result),
+                )
+            is P503UiEvent.CatalogSnapshotRefreshed ->
+                state.copy(catalogSnapshot = event.snapshot, catalogNotice = null)
+            is P503UiEvent.OpenAccountCreateDialog ->
+                state.copy(catalogDialog = CatalogDialog.CreateAccount(kind = AccountKind.ASSET), catalogNotice = null)
+            is P503UiEvent.OpenAccountRenameDialog ->
+                state.copy(
+                    catalogDialog = CatalogDialog.RenameAccount(event.accountId, event.currentName),
+                    catalogNotice = null,
+                )
+            is P503UiEvent.OpenCategoryGroupDialog ->
+                state.copy(catalogDialog = CatalogDialog.CreateCategoryGroup(kind = event.kind), catalogNotice = null)
+            is P503UiEvent.OpenCategoryAppendChildDialog ->
+                state.copy(catalogDialog = CatalogDialog.AppendCategoryChild(event.parentId), catalogNotice = null)
+            is P503UiEvent.OpenCategoryRenameDialog ->
+                state.copy(
+                    catalogDialog = CatalogDialog.RenameCategory(event.categoryId, event.currentName),
+                    catalogNotice = null,
+                )
+            is P503UiEvent.OpenCategoryDeleteDialog ->
+                state.copy(catalogDialog = CatalogDialog.ConfirmCategoryDelete(event.categoryId), catalogNotice = null)
+            is P503UiEvent.UpdateCatalogFormText ->
+                state.copy(catalogDialog = state.catalogDialog.withPrimaryText(event.text))
+            is P503UiEvent.UpdateCatalogFormSecondaryText ->
+                state.copy(catalogDialog = state.catalogDialog.withSecondaryText(event.text))
+            is P503UiEvent.UpdateCatalogFormKind ->
+                state.copy(catalogDialog = state.catalogDialog.withAccountKind(event.kind))
+            P503UiEvent.DismissCatalogDialog ->
+                state.copy(catalogDialog = CatalogDialog.None)
+            P503UiEvent.DismissCatalogNotice ->
+                state.copy(catalogNotice = null)
+            // Active-toggle intents are executed by the host (command + refresh), which then
+            // dispatches CatalogCommandCompleted; the pure reducer performs no IO, so the intent
+            // leaves the state untouched until that result arrives. "整组启用" (C-8) is its own
+            // command, so it joins the absorbed intents rather than reusing SetCategoryActive.
+            is P503UiEvent.ManageAccountActive,
+            is P503UiEvent.ManageCategoryActive,
+            is P503UiEvent.EnableCategoryGroup,
+            -> state
+            // Explicit Back during management closes the open dialog first; with no dialog it
+            // leaves the ACCOUNTS tab for HOME (the overview root stays the back floor).
+            P503UiEvent.Back ->
+                when {
+                    state.catalogDialog != CatalogDialog.None -> state.copy(catalogDialog = CatalogDialog.None)
+                    state.selectedTab == P503Tab.ACCOUNTS -> state.copy(selectedTab = P503Tab.HOME)
+                    else -> unhandled(state, event)
+                }
             else -> unhandled(state, event)
         }
 

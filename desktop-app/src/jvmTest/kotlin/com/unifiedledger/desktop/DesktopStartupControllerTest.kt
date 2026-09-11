@@ -70,10 +70,15 @@ class DesktopStartupControllerTest {
                     val graph = openDesktopLedger(url)
                     // Wrap the real driver-owned graph so the test can account for the
                     // controller's close action (P5-04.4 S3 resource-safety accounting).
-                    CloseableLedgerGraph(graph.facade) {
-                        closeCount += 1
-                        graph.close()
-                    }
+                    CloseableLedgerGraph(
+                        facade = graph.facade,
+                        close = {
+                            closeCount += 1
+                            graph.close()
+                        },
+                        catalogSession = graph.catalogSession,
+                        catalogCommands = graph.catalogCommands,
+                    )
                 },
             )
 

@@ -31,6 +31,7 @@ import com.unifiedledger.domain.AccountTransferField
 import com.unifiedledger.domain.AccountTransferIds
 import com.unifiedledger.domain.AccountTransferViolation
 import com.unifiedledger.domain.BalanceAdjustmentViolation
+import com.unifiedledger.domain.CatalogViolation
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryRenameViolation
 import com.unifiedledger.domain.CorrectTransactionVersionViolation
@@ -1394,6 +1395,8 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected =
         is PostingReconciliationViolation,
 
         is CategoryRenameViolation,
+
+        is CatalogViolation,
 
         -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
     }

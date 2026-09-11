@@ -29,9 +29,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.SummarizeLedgerActivity
-import com.unifiedledger.domain.Account
-import com.unifiedledger.domain.AccountId
-import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.ui.theme.glass.GlassBackdropSource
 import com.unifiedledger.ui.theme.glass.GlassSurface
 import com.unifiedledger.ui.theme.glass.rememberGlassBackdrop
@@ -109,36 +106,11 @@ fun P503TabShell(
 }
 
 /**
- * Accounts tab content (D-122): one row per account-currency balance from the
- * authoritative read payload, annotated with the catalog account kind. Accounts without
- * postings do not appear because the payload only carries accounts with balances; no
- * per-account drill-down exists in this batch.
- */
-@Composable
-fun P503AccountsScreen(
-    state: LedgerCurrentState,
-    catalog: LedgerCatalog,
-) {
-    val accountsById = remember(catalog) { catalog.accounts.associateBy { it.id } }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-    ) {
-        if (state.balances.isEmpty()) {
-            Text("还没有任何账户余额。", style = MaterialTheme.typography.bodyLarge)
-        } else {
-            state.balances.forEach { balance ->
-                Text(
-                    "${balance.accountId.value}（${accountKindLabel(accountsById, balance.accountId)}）" +
-                        "${balance.currency.code}：" +
-                        formatMinorUnits(balance.displayMinorUnits, balance.currency.precision),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-    }
-}
-
-/**
+ * Accounts tab content is now the P7-01.D management surface ([P503CatalogManagementScreen] on
+ * the shared [P503AppState.OverviewEmpty] management fields): manageable accounts with display
+ * names, kind, balance and active flag, plus the shared two-level category tree. The former
+ * read-only `P503AccountsScreen` (bare `accountId` rows) is superseded and removed.
+ *
  * Analysis tab content (D-122): the pure [SummarizeLedgerActivity] derivation over the
  * authoritative current state, rendered as-is. The UI never accumulates amounts itself;
  * signed totals (which can be negative) go through [formatMinorUnits] unchanged.
@@ -177,8 +149,3 @@ fun P503AnalysisScreen(
         }
     }
 }
-
-private fun accountKindLabel(
-    accountsById: Map<AccountId, Account>,
-    accountId: AccountId,
-): String = accountsById[accountId]?.kind?.name ?: "未知账户"

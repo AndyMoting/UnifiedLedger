@@ -32,6 +32,8 @@ data class Account(
     val realAccount: Boolean,
     val systemRole: String? = null,
     val storedValue: StoredValueConfig? = null,
+    val name: String = "",
+    val active: Boolean = true,
 )
 
 const val STORED_VALUE_BONUS_RIGHT_INCOME_ROLE = "stored_value_bonus_right_income"
@@ -45,6 +47,7 @@ data class Category(
     val postingAccountId: AccountId?,
     val active: Boolean,
     val kind: CategoryKind = CategoryKind.EXPENSE,
+    val name: String = "",
 )
 
 class LedgerCatalog private constructor(
