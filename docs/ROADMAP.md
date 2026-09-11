@@ -42,7 +42,7 @@
 
 ## 阶段 5：双端最小外壳与稳定 Android MVP
 
-建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01 至 P5-04.5 已全部交付，阶段 5 收口完成（`D-130`）。当前基线保持 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
+建立 Android 与 Desktop 可运行外壳，持续编译并调用同一业务核心；在现有稳定技术基线上完成 Android 基础交互。P5-01 至 P5-04.5 已全部交付，阶段 5 收口完成（`D-130`）。阶段 5 收口时基线为 Kotlin 2.4.10、Compose Multiplatform 1.11.1、Material3 1.9.0、min/compile/target SDK 34/36/36。
 
 - `P5-01`：双平台最小外壳契约已批准（`D-117`，contract-only，零实现/零 schema/零生产行为变化）。
 - `P5-02`：双平台骨架实施批已交付（`D-118`，`desktop-app`/`android-app` 两组合根、Clock 端口与 UUIDv7 产品 ID；零 schema/迁移变更）。
@@ -61,7 +61,7 @@
 
 ## 阶段 6：Android 视觉与平台适配
 
-在阶段 5 稳定基线上完成 Android 视觉和平台适配。包括 SDK/工具链证据门、以 `compileSdk 37` 为目标（minSdk 34 保持）；`targetSdk 37` 只有在官方兼容性证据、行为审计和 Android 14-17 回归全部通过后才升级，未通过则保持 targetSdk 36。阶段 6 再验证稳定主皮库双主题、AndroidLiquidGlass/Backdrop、Material3 回退路径，以及 Android 14-17 的设备、性能和人工验收；阶段 5 不提前修改这些依赖。阶段 6 进入条件已满足（D-133）；D1 工具链批完成（compileSdk 37，targetSdk 36 保持）；D2 主题与组件批完成（D-134）；D3 平台回归批完成 Android 14/15/16 模拟器证据与 targetSdk 37 行为审计（D-135），API 37 模拟器回归环境阻塞登记；阶段收口待 API 37 证据与真机确认。
+在阶段 5 稳定基线上完成 Android 视觉和平台适配。包括 SDK/工具链证据门、以 `compileSdk 37` 为目标（minSdk 34 保持）；`targetSdk 37` 只有在官方兼容性证据、行为审计和 Android 14-17 回归全部通过后才升级，未通过则保持 targetSdk 36。阶段 6 再验证稳定主皮库双主题、AndroidLiquidGlass/Backdrop、Material3 回退路径，以及 Android 14-17 的设备、性能和人工验收；阶段 5 不提前修改这些依赖。阶段 6 进入条件已满足（D-133）；D1 工具链批完成（compileSdk 37，targetSdk 36 保持）；D2 主题与组件批完成（D-134）；D3 平台回归批完成 Android 14/15/16 模拟器证据与 targetSdk 37 行为审计（D-135），API 37 模拟器回归环境阻塞登记；阶段收口待 API 37 证据与真机确认。阶段 6 收口声明：已于 2026-09-11 按 `D-142` 完成收口——Android 14/15/16/17 回归、视觉（Material3 稳定基线 + 玻璃独立回退层）、平台与性能证据、targetSdk 37 升级与真机确认全部通过，完成条件逐项满足；下一阶段 P7（Android 日常工作流）待用户门禁。
 
 - 进入条件：阶段 5 完成，SDK/工具链与目标依赖的官方证据门通过，且有可重复的 Android 基线验收。
 - 完成条件：Android 14-17 设备上的视觉功能或稳定 Material3 回退路径、平台证据和性能证据通过验收；玻璃效果失败但回退路径稳定时允许阶段 6 收口，且不阻塞核心账务流程。

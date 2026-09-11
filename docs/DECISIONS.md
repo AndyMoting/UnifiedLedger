@@ -2519,3 +2519,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **关闭判定：** **D-141 批关闭**——A-1..A-7 全部满足：A-1 六套件 1040 用例全绿且计数与冻结值精确一致、A-2 ktlintCheck 零告警、A-3 `:android-app:compileDebugKotlin` 通过、A-4 `project_docs` 通过、A-5 双端人工门向量 1-9 全 PASS、A-6 独立评审 + distinct verifier + 同提交 CI 三 job 绿 + 冻结哈希独立复算一致、A-7 diff 收敛（4 文件 8 行，零 schema/迁移/业务代码改动）。**CRLF 注**：规格文件在工作树因 Windows autocrlf 落盘为 CRLF，但 git blob 为 LF 且哈希等于冻结值 `A19F6473…10FC`，规范域一致。
 
 **关联决定：** `D-133`（P6-D2 三前置、P6-D3 视觉架构与指定皮肤主皮库落选）、`D-117`（CMP 1.11.1 栈冻结与主皮库选型证据）、`D-136`（玻璃启用与 backdrop 2.0.0）、`D-135`（行为审计与回归）、`D-140`（键入保留批，最近登记基线）。
+
+## D-142 阶段 6 收口登记（Android 视觉与平台适配）
+
+**状态：** 已批准并交付（2026-09-11）。纯收口登记：零代码逻辑、零 schema、零迁移、零依赖变更（仅描述性文档与注释同步，见下）。
+
+**决定：** 按 ROADMAP 阶段 6 完成条件与 WORK_PLAN 阶段收口项（计划内称 D4）登记阶段 6 收口。阶段 6 全部交付批次均已交付并关闭：D-133（入口证据与 SDK/视觉裁决）、D-134（D2 主题与组件）、D-135（D3 平台回归）、D-136（玻璃启用）、D-137（对话框 Esc 修复）、D-138（发生时间手输宽容解析）、D-139（键入保留缺陷修复）、D-140（冲突/拒绝流键入保留）、D-141（技术栈升级：CMP 1.12.0 + backdrop 2.0.1 + Kotlin 2.4.20 + AGP 9.3.1 + targetSdk 36→37 + kotlinx-datetime 0.8.0）。
+
+**阶段 6 完成判据对照（ROADMAP 阶段 6 完成条件：Android 14-17 上的视觉功能或稳定 Material3 回退路径、平台证据与性能证据通过验收）：**
+
+1. **平台证据**：D-135 完成 Android 14/15/16 模拟器回归与性能采样；API 37（Android 17）模拟器回归延后项于 2026-09-07 闭合；targetSdk 37 官方行为变化审计七域无影响。
+2. **视觉**：Material3 稳定基线为默认回退，玻璃独立层可用（D-134 双主题、E2E-R-001 状态栏对比度修复；D-136 玻璃启用与复验，浅 5.56 / 深 17.50 ≥3:1）；回退路径稳定。
+3. **targetSdk 37**：D-133 P6-D2 三前置（sw≥600dp 大屏审计、Android 14-17 回归、官方行为清单核对）与真机确认全部满足，D-141 完成 36→37 升级。
+4. **技术栈升级**：D-141 闭合（独立评审 + distinct verifier + 六套件 1040 用例全绿 + 同提交 CI run `34555111003` 三 job 绿 + 双端人工门向量 1-9 全 PASS）。
+5. **真机确认**：用户 2026-09-10 确认真机通过，并含 D-140 真机键入验证。
+
+收口结论：阶段 6 完成条件逐项满足，**阶段 6 收口完成**；阶段 7（Android 日常工作流）待用户门禁。
+
+**文档同步（处置 D141-SPEC-01 披露项）：** 同步升级后过时的描述性版本/SDK 陈述，使其与 D-141 事实一致——`README.md`、`docs/CURRENT_STATE.md`、`docs/ROADMAP.md`、`docs/ARCHITECTURE.md`、`docs/CONTRIBUTING.md`，以及描述性源码注释 `android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt`（targetSdk 36→37）与 `ledger-application/src/commonMain/kotlin/com/unifiedledger/application/UuidV7Generator.kt`（Kotlin 2.4.10→2.4.20），并更正 `app-ui/build.gradle.kts` 中自 D-136 起过时的 glass「zero call sites」注记。`docs/DECISIONS.md` 与既有 specs 中的历史版本陈述属冻结历史，永不变更。
+
+**范围冻结：** 零 schema/迁移/账务语义变更；仅文档与描述性注释；`.external/` 零触碰。
+
+**关联决定：** `D-130`（阶段 5 收口登记先例）、`D-133`（阶段 6 入口证据与 SDK/视觉裁决）、`D-141`（技术栈升级批，最近关闭批）。
