@@ -2541,3 +2541,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **范围冻结：** 零 schema/迁移/账务语义变更；仅文档与描述性注释；`.external/` 零触碰。
 
 **关联决定：** `D-130`（阶段 5 收口登记先例）、`D-133`（阶段 6 入口证据与 SDK/视觉裁决）、`D-141`（技术栈升级批，最近关闭批）。
+
+## D-143 P7-01 账户与分类目录管理（设计门 + Q01/Q02 裁决）
+
+**状态：** 已批准（设计门冻结，2026-09-11）；实施登记待实施批闭合后补登。本决定于 delta closure APPROVE（P0/P1 全闭合，零新增风险；仅余 P3 文档精度项并已收尾）后生效。
+
+**授权依据：** 用户 2026-09-11 常设授权「除不 push 外，其余默认采用推荐方案」；主代理在只读取证（账户/分类权威规则、目录与迁移源码、v27 schema、构建与迁移流程）与独立规格评审（REQUEST-CHANGES → 修正闭环）后，按推荐方案裁决 Q01/Q02。
+
+**决定：** 批准 P7-01「账户与分类目录管理」设计契约 `docs/specs/2026-09-11-p7-01-catalog-management-design.md`（状态 approved）。
+
+**Q01 账户生命周期（裁决）：** A-1 可管理属性仅 name/active，kind/currency/ownedByUser/realAccount/systemRole 创建期固定；A-2 可管理集合 = 同账本 realAccount && ownedByUser && systemRole == null && kind ∈ {ASSET, LIABILITY}；A-3 新建零余额、固定 CNY、无初始余额输入；A-4 改名不改稳定 ID + 名称历史；A-5 停用保留历史与余额、阻止新录入、可重启，本批无账户删除；A-6 名称规范化（去首尾空白、内部空白折叠、拒绝空/控制字符/超 64 码点），同账本非空名称唯一；A-7 空目录幂等种入旧 demo 默认目录，保留旧 demo ID，未知引用 fail-closed。
+
+**Q02 分类生命周期（裁决）：** C-1 两级固定、叶子映射隐藏过账账户；C-2 一级创建原子建立至少一个二级 + 隐藏账户，可追加二级；C-3 一级名称 (账本,kind) 唯一、二级 (账本,parentId) 唯一；C-4 改名追加名称历史；C-5 停用叶子须保留其父 ≥1 可用子；C-6 一级停用级联全子；C-7 仅无任何经济引用可删除；C-8 启用叶子要求父 active，另有整组启用；C-9 不做改父级/历史重分类迁移；C-10 隐藏账户与叶子同生命周期。
+
+**目录版本与提交重校验：** V-1 每账本单调目录版本 + expectedCatalogVersion 乐观并发，失配 `CatalogVersionConflict` 零写入；V-2 提交须在写入事务内按当前权威目录重校验引用对象的 active/存在/kind/叶子身份，失败整笔类型化拒绝零正式写入。
+
+**持久化与承接：** 新增非 rgXX_ 前缀产品表 `catalog_version/account/category/name_history/command_request/command_receipt`；自 schema v27 **加性迁移、纯建结构零回填**（版本号实施基线分配，预计 v28）；运行时幂等 bootstrap 承接旧 demo 目录；未知引用 fail-closed；**不改 `LedgerCatalog.create`**（严格校验仅在产品目录装载路径；停用/历史叶子允许 `posting_account_id == null`，与冻结 golden 一致）。对引用非默认 demo ID 的账本，bootstrap 后未知引用 fail-closed 是本批**期望终点**（保留库文件、仅 Retry/Exit，无本批恢复路径），目录映射补救留待后续批次另行裁决。
+
+**桌面缺陷修复：** `openDesktopLedger` 必须对已存在库做版本检测与条件迁移（低版本迁移、同版本直开、高版本 fail-closed），绝不删除或覆盖库文件；失败映射为 `P503StartupState.StartupError`。
+
+**契约披露：** Account.name/active 为 Kotlin 领域层产品侧扩展（golden fixture 形状不变，默认值不改变回放语义，既有约 198 处构造/解码零改动）；名称长度 ≤64 码点、一级名称唯一为新增产品约束；`catalog_account` 为 golden 账户形状子集（不含 reconciliation_eligible）。
+
+**范围冻结：** 不做账户删除、分类改父级、历史重分类迁移、多币种、余额初始值/余额调整能力；不改 rgXX_ 竖井、golden、P4/P5 正式提交语义。
+
+**验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块 + `:ledger-data:verifyCommonMainLedgerDatabaseMigration` + `ktlintCheck` + `project_docs`；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
+
+**关联决定：** D-022、D-023、D-024、D-025、D-026、D-027、D-046、D-063、D-066、D-077、D-087、D-098、D-113、D-119、D-120、D-126、D-142。
