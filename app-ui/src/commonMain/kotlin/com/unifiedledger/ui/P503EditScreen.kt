@@ -47,9 +47,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.unifiedledger.application.EntryType
+import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseOptions
+import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -59,28 +63,28 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
- * Edit screen (spec section 7.3.2). Payment account, secondary expense category, amount
- * and occurred time; the currency shown follows the selected payment account and is never
- * free text. Field errors retain the input and are semantically associated with their
- * field (isError+supportingText for text fields, a merged label+error semantics node for
- * the selector groups), so a screen reader reads each error as part of its field. A
- * non-null [onContinue] shows the Continue button; `null` hides it (used by the
- * conflict/rejection result presentation where the user must modify a field or abandon the
- * conflict before continuing). A non-null [onClose] shows the visible close button
- * (P5-04.3); it dispatches the same Back event as the system back: drop the draft and
- * return to the originating overview tab.
+ * Edit screen (spec section 7.3.2; P7-02 sections 6/S-2/S-4). Supports the two entry types
+ * implemented by P7-02.A (EXPENSE/INCOME) through a shared typed draft. The payment/receiving
+ * account, secondary category, amount, optional note and occurred time are edited here; the
+ * currency shown follows the selected account and is never free text. Field errors retain the
+ * input and are semantically associated with their field (isError+supportingText for text
+ * fields, a merged label+error semantics node for the selector groups), so a screen reader
+ * reads each error as part of its field. A non-null [onContinue] shows the Continue button;
+ * `null` hides it (used by the conflict/rejection result presentation where the user must
+ * modify a field or abandon the conflict before continuing). A non-null [onClose] shows the
+ * visible close button (P5-04.3); it dispatches the same Back event as the system back.
  *
  * D-131 R2: the occurred-at field gains a picker entry (DatePickerDialog then TimePicker,
- * spec 3.2); the selected local date-time converts through the fixed Asia/Shanghai zone
- * and is written via [onUpdateOccurredAt] (the reducer is untouched). The initial picker
- * value is the draft instant or the composition-root-injected [ledgerClock]'s current
- * instant; a conversion that fails the round-trip check (historical DST gap) surfaces the
- * field error and dispatches nothing (fail-closed, spec 3.3).
+ * spec 3.2); the selected local date-time converts through the fixed Asia/Shanghai zone and is
+ * written via [onUpdateOccurredAt] (the reducer is untouched). The initial picker value is the
+ * draft instant or the composition-root-injected [ledgerClock]'s current instant; a conversion
+ * that fails the round-trip check (historical DST gap) surfaces the field error and dispatches
+ * nothing (fail-closed, spec 3.3).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun P503EditScreen(
-    draft: ManualExpenseDraft,
+    draft: TypedEntryDraft,
     options: ManualExpenseOptions,
     validation: P503DraftValidation,
     currency: CurrencyUnit,
@@ -93,6 +97,11 @@ fun P503EditScreen(
     occurredAtText: String,
     onOccurredAtTextChange: (String) -> Unit,
     onContinue: (() -> Unit)?,
+    incomeOptions: ManualIncomeOptions = ManualIncomeOptions(emptyList(), emptyList()),
+    onSelectEntryType: (EntryType) -> Unit = {},
+    onUpdateNote: (String) -> Unit = {},
+    onUpdateReceivingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateIncomeCategory: (CategoryId) -> Unit = onUpdateCategory,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -110,6 +119,19 @@ fun P503EditScreen(
     DisposableEffect(Unit) {
         onDispose { latestOnDialogVisibilityChanged(false) }
     }
+
+    val isIncome = draft is IncomeDraft
+    val accountOptions = if (isIncome) incomeOptions.receivingAccounts else options.paymentAccounts
+    val accountFieldLabel = if (isIncome) "收款账户" else "支付账户"
+    val categoryOptions: List<Pair<CategoryId, String>> =
+        if (isIncome) {
+            incomeOptions.incomeCategories.map { it.categoryId to it.label }
+        } else {
+            options.expenseCategories.map { it.categoryId to it.label }
+        }
+    val categoryFieldLabel = if (isIncome) "收入分类" else "费用分类"
+    val amountCurrencyCode =
+        accountOptions.firstOrNull { it.accountId == draft.primaryAccountId }?.currency?.code ?: "—"
 
     Column(
         modifier =
@@ -144,7 +166,7 @@ fun P503EditScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "新增手工支出",
+                if (isIncome) "新增手工收入" else "新增手工支出",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
@@ -162,20 +184,42 @@ fun P503EditScreen(
         }
         Spacer(Modifier.height(8.dp))
 
+        // P7-02.A S-2: only EXPENSE/INCOME are selectable in this batch; the type switch uses
+        // the frozen retention matrix in the reducer.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("类型：", style = MaterialTheme.typography.titleSmall)
+            listOf(EntryType.EXPENSE, EntryType.INCOME).forEach { type ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(0.5f).minimumInteractiveComponentSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = draft.entryType == type,
+                        onClick = { onSelectEntryType(type) },
+                    )
+                    Text(if (type == EntryType.EXPENSE) "支出" else "收入", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
         val errors = validation.errors(draft, currency)
 
         SelectorField(
-            label = "支付账户",
+            label = accountFieldLabel,
             hasError = errors.missingPaymentAccount,
-            errorMessage = "请选择支付账户",
+            errorMessage = "请选择$accountFieldLabel",
         ) {
-            options.paymentAccounts.forEach { option ->
-                val selected = option.accountId == draft.paymentAccountId
+            accountOptions.forEach { option ->
+                val selected = option.accountId == draft.primaryAccountId
                 Row(
                     modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(selected = selected, onClick = { onUpdatePaymentAccount(option.accountId) })
+                    RadioButton(
+                        selected = selected,
+                        onClick = { if (isIncome) onUpdateReceivingAccount(option.accountId) else onUpdatePaymentAccount(option.accountId) },
+                    )
                     Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -183,28 +227,30 @@ fun P503EditScreen(
         Spacer(Modifier.height(8.dp))
 
         SelectorField(
-            label = "费用分类",
+            label = categoryFieldLabel,
             hasError = errors.missingCategory,
-            errorMessage = "请选择费用分类",
+            errorMessage = "请选择$categoryFieldLabel",
         ) {
-            options.expenseCategories.forEach { option ->
-                val selected = option.categoryId == draft.categoryId
+            categoryOptions.forEach { (optionCategoryId, label) ->
+                val selected = optionCategoryId == draft.categoryId
                 Row(
                     modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(selected = selected, onClick = { onUpdateCategory(option.categoryId) })
-                    Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                    RadioButton(
+                        selected = selected,
+                        onClick = { if (isIncome) onUpdateIncomeCategory(optionCategoryId) else onUpdateCategory(optionCategoryId) },
+                    )
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
         Spacer(Modifier.height(8.dp))
 
-        val selectedAccount = options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }
         OutlinedTextField(
             value = draft.amountText,
             onValueChange = onUpdateAmount,
-            label = { Text("金额（${selectedAccount?.currency?.code ?: "—"}）") },
+            label = { Text("金额（$amountCurrencyCode）") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             isError = errors.missingAmount || errors.amountFormatError != null,
@@ -215,6 +261,15 @@ fun P503EditScreen(
                     else -> Text("金额示例：11、35.8 或 35.80")
                 }
             },
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // P7-02.A S-4: optional note, length limit enforced by the reducer/commit validation.
+        OutlinedTextField(
+            value = draft.note,
+            onValueChange = onUpdateNote,
+            label = { Text("备注（可选）") },
+            singleLine = true,
         )
         Spacer(Modifier.height(8.dp))
 

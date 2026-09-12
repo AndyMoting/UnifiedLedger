@@ -2,9 +2,14 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.ManualEntryCommitResolution
+import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ManualIncomeCommitResolution
+import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -48,6 +53,40 @@ sealed interface P503UiEvent {
     data class UpdateOccurredAt(
         val instant: Instant,
     ) : P503UiEvent
+
+    // ---- P7-02.A typed-entry events (S-2/S-4) ----
+
+    /**
+     * Switches the editor's entry type. Valid only in Editing; the new draft is derived by the
+     * frozen [com.unifiedledger.application.EntryFieldRetention] matrix, and a target type this
+     * batch does not implement (TRANSFER/LEND/COLLECT) leaves the state untouched. Absorbed in
+     * every other state, never an ISE (§6.2a).
+     */
+    data class SelectEntryType(
+        val type: EntryType,
+    ) : P503UiEvent
+
+    /** P7-02.A S-4: writes the optional note draft field. */
+    data class UpdateNote(
+        val text: String,
+    ) : P503UiEvent
+
+    /** P7-02.A income receiving-account field update. */
+    data class UpdateReceivingAccount(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /** P7-02.A income category field update. */
+    data class UpdateIncomeCategory(
+        val categoryId: CategoryId,
+    ) : P503UiEvent
+
+    /**
+     * P7-02.A E-2: "record again" from the post-success overview. Only meaningful on the
+     * overview with a retained intent; absorbed everywhere else (§6.2a). The actual UI
+     * affordance ships with the efficiency batch, but the reducer semantics are frozen here.
+     */
+    data object SaveAndRecordAgain : P503UiEvent
 
     /**
      * The host obtains the requestId per spec section 4.6 and dispatches it. P5-04.3: the
@@ -164,16 +203,32 @@ sealed interface P503UiEvent {
     data object InitialLoadFailed : P503UiEvent
 
     data class SubmissionResult(
-        val result: ManualExpenseSubmissionResult,
-    ) : P503UiEvent
+        val result: ManualEntrySubmissionResult,
+    ) : P503UiEvent {
+        /** Source compatibility with pre-P7-02 expense-only call sites. */
+        constructor(result: ManualExpenseSubmissionResult) : this(ManualEntrySubmissionResult.Expense(result))
+
+        constructor(result: ManualIncomeSubmissionResult) : this(ManualEntrySubmissionResult.Income(result))
+    }
 
     /** Async result of one unknown-commit status check (P5-04.3); frozen four-outcome union. */
     data class CommitStatusResolved(
-        val resolution: ManualExpenseCommitResolution,
-    ) : P503UiEvent
+        val resolution: ManualEntryCommitResolution,
+    ) : P503UiEvent {
+        /** Source compatibility with pre-P7-02 expense-only call sites. */
+        constructor(resolution: ManualExpenseCommitResolution) : this(ManualEntryCommitResolution.Expense(resolution))
+
+        constructor(resolution: ManualIncomeCommitResolution) : this(ManualEntryCommitResolution.Income(resolution))
+    }
 
     data class RefreshResult(
         val currentState: LedgerCurrentState,
+        /**
+         * P7-02.A E-2 (G-C): the host injects the retained intent it captured before submission
+         * on the authoritative refresh that follows one determinate success
+         * (Created/NoChange/Recovered). Backward compatible; `null` for ordinary refreshes.
+         */
+        val retainedIntent: RetainedEntryIntent? = null,
     ) : P503UiEvent
 
     data object RefreshFailed : P503UiEvent

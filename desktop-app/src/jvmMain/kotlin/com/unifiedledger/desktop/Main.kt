@@ -13,41 +13,55 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
+import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
 import com.unifiedledger.application.CatalogBootstrapFailedException
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CommitOnceInvocationTracker
+import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
+import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.ConfirmedManualIncomeCommit
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
+import com.unifiedledger.application.ExecuteConfirmedManualIncome
+import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
+import com.unifiedledger.application.ExecuteManualIncomeSave
+import com.unifiedledger.application.ExecuteManualIncomeSubmission
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
+import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
+import com.unifiedledger.application.UuidV7ConfirmedManualIncomeIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
+import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
 import com.unifiedledger.data.SqlDelightConfirmedManualExpenseCommitPort
+import com.unifiedledger.data.SqlDelightConfirmedManualIncomeCommitPort
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
+import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
+import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
@@ -308,6 +322,51 @@ internal fun buildLedgerGraph(
     val queryCurrentState = session.queryCurrentState
     val resolver = ResolveManualExpenseCommitStatus(readAdapter)
     val submission = ExecuteManualExpenseSubmission(executeSave, tracker, resolver)
+
+    // P7-02.A income product chain, symmetric to the expense chain: its own port/tracker/id
+    // sources, its own V-2 admission wrapper and snapshot-aware resolver.
+    val incomePort = SqlDelightConfirmedManualIncomeCommitPort(database, driver)
+    val incomeTracker = CommitOnceInvocationTrackerIncome(incomePort)
+    val incomeDelegate =
+        ConfirmedIncomeTransactionFactory { request, ids ->
+            val catalog =
+                store.loadCurrent(request.ledgerId)
+                    ?: return@ConfirmedIncomeTransactionFactory DomainResult.Failure(DomainViolation.InvalidCatalog)
+            when (
+                val result =
+                    createAssetReceivedOrdinaryIncome(
+                        catalog = catalog,
+                        command =
+                            AssetReceivedOrdinaryIncomeCommand(
+                                ledgerId = request.ledgerId,
+                                amount = request.amount,
+                                categoryId = request.categoryId,
+                                receivingAccountId = request.receivingAccountId,
+                                times = TransactionTimes.collapsed(request.occurredAt),
+                                note = request.note,
+                            ),
+                        ids = ids.incomeIds,
+                    )
+            ) {
+                is DomainResult.Success ->
+                    DomainResult.Success(
+                        ConfirmedManualIncomeCommit(
+                            confirmationId = ids.confirmationId,
+                            transaction = result.value,
+                        ),
+                    )
+                is DomainResult.Failure -> result
+            }
+        }
+    val incomeFactory = CatalogAdmissionIncomeTransactionFactory(admissionReader = store, delegate = incomeDelegate)
+    val incomeIdSource = UuidV7ConfirmedManualIncomeIdSource(UuidV7Generator(::secureRandomBytes))
+    val incomeRequestIdSource = UuidV7ManualIncomeRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeConfirmedIncome = ExecuteConfirmedManualIncome(incomeTracker, incomeIdSource, incomeFactory)
+    val executeIncomeSave = ExecuteManualIncomeSave(executeConfirmedIncome)
+    val incomeResolver = ResolveManualIncomeCommitStatus(readAdapter)
+    val incomeSubmission = ExecuteManualIncomeSubmission(executeIncomeSave, incomeTracker, incomeResolver)
+    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission)
+
     val catalogCommands =
         ExecuteCatalogCommand(
             commitPort = store,
@@ -330,6 +389,12 @@ internal fun buildLedgerGraph(
             requestIdSource = requestIdSource,
             ledgerClock = ledgerClock,
             baseSummarizeActivity = session.summarizeActivity,
+            // P7-02.A typed entry surface.
+            submitEntry = entrySubmission,
+            submitIncome = incomeSubmission,
+            resolveIncomeCommitStatus = incomeResolver,
+            incomeRequestIdSource = incomeRequestIdSource,
+            baseIncomeOptionsProvider = session.incomeOptionsProvider,
             // P7-01.D: the management surface reads the same authoritative session and refreshes
             // it after every command, so options/reads/summaries stay on one catalog version.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },

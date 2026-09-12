@@ -111,6 +111,18 @@ sealed interface OrdinaryIncomeViolation : DomainViolation {
     data object IncomeCategoryRequired : OrdinaryIncomeViolation
 }
 
+/**
+ * P7-02.A S-2/S-4 shared entry-foundation tokens. `NoteTooLong` is produced by the
+ * application note validation (mirrored defensively by the commit transaction factories);
+ * `EntryTypeNotSupported` marks an entry type that this batch does not implement (TRANSFER /
+ * LEND / COLLECT are declared enum values only, per P7-02 S-2).
+ */
+sealed interface EntryFoundationViolation : DomainViolation {
+    data object NoteTooLong : EntryFoundationViolation
+
+    data object EntryTypeNotSupported : EntryFoundationViolation
+}
+
 enum class AccountTransferField {
     SOURCE_ACCOUNT,
     DESTINATION_ACCOUNT,

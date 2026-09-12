@@ -114,6 +114,16 @@ private class ResolutionFixedReadPort(
         ledgerId: LedgerId,
         receipt: ConfirmedExpenseReceipt,
     ): ManualExpenseCommitRecord? = record
+
+    override fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord? = null
+
+    override fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord? = null
 }
 
 private class ResolutionThrowingReadPort : LedgerCurrentStateReadPort {
@@ -128,4 +138,14 @@ private class ResolutionThrowingReadPort : LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedExpenseReceipt,
     ): ManualExpenseCommitRecord? = throw IllegalStateException("database unavailable")
+
+    override fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord? = throw IllegalStateException("database unavailable")
+
+    override fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord? = throw IllegalStateException("database unavailable")
 }

@@ -1,8 +1,11 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.EntryType
+import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import kotlin.time.Instant
@@ -35,10 +38,17 @@ sealed interface P503AppState {
         val catalogSnapshot: CatalogSnapshotView? = null,
         val catalogDialog: CatalogDialog = CatalogDialog.None,
         val catalogNotice: CatalogNotice? = null,
+        /**
+         * P7-02.A E-2 (G-C): the intent the host carries after one determinate success
+         * (Created/NoChange/Recovered) and its authoritative refresh, so "record again" can
+         * start a fresh editor from the retained fields. `null` on startup, initial entry and
+         * ordinary refreshes; never persisted.
+         */
+        val retainedIntent: RetainedEntryIntent? = null,
     ) : P503AppState
 
     data class Editing(
-        val draft: ManualExpenseDraft,
+        val draft: TypedEntryDraft,
         val requestId: RequestId?,
         // P5-04.2: overview snapshot + source tab captured when the editor flow started.
         val overview: LedgerCurrentState? = null,
@@ -46,7 +56,7 @@ sealed interface P503AppState {
     ) : P503AppState
 
     data class AwaitingConfirmation(
-        val draft: ManualExpenseDraft,
+        val draft: TypedEntryDraft,
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
@@ -58,7 +68,7 @@ sealed interface P503AppState {
     ) : P503AppState
 
     data class Submitting(
-        val draft: ManualExpenseDraft,
+        val draft: TypedEntryDraft,
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
@@ -69,14 +79,14 @@ sealed interface P503AppState {
     data object NoChange : P503AppState
 
     data class RequestIdentityConflict(
-        val draft: ManualExpenseDraft,
+        val draft: TypedEntryDraft,
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
     ) : P503AppState
 
     data class DomainRejected(
-        val draft: ManualExpenseDraft,
+        val draft: TypedEntryDraft,
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
@@ -86,7 +96,7 @@ sealed interface P503AppState {
         val context: InfrastructureFailureContext,
         // context == SUBMISSION: draft/requestId are always present (same-intent retry/return);
         // context == READ: both are null (finding P503Q-014).
-        val draft: ManualExpenseDraft? = null,
+        val draft: TypedEntryDraft? = null,
         val requestId: RequestId? = null,
         // P5-04.2: overview snapshot + source tab (meaningful only for SUBMISSION; READ is null).
         val overview: LedgerCurrentState? = null,
@@ -99,7 +109,7 @@ sealed interface P503AppState {
      * follow the InfrastructureFailure SUBMISSION precedent.
      */
     data class UnknownCommit(
-        val draft: ManualExpenseDraft? = null,
+        val draft: TypedEntryDraft? = null,
         val requestId: RequestId? = null,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
@@ -134,9 +144,25 @@ enum class UnknownCommitCheckOutcome {
     UNAVAILABLE,
 }
 
-data class ManualExpenseDraft(
+/**
+ * P7-02.A E-2: retained intent for "record again". The host holds this in memory across
+ * Submitting/UnknownCommit/Recovered; it is injected into [P503AppState.OverviewEmpty] through
+ * [P503UiEvent.RefreshResult.retainedIntent] after a determinate success and its authoritative
+ * refresh, and is never persisted across Exit or sessions.
+ */
+data class RetainedEntryIntent(
+    val type: EntryType,
+    val amountText: String,
     val paymentAccountId: AccountId?,
     val categoryId: CategoryId?,
-    val amountText: String,
+    val note: String,
     val occurredAt: Instant?,
+    val originTab: P503Tab,
 )
+
+/**
+ * The expense draft's former name, kept as a source-compatible alias so pre-P7-02 constructor
+ * call sites (tests, legacy reducers) keep compiling; [ExpenseDraft] is the sealed
+ * [TypedEntryDraft] EXPENSE subclass and is value-compatible with the old shape.
+ */
+typealias ManualExpenseDraft = ExpenseDraft

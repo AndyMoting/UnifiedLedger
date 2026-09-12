@@ -2,10 +2,13 @@ package com.unifiedledger.data
 
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
+import com.unifiedledger.application.ConfirmedIncomeReceipt
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
+import com.unifiedledger.application.ManualIncomeCommitRecord
+import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
@@ -86,6 +89,33 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 ?: return null
         return row.toRecord(ledgerId)
     }
+
+    override fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualIncomeCommitByRequest(ledgerId.value, requestId.value)
+                .executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
+
+    override fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualIncomeCommitByReceipt(
+                    ledger_id = ledgerId.value,
+                    confirmation_id = receipt.confirmationId.value,
+                    transaction_id = receipt.transactionId.value,
+                ).executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
 }
 
 private fun com.unifiedledger.data.db.ManualExpenseCommitByRequest.toRecord(ledgerId: LedgerId): ManualExpenseCommitRecord =
@@ -124,6 +154,48 @@ private fun com.unifiedledger.data.db.ManualExpenseCommitByReceipt.toRecord(ledg
             ),
         receipt =
             ConfirmedExpenseReceipt(
+                confirmationId = ConfirmationId(confirmation_id),
+                transactionId = TransactionId(transaction_id),
+            ),
+        currentVersionId = TransactionVersionId(current_version_id),
+    )
+
+private fun com.unifiedledger.data.db.ManualIncomeCommitByRequest.toRecord(ledgerId: LedgerId): ManualIncomeCommitRecord =
+    ManualIncomeCommitRecord(
+        ledgerId = ledgerId,
+        requestId = RequestId(request_id),
+        snapshot =
+            ManualIncomeRequestSnapshot(
+                ledgerId = ledgerId,
+                amount = Money.ofMinor(amount_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                categoryId = CategoryId(category_id),
+                receivingAccountId = AccountId(receiving_account_id),
+                occurredAt = Instant.parse(occurred_at),
+                note = note,
+            ),
+        receipt =
+            ConfirmedIncomeReceipt(
+                confirmationId = ConfirmationId(confirmation_id),
+                transactionId = TransactionId(transaction_id),
+            ),
+        currentVersionId = TransactionVersionId(current_version_id),
+    )
+
+private fun com.unifiedledger.data.db.ManualIncomeCommitByReceipt.toRecord(ledgerId: LedgerId): ManualIncomeCommitRecord =
+    ManualIncomeCommitRecord(
+        ledgerId = ledgerId,
+        requestId = RequestId(request_id),
+        snapshot =
+            ManualIncomeRequestSnapshot(
+                ledgerId = ledgerId,
+                amount = Money.ofMinor(amount_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                categoryId = CategoryId(category_id),
+                receivingAccountId = AccountId(receiving_account_id),
+                occurredAt = Instant.parse(occurred_at),
+                note = note,
+            ),
+        receipt =
+            ConfirmedIncomeReceipt(
                 confirmationId = ConfirmationId(confirmation_id),
                 transactionId = TransactionId(transaction_id),
             ),

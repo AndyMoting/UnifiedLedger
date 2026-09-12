@@ -10,6 +10,7 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -142,7 +143,7 @@ class P503HostCoordinatorTest {
 
     @Test
     fun retrySubmissionReusesSameRequestId() {
-        var receivedDraft: ManualExpenseDraft? = null
+        var receivedDraft: TypedEntryDraft? = null
         var receivedRequestId: RequestId? = null
         val coordinator =
             P503HostCoordinator(
@@ -189,7 +190,7 @@ class P503HostCoordinatorTest {
     @Test
     fun unknownCommitEntryTriggersReadOnlyCheckExactlyOnceThenGuardBlocks() {
         var checkCount = 0
-        var receivedDraft: ManualExpenseDraft? = null
+        var receivedDraft: TypedEntryDraft? = null
         var receivedRequestId: RequestId? = null
         val coordinator =
             P503HostCoordinator(

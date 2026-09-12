@@ -30,6 +30,18 @@ data class ManualExpenseCommitRecord(
     val currentVersionId: TransactionVersionId,
 )
 
+/**
+ * P7-02.A S-1 income analogue of [ManualExpenseCommitRecord]: the persisted request/snapshot/
+ * receipt relationship plus the transaction's current version id.
+ */
+data class ManualIncomeCommitRecord(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+    val snapshot: ManualIncomeRequestSnapshot,
+    val receipt: ConfirmedIncomeReceipt,
+    val currentVersionId: TransactionVersionId,
+)
+
 interface LedgerCurrentStateReadPort {
     fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow>
 
@@ -42,4 +54,16 @@ interface LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedExpenseReceipt,
     ): ManualExpenseCommitRecord?
+
+    /** P7-02.A S-1: income request lookup for the snapshot-aware commit-status resolver. */
+    fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord?
+
+    /** P7-02.A S-1: income receipt lookup for the snapshot-aware commit-status resolver. */
+    fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord?
 }

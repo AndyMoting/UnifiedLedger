@@ -8624,6 +8624,56 @@ WHERE receipt.ledger_id = ?
   AND receipt.confirmation_id = ?
   AND receipt.transaction_id = ?;
 
+-- P7-02.A income current-state reads, the income analogue of the two manual-expense lookups.
+manualIncomeCommitByRequest:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.receiving_account_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM manual_income_request AS request
+JOIN confirmed_income_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE request.ledger_id = ?
+  AND request.request_id = ?;
+
+manualIncomeCommitByReceipt:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.amount_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.category_id,
+  request.receiving_account_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM confirmed_income_receipt AS receipt
+JOIN manual_income_request AS request
+  ON request.ledger_id = receipt.ledger_id
+ AND request.request_id = receipt.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE receipt.ledger_id = ?
+  AND receipt.confirmation_id = ?
+  AND receipt.transaction_id = ?;
+
 -- P7-01 (D-143) catalog queries. Fresh persistence for the ledger-scoped product catalog:
 -- version probe, catalog rows, shared append-only name history, claim-first request/receipt
 -- idempotency and the bootstrap unknown-reference probes.

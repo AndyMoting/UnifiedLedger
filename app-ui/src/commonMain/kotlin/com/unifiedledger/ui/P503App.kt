@@ -26,16 +26,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.ManualEntryCommitResolution
+import com.unifiedledger.application.ManualEntrySaveInput
+import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseInputFailure
 import com.unifiedledger.application.ManualExpenseInputField
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualExpenseSaveInput
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ManualIncomeRequestSnapshot
+import com.unifiedledger.application.ManualIncomeSaveInput
+import com.unifiedledger.application.ManualIncomeSaveResult
+import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
 import kotlinx.coroutines.launch
@@ -68,6 +78,10 @@ fun P503Theme(content: @Composable () -> Unit) {
  * [P503LedgerFacade] and calls this composable once startup is ready. The host executes all
  * asynchronous work (authoritative queries, submission orchestration, result refresh) and
  * dispatches result events into the pure [P503Reducer].
+ *
+ * P7-02.A: the editor is typed (EXPENSE/INCOME); the host chooses the per-type save input and
+ * snapshot, injects the retained intent on the determinate-success refresh (E-2/G-C), and
+ * routes the income commit-status check to the income resolver.
  */
 @Composable
 fun P503App(
@@ -75,13 +89,14 @@ fun P503App(
     onExit: () -> Unit,
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
 ) {
-    val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency) }
+    val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency, facade.ledgerClock) }
     val validation = remember(facade) { P503DraftValidation(facade.parseAmount, facade.parseOccurredAt, facade.ledgerClock) }
     // D-140-style authoritative options snapshot. Reading the version here makes the options
     // reload after a catalog refresh (spec 7.4), because the facade exposes the refreshed
     // session models; options/reads/summaries then all follow one authoritative catalog version.
     val catalogVersion = facade.catalogSnapshot()?.catalogVersion
     val options = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
+    val incomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -90,10 +105,24 @@ fun P503App(
     var editDialogOpen by remember { mutableStateOf(false) }
     // D-140 (spec 2.1): 键入文本宿主级提升；null = 未初始化，显示按 draft 派生。
     var hoistedOccurredAtText by remember { mutableStateOf<String?>(null) }
+    // P7-02.A E-2 (G-C): the host-held memory of one determinate-success intent for "record
+    // again". Captured before submission, consumed by the authoritative refresh; never persisted.
+    var retainedIntent by remember { mutableStateOf<RetainedEntryIntent?>(null) }
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。
         if (event is P503UiEvent.StartNewExpense) hoistedOccurredAtText = null
+        // P7-02.A E-2 lifecycle: the retained intent is cleared once a new intent starts
+        // (StartNewExpense / record again / cancel or abandon back into Editing), so a stale
+        // intent can never be injected into an unrelated later refresh.
+        if (
+            event is P503UiEvent.StartNewExpense ||
+            event is P503UiEvent.SaveAndRecordAgain ||
+            event is P503UiEvent.Cancel ||
+            event is P503UiEvent.AbandonConflict
+        ) {
+            retainedIntent = null
+        }
         state = reducer.reduce(state, event).also { latestState.value = it }
     }
 
@@ -110,21 +139,34 @@ fun P503App(
         if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back)
     }
 
-    // The parse/display currency follows the selected payment account (spec section 4.1);
+    // The parse/display currency follows the selected primary account (spec section 4.1);
     // fall back to the facade currency only when no account is selected yet.
-    fun resolvedCurrency(draft: ManualExpenseDraft): CurrencyUnit = options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: facade.currency
+    fun resolvedCurrency(draft: TypedEntryDraft): CurrencyUnit =
+        when (draft) {
+            is IncomeDraft ->
+                incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.currency ?: facade.currency
+            is ExpenseDraft ->
+                options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: facade.currency
+        }
 
     fun refresh() {
+        val intent = retainedIntent
         when (val result = facade.queryCurrentState.query()) {
-            is LedgerCurrentStateResult.Success -> dispatch(P503UiEvent.RefreshResult(result.state))
+            is LedgerCurrentStateResult.Success -> {
+                // P7-02.A E-2: the intent is consumed only by a successful authoritative refresh;
+                // a failed read keeps it so the READ retry can still forward it (P3-3).
+                retainedIntent = null
+                dispatch(P503UiEvent.RefreshResult(result.state, intent))
+            }
             else -> dispatch(P503UiEvent.RefreshFailed)
         }
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
-    // check so both build a field-identical snapshot (the resolver compares field by field).
-    fun manualExpenseSaveInput(
-        draft: ManualExpenseDraft,
+    // check so both build a field-identical per-type snapshot (the resolver compares field by
+    // field). Returns null when the draft is incomplete.
+    fun expenseSaveInput(
+        draft: ExpenseDraft,
         requestId: RequestId,
     ): ManualExpenseSaveInput? {
         val currency = resolvedCurrency(draft)
@@ -143,67 +185,132 @@ fun P503App(
             categoryId = categoryId,
             paymentAccountId = paymentAccountId,
             occurredAt = occurredAt,
-            note = "",
+            note = draft.note,
+            confirmation = ExplicitManualSave,
+        )
+    }
+
+    fun incomeSaveInput(
+        draft: IncomeDraft,
+        requestId: RequestId,
+    ): ManualIncomeSaveInput? {
+        val currency = resolvedCurrency(draft)
+        val parsed = facade.parseAmount.parse(draft.amountText, currency)
+        val amount = (parsed as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        val categoryId = draft.categoryId
+        val receivingAccountId = draft.receivingAccountId
+        val occurredAt = draft.occurredAt
+        if (amount == null || categoryId == null || receivingAccountId == null || occurredAt == null) {
+            return null
+        }
+        return ManualIncomeSaveInput(
+            ledgerId = facade.ledgerId,
+            requestId = requestId,
+            amount = amount,
+            categoryId = categoryId,
+            receivingAccountId = receivingAccountId,
+            occurredAt = occurredAt,
+            note = draft.note,
             confirmation = ExplicitManualSave,
         )
     }
 
     fun submit(
-        draft: ManualExpenseDraft,
+        draft: TypedEntryDraft,
         requestId: RequestId,
     ) {
-        val input = manualExpenseSaveInput(draft, requestId)
-        if (input == null) {
-            // Invariant: Submitting is reachable only from a validated AwaitingConfirmation,
-            // so the draft is complete here. If the invariant is ever violated, fall back to
-            // the defensive InvalidInput transition (spec 7.2) instead of silently stranding
-            // Submitting (P5-04.3 keeps this branch); the defensive payload reports every
-            // field as missing.
-            dispatch(
-                P503UiEvent.SubmissionResult(
-                    ManualExpenseSubmissionResult.Application(
-                        ManualExpenseSaveResult.InvalidInput(
-                            buildSet {
-                                add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.AMOUNT))
-                                add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.CATEGORY))
-                                add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.PAYMENT_ACCOUNT))
-                            },
-                        ),
-                    ),
-                ),
-            )
-            return
-        }
-        scope.launch {
-            val submissionResult = facade.submitExpense.submit(input)
-            dispatch(P503UiEvent.SubmissionResult(submissionResult))
-        }
+        // P7-02.A E-2: capture the retained intent from the pre-submit draft before it leaves.
+        retainedIntent = draft.toRetainedIntent(currentOriginTab(latestState.value))
+        val result =
+            when (draft) {
+                is ExpenseDraft -> {
+                    val input = expenseSaveInput(draft, requestId)
+                    if (input == null) {
+                        // Defensive (P5-04.3 P503Q-014): Submitting is only reachable from a
+                        // validated AwaitingConfirmation, so this fallback reports every field
+                        // as missing instead of stranding the state.
+                        ManualEntrySubmissionResult.Expense(
+                            ManualExpenseSubmissionResult.Application(
+                                ManualExpenseSaveResult.InvalidInput(
+                                    buildSet {
+                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.AMOUNT))
+                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.CATEGORY))
+                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.PAYMENT_ACCOUNT))
+                                    },
+                                ),
+                            ),
+                        )
+                    } else {
+                        facade.submitEntryOrExpense().submit(ManualEntrySaveInput.Expense(input))
+                    }
+                }
+                is IncomeDraft -> {
+                    val input = incomeSaveInput(draft, requestId)
+                    val submission = facade.submitIncome
+                    if (input == null || submission == null) {
+                        ManualEntrySubmissionResult.Income(
+                            ManualIncomeSubmissionResult.Application(
+                                ManualIncomeSaveResult.InvalidInput(
+                                    buildSet {
+                                        add(com.unifiedledger.application.ManualIncomeInputField.AMOUNT)
+                                        add(com.unifiedledger.application.ManualIncomeInputField.CATEGORY)
+                                        add(com.unifiedledger.application.ManualIncomeInputField.RECEIVING_ACCOUNT)
+                                    },
+                                ),
+                            ),
+                        )
+                    } else {
+                        ManualEntrySubmissionResult.Income(submission.submit(input))
+                    }
+                }
+            }
+        dispatch(P503UiEvent.SubmissionResult(result))
     }
 
-    // P5-04.3: one read-only commit-status check for the unknown-commit flow. The silent
-    // return below is purely defensive and unreachable once the caller guard (draft and
-    // requestId non-null) has passed: UnknownCommit is only reached from a validated
-    // AwaitingConfirmation, so the draft is complete and the shared construction succeeds.
+    // P5-04.3: one read-only commit-status check for the unknown-commit flow, per entry type.
     fun checkCommitStatus(
-        draft: ManualExpenseDraft,
+        draft: TypedEntryDraft,
         requestId: RequestId,
     ) {
         if (statusCheckInFlight) return
-        val input = manualExpenseSaveInput(draft, requestId) ?: return
-        val attempted =
-            ManualExpenseRequestSnapshot(
-                ledgerId = input.ledgerId,
-                amount = checkNotNull(input.amount),
-                categoryId = checkNotNull(input.categoryId),
-                paymentAccountId = checkNotNull(input.paymentAccountId),
-                occurredAt = input.occurredAt,
-                note = input.note,
-            )
-        statusCheckInFlight = true
-        scope.launch {
-            val resolution = facade.resolveCommitStatus.resolve(facade.ledgerId, requestId, attempted)
-            statusCheckInFlight = false
-            dispatch(P503UiEvent.CommitStatusResolved(resolution))
+        when (draft) {
+            is ExpenseDraft -> {
+                val input = expenseSaveInput(draft, requestId) ?: return
+                val attempted =
+                    ManualExpenseRequestSnapshot(
+                        ledgerId = input.ledgerId,
+                        amount = checkNotNull(input.amount),
+                        categoryId = checkNotNull(input.categoryId),
+                        paymentAccountId = checkNotNull(input.paymentAccountId),
+                        occurredAt = input.occurredAt,
+                        note = input.note,
+                    )
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution = facade.resolveCommitStatus.resolve(facade.ledgerId, requestId, attempted)
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Expense(resolution)))
+                }
+            }
+            is IncomeDraft -> {
+                val input = incomeSaveInput(draft, requestId) ?: return
+                val resolver = facade.resolveIncomeCommitStatus ?: return
+                val attempted =
+                    ManualIncomeRequestSnapshot(
+                        ledgerId = input.ledgerId,
+                        amount = checkNotNull(input.amount),
+                        categoryId = checkNotNull(input.categoryId),
+                        receivingAccountId = checkNotNull(input.receivingAccountId),
+                        occurredAt = input.occurredAt,
+                        note = input.note,
+                    )
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Income(resolution)))
+                }
+            }
         }
     }
 
@@ -309,6 +416,24 @@ fun P503App(
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
     }
 
+    // P7-02.A E-2: the "record again" action availability and its host reset (hoisted
+    // occurred-at text) are deferred to the efficiency batch; the reducer effect, the
+    // retainedIntent payload and the injection channel are frozen and implemented here.
+
+    // P7-02.A: the account/category labels depend on the draft type; both are resolved from
+    // the authoritative options and fall back to the draft id values in the reducer.
+    fun accountLabel(draft: TypedEntryDraft): String =
+        when (draft) {
+            is IncomeDraft -> incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.label ?: ""
+            is ExpenseDraft -> options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.label ?: ""
+        }
+
+    fun categoryLabel(draft: TypedEntryDraft): String =
+        when (draft) {
+            is IncomeDraft -> incomeOptions.incomeCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
+            is ExpenseDraft -> options.expenseCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
+        }
+
     P503Theme {
         when (val current = state) {
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
@@ -348,6 +473,7 @@ fun P503App(
                 P503EditScreen(
                     draft = current.draft,
                     options = options,
+                    incomeOptions = incomeOptions,
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -356,6 +482,10 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                     onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = {
@@ -367,10 +497,8 @@ fun P503App(
                                 requestId,
                                 // P5-04.3: display labels resolved from the options; absent
                                 // options fall back to the draft id values in the reducer.
-                                paymentAccountLabel =
-                                    options.paymentAccounts.firstOrNull { it.accountId == current.draft.paymentAccountId }?.label,
-                                categoryLabel =
-                                    options.expenseCategories.firstOrNull { it.categoryId == current.draft.categoryId }?.label,
+                                paymentAccountLabel = accountLabel(current.draft),
+                                categoryLabel = categoryLabel(current.draft),
                             )
                         }, ::dispatch)
                     },
@@ -385,12 +513,7 @@ fun P503App(
             is P503AppState.AwaitingConfirmation ->
                 P503ConfirmationScreen(
                     draft = current.draft,
-                    currencyCode =
-                        options.paymentAccounts
-                            .firstOrNull { it.accountId == current.draft.paymentAccountId }
-                            ?.currency
-                            ?.code
-                            ?: facade.currency.code,
+                    currencyCode = resolvedCurrency(current.draft).code,
                     paymentAccountLabel = current.paymentAccountLabel,
                     categoryLabel = current.categoryLabel,
                     onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
@@ -419,6 +542,7 @@ fun P503App(
                 P503EditScreen(
                     draft = current.draft,
                     options = options,
+                    incomeOptions = incomeOptions,
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -427,6 +551,10 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                     onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = null,
@@ -447,6 +575,7 @@ fun P503App(
                 P503EditScreen(
                     draft = current.draft,
                     options = options,
+                    incomeOptions = incomeOptions,
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -455,6 +584,10 @@ fun P503App(
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                     onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = null,
@@ -518,6 +651,34 @@ private fun isBackEnabled(state: P503AppState): Boolean =
  * back and every other state (including the HOME overview root) must not dispatch one.
  */
 private fun isBackDispatchSafe(state: P503AppState): Boolean = isBackEnabled(state) && state !is P503AppState.Submitting
+
+/** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
+private fun currentOriginTab(state: P503AppState): P503Tab =
+    when (state) {
+        is P503AppState.Submitting -> state.originTab
+        is P503AppState.AwaitingConfirmation -> state.originTab
+        is P503AppState.Editing -> state.originTab
+        is P503AppState.RequestIdentityConflict -> state.originTab
+        is P503AppState.DomainRejected -> state.originTab
+        is P503AppState.InfrastructureFailure -> state.originTab
+        is P503AppState.UnknownCommit -> state.originTab
+        else -> P503Tab.HOME
+    }
+
+/** P7-02.A E-2: captures the reusable fields of one determinate-success draft. */
+private fun TypedEntryDraft.toRetainedIntent(originTab: P503Tab): RetainedEntryIntent =
+    RetainedEntryIntent(
+        type = entryType,
+        amountText = amountText,
+        paymentAccountId = primaryAccountId,
+        categoryId = categoryId,
+        note = note,
+        occurredAt = occurredAt,
+        originTab = originTab,
+    )
+
+/** P7-02.A: the typed submit entry point, falling back to the expense-only path for legacy roots. */
+private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.application.ExecuteManualEntrySubmission = submitEntry ?: throw IllegalStateException("facade is missing the typed entry submission")
 
 @Composable
 private fun P503InfrastructureReadScreen(onRetryRefresh: () -> Unit) {

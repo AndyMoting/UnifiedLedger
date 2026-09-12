@@ -36,6 +36,10 @@ fun createAndroidLedgerDatabase(
         commitPort =
             SqlDelightConfirmedManualExpenseCommitPort
                 .forPlatformConfiguredDatabase(database),
+        // P7-02.A: the symmetric income commit port on the same database connection.
+        incomeCommitPort =
+            SqlDelightConfirmedManualIncomeCommitPort
+                .forPlatformConfiguredDatabase(database),
         catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
@@ -44,6 +48,7 @@ fun createAndroidLedgerDatabase(
 class AndroidLedgerDatabaseHandle internal constructor(
     val database: LedgerDatabase,
     val commitPort: SqlDelightConfirmedManualExpenseCommitPort,
+    val incomeCommitPort: SqlDelightConfirmedManualIncomeCommitPort,
     val catalogStore: SqlDelightCatalogStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {

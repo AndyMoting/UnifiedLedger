@@ -13,11 +13,16 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.TransactionId
 
+/**
+ * P7-02.A S-1: income claim-first commit boundary, aligned with
+ * [SqlDelightConfirmedManualExpenseCommitPort] (same atomic claim/work/receipt discipline,
+ * same SQL semantics; this batch only adds the companion entry point, the marker constant and
+ * the documentation).
+ */
 class SqlDelightConfirmedManualIncomeCommitPort private constructor(
     private val database: LedgerDatabase,
 ) : ConfirmedManualIncomeCommitPort {
     constructor(database: LedgerDatabase, driver: SqlDriver) : this(database) {
-
         configureSqliteConnection(driver)
     }
 
@@ -26,39 +31,42 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
         requestSnapshot: ManualIncomeRequestSnapshot,
         createFormalTransaction: () -> DomainResult<ConfirmedManualIncomeCommit>,
     ): ConfirmedManualIncomeResult {
-        require(identity.ledgerId == requestSnapshot.ledgerId)
+        require(identity.ledgerId == requestSnapshot.ledgerId) {
+            "Request identity and snapshot must belong to the same ledger"
+        }
 
         return database.transactionWithResult {
             database.ledgerQueries.claimManualIncomeRequest(
-                identity.ledgerId.value,
-                identity.requestId.value,
-                requestSnapshot.amount.minorUnits,
-                requestSnapshot.amount.currency.code,
-                requestSnapshot.amount.currency.precision
-                    .toLong(),
-                requestSnapshot.categoryId.value,
-                requestSnapshot.receivingAccountId.value,
-                requestSnapshot.occurredAt.toString(),
-                requestSnapshot.note,
-                "explicit_manual_save",
+                ledger_id = identity.ledgerId.value,
+                request_id = identity.requestId.value,
+                amount_minor = requestSnapshot.amount.minorUnits,
+                currency_code = requestSnapshot.amount.currency.code,
+                currency_precision =
+                    requestSnapshot.amount.currency.precision
+                        .toLong(),
+                category_id = requestSnapshot.categoryId.value,
+                receiving_account_id = requestSnapshot.receivingAccountId.value,
+                occurred_at = requestSnapshot.occurredAt.toString(),
+                note = requestSnapshot.note,
+                confirmation_marker = EXPLICIT_MANUAL_SAVE_MARKER,
             )
 
-            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) return@transactionWithResult resolveExisting(identity, requestSnapshot)
+            if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
+                return@transactionWithResult resolveExisting(identity, requestSnapshot)
+            }
 
             when (val created = createFormalTransaction()) {
                 is DomainResult.Failure -> {
                     database.ledgerQueries.deleteManualIncomeRequest(identity.ledgerId.value, identity.requestId.value)
-
                     ConfirmedManualIncomeResult.Rejected(created.violation)
                 }
 
                 is DomainResult.Success -> {
-                    require(created.value.transaction.transaction.ledgerId == identity.ledgerId)
-
+                    require(created.value.transaction.transaction.ledgerId == identity.ledgerId) {
+                        "Committed transaction must belong to the request ledger"
+                    }
                     persistFormalTransaction(created.value.transaction)
-
                     database.ledgerQueries.insertConfirmedIncomeReceipt(identity.ledgerId.value, identity.requestId.value, created.value.confirmationId.value, created.value.transaction.transaction.id.value)
-
                     ConfirmedManualIncomeResult.Created(ConfirmedIncomeReceipt(created.value.confirmationId, created.value.transaction.transaction.id))
                 }
             }
@@ -86,9 +94,7 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
         database.ledgerQueries.insertTransactionCurrentVersion(transaction.id.value, transaction.ledgerId.value, transaction.currentVersionId.value)
 
         value.postingSets.forEach { set ->
-
             set.postings.forEachIndexed { index, posting ->
-
                 database.ledgerQueries.insertPosting(
                     posting.id.value,
                     set.id.value,
@@ -103,7 +109,15 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
             }
         }
     }
+
+    companion object {
+        internal fun forPlatformConfiguredDatabase(
+            database: LedgerDatabase,
+        ): SqlDelightConfirmedManualIncomeCommitPort = SqlDelightConfirmedManualIncomeCommitPort(database)
+    }
 }
+
+private const val EXPLICIT_MANUAL_SAVE_MARKER = "explicit_manual_save"
 
 private data class StoredIncomeCommit(
     val amount: Long,
@@ -117,23 +131,14 @@ private data class StoredIncomeCommit(
     val receipt: ConfirmedIncomeReceipt,
 ) {
     fun matches(value: ManualIncomeRequestSnapshot) =
-
         amount == value.amount.minorUnits &&
-
             code == value.amount.currency.code &&
-
             precision ==
-
             value.amount.currency.precision
                 .toLong() &&
-
             category == value.categoryId.value &&
-
             account == value.receivingAccountId.value &&
-
             occurred == value.occurredAt.toString() &&
-
             note == value.note &&
-
-            marker == "explicit_manual_save"
+            marker == EXPLICIT_MANUAL_SAVE_MARKER
 }

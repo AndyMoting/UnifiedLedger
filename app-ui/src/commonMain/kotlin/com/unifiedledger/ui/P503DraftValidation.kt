@@ -4,6 +4,7 @@ import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import kotlin.time.Instant
 
@@ -33,7 +34,7 @@ class P503DraftValidation(
     private val ledgerClock: LedgerClock = LedgerClock { error("D-138: occurred-at reconciliation needs the injected ledger clock") },
 ) {
     fun errors(
-        draft: ManualExpenseDraft,
+        draft: TypedEntryDraft,
         currency: CurrencyUnit,
     ): P503DraftErrors {
         val amountText = draft.amountText
@@ -48,7 +49,9 @@ class P503DraftValidation(
             }
         return P503DraftErrors(
             missingAmount = amountText.isBlank(),
-            missingPaymentAccount = draft.paymentAccountId == null,
+            // The primary account is the expense payment account or the income receiving
+            // account (P7-02.A S-1); the shared missing-field shape is reused.
+            missingPaymentAccount = draft.primaryAccountId == null,
             missingCategory = draft.categoryId == null,
             missingOccurredAt = draft.occurredAt == null,
             amountFormatError = amountError,
@@ -56,7 +59,7 @@ class P503DraftValidation(
     }
 
     fun isValid(
-        draft: ManualExpenseDraft,
+        draft: TypedEntryDraft,
         currency: CurrencyUnit,
     ): Boolean = !errors(draft, currency).hasErrors
 
