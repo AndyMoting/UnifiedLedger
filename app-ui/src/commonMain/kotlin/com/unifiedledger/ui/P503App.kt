@@ -26,10 +26,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.ManualCollectInputField
+import com.unifiedledger.application.ManualCollectSaveInput
+import com.unifiedledger.application.ManualCollectSaveResult
+import com.unifiedledger.application.ManualCollectSubmissionResult
 import com.unifiedledger.application.ManualEntryCommitResolution
 import com.unifiedledger.application.ManualEntrySaveInput
 import com.unifiedledger.application.ManualEntrySubmissionResult
@@ -43,6 +49,12 @@ import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.ManualIncomeSaveInput
 import com.unifiedledger.application.ManualIncomeSaveResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.ManualLendInputField
+import com.unifiedledger.application.ManualLendSaveInput
+import com.unifiedledger.application.ManualLendSaveResult
+import com.unifiedledger.application.ManualLendSubmissionResult
+import com.unifiedledger.application.ManualLendingBehavior
+import com.unifiedledger.application.ManualLendingRequestSnapshot
 import com.unifiedledger.application.ManualTransferInputField
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferSaveInput
@@ -104,6 +116,7 @@ fun P503App(
     val options = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
     val incomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
     val transferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
+    val lendingOptions = remember(facade, catalogVersion) { facade.lendingOptionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -156,6 +169,10 @@ fun P503App(
                 options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: facade.currency
             is TransferDraft ->
                 transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.currency ?: facade.currency
+            is LendDraft ->
+                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.currency ?: facade.currency
+            is CollectDraft ->
+                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: facade.currency
         }
 
     fun refresh() {
@@ -256,6 +273,58 @@ fun P503App(
         )
     }
 
+    fun lendSaveInput(
+        draft: LendDraft,
+        requestId: RequestId,
+    ): ManualLendSaveInput? {
+        val currency = resolvedCurrency(draft)
+        val amount = (facade.parseAmount.parse(draft.amount, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        val counterpartyId = draft.counterpartyId
+        val fundingAccountId = draft.fundingAccountId
+        val occurredAt = draft.occurredAt
+        if (amount == null || counterpartyId == null || fundingAccountId == null || occurredAt == null) return null
+        return ManualLendSaveInput(
+            ledgerId = facade.ledgerId,
+            requestId = requestId,
+            counterpartyId = counterpartyId,
+            fundingAccountId = fundingAccountId,
+            amount = amount,
+            occurredAt = occurredAt,
+            note = draft.note,
+            confirmation = ExplicitManualSave,
+        )
+    }
+
+    fun collectSaveInput(
+        draft: CollectDraft,
+        requestId: RequestId,
+    ): ManualCollectSaveInput? {
+        val currency = resolvedCurrency(draft)
+
+        fun parsed(text: String): Money? = (facade.parseAmount.parse(text, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        val totalReceived = parsed(draft.totalReceived)
+        val principal = parsed(draft.principal)
+        val interest = parsed(draft.interest)
+        val counterpartyId = draft.counterpartyId
+        val destinationAccountId = draft.destinationAccountId
+        val interestCategoryId = draft.interestCategoryId
+        val occurredAt = draft.occurredAt
+        if (totalReceived == null || principal == null || interest == null || counterpartyId == null || destinationAccountId == null || interestCategoryId == null || occurredAt == null) return null
+        return ManualCollectSaveInput(
+            ledgerId = facade.ledgerId,
+            requestId = requestId,
+            counterpartyId = counterpartyId,
+            destinationAccountId = destinationAccountId,
+            totalReceived = totalReceived,
+            principal = principal,
+            interest = interest,
+            interestCategoryId = interestCategoryId,
+            occurredAt = occurredAt,
+            note = draft.note,
+            confirmation = ExplicitManualSave,
+        )
+    }
+
     fun submit(
         draft: TypedEntryDraft,
         requestId: RequestId,
@@ -318,6 +387,47 @@ fun P503App(
                         )
                     } else {
                         submission.submit(ManualEntrySaveInput.Transfer(input))
+                    }
+                }
+                is LendDraft -> {
+                    val input = lendSaveInput(draft, requestId)
+                    val submission = facade.submitEntry
+                    if (input == null || submission == null) {
+                        ManualEntrySubmissionResult.Lend(
+                            ManualLendSubmissionResult.Application(
+                                ManualLendSaveResult.InvalidInput(
+                                    buildSet {
+                                        add(ManualLendInputField.COUNTERPARTY)
+                                        add(ManualLendInputField.FUNDING_ACCOUNT)
+                                        add(ManualLendInputField.AMOUNT)
+                                    },
+                                ),
+                            ),
+                        )
+                    } else {
+                        submission.submit(ManualEntrySaveInput.Lend(input))
+                    }
+                }
+                is CollectDraft -> {
+                    val input = collectSaveInput(draft, requestId)
+                    val submission = facade.submitEntry
+                    if (input == null || submission == null) {
+                        ManualEntrySubmissionResult.Collect(
+                            ManualCollectSubmissionResult.Application(
+                                ManualCollectSaveResult.InvalidInput(
+                                    buildSet {
+                                        add(ManualCollectInputField.COUNTERPARTY)
+                                        add(ManualCollectInputField.DESTINATION_ACCOUNT)
+                                        add(ManualCollectInputField.TOTAL_RECEIVED)
+                                        add(ManualCollectInputField.PRINCIPAL)
+                                        add(ManualCollectInputField.INTEREST)
+                                        add(ManualCollectInputField.INTEREST_CATEGORY)
+                                    },
+                                ),
+                            ),
+                        )
+                    } else {
+                        submission.submit(ManualEntrySaveInput.Collect(input))
                     }
                 }
             }
@@ -387,6 +497,54 @@ fun P503App(
                     val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Transfer(resolution)))
+                }
+            }
+            is LendDraft -> {
+                val input = lendSaveInput(draft, requestId) ?: return
+                val resolver = facade.resolveLendingCommitStatus ?: return
+                val attempted =
+                    ManualLendingRequestSnapshot(
+                        ledgerId = input.ledgerId,
+                        behavior = ManualLendingBehavior.LEND,
+                        counterpartyId = checkNotNull(input.counterpartyId),
+                        principalAccountId = checkNotNull(input.fundingAccountId),
+                        amount = checkNotNull(input.amount),
+                        interest = Money.ofMinor(0L, checkNotNull(input.amount).currency),
+                        fee = Money.ofMinor(0L, checkNotNull(input.amount).currency),
+                        totalReceived = null,
+                        interestCategoryId = null,
+                        occurredAt = input.occurredAt,
+                        note = input.note,
+                    )
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Lend(resolution)))
+                }
+            }
+            is CollectDraft -> {
+                val input = collectSaveInput(draft, requestId) ?: return
+                val resolver = facade.resolveLendingCommitStatus ?: return
+                val attempted =
+                    ManualLendingRequestSnapshot(
+                        ledgerId = input.ledgerId,
+                        behavior = ManualLendingBehavior.COLLECT,
+                        counterpartyId = checkNotNull(input.counterpartyId),
+                        principalAccountId = checkNotNull(input.destinationAccountId),
+                        amount = checkNotNull(input.principal),
+                        interest = checkNotNull(input.interest),
+                        fee = Money.ofMinor(0L, checkNotNull(input.totalReceived).currency),
+                        totalReceived = checkNotNull(input.totalReceived),
+                        interestCategoryId = checkNotNull(input.interestCategoryId),
+                        occurredAt = input.occurredAt,
+                        note = input.note,
+                    )
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Collect(resolution)))
                 }
             }
         }
@@ -505,6 +663,8 @@ fun P503App(
             is IncomeDraft -> incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.label ?: ""
             is ExpenseDraft -> options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.label ?: ""
             is TransferDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.label ?: ""
+            is LendDraft -> lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.label ?: ""
+            is CollectDraft -> lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.label ?: ""
         }
 
     fun categoryLabel(draft: TypedEntryDraft): String =
@@ -512,6 +672,8 @@ fun P503App(
             is IncomeDraft -> incomeOptions.incomeCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
             is ExpenseDraft -> options.expenseCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
             is TransferDraft -> transferOptions.feeCategories.firstOrNull { it.categoryId == draft.feeCategoryId }?.label ?: ""
+            is LendDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name ?: ""
+            is CollectDraft -> lendingOptions.interestCategories.firstOrNull { it.categoryId == draft.interestCategoryId }?.label ?: ""
         }
 
     P503Theme {
@@ -555,11 +717,21 @@ fun P503App(
                     options = options,
                     incomeOptions = incomeOptions,
                     transferOptions = transferOptions,
+                    lendingOptions = lendingOptions,
                     onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                     onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                     onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
                     onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
                     onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -630,11 +802,21 @@ fun P503App(
                     options = options,
                     incomeOptions = incomeOptions,
                     transferOptions = transferOptions,
+                    lendingOptions = lendingOptions,
                     onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                     onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                     onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
                     onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
                     onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -669,11 +851,21 @@ fun P503App(
                     options = options,
                     incomeOptions = incomeOptions,
                     transferOptions = transferOptions,
+                    lendingOptions = lendingOptions,
                     onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                     onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                     onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
                     onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
                     onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,

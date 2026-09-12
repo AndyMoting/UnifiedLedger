@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedManualIncomeResult
@@ -7,6 +8,7 @@ import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualEntryCommitResolution
 import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseRequestIdentity
@@ -20,6 +22,7 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.OrdinaryExpenseViolation
@@ -59,6 +62,55 @@ class P503TypedEntryReducerTest {
             P503UiEvent.UpdateIncomeCategory(incomeCategoryId),
         )
 
+    /** P7-02.C: the lending field events are the §6.2a new events for this batch. */
+    private val lendingEvents =
+        listOf<P503UiEvent>(
+            P503UiEvent.UpdateLendCounterparty(CounterpartyId("cp-1")),
+            P503UiEvent.UpdateLendFundingAccount(paymentAccountId),
+            P503UiEvent.UpdateLendAmount("100.00"),
+            P503UiEvent.UpdateCollectCounterparty(CounterpartyId("cp-1")),
+            P503UiEvent.UpdateCollectDestinationAccount(paymentAccountId),
+            P503UiEvent.UpdateCollectTotal("45.00"),
+            P503UiEvent.UpdateCollectPrincipal("40.00"),
+            P503UiEvent.UpdateCollectInterest("5.00"),
+            P503UiEvent.UpdateCollectInterestCategory(CategoryId("income-interest")),
+        )
+
+    @Test
+    fun lendingEventsAreAbsorbedInEveryNonEditingState() {
+        val states =
+            listOf(
+                P503AppState.Ready,
+                P503AppState.OverviewEmpty(emptyState),
+                P503AppState.AwaitingConfirmation(expenseDraft(), requestId),
+                P503AppState.Submitting(expenseDraft(), requestId),
+                P503AppState.Created,
+                P503AppState.NoChange,
+                P503AppState.Recovered,
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, expenseDraft(), requestId),
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ),
+                P503AppState.UnknownCommit(expenseDraft(), requestId),
+            )
+        for (state in states) {
+            for (event in lendingEvents) {
+                assertEquals(state, reducer.reduce(state, event), "absorbed $event in $state")
+            }
+        }
+    }
+
+    @Test
+    fun lendingEventsReturnToEditingWithTypingRetentionFromConflictAndRejection() {
+        val lend = LendDraft(counterpartyId = null, amount = "100.00", fundingAccountId = null, occurredAt = occurredAt)
+        val conflict = P503AppState.RequestIdentityConflict(lend, requestId, emptyState, P503Tab.HOME)
+        val edited = assertIs<P503AppState.Editing>(reducer.reduce(conflict, P503UiEvent.UpdateLendAmount("120.00")))
+        assertEquals("120.00", assertIs<LendDraft>(edited.draft).amount)
+
+        val collect = CollectDraft(counterpartyId = null, totalReceived = "45.00", principal = "40.00", interest = "5.00", destinationAccountId = null, occurredAt = occurredAt)
+        val rejected = P503AppState.DomainRejected(collect, requestId, emptyState, P503Tab.HOME)
+        val editedCollect = assertIs<P503AppState.Editing>(reducer.reduce(rejected, P503UiEvent.UpdateCollectInterestCategory(CategoryId("income-interest"))))
+        assertEquals(CategoryId("income-interest"), assertIs<CollectDraft>(editedCollect.draft).interestCategoryId)
+    }
+
     @Test
     fun selectingIncomeRewritesTheDraftWithRetention() {
         val editing = P503AppState.Editing(expenseDraft(), requestId, emptyState, P503Tab.HOME)
@@ -75,11 +127,33 @@ class P503TypedEntryReducerTest {
     }
 
     @Test
-    fun unimplementedTypeSwitchIsANoOpOnTheDraft() {
+    fun typeSwitchToLendNowBuildsALendDraft() {
         val editing = P503AppState.Editing(expenseDraft(), requestId)
         val after = assertIs<P503AppState.Editing>(reducer.reduce(editing, P503UiEvent.SelectEntryType(EntryType.LEND)))
-        assertEquals(expenseDraft(), after.draft)
-        assertEquals(EntryType.EXPENSE, after.draft.entryType)
+        val lend = assertIs<LendDraft>(after.draft)
+        assertEquals("35.80", lend.amount)
+        assertEquals(paymentAccountId, lend.fundingAccountId)
+        assertNull(lend.counterpartyId)
+        assertEquals(occurredAt, lend.occurredAt)
+    }
+
+    @Test
+    fun lendAndCollectFieldWritesEditTheDraft() {
+        val lendEditing =
+            P503AppState.Editing(
+                LendDraft(counterpartyId = null, amount = "100.00", fundingAccountId = paymentAccountId, occurredAt = occurredAt),
+                requestId,
+            )
+        val picked = assertIs<P503AppState.Editing>(reducer.reduce(lendEditing, P503UiEvent.UpdateLendCounterparty(CounterpartyId("cp-1"))))
+        assertEquals(CounterpartyId("cp-1"), assertIs<LendDraft>(picked.draft).counterpartyId)
+
+        val collectEditing =
+            P503AppState.Editing(
+                CollectDraft(counterpartyId = null, totalReceived = "45.00", principal = "40.00", interest = "5.00", destinationAccountId = paymentAccountId, occurredAt = occurredAt),
+                requestId,
+            )
+        val categorized = assertIs<P503AppState.Editing>(reducer.reduce(collectEditing, P503UiEvent.UpdateCollectInterestCategory(CategoryId("income-interest"))))
+        assertEquals(CategoryId("income-interest"), assertIs<CollectDraft>(categorized.draft).interestCategoryId)
     }
 
     @Test

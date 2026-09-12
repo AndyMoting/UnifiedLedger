@@ -44,6 +44,11 @@ fun createAndroidLedgerDatabase(
         transferCommitPort =
             SqlDelightConfirmedManualTransferCommitPort
                 .forPlatformConfiguredDatabase(database),
+        // P7-02.C: the symmetric lending commit port, counterparty directory and position reads.
+        lendingCommitPort =
+            SqlDelightConfirmedManualLendingCommitPort
+                .forPlatformConfiguredDatabase(database),
+        counterpartyStore = SqlDelightCounterpartyStore.forPlatformConfiguredDatabase(database),
         catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
@@ -54,6 +59,8 @@ class AndroidLedgerDatabaseHandle internal constructor(
     val commitPort: SqlDelightConfirmedManualExpenseCommitPort,
     val incomeCommitPort: SqlDelightConfirmedManualIncomeCommitPort,
     val transferCommitPort: SqlDelightConfirmedManualTransferCommitPort,
+    val lendingCommitPort: SqlDelightConfirmedManualLendingCommitPort,
+    val counterpartyStore: SqlDelightCounterpartyStore,
     val catalogStore: SqlDelightCatalogStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {

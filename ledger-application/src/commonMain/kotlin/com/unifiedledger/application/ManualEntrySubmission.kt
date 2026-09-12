@@ -19,6 +19,14 @@ sealed interface ManualEntrySubmissionResult {
     data class Transfer(
         val result: ManualTransferSubmissionResult,
     ) : ManualEntrySubmissionResult
+
+    data class Lend(
+        val result: ManualLendSubmissionResult,
+    ) : ManualEntrySubmissionResult
+
+    data class Collect(
+        val result: ManualCollectSubmissionResult,
+    ) : ManualEntrySubmissionResult
 }
 
 /**
@@ -36,6 +44,14 @@ sealed interface ManualEntryCommitResolution {
 
     data class Transfer(
         val resolution: ManualTransferCommitResolution,
+    ) : ManualEntryCommitResolution
+
+    data class Lend(
+        val resolution: ManualLendingCommitResolution,
+    ) : ManualEntryCommitResolution
+
+    data class Collect(
+        val resolution: ManualLendingCommitResolution,
     ) : ManualEntryCommitResolution
 }
 
@@ -79,6 +95,44 @@ sealed interface ManualEntrySaveInput {
 
         override val note: String get() = input.note
     }
+
+    data class Lend(
+        val input: ManualLendSaveInput,
+    ) : ManualEntrySaveInput {
+        override val ledgerId: LedgerId get() = input.ledgerId
+
+        override val requestId: RequestId get() = input.requestId
+
+        override val note: String get() = input.note
+    }
+
+    data class Collect(
+        val input: ManualCollectSaveInput,
+    ) : ManualEntrySaveInput {
+        override val ledgerId: LedgerId get() = input.ledgerId
+
+        override val requestId: RequestId get() = input.requestId
+
+        override val note: String get() = input.note
+    }
+}
+
+/**
+ * P7-02.C per-behavior lending submission, so [ExecuteManualEntrySubmission] can dispatch a LEND
+ * or COLLECT save input without eagerly constructing a submission it may not need.
+ */
+interface ManualLendingSubmission {
+    fun submitLend(input: ManualLendSaveInput): ManualLendSubmissionResult
+
+    fun submitCollect(input: ManualCollectSaveInput): ManualCollectSubmissionResult
+}
+
+class ExecuteLendingSubmission(
+    private val submission: ExecuteManualLendingSubmission,
+) : ManualLendingSubmission {
+    override fun submitLend(input: ManualLendSaveInput): ManualLendSubmissionResult = submission.saveLend(input)
+
+    override fun submitCollect(input: ManualCollectSaveInput): ManualCollectSubmissionResult = submission.saveCollect(input)
 }
 
 /**
@@ -91,6 +145,7 @@ class ExecuteManualEntrySubmission(
     private val expense: ExecuteManualExpenseSubmission,
     private val income: ExecuteManualIncomeSubmission,
     private val transfer: ExecuteManualTransferSubmission? = null,
+    private val lending: ManualLendingSubmission? = null,
 ) {
     fun submit(input: ManualEntrySaveInput): ManualEntrySubmissionResult {
         validateEntryNote(input.note)?.let { violation ->
@@ -115,6 +170,20 @@ class ExecuteManualEntrySubmission(
                             ManualTransferSaveResult.Executed(ConfirmedManualTransferResult.Rejected(violation)),
                         ),
                     )
+
+                is ManualEntrySaveInput.Lend ->
+                    ManualEntrySubmissionResult.Lend(
+                        ManualLendSubmissionResult.Application(
+                            ManualLendSaveResult.Executed(ConfirmedManualLendingResult.Rejected(violation)),
+                        ),
+                    )
+
+                is ManualEntrySaveInput.Collect ->
+                    ManualEntrySubmissionResult.Collect(
+                        ManualCollectSubmissionResult.Application(
+                            ManualCollectSaveResult.Executed(ConfirmedManualLendingResult.Rejected(violation)),
+                        ),
+                    )
             }
         }
         return when (input) {
@@ -123,6 +192,16 @@ class ExecuteManualEntrySubmission(
             is ManualEntrySaveInput.Transfer -> {
                 val submission = transfer ?: return ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.UnknownCommit)
                 ManualEntrySubmissionResult.Transfer(submission.submit(input.input))
+            }
+
+            is ManualEntrySaveInput.Lend -> {
+                val submission = lending ?: return ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.UnknownCommit)
+                ManualEntrySubmissionResult.Lend(submission.submitLend(input.input))
+            }
+
+            is ManualEntrySaveInput.Collect -> {
+                val submission = lending ?: return ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.UnknownCommit)
+                ManualEntrySubmissionResult.Collect(submission.submitCollect(input.input))
             }
         }
     }

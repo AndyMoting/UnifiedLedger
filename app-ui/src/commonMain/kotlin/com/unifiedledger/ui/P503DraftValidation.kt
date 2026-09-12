@@ -1,8 +1,10 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
@@ -57,6 +59,8 @@ class P503DraftValidation(
     ): P503DraftErrors =
         when (draft) {
             is TransferDraft -> transferErrors(draft, currency)
+            is LendDraft -> lendErrors(draft, currency)
+            is CollectDraft -> collectErrors(draft, currency)
             is ExpenseDraft, is IncomeDraft -> standardErrors(draft, currency)
         }
 
@@ -64,6 +68,48 @@ class P503DraftValidation(
         draft: TypedEntryDraft,
         currency: CurrencyUnit,
     ): Boolean = !errors(draft, currency).hasErrors
+
+    private fun lendErrors(
+        draft: LendDraft,
+        currency: CurrencyUnit,
+    ): P503DraftErrors {
+        val amountText = draft.amount
+        val amountError = amountText.amountError(currency)
+        return P503DraftErrors(
+            missingAmount = amountText.isBlank(),
+            // The counterparty is the type-specific object; the funding account is the asset-class field.
+            missingPaymentAccount = draft.fundingAccountId == null,
+            missingCategory = draft.counterpartyId == null,
+            missingOccurredAt = draft.occurredAt == null,
+            amountFormatError = amountError,
+        )
+    }
+
+    private fun collectErrors(
+        draft: CollectDraft,
+        currency: CurrencyUnit,
+    ): P503DraftErrors {
+        val totalError = draft.totalReceived.amountError(currency)
+        val principalError = draft.principal.amountError(currency)
+        val interestError = draft.interest.amountError(currency)
+        return P503DraftErrors(
+            missingAmount = draft.totalReceived.isBlank(),
+            missingPaymentAccount = draft.destinationAccountId == null,
+            missingCategory = draft.counterpartyId == null || draft.interestCategoryId == null,
+            missingOccurredAt = draft.occurredAt == null,
+            amountFormatError = totalError ?: principalError ?: interestError,
+        )
+    }
+
+    private fun String.amountError(currency: CurrencyUnit): ManualExpenseAmountFormatError? =
+        if (isBlank()) {
+            null
+        } else {
+            when (val parsed = parseAmount.parse(this, currency)) {
+                is ParseManualExpenseAmount.Result.Valid -> null
+                is ParseManualExpenseAmount.Result.Invalid -> parsed.error
+            }
+        }
 
     private fun standardErrors(
         draft: TypedEntryDraft,

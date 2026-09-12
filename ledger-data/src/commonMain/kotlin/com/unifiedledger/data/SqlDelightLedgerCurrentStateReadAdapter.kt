@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedIncomeReceipt
+import com.unifiedledger.application.ConfirmedLendingReceipt
 import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
@@ -10,6 +11,7 @@ import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualIncomeCommitRecord
 import com.unifiedledger.application.ManualIncomeRequestSnapshot
+import com.unifiedledger.application.ManualLendingCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.RequestId
@@ -139,6 +141,33 @@ class SqlDelightLedgerCurrentStateReadAdapter(
         val row =
             database.ledgerQueries
                 .manualTransferCommitByReceipt(
+                    ledger_id = ledgerId.value,
+                    confirmation_id = receipt.confirmationId.value,
+                    transaction_id = receipt.transactionId.value,
+                ).executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
+
+    override fun findManualLendingByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualLendingCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualLendingCommitByRequest(ledgerId.value, requestId.value)
+                .executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
+
+    override fun findManualLendingByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedLendingReceipt,
+    ): ManualLendingCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualLendingCommitByReceipt(
                     ledger_id = ledgerId.value,
                     confirmation_id = receipt.confirmationId.value,
                     transaction_id = receipt.transactionId.value,

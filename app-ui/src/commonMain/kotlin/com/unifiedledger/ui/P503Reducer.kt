@@ -1,12 +1,17 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedManualIncomeResult
+import com.unifiedledger.application.ConfirmedManualLendingResult
 import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.EntryFieldRetention
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.ManualCollectSaveResult
+import com.unifiedledger.application.ManualCollectSubmissionResult
 import com.unifiedledger.application.ManualEntryCommitResolution
 import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseCommitResolution
@@ -14,6 +19,9 @@ import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualIncomeCommitResolution
 import com.unifiedledger.application.ManualIncomeSaveResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.ManualLendSaveResult
+import com.unifiedledger.application.ManualLendSubmissionResult
+import com.unifiedledger.application.ManualLendingCommitResolution
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
@@ -23,6 +31,7 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
 
 /**
@@ -86,6 +95,15 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateTransferDestinationCredit,
             is P503UiEvent.UpdateTransferFee,
             is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
@@ -200,6 +218,15 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateTransferDestinationCredit,
             is P503UiEvent.UpdateTransferFee,
             is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
             -> state
             // Explicit Back during management closes the open dialog first; with no dialog it
             // leaves the ACCOUNTS tab for HOME (the overview root stays the back floor).
@@ -246,6 +273,24 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.withTransferFee(event.text))
             is P503UiEvent.UpdateTransferFeeCategory ->
                 state.copy(draft = state.draft.withTransferFeeCategory(event.categoryId))
+            is P503UiEvent.UpdateLendCounterparty ->
+                state.copy(draft = state.draft.withLendCounterparty(event.counterpartyId))
+            is P503UiEvent.UpdateLendFundingAccount ->
+                state.copy(draft = state.draft.withLendFundingAccount(event.accountId))
+            is P503UiEvent.UpdateLendAmount ->
+                state.copy(draft = state.draft.withLendAmount(event.text))
+            is P503UiEvent.UpdateCollectCounterparty ->
+                state.copy(draft = state.draft.withCollectCounterparty(event.counterpartyId))
+            is P503UiEvent.UpdateCollectDestinationAccount ->
+                state.copy(draft = state.draft.withCollectDestinationAccount(event.accountId))
+            is P503UiEvent.UpdateCollectTotal ->
+                state.copy(draft = state.draft.withCollectTotal(event.text))
+            is P503UiEvent.UpdateCollectPrincipal ->
+                state.copy(draft = state.draft.withCollectPrincipal(event.text))
+            is P503UiEvent.UpdateCollectInterest ->
+                state.copy(draft = state.draft.withCollectInterest(event.text))
+            is P503UiEvent.UpdateCollectInterestCategory ->
+                state.copy(draft = state.draft.withCollectInterestCategory(event.categoryId))
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
                     P503AppState.AwaitingConfirmation(
@@ -293,6 +338,15 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateTransferDestinationCredit,
             is P503UiEvent.UpdateTransferFee,
             is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
@@ -312,6 +366,8 @@ class P503ReducerImpl(
                     is ManualEntrySubmissionResult.Expense -> reduceExpenseSubmission(state, result.result)
                     is ManualEntrySubmissionResult.Income -> reduceIncomeSubmission(state, result.result)
                     is ManualEntrySubmissionResult.Transfer -> reduceTransferSubmission(state, result.result)
+                    is ManualEntrySubmissionResult.Lend -> reduceLendSubmission(state, result.result)
+                    is ManualEntrySubmissionResult.Collect -> reduceCollectSubmission(state, result.result)
                 }
             // Submission is single-flight; duplicate confirm/retry events are harmless.
             P503UiEvent.Confirm,
@@ -327,6 +383,15 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateTransferDestinationCredit,
             is P503UiEvent.UpdateTransferFee,
             is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> state
             else -> unhandled(state, event)
@@ -422,6 +487,8 @@ class P503ReducerImpl(
                     is ManualEntryCommitResolution.Expense -> reduceExpenseResolution(state, resolution.resolution)
                     is ManualEntryCommitResolution.Income -> reduceIncomeResolution(state, resolution.resolution)
                     is ManualEntryCommitResolution.Transfer -> reduceTransferResolution(state, resolution.resolution)
+                    is ManualEntryCommitResolution.Lend -> reduceLendResolution(state, resolution.resolution)
+                    is ManualEntryCommitResolution.Collect -> reduceCollectResolution(state, resolution.resolution)
                 }
             // The host dispatches this alongside the check call in its click handler; the
             // state instance stays untouched so the entry auto-check guard does not re-run.
@@ -467,6 +534,82 @@ class P503ReducerImpl(
             ManualTransferCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
 
+    private fun reduceLendSubmission(
+        state: P503AppState.Submitting,
+        result: ManualLendSubmissionResult,
+    ): P503AppState =
+        when (result) {
+            is ManualLendSubmissionResult.Application ->
+                when (val application = result.result) {
+                    is ManualLendSaveResult.InvalidInput ->
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab)
+                    is ManualLendSaveResult.Executed ->
+                        when (application.result) {
+                            is ConfirmedManualLendingResult.Created -> P503AppState.Created
+                            is ConfirmedManualLendingResult.NoChange -> P503AppState.NoChange
+                            is ConfirmedManualLendingResult.RequestIdentityConflict ->
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab)
+                            is ConfirmedManualLendingResult.Rejected ->
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab)
+                        }
+                }
+            ManualLendSubmissionResult.InfrastructureFailure ->
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab)
+            ManualLendSubmissionResult.UnknownCommit ->
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
+            is ManualLendSubmissionResult.Recovered -> P503AppState.Recovered
+        }
+
+    private fun reduceCollectSubmission(
+        state: P503AppState.Submitting,
+        result: ManualCollectSubmissionResult,
+    ): P503AppState =
+        when (result) {
+            is ManualCollectSubmissionResult.Application ->
+                when (val application = result.result) {
+                    is ManualCollectSaveResult.InvalidInput ->
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab)
+                    is ManualCollectSaveResult.Executed ->
+                        when (application.result) {
+                            is ConfirmedManualLendingResult.Created -> P503AppState.Created
+                            is ConfirmedManualLendingResult.NoChange -> P503AppState.NoChange
+                            is ConfirmedManualLendingResult.RequestIdentityConflict ->
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab)
+                            is ConfirmedManualLendingResult.Rejected ->
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab)
+                        }
+                }
+            ManualCollectSubmissionResult.InfrastructureFailure ->
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab)
+            ManualCollectSubmissionResult.UnknownCommit ->
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
+            is ManualCollectSubmissionResult.Recovered -> P503AppState.Recovered
+        }
+
+    private fun reduceLendResolution(
+        state: P503AppState.UnknownCommit,
+        resolution: ManualLendingCommitResolution,
+    ): P503AppState =
+        when (resolution) {
+            is ManualLendingCommitResolution.MatchingReceipt -> P503AppState.Recovered
+            ManualLendingCommitResolution.SnapshotConflict ->
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
+            ManualLendingCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
+            ManualLendingCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
+        }
+
+    private fun reduceCollectResolution(
+        state: P503AppState.UnknownCommit,
+        resolution: ManualLendingCommitResolution,
+    ): P503AppState =
+        when (resolution) {
+            is ManualLendingCommitResolution.MatchingReceipt -> P503AppState.Recovered
+            ManualLendingCommitResolution.SnapshotConflict ->
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
+            ManualLendingCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
+            ManualLendingCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
+        }
+
     private fun reduceTransientResult(
         event: P503UiEvent,
         current: P503AppState,
@@ -488,6 +631,15 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateTransferDestinationCredit,
             is P503UiEvent.UpdateTransferFee,
             is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> current
             else -> unhandled(current, event)
@@ -523,6 +675,25 @@ class P503ReducerImpl(
                 P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateTransferFeeCategory ->
                 P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab)
+            // P7-02.C: lending field edits return to Editing with typing retention (D-140).
+            is P503UiEvent.UpdateLendCounterparty ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateLendFundingAccount ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateLendAmount ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectCounterparty ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectDestinationAccount ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectTotal ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectPrincipal ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectInterest ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectInterestCategory ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab)
             // P7-02: a type switch and "record again" are absorbed on the conflict screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.SaveAndRecordAgain,
@@ -565,6 +736,25 @@ class P503ReducerImpl(
                 P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateTransferFeeCategory ->
                 P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab)
+            // P7-02.C: lending field edits return to Editing with typing retention (D-140).
+            is P503UiEvent.UpdateLendCounterparty ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateLendFundingAccount ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateLendAmount ->
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectCounterparty ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectDestinationAccount ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectTotal ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectPrincipal ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectInterest ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateCollectInterestCategory ->
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab)
             // P7-02: a type switch and "record again" are absorbed on the rejection screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.SaveAndRecordAgain,
@@ -597,6 +787,15 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateTransferDestinationCredit,
                     is P503UiEvent.UpdateTransferFee,
                     is P503UiEvent.UpdateTransferFeeCategory,
+                    is P503UiEvent.UpdateLendCounterparty,
+                    is P503UiEvent.UpdateLendFundingAccount,
+                    is P503UiEvent.UpdateLendAmount,
+                    is P503UiEvent.UpdateCollectCounterparty,
+                    is P503UiEvent.UpdateCollectDestinationAccount,
+                    is P503UiEvent.UpdateCollectTotal,
+                    is P503UiEvent.UpdateCollectPrincipal,
+                    is P503UiEvent.UpdateCollectInterest,
+                    is P503UiEvent.UpdateCollectInterestCategory,
                     P503UiEvent.SaveAndRecordAgain,
                     -> state
                     else -> unhandled(state, event)
@@ -618,6 +817,15 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateTransferDestinationCredit,
                     is P503UiEvent.UpdateTransferFee,
                     is P503UiEvent.UpdateTransferFeeCategory,
+                    is P503UiEvent.UpdateLendCounterparty,
+                    is P503UiEvent.UpdateLendFundingAccount,
+                    is P503UiEvent.UpdateLendAmount,
+                    is P503UiEvent.UpdateCollectCounterparty,
+                    is P503UiEvent.UpdateCollectDestinationAccount,
+                    is P503UiEvent.UpdateCollectTotal,
+                    is P503UiEvent.UpdateCollectPrincipal,
+                    is P503UiEvent.UpdateCollectInterest,
+                    is P503UiEvent.UpdateCollectInterestCategory,
                     P503UiEvent.SaveAndRecordAgain,
                     -> state
                     else -> unhandled(state, event)
@@ -636,6 +844,8 @@ private fun TypedEntryDraft.withPrimaryAccount(accountId: AccountId): TypedEntry
         is ExpenseDraft -> copy(paymentAccountId = accountId)
         is IncomeDraft -> copy(receivingAccountId = accountId)
         is TransferDraft -> copy(sourceAccountId = accountId)
+        is LendDraft -> copy(fundingAccountId = accountId)
+        is CollectDraft -> copy(destinationAccountId = accountId)
     }
 
 /** P7-02: sets the draft's category while preserving the concrete subtype. */
@@ -644,6 +854,8 @@ private fun TypedEntryDraft.withCategory(categoryId: CategoryId): TypedEntryDraf
         is ExpenseDraft -> copy(categoryId = categoryId)
         is IncomeDraft -> copy(categoryId = categoryId)
         is TransferDraft -> copy(feeCategoryId = categoryId)
+        is LendDraft -> this
+        is CollectDraft -> copy(interestCategoryId = categoryId)
     }
 
 /** P7-02.B transfer source drawer; absorbed on non-transfer drafts. */
@@ -660,3 +872,30 @@ private fun TypedEntryDraft.withTransferFee(text: String): TypedEntryDraft = if 
 
 /** P7-02.B transfer fee category; absorbed on non-transfer drafts. */
 private fun TypedEntryDraft.withTransferFeeCategory(categoryId: CategoryId): TypedEntryDraft = if (this is TransferDraft) copy(feeCategoryId = categoryId) else this
+
+/** P7-02.C lend counterparty; absorbed on non-lend drafts (E-1 type-specific field). */
+private fun TypedEntryDraft.withLendCounterparty(counterpartyId: CounterpartyId): TypedEntryDraft = if (this is LendDraft) copy(counterpartyId = counterpartyId) else this
+
+/** P7-02.C lend funding account; absorbed on non-lend drafts. */
+private fun TypedEntryDraft.withLendFundingAccount(accountId: AccountId): TypedEntryDraft = if (this is LendDraft) copy(fundingAccountId = accountId) else this
+
+/** P7-02.C lend amount text; absorbed on non-lend drafts. */
+private fun TypedEntryDraft.withLendAmount(text: String): TypedEntryDraft = if (this is LendDraft) copy(amount = text) else this
+
+/** P7-02.C collect counterparty; absorbed on non-collect drafts (E-1 type-specific field). */
+private fun TypedEntryDraft.withCollectCounterparty(counterpartyId: CounterpartyId): TypedEntryDraft = if (this is CollectDraft) copy(counterpartyId = counterpartyId) else this
+
+/** P7-02.C collect destination account; absorbed on non-collect drafts. */
+private fun TypedEntryDraft.withCollectDestinationAccount(accountId: AccountId): TypedEntryDraft = if (this is CollectDraft) copy(destinationAccountId = accountId) else this
+
+/** P7-02.C collect total-received text; absorbed on non-collect drafts. */
+private fun TypedEntryDraft.withCollectTotal(text: String): TypedEntryDraft = if (this is CollectDraft) copy(totalReceived = text) else this
+
+/** P7-02.C collect principal component text; absorbed on non-collect drafts. */
+private fun TypedEntryDraft.withCollectPrincipal(text: String): TypedEntryDraft = if (this is CollectDraft) copy(principal = text) else this
+
+/** P7-02.C collect interest component text; absorbed on non-collect drafts. */
+private fun TypedEntryDraft.withCollectInterest(text: String): TypedEntryDraft = if (this is CollectDraft) copy(interest = text) else this
+
+/** P7-02.C collect interest category; absorbed on non-collect drafts. */
+private fun TypedEntryDraft.withCollectInterestCategory(categoryId: CategoryId): TypedEntryDraft = if (this is CollectDraft) copy(interestCategoryId = categoryId) else this

@@ -2,7 +2,6 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
-import com.unifiedledger.domain.EntryFoundationViolation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -80,11 +79,37 @@ class EntryDraftTest {
     }
 
     @Test
-    fun `unimplemented target types have no draft in this batch`() {
-        for (type in listOf(EntryType.LEND, EntryType.COLLECT)) {
-            assertNull(EntryFieldRetention.switchType(expense(), type), "for $type")
-            assertNull(EntryFieldRetention.switchType(income(), type), "for $type")
-        }
+    fun `switching expense to lend retains amount occurredAt and note and clears the counterparty`() {
+        val lend = assertIs<LendDraft>(EntryFieldRetention.switchType(expense(), EntryType.LEND))
+        assertEquals("35.80", lend.amount)
+        assertEquals(occurredAt, lend.occurredAt)
+        assertEquals("lunch", lend.note)
+        assertEquals(AccountId("asset"), lend.fundingAccountId)
+        assertNull(lend.counterpartyId)
+    }
+
+    @Test
+    fun `switching transfer to collect retains the amount text and clears the counterparty and components`() {
+        val transfer = assertIs<TransferDraft>(EntryFieldRetention.switchType(expense(), EntryType.TRANSFER))
+        val collect = assertIs<CollectDraft>(EntryFieldRetention.switchType(transfer, EntryType.COLLECT))
+        assertEquals("35.80", collect.totalReceived)
+        assertEquals("", collect.principal)
+        assertEquals("", collect.interest)
+        assertEquals("0.00", collect.fee)
+        assertEquals(occurredAt, collect.occurredAt)
+        assertEquals("lunch", collect.note)
+        assertNull(collect.counterpartyId)
+        assertNull(collect.interestCategoryId)
+        assertNull(collect.destinationAccountId)
+    }
+
+    @Test
+    fun `switch back to expense does not restore the cleared counterparty`() {
+        val lend = assertIs<LendDraft>(EntryFieldRetention.switchType(expense(), EntryType.LEND))
+        val back = assertIs<ExpenseDraft>(EntryFieldRetention.switchType(lend, EntryType.EXPENSE))
+        assertEquals("35.80", back.amountText)
+        assertEquals(AccountId("asset"), back.paymentAccountId)
+        assertNull(back.categoryId)
     }
 
     @Test
@@ -104,12 +129,11 @@ class EntryDraftTest {
     }
 
     @Test
-    fun `unsupported type gate maps only lend collect`() {
+    fun `all five frozen entry types are supported after batch C`() {
         assertNull(validateEntryTypeSupported(EntryType.EXPENSE))
         assertNull(validateEntryTypeSupported(EntryType.INCOME))
         assertNull(validateEntryTypeSupported(EntryType.TRANSFER))
-        for (type in listOf(EntryType.LEND, EntryType.COLLECT)) {
-            assertEquals(EntryFoundationViolation.EntryTypeNotSupported, validateEntryTypeSupported(type))
-        }
+        assertNull(validateEntryTypeSupported(EntryType.LEND))
+        assertNull(validateEntryTypeSupported(EntryType.COLLECT))
     }
 }

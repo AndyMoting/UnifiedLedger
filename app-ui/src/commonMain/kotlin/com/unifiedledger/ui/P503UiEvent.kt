@@ -15,6 +15,7 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CounterpartyId
 import kotlin.time.Instant
 
 /**
@@ -105,6 +106,53 @@ sealed interface P503UiEvent {
 
     /** Transfer fee-category update (only meaningful when fee > 0). */
     data class UpdateTransferFeeCategory(
+        val categoryId: CategoryId,
+    ) : P503UiEvent
+
+    // ---- P7-02.C lending events ----
+
+    /** Lend counterparty selection (type-specific: cleared on a switch away). */
+    data class UpdateLendCounterparty(
+        val counterpartyId: CounterpartyId,
+    ) : P503UiEvent
+
+    /** Lend funding account (belongs to the shared asset-account class). */
+    data class UpdateLendFundingAccount(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /** Lend principal amount text. */
+    data class UpdateLendAmount(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Collect counterparty selection (type-specific). */
+    data class UpdateCollectCounterparty(
+        val counterpartyId: CounterpartyId,
+    ) : P503UiEvent
+
+    /** Collect destination account. */
+    data class UpdateCollectDestinationAccount(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /** Collect total-received amount text (the collect main amount field). */
+    data class UpdateCollectTotal(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Collect principal component text. */
+    data class UpdateCollectPrincipal(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Collect interest component text. */
+    data class UpdateCollectInterest(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Collect exact active leaf INCOME interest category. */
+    data class UpdateCollectInterestCategory(
         val categoryId: CategoryId,
     ) : P503UiEvent
 

@@ -2,16 +2,21 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendingPositionReadPort
 import com.unifiedledger.application.ManualExpenseOptionsProvider
 import com.unifiedledger.application.ManualExpenseRequestIdSource
 import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ManualIncomeOptionsProvider
 import com.unifiedledger.application.ManualIncomeRequestIdSource
+import com.unifiedledger.application.ManualLendingOptions
+import com.unifiedledger.application.ManualLendingOptionsProvider
+import com.unifiedledger.application.ManualLendingRequestIdSource
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
@@ -20,6 +25,7 @@ import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
+import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
@@ -76,6 +82,12 @@ class P503LedgerFacade(
     val resolveTransferCommitStatus: ResolveManualTransferCommitStatus? = null,
     val transferRequestIdSource: ManualTransferRequestIdSource? = null,
     baseTransferOptionsProvider: ManualTransferOptionsProvider? = null,
+    // P7-02.C lending surface.
+    val resolveLendingCommitStatus: ResolveManualLendingCommitStatus? = null,
+    val lendingRequestIdSource: ManualLendingRequestIdSource? = null,
+    baseLendingOptionsProvider: ManualLendingOptionsProvider? = null,
+    val lendingPositions: LendingPositionReadPort? = null,
+    val counterpartyCommands: CounterpartyCommands? = null,
     // P7-01.D catalog management surface; null/empty defaults keep legacy constructions valid.
     val catalogSnapshot: () -> CatalogSnapshotView? = { null },
     val executeCatalogCommand: ExecuteCatalogCommand? = null,
@@ -90,6 +102,8 @@ class P503LedgerFacade(
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
     private val fallbackTransferOptionsProvider =
         baseTransferOptionsProvider ?: ManualTransferOptionsProvider { ManualTransferOptions(emptyList(), emptyList()) }
+    private val fallbackLendingOptionsProvider =
+        baseLendingOptionsProvider ?: ManualLendingOptionsProvider { ManualLendingOptions(emptyList(), emptyList()) }
 
     /** Current authoritative options provider; follows [refreshCatalog] when a session is injected. */
     val optionsProvider: ManualExpenseOptionsProvider
@@ -102,6 +116,10 @@ class P503LedgerFacade(
     /** P7-02.B: current authoritative transfer options projection; follows [refreshCatalog]. */
     val transferOptionsProvider: ManualTransferOptionsProvider
         get() = session?.transferOptionsProvider ?: fallbackTransferOptionsProvider
+
+    /** P7-02.C: current authoritative lending options projection; follows [refreshCatalog]. */
+    val lendingOptionsProvider: ManualLendingOptionsProvider
+        get() = session?.lendingOptionsProvider ?: fallbackLendingOptionsProvider
 
     /** Current authoritative read model; follows [refreshCatalog] when a session is injected. */
     val queryCurrentState: QueryLedgerCurrentState

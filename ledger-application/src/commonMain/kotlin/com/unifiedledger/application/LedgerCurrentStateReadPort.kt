@@ -78,4 +78,20 @@ interface LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedTransferReceipt,
     ): ManualTransferCommitRecord?
+
+    /**
+     * P7-02.C: lending request lookup for the snapshot-aware commit-status resolver. The default
+     * `null` (no lending rows) keeps pre-P7-02 read-port fakes source-compatible; the real
+     * adapter overrides it.
+     */
+    fun findManualLendingByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualLendingCommitRecord? = null
+
+    /** P7-02.C: lending receipt lookup for the snapshot-aware commit-status resolver. */
+    fun findManualLendingByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedLendingReceipt,
+    ): ManualLendingCommitRecord? = null
 }

@@ -47,11 +47,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseOptions
 import com.unifiedledger.application.ManualIncomeOptions
+import com.unifiedledger.application.ManualLendingOptions
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.TransferDraft
@@ -101,6 +104,7 @@ fun P503EditScreen(
     onContinue: (() -> Unit)?,
     incomeOptions: ManualIncomeOptions = ManualIncomeOptions(emptyList(), emptyList()),
     transferOptions: ManualTransferOptions = ManualTransferOptions(emptyList(), emptyList()),
+    lendingOptions: ManualLendingOptions = ManualLendingOptions(emptyList(), emptyList()),
     onSelectEntryType: (EntryType) -> Unit = {},
     onUpdateNote: (String) -> Unit = {},
     onUpdateReceivingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
@@ -110,6 +114,15 @@ fun P503EditScreen(
     onUpdateTransferDestinationCredit: (String) -> Unit = onUpdateAmount,
     onUpdateTransferFee: (String) -> Unit = {},
     onUpdateTransferFeeCategory: (CategoryId) -> Unit = onUpdateCategory,
+    onUpdateLendCounterparty: (com.unifiedledger.domain.CounterpartyId) -> Unit = {},
+    onUpdateLendFundingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateLendAmount: (String) -> Unit = onUpdateAmount,
+    onUpdateCollectCounterparty: (com.unifiedledger.domain.CounterpartyId) -> Unit = {},
+    onUpdateCollectDestinationAccount: (AccountId) -> Unit = {},
+    onUpdateCollectTotal: (String) -> Unit = onUpdateAmount,
+    onUpdateCollectPrincipal: (String) -> Unit = {},
+    onUpdateCollectInterest: (String) -> Unit = {},
+    onUpdateCollectInterestCategory: (CategoryId) -> Unit = onUpdateCategory,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -175,9 +188,11 @@ fun P503EditScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                when {
-                    isTransfer -> "新增手工转账"
-                    isIncome -> "新增手工收入"
+                when (draft) {
+                    is TransferDraft -> "新增手工转账"
+                    is IncomeDraft -> "新增手工收入"
+                    is LendDraft -> "新增手工借出"
+                    is CollectDraft -> "新增手工收回"
                     else -> "新增手工支出"
                 },
                 style = MaterialTheme.typography.titleLarge,
@@ -201,9 +216,9 @@ fun P503EditScreen(
         // the type switch uses the frozen retention matrix in the reducer.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER).forEach { type ->
+            listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT).forEach { type ->
                 Row(
-                    modifier = Modifier.fillMaxWidth(1f / 3f).minimumInteractiveComponentSize(),
+                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(
@@ -214,6 +229,8 @@ fun P503EditScreen(
                         when (type) {
                             EntryType.INCOME -> "收入"
                             EntryType.TRANSFER -> "转账"
+                            EntryType.LEND -> "借出"
+                            EntryType.COLLECT -> "收回"
                             else -> "支出"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -305,6 +322,76 @@ fun P503EditScreen(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+            }
+        } else if (draft is LendDraft) {
+            SelectorField(label = "往来对象", hasError = errors.missingCategory, errorMessage = "请选择往来对象") {
+                lendingOptions.counterparties.filter { it.active }.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateLendCounterparty(option.counterpartyId) })
+                        Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "出资账户", hasError = errors.missingPaymentAccount, errorMessage = "请选择出资账户") {
+                lendingOptions.ownedAssetAccounts.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.accountId == draft.fundingAccountId, onClick = { onUpdateLendFundingAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            val lendCurrency =
+                lendingOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.fundingAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(
+                value = draft.amount,
+                onValueChange = onUpdateLendAmount,
+                label = { Text("借出金额（$lendCurrency）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+            )
+        } else if (draft is CollectDraft) {
+            SelectorField(label = "往来对象", hasError = errors.missingCategory, errorMessage = "请选择往来对象") {
+                lendingOptions.counterparties.filter { it.active }.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateCollectCounterparty(option.counterpartyId) })
+                        Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "到账账户", hasError = errors.missingPaymentAccount, errorMessage = "请选择到账账户") {
+                lendingOptions.ownedAssetAccounts.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.accountId == draft.destinationAccountId, onClick = { onUpdateCollectDestinationAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            val collectCurrency =
+                lendingOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.destinationAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(value = draft.totalReceived, onValueChange = onUpdateCollectTotal, label = { Text("实收总额（$collectCurrency）") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = errors.missingAmount)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = draft.principal, onValueChange = onUpdateCollectPrincipal, label = { Text("本金") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = draft.interest, onValueChange = onUpdateCollectInterest, label = { Text("利息") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "利息分类", hasError = errors.missingCategory, errorMessage = "请选择利息分类") {
+                lendingOptions.interestCategories.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.categoryId == draft.interestCategoryId, onClick = { onUpdateCollectInterestCategory(option.categoryId) })
+                        Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         } else {
             SelectorField(

@@ -8891,6 +8891,166 @@ WHERE receipt.ledger_id = ?
   AND receipt.confirmation_id = ?
   AND receipt.transaction_id = ?;
 
+-- P7-02.C manual lending claim-first pair, counterparty directory and per-object position reads.
+claimManualLendingRequest:
+INSERT INTO manual_lending_request(
+  ledger_id, request_id, behavior_code, counterparty_id, principal_account_id, amount_minor,
+  interest_minor, fee_minor, total_received_minor, interest_category_id, currency_code,
+  currency_precision, occurred_at, note, confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteManualLendingRequest:
+DELETE FROM manual_lending_request WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+insertConfirmedLendingReceipt:
+INSERT INTO confirmed_lending_receipt(ledger_id, request_id, confirmation_id, transaction_id) VALUES (?, ?, ?, ?);
+
+selectCommittedManualLendingRequest:
+SELECT request.behavior_code, request.counterparty_id, request.principal_account_id,
+  request.amount_minor, request.interest_minor, request.fee_minor, request.total_received_minor,
+  request.interest_category_id, request.currency_code, request.currency_precision,
+  request.occurred_at, request.note, request.confirmation_marker,
+  receipt.confirmation_id, receipt.transaction_id
+FROM manual_lending_request AS request
+JOIN confirmed_lending_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+countManualLendingRequests:
+SELECT count(*) FROM manual_lending_request;
+
+countLendingReceipts:
+SELECT count(*) FROM confirmed_lending_receipt;
+
+manualLendingCommitByRequest:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.behavior_code,
+  request.counterparty_id,
+  request.principal_account_id,
+  request.amount_minor,
+  request.interest_minor,
+  request.fee_minor,
+  request.total_received_minor,
+  request.interest_category_id,
+  request.currency_code,
+  request.currency_precision,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM manual_lending_request AS request
+JOIN confirmed_lending_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE request.ledger_id = ?
+  AND request.request_id = ?;
+
+manualLendingCommitByReceipt:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.behavior_code,
+  request.counterparty_id,
+  request.principal_account_id,
+  request.amount_minor,
+  request.interest_minor,
+  request.fee_minor,
+  request.total_received_minor,
+  request.interest_category_id,
+  request.currency_code,
+  request.currency_precision,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM confirmed_lending_receipt AS receipt
+JOIN manual_lending_request AS request
+  ON request.ledger_id = receipt.ledger_id
+ AND request.request_id = receipt.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE receipt.ledger_id = ?
+  AND receipt.confirmation_id = ?
+  AND receipt.transaction_id = ?;
+
+-- P7-02.C counterparty directory. The current row plus the append-only shared name history; the
+-- receivable account lives in catalog_account and is hidden by construction.
+insertCounterparty:
+INSERT INTO counterparty(ledger_id, counterparty_id, current_name, receivable_account_id, active)
+VALUES (?, ?, ?, ?, ?);
+
+selectCounterparty:
+SELECT counterparty_id, current_name, receivable_account_id, active
+FROM counterparty WHERE ledger_id = ? AND counterparty_id = ?;
+
+selectCounterparties:
+SELECT counterparty_id, current_name, receivable_account_id, active
+FROM counterparty WHERE ledger_id = ? ORDER BY counterparty_id;
+
+updateCounterpartyName:
+UPDATE counterparty SET current_name = ? WHERE ledger_id = ? AND counterparty_id = ?;
+
+updateCounterpartyActive:
+UPDATE counterparty SET active = ? WHERE ledger_id = ? AND counterparty_id = ?;
+
+selectCounterpartyMaxNameVersion:
+SELECT max(version_number) FROM counterparty_name_history WHERE ledger_id = ? AND counterparty_id = ?;
+
+selectCounterpartyNameHistory:
+SELECT version_number, name, status FROM counterparty_name_history
+WHERE ledger_id = ? AND counterparty_id = ? ORDER BY version_number;
+
+supersedeCounterpartyCurrentName:
+UPDATE counterparty_name_history SET status = 'SUPERSEDED'
+WHERE ledger_id = ? AND counterparty_id = ? AND status = 'CURRENT';
+
+insertCounterpartyNameHistory:
+INSERT INTO counterparty_name_history(ledger_id, counterparty_id, version_number, name, status)
+VALUES (?, ?, ?, ?, ?);
+
+-- P7-02.C per-object position: upsert the current balance, append the immutable history row.
+insertLendingPosition:
+INSERT INTO lending_position(ledger_id, counterparty_id, receivable_account_id, currency_code, currency_precision, principal_balance_minor)
+VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (ledger_id, counterparty_id) DO NOTHING;
+
+updateLendingPositionBalance:
+UPDATE lending_position SET principal_balance_minor = ?
+WHERE ledger_id = ? AND counterparty_id = ?;
+
+selectLendingPosition:
+SELECT receivable_account_id, currency_code, currency_precision, principal_balance_minor
+FROM lending_position WHERE ledger_id = ? AND counterparty_id = ?;
+
+selectLendingPositions:
+SELECT counterparty_id, receivable_account_id, currency_code, currency_precision, principal_balance_minor
+FROM lending_position WHERE ledger_id = ? ORDER BY counterparty_id;
+
+insertLendingPositionHistory:
+INSERT INTO lending_position_history(
+  ledger_id, counterparty_id, entry_id, behavior_code, amount_minor,
+  principal_balance_after_minor, transaction_id, occurred_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- G-D: the single frozen read/rebuild order for one object's append-only history.
+selectLendingPositionHistory:
+SELECT entry_id, behavior_code, amount_minor, principal_balance_after_minor, transaction_id, occurred_at
+FROM lending_position_history
+WHERE ledger_id = ? AND counterparty_id = ?
+ORDER BY occurred_at ASC, entry_id ASC;
+
+countLendingPositions:
+SELECT count(*) FROM lending_position;
+
 -- P7-01 (D-143) catalog queries. Fresh persistence for the ledger-scoped product catalog:
 -- version probe, catalog rows, shared append-only name history, claim-first request/receipt
 -- idempotency and the bootstrap unknown-reference probes.

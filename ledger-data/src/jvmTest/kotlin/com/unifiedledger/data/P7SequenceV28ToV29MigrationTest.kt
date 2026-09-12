@@ -69,6 +69,41 @@ class P7SequenceV28ToV29MigrationTest {
     }
 
     @Test
+    fun lendingPositionHistoryUniqueKeyAndTransactionForeignKeyAreEnforced() {
+        // L-4/G-D: the append-only history key is (ledger_id, counterparty_id, entry_id) and its
+        // transaction_id references ledger_transaction in the same ledger.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, migrationProperties())
+        try {
+            LedgerDatabase.Schema.create(driver)
+            // L-1 shape: a counterparty's receivable account is a hidden, non-owned, non-real
+            // catalog_account row, and lending_position references it by a deferred FK, so the
+            // account row must exist before any position row (foreign_keys = true here).
+            driver.execute(null, "INSERT INTO catalog_account VALUES ('l','recv','n','ASSET','CNY',2,0,0,NULL,1,1)", 0)
+            driver.execute(null, "INSERT INTO counterparty VALUES ('l','cp1','n','recv',1)", 0)
+            driver.execute(null, "INSERT INTO lending_position VALUES ('l','cp1','recv','CNY',2,0)", 0)
+            // insertTransaction stores newer formal kinds (LEND/COLLECT) with legacy kind
+            // 'EXPENSE' and the real kind in canonical_kind; raw SQL must mirror that mapping.
+            driver.execute(null, "INSERT INTO ledger_transaction (transaction_id, ledger_id, kind, canonical_kind) VALUES ('t1','l','EXPENSE','LEND')", 0)
+            driver.execute(null, "INSERT INTO lending_position_history VALUES ('l','cp1','e1','LEND',100,100,'t1','2026-01-01T00:00:00Z')", 0)
+            // Duplicate entry id in the same object is rejected by the primary key.
+            assertFailsWith<SQLException> {
+                driver.execute(null, "INSERT INTO lending_position_history VALUES ('l','cp1','e1','COLLECT',50,50,'t1','2026-01-02T00:00:00Z')", 0)
+            }
+            // The same entry id under a different object is allowed by the composite key.
+            driver.execute(null, "INSERT INTO catalog_account VALUES ('l','recv2','n','ASSET','CNY',2,0,0,NULL,1,1)", 0)
+            driver.execute(null, "INSERT INTO counterparty VALUES ('l','cp2','n','recv2',1)", 0)
+            driver.execute(null, "INSERT INTO lending_position VALUES ('l','cp2','recv2','CNY',2,0)", 0)
+            driver.execute(null, "INSERT INTO lending_position_history VALUES ('l','cp2','e1','LEND',10,10,'t1','2026-01-01T00:00:00Z')", 0)
+            // The transaction FK is enforced: a dangling reference is rejected on insert.
+            assertFailsWith<SQLException> {
+                driver.execute(null, "INSERT INTO lending_position_history VALUES ('l','cp1','e2','LEND',10,10,'missing-tx','2026-01-03T00:00:00Z')", 0)
+            }
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
     fun entryPinAndLendingGuardsEnforceTheirInvariants() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, migrationProperties())
         try {
