@@ -77,7 +77,7 @@ class P503TypedEntryReducerTest {
     @Test
     fun unimplementedTypeSwitchIsANoOpOnTheDraft() {
         val editing = P503AppState.Editing(expenseDraft(), requestId)
-        val after = assertIs<P503AppState.Editing>(reducer.reduce(editing, P503UiEvent.SelectEntryType(EntryType.TRANSFER)))
+        val after = assertIs<P503AppState.Editing>(reducer.reduce(editing, P503UiEvent.SelectEntryType(EntryType.LEND)))
         assertEquals(expenseDraft(), after.draft)
         assertEquals(EntryType.EXPENSE, after.draft.entryType)
     }

@@ -58,9 +58,9 @@ sealed interface P503UiEvent {
 
     /**
      * Switches the editor's entry type. Valid only in Editing; the new draft is derived by the
-     * frozen [com.unifiedledger.application.EntryFieldRetention] matrix, and a target type this
-     * batch does not implement (TRANSFER/LEND/COLLECT) leaves the state untouched. Absorbed in
-     * every other state, never an ISE (§6.2a).
+     * frozen [com.unifiedledger.application.EntryFieldRetention] matrix, and a target type the
+     * current batch does not implement (LEND/COLLECT pre-C) leaves the state untouched. Absorbed
+     * in every other state, never an ISE (§6.2a).
      */
     data class SelectEntryType(
         val type: EntryType,
@@ -78,6 +78,33 @@ sealed interface P503UiEvent {
 
     /** P7-02.A income category field update. */
     data class UpdateIncomeCategory(
+        val categoryId: CategoryId,
+    ) : P503UiEvent
+
+    // ---- P7-02.B transfer events ----
+
+    /** Transfer source (drawer) account update. */
+    data class UpdateTransferSourceAccount(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /** Transfer destination (recipient) account update. */
+    data class UpdateTransferDestinationAccount(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /** Transfer destination-credit amount text update (the transfer main amount field). */
+    data class UpdateTransferDestinationCredit(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Transfer fee text update. */
+    data class UpdateTransferFee(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Transfer fee-category update (only meaningful when fee > 0). */
+    data class UpdateTransferFeeCategory(
         val categoryId: CategoryId,
     ) : P503UiEvent
 

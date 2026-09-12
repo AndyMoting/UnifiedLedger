@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(28L, queryUserVersion(url))
+            assertEquals(29L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -60,12 +60,12 @@ class DesktopCatalogMigrationTest {
         try {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                driver.execute(null, "PRAGMA user_version = 29", 0)
+                driver.execute(null, "PRAGMA user_version = 30", 0)
             }
             assertFailsWith<IllegalStateException> {
                 JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
             }
-            JdbcSqliteDriver(url).use { driver -> assertEquals(29L, driver.userVersion()) }
+            JdbcSqliteDriver(url).use { driver -> assertEquals(30L, driver.userVersion()) }
             assertEquals(true, Files.exists(path))
         } finally {
             Files.deleteIfExists(path)
@@ -88,7 +88,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -110,20 +110,22 @@ class DesktopCatalogMigrationTest {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 driver.execute(null, "PRAGMA foreign_keys = OFF", 0)
-                listOf(
-                    "catalog_command_receipt",
-                    "catalog_command_request",
-                    "catalog_name_history",
-                    "catalog_category",
-                    "catalog_account",
-                    "catalog_version",
+                (
+                    listOf(
+                        "catalog_command_receipt",
+                        "catalog_command_request",
+                        "catalog_name_history",
+                        "catalog_category",
+                        "catalog_account",
+                        "catalog_version",
+                    ) + P7_V29_TABLES
                 ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -155,7 +157,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -207,7 +209,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(28L, driver.userVersion())
+                assertEquals(29L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -233,13 +235,15 @@ class DesktopCatalogMigrationTest {
         JdbcSqliteDriver(url).use { driver ->
             LedgerDatabase.Schema.create(driver)
             driver.execute(null, "PRAGMA foreign_keys = OFF", 0)
-            listOf(
-                "catalog_command_receipt",
-                "catalog_command_request",
-                "catalog_name_history",
-                "catalog_category",
-                "catalog_account",
-                "catalog_version",
+            (
+                listOf(
+                    "catalog_command_receipt",
+                    "catalog_command_request",
+                    "catalog_name_history",
+                    "catalog_category",
+                    "catalog_account",
+                    "catalog_version",
+                ) + P7_V29_TABLES
             ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
@@ -259,6 +263,21 @@ class DesktopCatalogMigrationTest {
             0,
         )
         return version
+    }
+
+    private companion object {
+        val P7_V29_TABLES =
+            listOf(
+                "manual_transfer_request",
+                "confirmed_transfer_receipt",
+                "counterparty",
+                "counterparty_name_history",
+                "lending_position",
+                "lending_position_history",
+                "manual_lending_request",
+                "confirmed_lending_receipt",
+                "entry_pin",
+            )
     }
 
     private fun queryLong(

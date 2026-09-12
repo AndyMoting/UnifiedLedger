@@ -43,8 +43,14 @@ import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.ManualIncomeSaveInput
 import com.unifiedledger.application.ManualIncomeSaveResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.ManualTransferInputField
+import com.unifiedledger.application.ManualTransferRequestSnapshot
+import com.unifiedledger.application.ManualTransferSaveInput
+import com.unifiedledger.application.ManualTransferSaveResult
+import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
@@ -97,6 +103,7 @@ fun P503App(
     val catalogVersion = facade.catalogSnapshot()?.catalogVersion
     val options = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
     val incomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
+    val transferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -147,6 +154,8 @@ fun P503App(
                 incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.currency ?: facade.currency
             is ExpenseDraft ->
                 options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: facade.currency
+            is TransferDraft ->
+                transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.currency ?: facade.currency
         }
 
     fun refresh() {
@@ -215,20 +224,49 @@ fun P503App(
         )
     }
 
+    fun transferSaveInput(
+        draft: TransferDraft,
+        requestId: RequestId,
+    ): ManualTransferSaveInput? {
+        val currency = resolvedCurrency(draft)
+        val creditParsed = facade.parseAmount.parse(draft.destinationCredit, currency)
+        val destinationCredit = (creditParsed as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        val fee =
+            when {
+                draft.fee.isBlank() -> Money.ofMinor(0L, currency)
+                else -> (facade.parseAmount.parse(draft.fee, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+            }
+        val sourceAccountId = draft.sourceAccountId
+        val destinationAccountId = draft.destinationAccountId
+        val occurredAt = draft.occurredAt
+        if (destinationCredit == null || fee == null || sourceAccountId == null || destinationAccountId == null || occurredAt == null) {
+            return null
+        }
+        return ManualTransferSaveInput(
+            ledgerId = facade.ledgerId,
+            requestId = requestId,
+            sourceAccountId = sourceAccountId,
+            destinationAccountId = destinationAccountId,
+            destinationCredit = destinationCredit,
+            fee = fee,
+            feeCategoryId = draft.feeCategoryId,
+            occurredAt = occurredAt,
+            note = draft.note,
+            confirmation = ExplicitManualSave,
+        )
+    }
+
     fun submit(
         draft: TypedEntryDraft,
         requestId: RequestId,
     ) {
-        // P7-02.A E-2: capture the retained intent from the pre-submit draft before it leaves.
+        // P7-02 E-2: capture the retained intent from the pre-submit draft before it leaves.
         retainedIntent = draft.toRetainedIntent(currentOriginTab(latestState.value))
         val result =
             when (draft) {
                 is ExpenseDraft -> {
                     val input = expenseSaveInput(draft, requestId)
                     if (input == null) {
-                        // Defensive (P5-04.3 P503Q-014): Submitting is only reachable from a
-                        // validated AwaitingConfirmation, so this fallback reports every field
-                        // as missing instead of stranding the state.
                         ManualEntrySubmissionResult.Expense(
                             ManualExpenseSubmissionResult.Application(
                                 ManualExpenseSaveResult.InvalidInput(
@@ -261,6 +299,25 @@ fun P503App(
                         )
                     } else {
                         ManualEntrySubmissionResult.Income(submission.submit(input))
+                    }
+                }
+                is TransferDraft -> {
+                    val input = transferSaveInput(draft, requestId)
+                    val submission = facade.submitEntry
+                    if (input == null || submission == null) {
+                        ManualEntrySubmissionResult.Transfer(
+                            ManualTransferSubmissionResult.Application(
+                                ManualTransferSaveResult.InvalidInput(
+                                    buildSet {
+                                        add(ManualTransferInputField.SOURCE_ACCOUNT)
+                                        add(ManualTransferInputField.DESTINATION_ACCOUNT)
+                                        add(ManualTransferInputField.DESTINATION_CREDIT)
+                                    },
+                                ),
+                            ),
+                        )
+                    } else {
+                        submission.submit(ManualEntrySaveInput.Transfer(input))
                     }
                 }
             }
@@ -309,6 +366,27 @@ fun P503App(
                     val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Income(resolution)))
+                }
+            }
+            is TransferDraft -> {
+                val input = transferSaveInput(draft, requestId) ?: return
+                val resolver = facade.resolveTransferCommitStatus ?: return
+                val attempted =
+                    ManualTransferRequestSnapshot(
+                        ledgerId = input.ledgerId,
+                        sourceAccountId = checkNotNull(input.sourceAccountId),
+                        destinationAccountId = checkNotNull(input.destinationAccountId),
+                        destinationCredit = checkNotNull(input.destinationCredit),
+                        fee = checkNotNull(input.fee),
+                        feeCategoryId = input.feeCategoryId,
+                        occurredAt = input.occurredAt,
+                        note = input.note,
+                    )
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Transfer(resolution)))
                 }
             }
         }
@@ -426,12 +504,14 @@ fun P503App(
         when (draft) {
             is IncomeDraft -> incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.label ?: ""
             is ExpenseDraft -> options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.label ?: ""
+            is TransferDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.label ?: ""
         }
 
     fun categoryLabel(draft: TypedEntryDraft): String =
         when (draft) {
             is IncomeDraft -> incomeOptions.incomeCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
             is ExpenseDraft -> options.expenseCategories.firstOrNull { it.categoryId == draft.categoryId }?.label ?: ""
+            is TransferDraft -> transferOptions.feeCategories.firstOrNull { it.categoryId == draft.feeCategoryId }?.label ?: ""
         }
 
     P503Theme {
@@ -474,6 +554,12 @@ fun P503App(
                     draft = current.draft,
                     options = options,
                     incomeOptions = incomeOptions,
+                    transferOptions = transferOptions,
+                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -543,6 +629,12 @@ fun P503App(
                     draft = current.draft,
                     options = options,
                     incomeOptions = incomeOptions,
+                    transferOptions = transferOptions,
+                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,
@@ -576,6 +668,12 @@ fun P503App(
                     draft = current.draft,
                     options = options,
                     incomeOptions = incomeOptions,
+                    transferOptions = transferOptions,
+                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
                     ledgerClock = facade.ledgerClock,

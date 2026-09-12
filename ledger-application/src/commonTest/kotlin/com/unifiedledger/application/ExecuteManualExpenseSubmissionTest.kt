@@ -372,6 +372,16 @@ private class SubmissionFixedReadPort(
         ledgerId: LedgerId,
         receipt: ConfirmedIncomeReceipt,
     ): ManualIncomeCommitRecord? = null
+
+    override fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord? = null
+
+    override fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord? = null
 }
 
 private class SubmissionThrowingReadPort : LedgerCurrentStateReadPort {
@@ -396,6 +406,16 @@ private class SubmissionThrowingReadPort : LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedIncomeReceipt,
     ): ManualIncomeCommitRecord? = throw IllegalStateException("database unavailable")
+
+    override fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord? = null
+
+    override fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord? = null
 }
 
 private class SubmissionFailOnCallIdSource : ConfirmedManualExpenseIdSource {

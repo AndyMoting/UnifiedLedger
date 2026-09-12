@@ -252,6 +252,16 @@ class AndroidStartupControllerTest {
                     ledgerId: LedgerId,
                     receipt: com.unifiedledger.application.ConfirmedIncomeReceipt,
                 ): com.unifiedledger.application.ManualIncomeCommitRecord? = null
+
+                override fun findManualTransferByRequest(
+                    ledgerId: LedgerId,
+                    requestId: RequestId,
+                ): com.unifiedledger.application.ManualTransferCommitRecord? = null
+
+                override fun findManualTransferByReceipt(
+                    ledgerId: LedgerId,
+                    receipt: com.unifiedledger.application.ConfirmedTransferReceipt,
+                ): com.unifiedledger.application.ManualTransferCommitRecord? = null
             }
         val resolver = ResolveManualExpenseCommitStatus(readPort)
         val commitPort =

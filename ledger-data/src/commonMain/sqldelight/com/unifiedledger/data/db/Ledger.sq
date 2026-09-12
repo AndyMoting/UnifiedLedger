@@ -137,6 +137,137 @@ CREATE TABLE confirmed_income_receipt (
   FOREIGN KEY (transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
 );
 
+-- P7-02.B (T-1..T-5) product manual-transfer claim-first idempotency pair. request_snapshot is
+-- the only equivalent-replay basis; fee_category_id is nullable and present exactly when fee>0.
+CREATE TABLE manual_transfer_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  source_account_id TEXT NOT NULL,
+  destination_account_id TEXT NOT NULL,
+  destination_credit_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  fee_minor INTEGER NOT NULL CHECK (fee_minor >= 0),
+  fee_category_id TEXT,
+  occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE confirmed_transfer_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_transfer_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+-- P7-02.C stable counterparty catalog: current row plus append-only superseded name history.
+CREATE TABLE counterparty (
+  ledger_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  current_name TEXT NOT NULL,
+  receivable_account_id TEXT NOT NULL,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (ledger_id, counterparty_id)
+);
+CREATE TABLE counterparty_name_history (
+  ledger_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT','SUPERSEDED')),
+  PRIMARY KEY (ledger_id, counterparty_id, version_number)
+);
+CREATE TRIGGER counterparty_name_history_guard_update BEFORE UPDATE ON counterparty_name_history BEGIN
+  SELECT CASE WHEN old.status != 'CURRENT' OR new.status != 'SUPERSEDED'
+      OR new.ledger_id != old.ledger_id OR new.counterparty_id != old.counterparty_id
+      OR new.version_number != old.version_number OR new.name != old.name
+    THEN RAISE(ABORT, 'cannot update counterparty name history') END;
+END;
+
+-- P7-02.C per-object lending position and append-only history. The read/rebuild order is
+-- (occurred_at, entry_id) ascending (G-D same-instant determinism).
+CREATE TABLE lending_position (
+  ledger_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  receivable_account_id TEXT NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  principal_balance_minor INTEGER NOT NULL CHECK (principal_balance_minor >= 0),
+  PRIMARY KEY (ledger_id, counterparty_id),
+  FOREIGN KEY (ledger_id, counterparty_id)
+    REFERENCES counterparty(ledger_id, counterparty_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, receivable_account_id)
+    REFERENCES catalog_account(ledger_id, account_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE lending_position_history (
+  ledger_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  behavior_code TEXT NOT NULL CHECK (behavior_code IN ('LEND','COLLECT')),
+  amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),
+  principal_balance_after_minor INTEGER NOT NULL CHECK (principal_balance_after_minor >= 0),
+  transaction_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, counterparty_id, entry_id),
+  FOREIGN KEY (ledger_id, counterparty_id)
+    REFERENCES lending_position(ledger_id, counterparty_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX lending_position_history_by_object ON lending_position_history(ledger_id, counterparty_id, occurred_at, entry_id);
+CREATE TRIGGER lending_position_history_guard_update BEFORE UPDATE ON lending_position_history BEGIN
+  SELECT RAISE(ABORT, 'cannot update lending position history'); END;
+CREATE TRIGGER lending_position_history_guard_delete BEFORE DELETE ON lending_position_history BEGIN
+  SELECT RAISE(ABORT, 'cannot delete lending position history'); END;
+
+-- P7-02.C manual lending claim-first pair.
+CREATE TABLE manual_lending_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  behavior_code TEXT NOT NULL CHECK (behavior_code IN ('LEND','COLLECT')),
+  counterparty_id TEXT NOT NULL,
+  principal_account_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  interest_minor INTEGER NOT NULL CHECK (interest_minor >= 0),
+  fee_minor INTEGER NOT NULL CHECK (fee_minor = 0),
+  total_received_minor INTEGER,
+  interest_category_id TEXT,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  occurred_at TEXT NOT NULL,
+  note TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id)
+);
+CREATE TABLE confirmed_lending_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES manual_lending_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+-- P7-02.D manual pin preference (account/category), additive and ledger-scoped.
+CREATE TABLE entry_pin (
+  ledger_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('account','category')),
+  target_id TEXT NOT NULL,
+  pinned_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, target_kind, target_id)
+);
+
 -- RG-02 D-087 category_rename minimal closed loop: append-only category name
 -- history. Version 1 is seeded from the frozen v1 catalog at root start; an
 -- accepted rename supersedes the current record and appends the next version.
@@ -1917,6 +2048,32 @@ WHERE ledger_id = :ledger_id AND request_id = :request_id;
 deleteManualIncomeRequest:
 DELETE FROM manual_income_request WHERE ledger_id = :ledger_id AND request_id = :request_id;
 
+-- P7-02.B claim-first manual transfer: insert the request row only if absent; the port then
+-- compares the persisted snapshot on a conflict and rolls the claim back on a typed rejection.
+claimManualTransferRequest:
+INSERT INTO manual_transfer_request(
+  ledger_id, request_id, source_account_id, destination_account_id, destination_credit_minor,
+  currency_code, currency_precision, fee_minor, fee_category_id, occurred_at, note, confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteManualTransferRequest:
+DELETE FROM manual_transfer_request WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+insertConfirmedTransferReceipt:
+INSERT INTO confirmed_transfer_receipt(ledger_id, request_id, confirmation_id, transaction_id) VALUES (?, ?, ?, ?);
+
+selectCommittedManualTransferRequest:
+SELECT request.source_account_id, request.destination_account_id, request.destination_credit_minor,
+  request.currency_code, request.currency_precision, request.fee_minor, request.fee_category_id,
+  request.occurred_at, request.note, request.confirmation_marker,
+  receipt.confirmation_id, receipt.transaction_id
+FROM manual_transfer_request AS request
+JOIN confirmed_transfer_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
 insertConfirmedIncomeReceipt:
 INSERT INTO confirmed_income_receipt(ledger_id, request_id, confirmation_id, transaction_id) VALUES (?, ?, ?, ?);
 
@@ -1996,6 +2153,12 @@ SELECT count(*) FROM manual_income_request;
 
 countIncomeReceipts:
 SELECT count(*) FROM confirmed_income_receipt;
+
+countManualTransferRequests:
+SELECT count(*) FROM manual_transfer_request;
+
+countTransferReceipts:
+SELECT count(*) FROM confirmed_transfer_receipt;
 
 insertRg02CategoryNameHistory:
 INSERT INTO rg02_category_name_history(ledger_id, category_id, version_number, name, status)
@@ -8665,6 +8828,60 @@ SELECT
   current_version.current_version_id
 FROM confirmed_income_receipt AS receipt
 JOIN manual_income_request AS request
+  ON request.ledger_id = receipt.ledger_id
+ AND request.request_id = receipt.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE receipt.ledger_id = ?
+  AND receipt.confirmation_id = ?
+  AND receipt.transaction_id = ?;
+
+-- P7-02.B transfer current-state reads, mirroring the manual-expense/income lookups.
+manualTransferCommitByRequest:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.source_account_id,
+  request.destination_account_id,
+  request.destination_credit_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.fee_minor,
+  request.fee_category_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM manual_transfer_request AS request
+JOIN confirmed_transfer_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id
+ AND receipt.request_id = request.request_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = receipt.ledger_id
+ AND current_version.transaction_id = receipt.transaction_id
+WHERE request.ledger_id = ?
+  AND request.request_id = ?;
+
+manualTransferCommitByReceipt:
+SELECT
+  request.ledger_id,
+  request.request_id,
+  request.source_account_id,
+  request.destination_account_id,
+  request.destination_credit_minor,
+  request.currency_code,
+  request.currency_precision,
+  request.fee_minor,
+  request.fee_category_id,
+  request.occurred_at,
+  request.note,
+  receipt.confirmation_id,
+  receipt.transaction_id,
+  current_version.current_version_id
+FROM confirmed_transfer_receipt AS receipt
+JOIN manual_transfer_request AS request
   ON request.ledger_id = receipt.ledger_id
  AND request.request_id = receipt.request_id
 JOIN ledger_transaction_current_version AS current_version

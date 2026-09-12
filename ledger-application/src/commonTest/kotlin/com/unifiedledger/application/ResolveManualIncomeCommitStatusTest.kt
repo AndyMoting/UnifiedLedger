@@ -56,6 +56,16 @@ class ResolveManualIncomeCommitStatusTest {
                 ledgerId: LedgerId,
                 receipt: ConfirmedIncomeReceipt,
             ): ManualIncomeCommitRecord? = record
+
+            override fun findManualTransferByRequest(
+                ledgerId: LedgerId,
+                requestId: RequestId,
+            ): ManualTransferCommitRecord? = null
+
+            override fun findManualTransferByReceipt(
+                ledgerId: LedgerId,
+                receipt: ConfirmedTransferReceipt,
+            ): ManualTransferCommitRecord? = null
         }
 
     @Test
@@ -112,6 +122,16 @@ class ResolveManualIncomeCommitStatusTest {
                     ledgerId: LedgerId,
                     receipt: ConfirmedIncomeReceipt,
                 ): ManualIncomeCommitRecord? = throw IllegalStateException("db down")
+
+                override fun findManualTransferByRequest(
+                    ledgerId: LedgerId,
+                    requestId: RequestId,
+                ): ManualTransferCommitRecord? = null
+
+                override fun findManualTransferByReceipt(
+                    ledgerId: LedgerId,
+                    receipt: ConfirmedTransferReceipt,
+                ): ManualTransferCommitRecord? = null
             }
         assertEquals(
             ManualIncomeCommitResolution.Unavailable,

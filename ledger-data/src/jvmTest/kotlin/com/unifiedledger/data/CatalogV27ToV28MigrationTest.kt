@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 class CatalogV27ToV28MigrationTest {
     @Test
     fun versionTwentyEightIsCurrent() {
-        assertEquals(28, LedgerDatabase.Schema.version)
+        assertEquals(29, LedgerDatabase.Schema.version)
     }
 
     @Test

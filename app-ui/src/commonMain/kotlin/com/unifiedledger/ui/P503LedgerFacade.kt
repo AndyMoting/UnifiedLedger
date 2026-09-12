@@ -12,11 +12,15 @@ import com.unifiedledger.application.ManualExpenseRequestIdSource
 import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ManualIncomeOptionsProvider
 import com.unifiedledger.application.ManualIncomeRequestIdSource
+import com.unifiedledger.application.ManualTransferOptions
+import com.unifiedledger.application.ManualTransferOptionsProvider
+import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
+import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
@@ -68,6 +72,10 @@ class P503LedgerFacade(
     val resolveIncomeCommitStatus: ResolveManualIncomeCommitStatus? = null,
     val incomeRequestIdSource: ManualIncomeRequestIdSource? = null,
     baseIncomeOptionsProvider: ManualIncomeOptionsProvider? = null,
+    // P7-02.B transfer surface.
+    val resolveTransferCommitStatus: ResolveManualTransferCommitStatus? = null,
+    val transferRequestIdSource: ManualTransferRequestIdSource? = null,
+    baseTransferOptionsProvider: ManualTransferOptionsProvider? = null,
     // P7-01.D catalog management surface; null/empty defaults keep legacy constructions valid.
     val catalogSnapshot: () -> CatalogSnapshotView? = { null },
     val executeCatalogCommand: ExecuteCatalogCommand? = null,
@@ -80,6 +88,8 @@ class P503LedgerFacade(
     private val fallbackSummarizeActivity = baseSummarizeActivity
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
+    private val fallbackTransferOptionsProvider =
+        baseTransferOptionsProvider ?: ManualTransferOptionsProvider { ManualTransferOptions(emptyList(), emptyList()) }
 
     /** Current authoritative options provider; follows [refreshCatalog] when a session is injected. */
     val optionsProvider: ManualExpenseOptionsProvider
@@ -88,6 +98,10 @@ class P503LedgerFacade(
     /** P7-02.A: current authoritative income options projection; follows [refreshCatalog]. */
     val incomeOptionsProvider: ManualIncomeOptionsProvider
         get() = session?.incomeOptionsProvider ?: fallbackIncomeOptionsProvider
+
+    /** P7-02.B: current authoritative transfer options projection; follows [refreshCatalog]. */
+    val transferOptionsProvider: ManualTransferOptionsProvider
+        get() = session?.transferOptionsProvider ?: fallbackTransferOptionsProvider
 
     /** Current authoritative read model; follows [refreshCatalog] when a session is injected. */
     val queryCurrentState: QueryLedgerCurrentState

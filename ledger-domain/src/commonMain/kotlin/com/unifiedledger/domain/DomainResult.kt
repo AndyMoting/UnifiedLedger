@@ -123,6 +123,30 @@ sealed interface EntryFoundationViolation : DomainViolation {
     data object EntryTypeNotSupported : EntryFoundationViolation
 }
 
+/**
+ * P7-02.B T-1..T-5 product manual-transfer tokens. Each maps to exactly one stable failure code
+ * in the application layer (spec section 5.3). The domain `AccountTransferViolation` and
+ * `PrincipalTransferViolation` remain the authoritative reusable domain rules; the product
+ * transaction adapter pre-validates the product-only shapes (derived amount, fee-category
+ * presence, account eligibility) and maps any residual domain rejection onto these tokens so
+ * the product surface always reports the stable transfer code family.
+ */
+sealed interface ManualTransferViolation : DomainViolation {
+    data object TransferSameAccount : ManualTransferViolation
+
+    data object TransferAccountNotEligible : ManualTransferViolation
+
+    data object TransferAmountMustBePositive : ManualTransferViolation
+
+    data object TransferFeeMustNotBeNegative : ManualTransferViolation
+
+    data object TransferAmountMismatch : ManualTransferViolation
+
+    data object TransferFeeCategoryRequired : ManualTransferViolation
+
+    data object TransferFeeCategoryNotAllowed : ManualTransferViolation
+}
+
 enum class AccountTransferField {
     SOURCE_ACCOUNT,
     DESTINATION_ACCOUNT,

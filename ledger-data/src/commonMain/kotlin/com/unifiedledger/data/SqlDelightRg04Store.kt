@@ -25,6 +25,7 @@ import com.unifiedledger.domain.FundingComponent
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.LendingViolation
+import com.unifiedledger.domain.ManualTransferViolation
 import com.unifiedledger.domain.MergedPaymentViolation
 import com.unifiedledger.domain.MixedPaymentExpenseCommand
 import com.unifiedledger.domain.MixedPaymentPosting
@@ -474,6 +475,8 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected =
         is CatalogAdmissionRejection,
 
         is EntryFoundationViolation,
+
+        is ManualTransferViolation,
 
         -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
     }

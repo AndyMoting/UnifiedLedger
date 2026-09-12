@@ -17,37 +17,47 @@ import androidx.compose.ui.platform.LocalContext
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
 import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
+import com.unifiedledger.application.CatalogAdmissionTransferTransactionFactory
 import com.unifiedledger.application.CatalogBootstrapFailedException
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
+import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
+import com.unifiedledger.application.ConfirmedTransferTransactionFactory
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteConfirmedManualIncome
+import com.unifiedledger.application.ExecuteConfirmedManualTransfer
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSave
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
+import com.unifiedledger.application.ExecuteManualTransferSave
+import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
+import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualIncomeIdSource
+import com.unifiedledger.application.UuidV7ConfirmedManualTransferIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
+import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
@@ -303,7 +313,26 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
     val executeIncomeSave = ExecuteManualIncomeSave(executeConfirmedIncome)
     val incomeResolver = ResolveManualIncomeCommitStatus(readAdapter)
     val incomeSubmission = ExecuteManualIncomeSubmission(executeIncomeSave, incomeTracker, incomeResolver)
-    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission)
+
+    // P7-02.B transfer product chain: its own tracker/port/id sources (no shared consumption),
+    // a transfer admission wrapper (V-2) and its own snapshot-aware resolver. The delegate reads
+    // the current catalog inside the write transaction, exactly like the expense/income delegates.
+    val transferTracker = CommitOnceInvocationTrackerTransfer(handle.transferCommitPort)
+    val transferDelegate =
+        ConfirmedTransferTransactionFactory { request, ids ->
+            val catalog =
+                store.loadCurrent(request.ledgerId)
+                    ?: return@ConfirmedTransferTransactionFactory DomainResult.Failure(DomainViolation.InvalidCatalog)
+            ManualTransferTransactionFactory(catalog).create(request, ids)
+        }
+    val transferFactory = CatalogAdmissionTransferTransactionFactory(admissionReader = store, delegate = transferDelegate)
+    val transferIdSource = UuidV7ConfirmedManualTransferIdSource(UuidV7Generator(::secureRandomBytes))
+    val transferRequestIdSource = UuidV7ManualTransferRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeConfirmedTransfer = ExecuteConfirmedManualTransfer(transferTracker, transferIdSource, transferFactory)
+    val executeTransferSave = ExecuteManualTransferSave(executeConfirmedTransfer)
+    val transferResolver = ResolveManualTransferCommitStatus(readAdapter)
+    val transferSubmission = ExecuteManualTransferSubmission(executeTransferSave, transferTracker, transferResolver)
+    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission, transferSubmission)
 
     val catalogCommands =
         ExecuteCatalogCommand(
@@ -333,6 +362,9 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             resolveIncomeCommitStatus = incomeResolver,
             incomeRequestIdSource = incomeRequestIdSource,
             baseIncomeOptionsProvider = session.incomeOptionsProvider,
+            resolveTransferCommitStatus = transferResolver,
+            transferRequestIdSource = transferRequestIdSource,
+            baseTransferOptionsProvider = session.transferOptionsProvider,
             // P7-01.D: management reads the same session and refreshes it after every command.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,

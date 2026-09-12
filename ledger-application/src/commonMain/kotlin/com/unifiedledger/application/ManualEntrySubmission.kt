@@ -3,10 +3,9 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.LedgerId
 
 /**
- * P7-02.A S-1: the shared UI consumes application types only, so one entry-type-tagged union
- * carries either the expense or the income submission outcome through the same
- * `SubmissionResult` event. The per-type results keep their own frozen shapes; this union adds
- * no behavior of its own.
+ * P7-02 S-1: the shared UI consumes application types only, so one entry-type-tagged union
+ * carries the per-type submission outcome through the same `SubmissionResult` event. The
+ * per-type results keep their own frozen shapes; this union adds no behavior of its own.
  */
 sealed interface ManualEntrySubmissionResult {
     data class Expense(
@@ -16,12 +15,15 @@ sealed interface ManualEntrySubmissionResult {
     data class Income(
         val result: ManualIncomeSubmissionResult,
     ) : ManualEntrySubmissionResult
+
+    data class Transfer(
+        val result: ManualTransferSubmissionResult,
+    ) : ManualEntrySubmissionResult
 }
 
 /**
- * P7-02.A S-1: the shared analogue of [ManualEntrySubmissionResult] for the unknown-commit
- * status check, so the existing `CommitStatusResolved` event stays type-tagged for both entry
- * types.
+ * P7-02 S-1: the shared analogue of [ManualEntrySubmissionResult] for the unknown-commit status
+ * check, so the existing `CommitStatusResolved` event stays type-tagged for every entry type.
  */
 sealed interface ManualEntryCommitResolution {
     data class Expense(
@@ -31,10 +33,14 @@ sealed interface ManualEntryCommitResolution {
     data class Income(
         val resolution: ManualIncomeCommitResolution,
     ) : ManualEntryCommitResolution
+
+    data class Transfer(
+        val resolution: ManualTransferCommitResolution,
+    ) : ManualEntryCommitResolution
 }
 
 /**
- * P7-02.A S-1: entry-type-tagged save input. The composition root builds the per-type input it
+ * P7-02 S-1: entry-type-tagged save input. The composition root builds the per-type input it
  * already knows how to build; the shared submission entry point dispatches on this union.
  */
 sealed interface ManualEntrySaveInput {
@@ -63,10 +69,20 @@ sealed interface ManualEntrySaveInput {
 
         override val note: String get() = input.note
     }
+
+    data class Transfer(
+        val input: ManualTransferSaveInput,
+    ) : ManualEntrySaveInput {
+        override val ledgerId: LedgerId get() = input.ledgerId
+
+        override val requestId: RequestId get() = input.requestId
+
+        override val note: String get() = input.note
+    }
 }
 
 /**
- * P7-02.A S-1/S-4 shared submission entry point. It enforces the note length limit once (typed
+ * P7-02 S-1/S-4 shared submission entry point. It enforces the note length limit once (typed
  * rejection with zero formal writes) and then delegates to the per-type submission with the
  * exact same tracker/port instances the composition root injected, so claim-first idempotency
  * and the D-119 exception recovery order are unchanged.
@@ -74,6 +90,7 @@ sealed interface ManualEntrySaveInput {
 class ExecuteManualEntrySubmission(
     private val expense: ExecuteManualExpenseSubmission,
     private val income: ExecuteManualIncomeSubmission,
+    private val transfer: ExecuteManualTransferSubmission? = null,
 ) {
     fun submit(input: ManualEntrySaveInput): ManualEntrySubmissionResult {
         validateEntryNote(input.note)?.let { violation ->
@@ -91,11 +108,22 @@ class ExecuteManualEntrySubmission(
                             ManualIncomeSaveResult.Executed(ConfirmedManualIncomeResult.Rejected(violation)),
                         ),
                     )
+
+                is ManualEntrySaveInput.Transfer ->
+                    ManualEntrySubmissionResult.Transfer(
+                        ManualTransferSubmissionResult.Application(
+                            ManualTransferSaveResult.Executed(ConfirmedManualTransferResult.Rejected(violation)),
+                        ),
+                    )
             }
         }
         return when (input) {
             is ManualEntrySaveInput.Expense -> ManualEntrySubmissionResult.Expense(expense.submit(input.input))
             is ManualEntrySaveInput.Income -> ManualEntrySubmissionResult.Income(income.submit(input.input))
+            is ManualEntrySaveInput.Transfer -> {
+                val submission = transfer ?: return ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.UnknownCommit)
+                ManualEntrySubmissionResult.Transfer(submission.submit(input.input))
+            }
         }
     }
 }

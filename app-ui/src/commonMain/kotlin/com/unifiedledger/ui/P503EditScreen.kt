@@ -52,7 +52,9 @@ import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseOptions
 import com.unifiedledger.application.ManualIncomeOptions
+import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -98,10 +100,16 @@ fun P503EditScreen(
     onOccurredAtTextChange: (String) -> Unit,
     onContinue: (() -> Unit)?,
     incomeOptions: ManualIncomeOptions = ManualIncomeOptions(emptyList(), emptyList()),
+    transferOptions: ManualTransferOptions = ManualTransferOptions(emptyList(), emptyList()),
     onSelectEntryType: (EntryType) -> Unit = {},
     onUpdateNote: (String) -> Unit = {},
     onUpdateReceivingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
     onUpdateIncomeCategory: (CategoryId) -> Unit = onUpdateCategory,
+    onUpdateTransferSourceAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateTransferDestinationAccount: (AccountId) -> Unit = {},
+    onUpdateTransferDestinationCredit: (String) -> Unit = onUpdateAmount,
+    onUpdateTransferFee: (String) -> Unit = {},
+    onUpdateTransferFeeCategory: (CategoryId) -> Unit = onUpdateCategory,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -121,6 +129,7 @@ fun P503EditScreen(
     }
 
     val isIncome = draft is IncomeDraft
+    val isTransfer = draft is TransferDraft
     val accountOptions = if (isIncome) incomeOptions.receivingAccounts else options.paymentAccounts
     val accountFieldLabel = if (isIncome) "收款账户" else "支付账户"
     val categoryOptions: List<Pair<CategoryId, String>> =
@@ -166,7 +175,11 @@ fun P503EditScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (isIncome) "新增手工收入" else "新增手工支出",
+                when {
+                    isTransfer -> "新增手工转账"
+                    isIncome -> "新增手工收入"
+                    else -> "新增手工支出"
+                },
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
@@ -184,20 +197,27 @@ fun P503EditScreen(
         }
         Spacer(Modifier.height(8.dp))
 
-        // P7-02.A S-2: only EXPENSE/INCOME are selectable in this batch; the type switch uses
-        // the frozen retention matrix in the reducer.
+        // P7-02 S-2: EXPENSE/INCOME/TRANSFER are selectable in this batch (LEND/COLLECT in C);
+        // the type switch uses the frozen retention matrix in the reducer.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            listOf(EntryType.EXPENSE, EntryType.INCOME).forEach { type ->
+            listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER).forEach { type ->
                 Row(
-                    modifier = Modifier.fillMaxWidth(0.5f).minimumInteractiveComponentSize(),
+                    modifier = Modifier.fillMaxWidth(1f / 3f).minimumInteractiveComponentSize(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(
                         selected = draft.entryType == type,
                         onClick = { onSelectEntryType(type) },
                     )
-                    Text(if (type == EntryType.EXPENSE) "支出" else "收入", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        when (type) {
+                            EntryType.INCOME -> "收入"
+                            EntryType.TRANSFER -> "转账"
+                            else -> "支出"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
         }
@@ -205,64 +225,147 @@ fun P503EditScreen(
 
         val errors = validation.errors(draft, currency)
 
-        SelectorField(
-            label = accountFieldLabel,
-            hasError = errors.missingPaymentAccount,
-            errorMessage = "请选择$accountFieldLabel",
-        ) {
-            accountOptions.forEach { option ->
-                val selected = option.accountId == draft.primaryAccountId
-                Row(
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = selected,
-                        onClick = { if (isIncome) onUpdateReceivingAccount(option.accountId) else onUpdatePaymentAccount(option.accountId) },
-                    )
-                    Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+        if (draft is TransferDraft) {
+            SelectorField(
+                label = "转出账户",
+                hasError = errors.missingPaymentAccount,
+                errorMessage = "请选择转出账户",
+            ) {
+                transferOptions.ownedAssetAccounts.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option.accountId == draft.sourceAccountId, onClick = { onUpdateTransferSourceAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-        SelectorField(
-            label = categoryFieldLabel,
-            hasError = errors.missingCategory,
-            errorMessage = "请选择$categoryFieldLabel",
-        ) {
-            categoryOptions.forEach { (optionCategoryId, label) ->
-                val selected = optionCategoryId == draft.categoryId
-                Row(
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = selected,
-                        onClick = { if (isIncome) onUpdateIncomeCategory(optionCategoryId) else onUpdateCategory(optionCategoryId) },
-                    )
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
+            SelectorField(
+                label = "转入账户",
+                hasError = errors.missingDestinationAccount,
+                errorMessage = "请选择转入账户",
+            ) {
+                transferOptions.ownedAssetAccounts.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option.accountId == draft.destinationAccountId, onClick = { onUpdateTransferDestinationAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-        OutlinedTextField(
-            value = draft.amountText,
-            onValueChange = onUpdateAmount,
-            label = { Text("金额（$amountCurrencyCode）") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            isError = errors.missingAmount || errors.amountFormatError != null,
-            supportingText = {
-                when {
-                    errors.missingAmount -> Text("请输入金额")
-                    errors.amountFormatError != null -> Text("金额格式无效")
-                    else -> Text("金额示例：11、35.8 或 35.80")
+            val transferCurrencyCode =
+                transferOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.sourceAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(
+                value = draft.destinationCredit,
+                onValueChange = onUpdateTransferDestinationCredit,
+                label = { Text("到账本金（$transferCurrencyCode）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+                supportingText = { Text("转出金额 = 到账本金 + 手续费") },
+            )
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = draft.fee,
+                onValueChange = onUpdateTransferFee,
+                label = { Text("手续费") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.feeFormatError != null,
+                supportingText = { Text(if (errors.feeFormatError != null) "手续费格式无效" else "无手续费填 0.00") },
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // A fee category is only meaningful (and required) when the fee is positive.
+            if (errors.transferFeeCategoryRequired) {
+                SelectorField(
+                    label = "手续费分类",
+                    hasError = errors.missingCategory,
+                    errorMessage = "请选择手续费分类",
+                ) {
+                    transferOptions.feeCategories.forEach { option ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = option.categoryId == draft.feeCategoryId, onClick = { onUpdateTransferFeeCategory(option.categoryId) })
+                            Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
-            },
-        )
-        Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
+            }
+        } else {
+            SelectorField(
+                label = accountFieldLabel,
+                hasError = errors.missingPaymentAccount,
+                errorMessage = "请选择$accountFieldLabel",
+            ) {
+                accountOptions.forEach { option ->
+                    val selected = option.accountId == draft.primaryAccountId
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { if (isIncome) onUpdateReceivingAccount(option.accountId) else onUpdatePaymentAccount(option.accountId) },
+                        )
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            SelectorField(
+                label = categoryFieldLabel,
+                hasError = errors.missingCategory,
+                errorMessage = "请选择$categoryFieldLabel",
+            ) {
+                categoryOptions.forEach { (optionCategoryId, label) ->
+                    val selected = optionCategoryId == draft.categoryId
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { if (isIncome) onUpdateIncomeCategory(optionCategoryId) else onUpdateCategory(optionCategoryId) },
+                        )
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = draft.amountText,
+                onValueChange = onUpdateAmount,
+                label = { Text("金额（$amountCurrencyCode）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+                supportingText = {
+                    when {
+                        errors.missingAmount -> Text("请输入金额")
+                        errors.amountFormatError != null -> Text("金额格式无效")
+                        else -> Text("金额示例：11、35.8 或 35.80")
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
 
         // P7-02.A S-4: optional note, length limit enforced by the reducer/commit validation.
         OutlinedTextField(

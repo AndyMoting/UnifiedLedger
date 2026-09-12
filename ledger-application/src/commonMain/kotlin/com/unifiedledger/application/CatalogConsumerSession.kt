@@ -46,6 +46,10 @@ class CatalogConsumerSession(
     var incomeOptionsProvider: ManualIncomeOptionsProvider = QueryAuthoritativeManualIncomeOptions(reader, ledgerId)
         private set
 
+    /** P7-02.B: the authoritative transfer option projection on the same catalog version. */
+    var transferOptionsProvider: ManualTransferOptionsProvider = QueryAuthoritativeManualTransferOptions(reader, ledgerId)
+        private set
+
     var queryCurrentState: QueryLedgerCurrentState = QueryLedgerCurrentState(readPort, ledgerId, authority.catalog)
         private set
 
@@ -65,6 +69,7 @@ class CatalogConsumerSession(
         authority = reloaded
         optionsProvider = QueryAuthoritativeManualExpenseOptions(reader, ledgerId)
         incomeOptionsProvider = QueryAuthoritativeManualIncomeOptions(reader, ledgerId)
+        transferOptionsProvider = QueryAuthoritativeManualTransferOptions(reader, ledgerId)
         queryCurrentState = QueryLedgerCurrentState(readPort, ledgerId, reloaded.catalog)
         summarizeActivity = SummarizeLedgerActivity(reloaded.catalog)
         return reloaded

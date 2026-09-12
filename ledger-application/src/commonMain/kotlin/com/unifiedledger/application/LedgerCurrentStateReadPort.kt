@@ -66,4 +66,16 @@ interface LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedIncomeReceipt,
     ): ManualIncomeCommitRecord?
+
+    /** P7-02.B: transfer request lookup for the snapshot-aware commit-status resolver. */
+    fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord?
+
+    /** P7-02.B: transfer receipt lookup for the snapshot-aware commit-status resolver. */
+    fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord?
 }

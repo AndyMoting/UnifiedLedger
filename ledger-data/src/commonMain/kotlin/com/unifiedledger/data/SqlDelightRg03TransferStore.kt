@@ -45,6 +45,7 @@ import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.LendingViolation
+import com.unifiedledger.domain.ManualTransferViolation
 import com.unifiedledger.domain.MergedPaymentViolation
 import com.unifiedledger.domain.MixedPaymentViolation
 import com.unifiedledger.domain.Money
@@ -1403,6 +1404,8 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected =
         is CatalogAdmissionRejection,
 
         is EntryFoundationViolation,
+
+        is ManualTransferViolation,
 
         -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
     }

@@ -3,12 +3,15 @@ package com.unifiedledger.data
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedIncomeReceipt
+import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualIncomeCommitRecord
 import com.unifiedledger.application.ManualIncomeRequestSnapshot
+import com.unifiedledger.application.ManualTransferCommitRecord
+import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
@@ -116,6 +119,33 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 ?: return null
         return row.toRecord(ledgerId)
     }
+
+    override fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualTransferCommitByRequest(ledgerId.value, requestId.value)
+                .executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
+
+    override fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .manualTransferCommitByReceipt(
+                    ledger_id = ledgerId.value,
+                    confirmation_id = receipt.confirmationId.value,
+                    transaction_id = receipt.transactionId.value,
+                ).executeAsOneOrNull()
+                ?: return null
+        return row.toRecord(ledgerId)
+    }
 }
 
 private fun com.unifiedledger.data.db.ManualExpenseCommitByRequest.toRecord(ledgerId: LedgerId): ManualExpenseCommitRecord =
@@ -199,5 +229,43 @@ private fun com.unifiedledger.data.db.ManualIncomeCommitByReceipt.toRecord(ledge
                 confirmationId = ConfirmationId(confirmation_id),
                 transactionId = TransactionId(transaction_id),
             ),
+        currentVersionId = TransactionVersionId(current_version_id),
+    )
+
+private fun com.unifiedledger.data.db.ManualTransferCommitByRequest.toRecord(ledgerId: LedgerId): ManualTransferCommitRecord =
+    ManualTransferCommitRecord(
+        ledgerId = ledgerId,
+        requestId = RequestId(request_id),
+        snapshot =
+            ManualTransferRequestSnapshot(
+                ledgerId = ledgerId,
+                sourceAccountId = AccountId(source_account_id),
+                destinationAccountId = AccountId(destination_account_id),
+                destinationCredit = Money.ofMinor(destination_credit_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                fee = Money.ofMinor(fee_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                feeCategoryId = fee_category_id?.let(::CategoryId),
+                occurredAt = Instant.parse(occurred_at),
+                note = note,
+            ),
+        receipt = ConfirmedTransferReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
+        currentVersionId = TransactionVersionId(current_version_id),
+    )
+
+private fun com.unifiedledger.data.db.ManualTransferCommitByReceipt.toRecord(ledgerId: LedgerId): ManualTransferCommitRecord =
+    ManualTransferCommitRecord(
+        ledgerId = ledgerId,
+        requestId = RequestId(request_id),
+        snapshot =
+            ManualTransferRequestSnapshot(
+                ledgerId = ledgerId,
+                sourceAccountId = AccountId(source_account_id),
+                destinationAccountId = AccountId(destination_account_id),
+                destinationCredit = Money.ofMinor(destination_credit_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                fee = Money.ofMinor(fee_minor, CurrencyUnit(currency_code, currency_precision.toInt())),
+                feeCategoryId = fee_category_id?.let(::CategoryId),
+                occurredAt = Instant.parse(occurred_at),
+                note = note,
+            ),
+        receipt = ConfirmedTransferReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
         currentVersionId = TransactionVersionId(current_version_id),
     )

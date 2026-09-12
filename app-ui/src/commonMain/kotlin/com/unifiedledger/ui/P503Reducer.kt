@@ -2,6 +2,7 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedManualIncomeResult
+import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.EntryFieldRetention
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
@@ -13,7 +14,11 @@ import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualIncomeCommitResolution
 import com.unifiedledger.application.ManualIncomeSaveResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.ManualTransferCommitResolution
+import com.unifiedledger.application.ManualTransferSaveResult
+import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -25,8 +30,8 @@ import com.unifiedledger.domain.CurrencyUnit
  * performs IO, randomness or facade calls; it only consumes events. Any reachable (state, event)
  * combination not listed in the transition table is a programming error and fails fast.
  *
- * P7-02.A: drafts are typed ([TypedEntryDraft]) and the new entry-foundation events
- * (`SelectEntryType`/`UpdateNote`/income field updates) are absorbed in every state other than
+ * P7-02: drafts are typed ([TypedEntryDraft]) and the entry-foundation events
+ * (`SelectEntryType`/`UpdateNote`/per-type field updates) are absorbed in every state other than
  * their documented effects; the existing events keep their frozen transitions and ISE behavior
  * (G-B).
  */
@@ -70,12 +75,17 @@ class P503ReducerImpl(
             // The authoritative load always lands on the home tab (D-122).
             is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
             P503UiEvent.InitialLoadFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
-            // P7-02.A: the new entry-foundation events never throw an ISE in any state (§6.2a);
-            // before the overview exists they are absorbed.
+            // P7-02: the entry-foundation events never throw an ISE in any state (§6.2a); before
+            // the overview exists they are absorbed.
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
@@ -101,24 +111,18 @@ class P503ReducerImpl(
             // successful catalog command and after an explicit management refresh, so this
             // transition replaces the overview's read state while staying on the current tab
             // (the catalog notice/dialog are management-only fields and are left untouched).
-            // P7-02.A G-C: an ordinary overview refresh keeps the existing retainedIntent; only
+            // P7-02 G-C: an ordinary overview refresh keeps the existing retainedIntent; only
             // the successful-result refresh (reduceTransientResult) overrides it.
             is P503UiEvent.RefreshResult -> state.copy(state = event.currentState)
             P503UiEvent.RefreshFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             P503UiEvent.StartNewExpense ->
                 P503AppState.Editing(
-                    draft =
-                        ExpenseDraft(
-                            paymentAccountId = null,
-                            categoryId = null,
-                            amountText = "",
-                            occurredAt = null,
-                        ),
+                    draft = ExpenseDraft(paymentAccountId = null, categoryId = null, amountText = "", occurredAt = null),
                     requestId = null,
                     overview = state.state,
                     originTab = state.selectedTab,
                 )
-            // P7-02.A E-2: only a determinate-success retained intent can start a new editor;
+            // P7-02 E-2: only a determinate-success retained intent can start a new editor;
             // the amount/note/old confirmation are cleared, occurredAt is the current clock
             // instant, and a new (null) requestId is allocated by the host on Continue.
             P503UiEvent.SaveAndRecordAgain ->
@@ -127,22 +131,19 @@ class P503ReducerImpl(
                         draft =
                             when (intent.type) {
                                 com.unifiedledger.application.EntryType.INCOME ->
-                                    IncomeDraft(
-                                        receivingAccountId = intent.paymentAccountId,
-                                        categoryId = intent.categoryId,
-                                        amountText = "",
+                                    IncomeDraft(intent.paymentAccountId, intent.categoryId, "", ledgerClock?.now(), "")
+                                com.unifiedledger.application.EntryType.TRANSFER ->
+                                    TransferDraft(
+                                        sourceAccountId = intent.paymentAccountId,
+                                        destinationAccountId = null,
+                                        destinationCredit = "",
+                                        fee = com.unifiedledger.application.DEFAULT_TRANSFER_FEE_TEXT,
+                                        feeCategoryId = null,
                                         occurredAt = ledgerClock?.now(),
                                         note = "",
                                     )
-
                                 else ->
-                                    ExpenseDraft(
-                                        paymentAccountId = intent.paymentAccountId,
-                                        categoryId = intent.categoryId,
-                                        amountText = "",
-                                        occurredAt = ledgerClock?.now(),
-                                        note = "",
-                                    )
+                                    ExpenseDraft(intent.paymentAccountId, intent.categoryId, "", ledgerClock?.now(), "")
                             },
                         requestId = null,
                         overview = state.state,
@@ -161,19 +162,13 @@ class P503ReducerImpl(
             is P503UiEvent.OpenAccountCreateDialog ->
                 state.copy(catalogDialog = CatalogDialog.CreateAccount(kind = AccountKind.ASSET), catalogNotice = null)
             is P503UiEvent.OpenAccountRenameDialog ->
-                state.copy(
-                    catalogDialog = CatalogDialog.RenameAccount(event.accountId, event.currentName),
-                    catalogNotice = null,
-                )
+                state.copy(catalogDialog = CatalogDialog.RenameAccount(event.accountId, event.currentName), catalogNotice = null)
             is P503UiEvent.OpenCategoryGroupDialog ->
                 state.copy(catalogDialog = CatalogDialog.CreateCategoryGroup(kind = event.kind), catalogNotice = null)
             is P503UiEvent.OpenCategoryAppendChildDialog ->
                 state.copy(catalogDialog = CatalogDialog.AppendCategoryChild(event.parentId), catalogNotice = null)
             is P503UiEvent.OpenCategoryRenameDialog ->
-                state.copy(
-                    catalogDialog = CatalogDialog.RenameCategory(event.categoryId, event.currentName),
-                    catalogNotice = null,
-                )
+                state.copy(catalogDialog = CatalogDialog.RenameCategory(event.categoryId, event.currentName), catalogNotice = null)
             is P503UiEvent.OpenCategoryDeleteDialog ->
                 state.copy(catalogDialog = CatalogDialog.ConfirmCategoryDelete(event.categoryId), catalogNotice = null)
             is P503UiEvent.UpdateCatalogFormText ->
@@ -194,12 +189,17 @@ class P503ReducerImpl(
             is P503UiEvent.ManageCategoryActive,
             is P503UiEvent.EnableCategoryGroup,
             -> state
-            // P7-02.A: the entry-field intents are only meaningful inside the editor; on the
+            // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
             -> state
             // Explicit Back during management closes the open dialog first; with no dialog it
             // leaves the ACCOUNTS tab for HOME (the overview root stays the back floor).
@@ -225,17 +225,27 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.withCategory(event.categoryId))
             is P503UiEvent.UpdateOccurredAt ->
                 state.copy(draft = state.draft.withOccurredAt(event.instant))
-            // P7-02.A S-2/E-1: the frozen retention matrix is the single implementation; an
+            // P7-02 S-2/E-1: the frozen retention matrix is the single implementation; an
             // unsupported target type leaves the state untouched.
             is P503UiEvent.SelectEntryType ->
                 EntryFieldRetention.switchType(state.draft, event.type)?.let { state.copy(draft = it) } ?: state
-            // P7-02.A S-4 note write.
+            // P7-02 S-4 note write.
             is P503UiEvent.UpdateNote ->
                 state.copy(draft = state.draft.withNote(event.text))
             is P503UiEvent.UpdateReceivingAccount ->
                 state.copy(draft = state.draft.withPrimaryAccount(event.accountId))
             is P503UiEvent.UpdateIncomeCategory ->
                 state.copy(draft = state.draft.withCategory(event.categoryId))
+            is P503UiEvent.UpdateTransferSourceAccount ->
+                state.copy(draft = state.draft.withTransferSourceAccount(event.accountId))
+            is P503UiEvent.UpdateTransferDestinationAccount ->
+                state.copy(draft = state.draft.withTransferDestinationAccount(event.accountId))
+            is P503UiEvent.UpdateTransferDestinationCredit ->
+                state.copy(draft = state.draft.withTransferDestinationCredit(event.text))
+            is P503UiEvent.UpdateTransferFee ->
+                state.copy(draft = state.draft.withTransferFee(event.text))
+            is P503UiEvent.UpdateTransferFeeCategory ->
+                state.copy(draft = state.draft.withTransferFeeCategory(event.categoryId))
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
                     P503AppState.AwaitingConfirmation(
@@ -267,27 +277,22 @@ class P503ReducerImpl(
             // Cancelling an unsubmitted draft abandons the save intent; the requestId may
             // be discarded and a later Continue allocates a new one (spec 7.4).
             P503UiEvent.Cancel ->
-                P503AppState.Editing(
-                    draft = state.draft,
-                    requestId = null,
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab)
             P503UiEvent.Confirm ->
-                P503AppState.Submitting(
-                    draft = state.draft,
-                    requestId = state.requestId,
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.Submitting(draft = state.draft, requestId = state.requestId, overview = state.overview, originTab = state.originTab)
             // A second confirm can arrive from a queued UI event after the first event has
             // already been handled. Keep the intent locked to the existing confirmation.
             is P503UiEvent.Continue -> state
-            // P7-02.A: entry-field intents are absorbed while awaiting confirmation (§6.2a).
+            // P7-02: entry-field intents are absorbed while awaiting confirmation (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
@@ -306,16 +311,22 @@ class P503ReducerImpl(
                 when (val result = event.result) {
                     is ManualEntrySubmissionResult.Expense -> reduceExpenseSubmission(state, result.result)
                     is ManualEntrySubmissionResult.Income -> reduceIncomeSubmission(state, result.result)
+                    is ManualEntrySubmissionResult.Transfer -> reduceTransferSubmission(state, result.result)
                 }
             // Submission is single-flight; duplicate confirm/retry events are harmless.
             P503UiEvent.Confirm,
             P503UiEvent.RetrySubmission,
             -> state
-            // P7-02.A: entry-field intents are absorbed while submitting (§6.2a).
+            // P7-02: entry-field intents are absorbed while submitting (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> state
             else -> unhandled(state, event)
@@ -341,13 +352,7 @@ class P503ReducerImpl(
                         }
                 }
             is com.unifiedledger.application.ManualExpenseSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(
-                    context = InfrastructureFailureContext.SUBMISSION,
-                    draft = state.draft,
-                    requestId = state.requestId,
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab)
             is com.unifiedledger.application.ManualExpenseSubmissionResult.UnknownCommit ->
                 P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
             is com.unifiedledger.application.ManualExpenseSubmissionResult.Recovered -> P503AppState.Recovered
@@ -373,16 +378,36 @@ class P503ReducerImpl(
                         }
                 }
             is ManualIncomeSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(
-                    context = InfrastructureFailureContext.SUBMISSION,
-                    draft = state.draft,
-                    requestId = state.requestId,
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab)
             is ManualIncomeSubmissionResult.UnknownCommit ->
                 P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
             is ManualIncomeSubmissionResult.Recovered -> P503AppState.Recovered
+        }
+
+    private fun reduceTransferSubmission(
+        state: P503AppState.Submitting,
+        result: ManualTransferSubmissionResult,
+    ): P503AppState =
+        when (result) {
+            is ManualTransferSubmissionResult.Application ->
+                when (val application = result.result) {
+                    is ManualTransferSaveResult.InvalidInput ->
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab)
+                    is ManualTransferSaveResult.Executed ->
+                        when (application.result) {
+                            is ConfirmedManualTransferResult.Created -> P503AppState.Created
+                            is ConfirmedManualTransferResult.NoChange -> P503AppState.NoChange
+                            is ConfirmedManualTransferResult.RequestIdentityConflict ->
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab)
+                            is ConfirmedManualTransferResult.Rejected ->
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab)
+                        }
+                }
+            is ManualTransferSubmissionResult.InfrastructureFailure ->
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab)
+            is ManualTransferSubmissionResult.UnknownCommit ->
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab)
+            is ManualTransferSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
     private fun reduceUnknownCommit(
@@ -396,6 +421,7 @@ class P503ReducerImpl(
                 when (val resolution = event.resolution) {
                     is ManualEntryCommitResolution.Expense -> reduceExpenseResolution(state, resolution.resolution)
                     is ManualEntryCommitResolution.Income -> reduceIncomeResolution(state, resolution.resolution)
+                    is ManualEntryCommitResolution.Transfer -> reduceTransferResolution(state, resolution.resolution)
                 }
             // The host dispatches this alongside the check call in its click handler; the
             // state instance stays untouched so the entry auto-check guard does not re-run.
@@ -412,12 +438,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualExpenseCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualExpenseCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(
-                    draft = checkNotNull(state.draft),
-                    requestId = checkNotNull(state.requestId),
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
             ManualExpenseCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualExpenseCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -429,14 +450,21 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualIncomeCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualIncomeCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(
-                    draft = checkNotNull(state.draft),
-                    requestId = checkNotNull(state.requestId),
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
             ManualIncomeCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualIncomeCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
+        }
+
+    private fun reduceTransferResolution(
+        state: P503AppState.UnknownCommit,
+        resolution: ManualTransferCommitResolution,
+    ): P503AppState =
+        when (resolution) {
+            is ManualTransferCommitResolution.MatchingReceipt -> P503AppState.Recovered
+            ManualTransferCommitResolution.SnapshotConflict ->
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
+            ManualTransferCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
+            ManualTransferCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
 
     private fun reduceTransientResult(
@@ -445,20 +473,21 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             // The authoritative refresh after a submission flow always returns to the home
-            // tab; the submission states carry no tab. P7-02.A G-C: a determinate-success
+            // tab; the submission states carry no tab. P7-02 G-C: a determinate-success
             // refresh carries the host-captured retained intent into the new overview.
             is P503UiEvent.RefreshResult ->
-                P503AppState.OverviewEmpty(
-                    state = event.currentState,
-                    selectedTab = P503Tab.HOME,
-                    retainedIntent = event.retainedIntent,
-                )
+                P503AppState.OverviewEmpty(state = event.currentState, selectedTab = P503Tab.HOME, retainedIntent = event.retainedIntent)
             P503UiEvent.RefreshFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
-            // P7-02.A: new entry-foundation events are absorbed in every transient result state.
+            // P7-02: new entry-foundation events are absorbed in every transient result state.
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
             P503UiEvent.SaveAndRecordAgain,
             -> current
             else -> unhandled(current, event)
@@ -477,25 +506,30 @@ class P503ReducerImpl(
                 P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateOccurredAt ->
                 P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab)
-            // P7-02.A: note/income field edits return to Editing with typing retention (D-140).
+            // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
                 P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateReceivingAccount ->
                 P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateIncomeCategory ->
                 P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab)
-            // P7-02.A: a type switch and "record again" are absorbed on the conflict screen.
+            is P503UiEvent.UpdateTransferSourceAccount ->
+                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferDestinationAccount ->
+                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferDestinationCredit ->
+                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferFee ->
+                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferFeeCategory ->
+                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab)
+            // P7-02: a type switch and "record again" are absorbed on the conflict screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.SaveAndRecordAgain,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
-                P503AppState.Editing(
-                    draft = state.draft,
-                    requestId = null,
-                    overview = state.overview,
-                    originTab = state.originTab,
-                )
+                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab)
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
             else -> unhandled(state, event)
@@ -514,14 +548,24 @@ class P503ReducerImpl(
                 P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateOccurredAt ->
                 P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab)
-            // P7-02.A: note/income field edits return to Editing with typing retention (D-140).
+            // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
                 P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateReceivingAccount ->
                 P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab)
             is P503UiEvent.UpdateIncomeCategory ->
                 P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab)
-            // P7-02.A: a type switch and "record again" are absorbed on the rejection screen.
+            is P503UiEvent.UpdateTransferSourceAccount ->
+                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferDestinationAccount ->
+                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferDestinationCredit ->
+                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferFee ->
+                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab)
+            is P503UiEvent.UpdateTransferFeeCategory ->
+                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab)
+            // P7-02: a type switch and "record again" are absorbed on the rejection screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.SaveAndRecordAgain,
             -> state
@@ -538,26 +582,21 @@ class P503ReducerImpl(
             InfrastructureFailureContext.SUBMISSION ->
                 when (event) {
                     P503UiEvent.RetrySubmission ->
-                        P503AppState.Submitting(
-                            draft = checkNotNull(state.draft),
-                            requestId = checkNotNull(state.requestId),
-                            overview = state.overview,
-                            originTab = state.originTab,
-                        )
+                        P503AppState.Submitting(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
                     P503UiEvent.Cancel ->
-                        P503AppState.Editing(
-                            draft = checkNotNull(state.draft),
-                            requestId = checkNotNull(state.requestId),
-                            overview = state.overview,
-                            originTab = state.originTab,
-                        )
+                        P503AppState.Editing(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab)
                     P503UiEvent.Back ->
                         P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
-                    // P7-02.A: entry-field intents are absorbed in SUBMISSION failure (§6.2a).
+                    // P7-02: entry-field intents are absorbed in SUBMISSION failure (§6.2a).
                     is P503UiEvent.SelectEntryType,
                     is P503UiEvent.UpdateNote,
                     is P503UiEvent.UpdateReceivingAccount,
                     is P503UiEvent.UpdateIncomeCategory,
+                    is P503UiEvent.UpdateTransferSourceAccount,
+                    is P503UiEvent.UpdateTransferDestinationAccount,
+                    is P503UiEvent.UpdateTransferDestinationCredit,
+                    is P503UiEvent.UpdateTransferFee,
+                    is P503UiEvent.UpdateTransferFeeCategory,
                     P503UiEvent.SaveAndRecordAgain,
                     -> state
                     else -> unhandled(state, event)
@@ -565,19 +604,20 @@ class P503ReducerImpl(
             InfrastructureFailureContext.READ ->
                 when (event) {
                     P503UiEvent.RetryRefresh -> state
-                    // P7-02.A G-C: a successful read retry still forwards the retained intent.
+                    // P7-02 G-C: a successful read retry still forwards the retained intent.
                     is P503UiEvent.RefreshResult ->
-                        P503AppState.OverviewEmpty(
-                            state = event.currentState,
-                            selectedTab = P503Tab.HOME,
-                            retainedIntent = event.retainedIntent,
-                        )
+                        P503AppState.OverviewEmpty(state = event.currentState, selectedTab = P503Tab.HOME, retainedIntent = event.retainedIntent)
                     P503UiEvent.RefreshFailed -> state
-                    // P7-02.A: new entry-foundation events are absorbed in READ failure too.
+                    // P7-02: new entry-foundation events are absorbed in READ failure too.
                     is P503UiEvent.SelectEntryType,
                     is P503UiEvent.UpdateNote,
                     is P503UiEvent.UpdateReceivingAccount,
                     is P503UiEvent.UpdateIncomeCategory,
+                    is P503UiEvent.UpdateTransferSourceAccount,
+                    is P503UiEvent.UpdateTransferDestinationAccount,
+                    is P503UiEvent.UpdateTransferDestinationCredit,
+                    is P503UiEvent.UpdateTransferFee,
+                    is P503UiEvent.UpdateTransferFeeCategory,
                     P503UiEvent.SaveAndRecordAgain,
                     -> state
                     else -> unhandled(state, event)
@@ -590,16 +630,33 @@ class P503ReducerImpl(
     ): Nothing = throw IllegalStateException("Unhandled P5-03 event $event in state $state")
 }
 
-/** P7-02.A: sets the draft's primary account while preserving the concrete subtype. */
+/** P7-02: sets the draft's primary account while preserving the concrete subtype. */
 private fun TypedEntryDraft.withPrimaryAccount(accountId: AccountId): TypedEntryDraft =
     when (this) {
         is ExpenseDraft -> copy(paymentAccountId = accountId)
         is IncomeDraft -> copy(receivingAccountId = accountId)
+        is TransferDraft -> copy(sourceAccountId = accountId)
     }
 
-/** P7-02.A: sets the draft's category while preserving the concrete subtype. */
+/** P7-02: sets the draft's category while preserving the concrete subtype. */
 private fun TypedEntryDraft.withCategory(categoryId: CategoryId): TypedEntryDraft =
     when (this) {
         is ExpenseDraft -> copy(categoryId = categoryId)
         is IncomeDraft -> copy(categoryId = categoryId)
+        is TransferDraft -> copy(feeCategoryId = categoryId)
     }
+
+/** P7-02.B transfer source drawer; absorbed on non-transfer drafts. */
+private fun TypedEntryDraft.withTransferSourceAccount(accountId: AccountId): TypedEntryDraft = if (this is TransferDraft) copy(sourceAccountId = accountId) else this
+
+/** P7-02.B transfer destination drawer; absorbed on non-transfer drafts. */
+private fun TypedEntryDraft.withTransferDestinationAccount(accountId: AccountId): TypedEntryDraft = if (this is TransferDraft) copy(destinationAccountId = accountId) else this
+
+/** P7-02.B transfer destination-credit text; absorbed on non-transfer drafts. */
+private fun TypedEntryDraft.withTransferDestinationCredit(text: String): TypedEntryDraft = if (this is TransferDraft) copy(destinationCredit = text) else this
+
+/** P7-02.B transfer fee text; absorbed on non-transfer drafts. */
+private fun TypedEntryDraft.withTransferFee(text: String): TypedEntryDraft = if (this is TransferDraft) copy(fee = text) else this
+
+/** P7-02.B transfer fee category; absorbed on non-transfer drafts. */
+private fun TypedEntryDraft.withTransferFeeCategory(categoryId: CategoryId): TypedEntryDraft = if (this is TransferDraft) copy(feeCategoryId = categoryId) else this

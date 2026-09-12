@@ -81,17 +81,34 @@ class EntryDraftTest {
 
     @Test
     fun `unimplemented target types have no draft in this batch`() {
-        for (type in listOf(EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT)) {
+        for (type in listOf(EntryType.LEND, EntryType.COLLECT)) {
             assertNull(EntryFieldRetention.switchType(expense(), type), "for $type")
             assertNull(EntryFieldRetention.switchType(income(), type), "for $type")
         }
     }
 
     @Test
-    fun `unsupported type gate maps only transfer lend collect`() {
+    fun `switching expense to transfer retains the asset account class and clears type-specific fields`() {
+        val transfer = assertIs<TransferDraft>(EntryFieldRetention.switchType(expense(), EntryType.TRANSFER))
+        assertEquals(AccountId("asset"), transfer.sourceAccountId)
+        assertEquals("35.80", transfer.destinationCredit)
+        assertEquals(occurredAt, transfer.occurredAt)
+        assertEquals("lunch", transfer.note)
+        assertNull(transfer.destinationAccountId)
+        assertNull(transfer.feeCategoryId)
+
+        val back = assertIs<ExpenseDraft>(EntryFieldRetention.switchType(transfer, EntryType.EXPENSE))
+        assertEquals(AccountId("asset"), back.paymentAccountId)
+        assertEquals("35.80", back.amountText)
+        assertNull(back.categoryId)
+    }
+
+    @Test
+    fun `unsupported type gate maps only lend collect`() {
         assertNull(validateEntryTypeSupported(EntryType.EXPENSE))
         assertNull(validateEntryTypeSupported(EntryType.INCOME))
-        for (type in listOf(EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT)) {
+        assertNull(validateEntryTypeSupported(EntryType.TRANSFER))
+        for (type in listOf(EntryType.LEND, EntryType.COLLECT)) {
             assertEquals(EntryFoundationViolation.EntryTypeNotSupported, validateEntryTypeSupported(type))
         }
     }
