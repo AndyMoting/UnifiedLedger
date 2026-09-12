@@ -174,6 +174,56 @@ class DesktopCatalogMigrationTest {
         }
     }
 
+    @Test
+    fun guardsOnlySurfaceFromAnUntaggedV26FileIsNotMistakenForV27() {
+        val path: Path = Files.createTempFile("p7-01-desktop-untagged-v26-guards-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            // R2: a real v26 database has the two 25.sqm evidence-projection guards but not the
+            // 26.sqm-unique index / correction snapshot. The `.all` conjunction must reject it.
+            JdbcSqliteDriver(url).use { driver ->
+                driver.execute(
+                    null,
+                    "CREATE TABLE ledger_transaction (transaction_id TEXT NOT NULL PRIMARY KEY, ledger_id TEXT NOT NULL, kind TEXT NOT NULL, canonical_kind TEXT, UNIQUE (transaction_id, ledger_id))",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "CREATE TABLE evidence_projection (ledger_id TEXT NOT NULL, projection_id TEXT NOT NULL, evidence_id TEXT NOT NULL, source_id TEXT NOT NULL, source_hash TEXT NOT NULL, target_account_id TEXT NOT NULL, currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL, raw_amount_minor INTEGER NOT NULL, raw_currency_precision INTEGER NOT NULL, normalized_amount_minor INTEGER NOT NULL, direction_token TEXT NOT NULL, state TEXT NOT NULL, rejection_code TEXT, rule_id TEXT NOT NULL, rule_version INTEGER NOT NULL, materialization_request_id TEXT NOT NULL, materialized_at TEXT NOT NULL, PRIMARY KEY (ledger_id, projection_id))",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "CREATE TRIGGER evidence_projection_guard_update BEFORE UPDATE ON evidence_projection BEGIN SELECT RAISE(ABORT, 'cannot update evidence projection'); END",
+                    0,
+                )
+                driver.execute(
+                    null,
+                    "CREATE TRIGGER evidence_projection_guard_delete BEFORE DELETE ON evidence_projection BEGIN SELECT RAISE(ABORT, 'cannot delete evidence projection'); END",
+                    0,
+                )
+                driver.execute(null, "PRAGMA user_version = 0", 0)
+            }
+
+            JdbcSqliteDriver(url).use { driver ->
+                migrateToCurrentSchema(driver)
+                assertEquals(28L, driver.userVersion())
+                // The v27-only objects were never created: the guards alone did not pass the gate.
+                assertEquals(
+                    0L,
+                    queryLong(
+                        driver,
+                        "SELECT count(*) FROM sqlite_master WHERE name IN ('catalog_version','evidence_projection_current_by_evidence','reconciliation_correction_snapshot')",
+                    ),
+                )
+                assertEquals(1L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'evidence_projection'"))
+            }
+            assertEquals(true, Files.exists(path))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
     /**
      * Builds a genuine v27 file from the current schema by dropping the six additive `catalog_*`
      * product tables `27.sqm` introduces (the migration is structure-only, so the remainder is

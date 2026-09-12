@@ -251,7 +251,9 @@ fun P503App(
             facade.catalogSnapshot()
                 ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
                 ?: return
-        dispatch(P503UiEvent.CatalogCommandCompleted(result, fresh))
+        // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
+        // transition for management events; publish the outcome only while still on the overview.
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogCommandCompleted(result, fresh), ::dispatch)
     }
 
     fun runCatalogToggle(event: P503UiEvent) {
@@ -303,7 +305,8 @@ fun P503App(
         facade.refreshCatalog()
         refresh()
         val fresh = facade.catalogSnapshot() ?: return
-        dispatch(P503UiEvent.CatalogSnapshotRefreshed(fresh))
+        // F1 (N-5): same overview-only guard as the command success path.
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
     }
 
     P503Theme {

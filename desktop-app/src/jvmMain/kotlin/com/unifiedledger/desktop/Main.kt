@@ -458,11 +458,14 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
 private const val LEGACY_UNTAGGED_VERSION = 27L
 
 /**
- * R2: objects that only exist from v27 onward (`26.sqm` step 2/3), used to confirm an untagged
- * populated file really is the v27 surface before running the v27 -> v28 migration. The unique
- * index, the two guards and the correction snapshot all arrive with 26.sqm, so any one of them
- * proves the 26 -> 27 rebuild already happened. A populated file lacking them is a v26-or-older
- * database and must fall through to the stamp-only fail-closed branch, never a guessed migrate.
+ * R2: structural sentinels used to confirm an untagged populated file really is the v27 surface
+ * before running the v27 -> v28 migration. `evidence_projection_guard_update` and
+ * `evidence_projection_guard_delete` were created by `25.sqm` (v25 -> v26); the
+ * `evidence_projection_current_by_evidence` unique index and `reconciliation_correction_snapshot`
+ * were created by `26.sqm` step 2/3 (v26 -> v27). Because the conjunction (`.all`) requires the
+ * v27-only pair, a file at exactly v26 (guards present, index/snapshot absent) and any older file
+ * both fail the sentinel and fall through to the stamp-only fail-closed branch, never a guessed
+ * migrate; only a real v27+ surface passes.
  */
 private val V27_STRUCTURAL_SENTINELS =
     listOf(

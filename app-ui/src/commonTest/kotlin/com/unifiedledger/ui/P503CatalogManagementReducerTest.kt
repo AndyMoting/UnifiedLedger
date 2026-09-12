@@ -331,6 +331,22 @@ class P503CatalogManagementReducerTest {
     }
 
     @Test
+    fun refreshedReadStateKeepsTheTabDialogAndNotice() {
+        // F3: the R1 read-state transition only replaces `state`; management-only fields and the
+        // selected tab are preserved (the host dispatches this while still on the ACCOUNTS tab).
+        val notice = CatalogNotice("已保存", error = false)
+        val before = management(dialog = CatalogDialog.CreateAccount(nameText = "现金"), notice = notice)
+
+        val after = assertIs<P503AppState.OverviewEmpty>(reduceFrom(before, P503UiEvent.RefreshResult(overview)))
+
+        assertEquals(P503Tab.ACCOUNTS, after.selectedTab)
+        assertEquals(CatalogDialog.CreateAccount(nameText = "现金"), after.catalogDialog)
+        assertEquals(notice, after.catalogNotice)
+        assertEquals(snapshot(), after.catalogSnapshot)
+        assertEquals(overview, after.state)
+    }
+
+    @Test
     fun activeToggleIntentIsAbsorbedUntilTheCommandResultArrives() {
         val before = management()
         val after = reduceFrom(before, P503UiEvent.ManageAccountActive(accountId, active = false))
