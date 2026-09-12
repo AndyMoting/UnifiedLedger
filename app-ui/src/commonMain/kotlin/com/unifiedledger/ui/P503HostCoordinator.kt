@@ -1,6 +1,15 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.RequestId
+
+/**
+ * R1 (spec 6.2/7.3, D-027): a successful catalog command must refresh the authoritative read
+ * model too, not just the management projection. HOME's balances/transaction lines come from
+ * `queryCurrentState`, which reads through the refreshed catalog session, so the host re-queries
+ * it and dispatches the ordinary `RefreshResult`. Rejections/conflicts never refresh.
+ */
+internal fun shouldRefreshReadModelAfterCatalogCommand(result: CatalogCommandResult): Boolean = result is CatalogCommandResult.Accepted || result is CatalogCommandResult.NoChange
 
 /** Runs on the UI event thread without suspension; obsolete screen callbacks do no work. */
 internal fun dispatchCurrentP503Action(

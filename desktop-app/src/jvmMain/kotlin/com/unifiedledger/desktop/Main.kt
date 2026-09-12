@@ -315,7 +315,6 @@ internal fun buildLedgerGraph(
             entityIdSource = UuidV7CatalogEntityIdSource(UuidV7Generator(::secureRandomBytes)),
             categoryReferenceProbe = store,
         )
-    val catalogRequestIds = UuidV7CatalogManagementRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val snapshotQuery = QueryCatalogSnapshot(store)
     val facade =
         P503LedgerFacade(
@@ -335,7 +334,6 @@ internal fun buildLedgerGraph(
             // it after every command, so options/reads/summaries stay on one catalog version.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,
-            newCatalogRequestId = { catalogRequestIds.next() },
             refreshCatalog = { session.refresh() },
             catalogSession = session,
         )
@@ -417,10 +415,12 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
             // Already the current product schema, only the version stamp was missing.
             driver.writeUserVersion(currentVersion)
         }
-        from == 0L && driver.hasTable("ledger_transaction") -> {
-            // Legacy pre-catalog ledger without a version stamp: treat it as v27 (the last
-            // version before the additive catalog tables) and run the structure-only migration
-            // in one transaction. A failure rolls back and surfaces as StartupError; the file is
+        from == 0L && driver.hasTable("ledger_transaction") && driver.hasV27StructuralSentinel() -> {
+            // Legacy pre-catalog ledger without a version stamp, verified to actually carry the
+            // v27 surface (R2: the sentinel guards the 26.sqm rebuild objects, so a real v26 or
+            // older file cannot reach here and silently skip 26 -> 27). Treat it as v27 (the last
+            // version before the additive catalog tables) and run the structure-only migration in
+            // one transaction. A failure rolls back and surfaces as StartupError; the file is
             // never deleted or overwritten.
             val database = LedgerDatabase(driver)
             database.transaction {
@@ -433,9 +433,11 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
             driver.writeUserVersion(currentVersion)
         }
         from == 0L -> {
-            // Unknown populated schema without a version stamp: never create over it; stamp the
-            // current version so opening is deterministic. Downstream bootstrap fails closed
-            // visibly if the schema does not match.
+            // Unknown populated schema without a version stamp (R2: populated but not verifiably
+            // v27, e.g. a real v26 file): never create over it and never guess a migration; stamp
+            // the current version so opening is deterministic. Downstream catalog bootstrap fails
+            // closed visibly if the schema does not match, instead of a partial schema silently
+            // acquired by skipping a structural migration.
             driver.writeUserVersion(currentVersion)
         }
         from == currentVersion -> Unit
@@ -454,6 +456,38 @@ internal fun migrateToCurrentSchema(driver: SqlDriver) {
 
 /** Last schema version before the additive P7-01 `catalog_*` tables (spec 5.2). */
 private const val LEGACY_UNTAGGED_VERSION = 27L
+
+/**
+ * R2: objects that only exist from v27 onward (`26.sqm` step 2/3), used to confirm an untagged
+ * populated file really is the v27 surface before running the v27 -> v28 migration. The unique
+ * index, the two guards and the correction snapshot all arrive with 26.sqm, so any one of them
+ * proves the 26 -> 27 rebuild already happened. A populated file lacking them is a v26-or-older
+ * database and must fall through to the stamp-only fail-closed branch, never a guessed migrate.
+ */
+private val V27_STRUCTURAL_SENTINELS =
+    listOf(
+        "evidence_projection_current_by_evidence",
+        "evidence_projection_guard_update",
+        "evidence_projection_guard_delete",
+        "reconciliation_correction_snapshot",
+    )
+
+private fun SqlDriver.hasV27StructuralSentinel(): Boolean = V27_STRUCTURAL_SENTINELS.all { hasSchemaObject(it) }
+
+private fun SqlDriver.hasSchemaObject(name: String): Boolean {
+    var found = false
+    executeQuery(
+        null,
+        "SELECT count(*) FROM sqlite_master WHERE name = ?",
+        { cursor ->
+            if (cursor.next().value) found = (cursor.getLong(0) ?: 0L) > 0L
+            app.cash.sqldelight.db.QueryResult.Unit
+        },
+        1,
+        { bindString(0, name) },
+    )
+    return found
+}
 
 private fun SqlDriver.hasTable(name: String): Boolean {
     var found = false

@@ -240,8 +240,12 @@ fun P503App(
     // continue from the same version without a restart; a typed conflict is surfaced as a
     // banner and never retried automatically.
     fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
-        if (result is CatalogCommandResult.Accepted || result is CatalogCommandResult.NoChange) {
+        if (shouldRefreshReadModelAfterCatalogCommand(result)) {
             facade.refreshCatalog()
+            // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
+            // model, which now reads through the refreshed session; re-query it via the existing
+            // refresh channel so a rename/deactivate shows new names on HOME without a restart.
+            refresh()
         }
         val fresh =
             facade.catalogSnapshot()
@@ -293,9 +297,11 @@ fun P503App(
     }
 
     // Explicit refresh used by the management screen: reload the shared session and install the
-    // reloaded projection (a no-op command success path).
+    // reloaded projection (a no-op command success path). The read model is re-queried against
+    // the reloaded session too, for the same HOME-freshness reason as the command success path.
     fun refreshCatalogSnapshot() {
         facade.refreshCatalog()
+        refresh()
         val fresh = facade.catalogSnapshot() ?: return
         dispatch(P503UiEvent.CatalogSnapshotRefreshed(fresh))
     }

@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.AccountCurrencyBalance
 import com.unifiedledger.application.CatalogCommandReceipt
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogFailureCode
@@ -298,6 +299,35 @@ class P503CatalogManagementReducerTest {
             )
         assertEquals(3L, state.catalogSnapshot?.catalogVersion)
         assertNull(state.catalogNotice)
+    }
+
+    @Test
+    fun refreshedReadStateInstallsTheNewNamesWithoutChangingIdsOrAmounts() {
+        // R1 (spec 7.3/D-027, 6.2): after a rename the host re-queries the authoritative state
+        // and dispatches the ordinary RefreshResult; HOME must then render the new name while
+        // stable ids and amounts stay byte-for-byte unchanged.
+        val renamedAccountId = accountId
+        val oldName =
+            LedgerCurrentState(
+                ledgerId,
+                transactions = emptyList<CurrentVersionRow>(),
+                balances = listOf(AccountCurrencyBalance(renamedAccountId, cny, -3_580L, -3_580L)),
+                accountNames = mapOf(renamedAccountId to "旧名"),
+            )
+        val newNameState = oldName.copy(accountNames = mapOf(renamedAccountId to "新名"))
+
+        val before =
+            assertIs<P503AppState.OverviewEmpty>(
+                reduceFrom(management(), P503UiEvent.Back, P503UiEvent.RefreshResult(oldName)),
+            )
+        assertEquals(P503Tab.HOME, before.selectedTab)
+        assertEquals("旧名", before.state.accountNames.getValue(renamedAccountId))
+
+        val after = assertIs<P503AppState.OverviewEmpty>(reduceFrom(before, P503UiEvent.RefreshResult(newNameState)))
+        assertEquals(P503Tab.HOME, after.selectedTab)
+        assertEquals("新名", after.state.accountNames.getValue(renamedAccountId))
+        assertEquals(before.state.balances, after.state.balances)
+        assertEquals(before.state.transactions, after.state.transactions)
     }
 
     @Test

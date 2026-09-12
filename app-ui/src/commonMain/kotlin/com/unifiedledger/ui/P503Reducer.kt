@@ -69,6 +69,12 @@ class P503ReducerImpl(
                     catalogDialog = CatalogDialog.None,
                     catalogNotice = null,
                 )
+            // R1 (spec 6.2/7.3): the host re-queries the authoritative read model after a
+            // successful catalog command and after an explicit management refresh, so this
+            // transition replaces the overview's read state while staying on the current tab
+            // (the catalog notice/dialog are management-only fields and are left untouched).
+            is P503UiEvent.RefreshResult -> state.copy(state = event.currentState)
+            P503UiEvent.RefreshFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             P503UiEvent.StartNewExpense ->
                 P503AppState.Editing(
                     draft =

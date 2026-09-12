@@ -104,8 +104,46 @@ class DesktopCatalogMigrationTest {
         val path: Path = Files.createTempFile("p7-01-desktop-legacy-untagged-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
         try {
-            // A shell with only a core table stands in for a pre-catalog ledger that was never
-            // stamped: the version-less path must run the v27 migration rather than Schema.create.
+            // R2: a genuine v27 surface (current schema minus the additive catalog tables, which
+            // keeps all 26.sqm objects) that was never stamped at the current version. The
+            // version-less path must verify the v27 sentinel and run the migration.
+            JdbcSqliteDriver(url).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                driver.execute(null, "PRAGMA foreign_keys = OFF", 0)
+                listOf(
+                    "catalog_command_receipt",
+                    "catalog_command_request",
+                    "catalog_name_history",
+                    "catalog_category",
+                    "catalog_account",
+                    "catalog_version",
+                ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
+                driver.execute(null, "PRAGMA user_version = 0", 0)
+            }
+
+            JdbcSqliteDriver(url).use { driver ->
+                migrateToCurrentSchema(driver)
+                assertEquals(28L, driver.userVersion())
+                assertEquals(
+                    1L,
+                    queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
+                )
+            }
+            assertEquals(true, Files.exists(path))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun populatedLedgerWithoutTheV27SentinelIsStampedOnlyAndNeverGuessedMigrated() {
+        val path: Path = Files.createTempFile("p7-01-desktop-untagged-v26-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            // R2: a populated file whose real version is unknown and which lacks the v27 rebuild
+            // objects (stands in for a real v26-or-older database). Running v27 -> v28 here would
+            // silently skip the 26 -> 27 structural rebuild, so the path must only stamp the
+            // current version and let the downstream bootstrap fail closed if the schema is wrong.
             JdbcSqliteDriver(url).use { driver ->
                 driver.execute(
                     null,
@@ -118,13 +156,17 @@ class DesktopCatalogMigrationTest {
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
                 assertEquals(28L, driver.userVersion())
+                // No migration ran: the catalog tables were not created, and the v27 objects the
+                // guarded branch would have relied on are still absent.
                 assertEquals(
-                    1L,
+                    0L,
                     queryLong(
                         driver,
-                        "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'",
+                        "SELECT count(*) FROM sqlite_master WHERE name IN ('catalog_version','evidence_projection_current_by_evidence','reconciliation_correction_snapshot')",
                     ),
                 )
+                // The pre-existing table is untouched: never deleted or overwritten.
+                assertEquals(1L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'ledger_transaction'"))
             }
             assertEquals(true, Files.exists(path))
         } finally {

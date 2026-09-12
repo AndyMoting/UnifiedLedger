@@ -1,5 +1,10 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogCommandReceipt
+import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CatalogFailureCode
+import com.unifiedledger.application.CatalogReceiptOutcome
+import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
@@ -239,5 +244,22 @@ class P503HostCoordinatorTest {
         val absent = P503AppState.UnknownCommit(draft, requestId, lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
         assertNull(coordinator.decide(absent))
         assertEquals(1, checkCount)
+    }
+
+    @Test
+    fun onlySuccessfulCatalogCommandsRefreshTheReadModel() {
+        // R1: Accepted/NoChange refresh HOME's read model; Rejected/Conflict never do.
+        val accepted =
+            CatalogCommandResult.Accepted(
+                CatalogCommandReceipt(CatalogRequestId("r1"), CatalogReceiptOutcome.ACCEPTED, 2L),
+            )
+        val noChange =
+            CatalogCommandResult.NoChange(
+                CatalogCommandReceipt(CatalogRequestId("r2"), CatalogReceiptOutcome.NO_CHANGE, 2L),
+            )
+        assertEquals(true, shouldRefreshReadModelAfterCatalogCommand(accepted))
+        assertEquals(true, shouldRefreshReadModelAfterCatalogCommand(noChange))
+        assertEquals(false, shouldRefreshReadModelAfterCatalogCommand(CatalogCommandResult.Rejected(CatalogFailureCode.CATALOG_NAME_CONFLICT)))
+        assertEquals(false, shouldRefreshReadModelAfterCatalogCommand(CatalogCommandResult.Conflict(CatalogFailureCode.CATALOG_VERSION_CONFLICT)))
     }
 }

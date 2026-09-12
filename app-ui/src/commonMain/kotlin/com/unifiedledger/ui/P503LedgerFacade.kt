@@ -1,7 +1,6 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogConsumerSession
-import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
@@ -24,9 +23,10 @@ import com.unifiedledger.domain.LedgerId
  *
  * P7-01.D (D-143) adds the catalog-management surface: [catalogSnapshot] is the current
  * authoritative projection (names replacing bare ids, including `catalogVersion`),
- * [executeCatalogCommand] is the nine-command entry point, [newCatalogRequestId] mints one
- * request id per user intent, and [refreshCatalog] reloads the shared catalog session so
- * options/reads/summaries continue from the same authoritative version without a restart.
+ * [executeCatalogCommand] is the nine-command entry point (it mints each command's request id
+ * internally, so equivalent replay stays deterministic), and [refreshCatalog] reloads the
+ * shared catalog session so options/reads/summaries continue from the same authoritative
+ * version without a restart.
  *
  * When a [catalogSession] is injected (spec 6.2), [optionsProvider], [queryCurrentState] and
  * [summarizeActivity] are read through it, so `refreshCatalog()` reaches every consumer of the
@@ -53,7 +53,6 @@ class P503LedgerFacade(
     // P7-01.D catalog management surface; null/empty defaults keep legacy constructions valid.
     val catalogSnapshot: () -> CatalogSnapshotView? = { null },
     val executeCatalogCommand: ExecuteCatalogCommand? = null,
-    val newCatalogRequestId: () -> CatalogRequestId = { CatalogRequestId("") },
     val refreshCatalog: () -> Unit = {},
     catalogSession: CatalogConsumerSession? = null,
 ) {

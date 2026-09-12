@@ -254,7 +254,6 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             entityIdSource = UuidV7CatalogEntityIdSource(UuidV7Generator(::secureRandomBytes)),
             categoryReferenceProbe = store,
         )
-    val catalogRequestIds = UuidV7CatalogManagementRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val snapshotQuery = QueryCatalogSnapshot(store)
     val facade =
         P503LedgerFacade(
@@ -273,7 +272,6 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             // P7-01.D: management reads the same session and refreshes it after every command.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,
-            newCatalogRequestId = { catalogRequestIds.next() },
             refreshCatalog = { session.refresh() },
             catalogSession = session,
         )
