@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.ManualExpenseInputFailure
@@ -76,7 +77,11 @@ fun P503App(
 ) {
     val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency) }
     val validation = remember(facade) { P503DraftValidation(facade.parseAmount, facade.parseOccurredAt, facade.ledgerClock) }
-    val options = remember(facade) { facade.optionsProvider.queryOptions() }
+    // D-140-style authoritative options snapshot. Reading the version here makes the options
+    // reload after a catalog refresh (spec 7.4), because the facade exposes the refreshed
+    // session models; options/reads/summaries then all follow one authoritative catalog version.
+    val catalogVersion = facade.catalogSnapshot()?.catalogVersion
+    val options = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -97,8 +102,8 @@ fun P503App(
     // back to avoid exiting the process mid-submission; only non-Submitting states dispatch.
     // D-137: while a picker dialog is open, the back channel is additionally disabled, so
     // Esc / system back reaches only the dialog layer and the edit page stays open.
-    val editFlowBackEnabled = isEditFlowBackEnabled(state)
-    backHandler?.invoke(editFlowBackEnabled && !editDialogOpen) {
+    val backEnabled = isBackEnabled(state)
+    backHandler?.invoke(backEnabled && !editDialogOpen) {
         // P5-04.3 double-fire guard: re-check at dispatch time and only dispatch while the
         // state is still Back-legal, so a repeated back (fast double Esc / double system
         // back) is ignored instead of crashing on (OverviewEmpty, Back).
@@ -230,18 +235,112 @@ fun P503App(
         coordinator.decide(state)
     }
 
+    // P7-01.D: run one catalog command, then refresh the shared session and read the fresh
+    // authoritative snapshot. `refreshCatalog()` reloads the catalog so options/reads/summaries
+    // continue from the same version without a restart; a typed conflict is surfaced as a
+    // banner and never retried automatically.
+    fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
+        if (shouldRefreshReadModelAfterCatalogCommand(result)) {
+            facade.refreshCatalog()
+            // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
+            // model, which now reads through the refreshed session; re-query it via the existing
+            // refresh channel so a rename/deactivate shows new names on HOME without a restart.
+            refresh()
+        }
+        val fresh =
+            facade.catalogSnapshot()
+                ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+                ?: return
+        // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
+        // transition for management events; publish the outcome only while still on the overview.
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogCommandCompleted(result, fresh), ::dispatch)
+    }
+
+    fun runCatalogToggle(event: P503UiEvent) {
+        val command = facade.executeCatalogCommand ?: return
+        val version = (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot?.catalogVersion ?: return
+        scope.launch {
+            val result =
+                when (event) {
+                    is P503UiEvent.ManageAccountActive ->
+                        command.setAccountActive(facade.ledgerId, event.accountId, event.active, version)
+                    is P503UiEvent.ManageCategoryActive ->
+                        command.setCategoryActive(facade.ledgerId, event.categoryId, event.active, version)
+                    is P503UiEvent.EnableCategoryGroup ->
+                        command.enableCategoryGroup(facade.ledgerId, event.parentId, version)
+                    else -> return@launch
+                }
+            dispatchCatalogCommandResult(result)
+        }
+    }
+
+    fun runCatalogForm(dialog: CatalogDialog) {
+        val command = facade.executeCatalogCommand ?: return
+        val version = (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot?.catalogVersion ?: return
+        scope.launch {
+            val result =
+                when (dialog) {
+                    is CatalogDialog.CreateAccount ->
+                        command.createAccount(facade.ledgerId, dialog.nameText, dialog.kind, version)
+                    is CatalogDialog.RenameAccount ->
+                        command.renameAccount(facade.ledgerId, dialog.accountId, dialog.nameText, version)
+                    is CatalogDialog.CreateCategoryGroup ->
+                        command.createCategoryGroup(facade.ledgerId, dialog.kind, dialog.groupNameText, dialog.firstChildNameText, version)
+                    is CatalogDialog.AppendCategoryChild ->
+                        command.appendCategoryChild(facade.ledgerId, dialog.parentId, dialog.nameText, version)
+                    is CatalogDialog.RenameCategory ->
+                        command.renameCategory(facade.ledgerId, dialog.categoryId, dialog.nameText, version)
+                    is CatalogDialog.ConfirmCategoryDelete ->
+                        command.deleteCategory(facade.ledgerId, dialog.categoryId, version)
+                    CatalogDialog.None -> return@launch
+                }
+            dispatchCatalogCommandResult(result)
+        }
+    }
+
+    // Explicit refresh used by the management screen: reload the shared session and install the
+    // reloaded projection (a no-op command success path). The read model is re-queried against
+    // the reloaded session too, for the same HOME-freshness reason as the command success path.
+    fun refreshCatalogSnapshot() {
+        facade.refreshCatalog()
+        refresh()
+        val fresh = facade.catalogSnapshot() ?: return
+        // F1 (N-5): same overview-only guard as the command success path.
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
+    }
+
     P503Theme {
         when (val current = state) {
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->
                 P503TabShell(
                     selectedTab = current.selectedTab,
-                    onSelectTab = { dispatch(P503UiEvent.SelectTab(it)) },
+                    onSelectTab = { tab ->
+                        if (tab == P503Tab.ACCOUNTS) {
+                            dispatch(P503UiEvent.SelectTab(tab, facade.catalogSnapshot()))
+                        } else {
+                            dispatch(P503UiEvent.SelectTab(tab))
+                        }
+                    },
                     onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
                 ) {
                     when (current.selectedTab) {
                         P503Tab.HOME -> P503OverviewScreen(current.state)
-                        P503Tab.ACCOUNTS -> P503AccountsScreen(current.state, facade.catalog)
+                        P503Tab.ACCOUNTS ->
+                            P503CatalogManagementScreen(
+                                state = current,
+                                onEvent = { event ->
+                                    when (event) {
+                                        is P503UiEvent.ManageAccountActive,
+                                        is P503UiEvent.ManageCategoryActive,
+                                        is P503UiEvent.EnableCategoryGroup,
+                                        -> runCatalogToggle(event)
+                                        else -> dispatch(event)
+                                    }
+                                },
+                                onSubmit = { dialog -> runCatalogForm(dialog) },
+                                onRefresh = { refreshCatalogSnapshot() },
+                            )
                         P503Tab.ANALYSIS -> P503AnalysisScreen(current.state, facade.summarizeActivity)
                     }
                 }
@@ -400,8 +499,10 @@ fun P503App(
 }
 
 /** P5-04.2: the editor flow intercepts system back only with an overview to close back to. */
-private fun isEditFlowBackEnabled(state: P503AppState): Boolean =
+private fun isBackEnabled(state: P503AppState): Boolean =
     when (state) {
+        // P7-01.D: on the ACCOUNTS tab back closes an open catalog dialog, or leaves for HOME.
+        is P503AppState.OverviewEmpty -> state.selectedTab == P503Tab.ACCOUNTS
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -413,10 +514,10 @@ private fun isEditFlowBackEnabled(state: P503AppState): Boolean =
     }
 
 /**
- * P5-04.3: dispatching Back is only legal from the Back-able editor-flow states; Submitting
- * swallows the back and every other state must not dispatch one.
+ * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the
+ * back and every other state (including the HOME overview root) must not dispatch one.
  */
-private fun isBackDispatchSafe(state: P503AppState): Boolean = isEditFlowBackEnabled(state) && state !is P503AppState.Submitting
+private fun isBackDispatchSafe(state: P503AppState): Boolean = isBackEnabled(state) && state !is P503AppState.Submitting
 
 @Composable
 private fun P503InfrastructureReadScreen(onRetryRefresh: () -> Unit) {

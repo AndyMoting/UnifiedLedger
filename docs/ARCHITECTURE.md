@@ -76,6 +76,8 @@ P5-03 demo 的 catalog 为两端以相同稳定 ID 确定性重建的固定匿�
 
 commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 ledgerId、requestId 与 attempted snapshot；只有逐值 matching receipt 可恢复成功，snapshot conflict 映射稳定冲突，absent/unavailable 保持 unknown 且不得自动重试或换 requestId。仅 handoff 前可证明 `commitOnce` 零调用的 orchestration failure 可重试。两端组合根还须实现 `Starting`/`Ready`/稳定 startup-error 的 fail-closed 装配，driver/schema/open 失败时业务 UI 与用例不可达，只提供 Retry/Exit。上述 read/options、resolver、amount/requestId 和 startup 边界均已由 D-120 实施（`docs/specs/2026-08-30-p5-03-demo-surface-b-implementation-design.md`），现为已实现约束。
 
+`D-143`（P7-01）补齐 catalog persistence/management 边界：产品账户/分类目录由 `ledger-data` 持久化（非 `rgXX_` 前缀的 `catalog_*` 表，加性迁移、纯建结构零回填，旧库由幂等 bootstrap 承接）；`ledger-application` 拥有管理用例、目录投影与每账本单调递增目录版本（`expectedCatalogVersion` 乐观并发）；两端组合根装载同一权威目录，统一供应选项、写入、读取与汇总，管理成功后无需重启刷新。严格目录不变量置于产品目录装载路径（不改 `LedgerCatalog.create`），且停用/历史叶子允许无过账账户以保持冻结 golden 兼容；引用未知或被停用对象的提交在写入事务内校验并类型化拒绝。具体契约见 `docs/specs/2026-09-11-p7-01-catalog-management-design.md`。
+
 ## 正式数据流
 
 ### 手工入口

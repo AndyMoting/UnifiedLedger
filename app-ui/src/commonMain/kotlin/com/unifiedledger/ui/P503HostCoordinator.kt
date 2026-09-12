@@ -1,6 +1,34 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.RequestId
+
+/**
+ * R1 (spec 6.2/7.3, D-027): a successful catalog command must refresh the authoritative read
+ * model too, not just the management projection. HOME's balances/transaction lines come from
+ * `queryCurrentState`, which reads through the refreshed catalog session, so the host re-queries
+ * it and dispatches the ordinary `RefreshResult`. Rejections/conflicts never refresh.
+ */
+internal fun shouldRefreshReadModelAfterCatalogCommand(result: CatalogCommandResult): Boolean = result is CatalogCommandResult.Accepted || result is CatalogCommandResult.NoChange
+
+/**
+ * F1 (N-5): a catalog management outcome may only be published while the overview is still on
+ * screen. [P503App]'s read-model re-query can fail into `InfrastructureFailure(READ)`, a state
+ * with no transition for `CatalogCommandCompleted`/`CatalogSnapshotRefreshed`; dispatching one
+ * there would hit the reducer's `unhandled` branch and throw from a coroutine/UI callback. Keep
+ * the recoverable read-failure page as the visible state instead: the management projection is
+ * re-read fresh from the facade whenever the user next opens the ACCOUNTS tab, so no user-visible
+ * information is lost by not publishing the banner. Returns whether the event was dispatched.
+ */
+internal fun dispatchCatalogOutcomeIfOverview(
+    currentState: P503AppState,
+    event: P503UiEvent,
+    dispatch: (P503UiEvent) -> Unit,
+): Boolean {
+    if (currentState !is P503AppState.OverviewEmpty) return false
+    dispatch(event)
+    return true
+}
 
 /** Runs on the UI event thread without suspension; obsolete screen callbacks do no work. */
 internal fun dispatchCurrentP503Action(

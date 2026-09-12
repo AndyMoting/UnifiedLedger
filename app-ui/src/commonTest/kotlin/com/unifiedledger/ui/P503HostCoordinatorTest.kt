@@ -1,13 +1,22 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogCommandReceipt
+import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CatalogFailureCode
+import com.unifiedledger.application.CatalogReceiptOutcome
+import com.unifiedledger.application.CatalogRequestId
+import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -239,5 +248,61 @@ class P503HostCoordinatorTest {
         val absent = P503AppState.UnknownCommit(draft, requestId, lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
         assertNull(coordinator.decide(absent))
         assertEquals(1, checkCount)
+    }
+
+    @Test
+    fun onlySuccessfulCatalogCommandsRefreshTheReadModel() {
+        // R1: Accepted/NoChange refresh HOME's read model; Rejected/Conflict never do.
+        val accepted =
+            CatalogCommandResult.Accepted(
+                CatalogCommandReceipt(CatalogRequestId("r1"), CatalogReceiptOutcome.ACCEPTED, 2L),
+            )
+        val noChange =
+            CatalogCommandResult.NoChange(
+                CatalogCommandReceipt(CatalogRequestId("r2"), CatalogReceiptOutcome.NO_CHANGE, 2L),
+            )
+        assertEquals(true, shouldRefreshReadModelAfterCatalogCommand(accepted))
+        assertEquals(true, shouldRefreshReadModelAfterCatalogCommand(noChange))
+        assertEquals(false, shouldRefreshReadModelAfterCatalogCommand(CatalogCommandResult.Rejected(CatalogFailureCode.CATALOG_NAME_CONFLICT)))
+        assertEquals(false, shouldRefreshReadModelAfterCatalogCommand(CatalogCommandResult.Conflict(CatalogFailureCode.CATALOG_VERSION_CONFLICT)))
+    }
+
+    @Test
+    fun catalogOutcomeIsSuppressedOnceTheReadRefreshFailed() {
+        // F1 (N-5): a command can succeed while the follow-up read re-query fails into
+        // InfrastructureFailure(READ), which has no transition for the management events. The
+        // host guard must drop them (no throw), leaving the recoverable read-failure page up.
+        val readFailure = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
+        var dispatched = 0
+
+        val published =
+            dispatchCatalogOutcomeIfOverview(
+                readFailure,
+                P503UiEvent.CatalogSnapshotRefreshed(
+                    CatalogSnapshotView(catalogVersion = 2L, manageableAccounts = emptyList(), categories = emptyList()),
+                ),
+            ) { dispatched += 1 }
+
+        assertEquals(false, published)
+        assertEquals(0, dispatched)
+
+        // A reducer's direct dispatch would be an unhandled (state, event) pair - the reason the
+        // guard exists. Lock that down so a future reducer change stays deliberate.
+        assertFailsWith<IllegalStateException> {
+            P503ReducerImpl(ParseManualExpenseAmount(), cny)
+                .reduce(readFailure, P503UiEvent.CatalogCommandCompleted(CatalogCommandResult.Accepted(CatalogCommandReceipt(CatalogRequestId("r3"), CatalogReceiptOutcome.ACCEPTED, 2L)), CatalogSnapshotView(2L, emptyList(), emptyList())))
+        }
+    }
+
+    @Test
+    fun catalogOutcomeIsStillPublishedWhileOnTheOverview() {
+        val overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-local-test"), emptyList(), emptyList()))
+        var received: P503UiEvent? = null
+        val event = P503UiEvent.CatalogSnapshotRefreshed(CatalogSnapshotView(3L, emptyList(), emptyList()))
+
+        val published = dispatchCatalogOutcomeIfOverview(overview, event) { received = it }
+
+        assertEquals(true, published)
+        assertEquals(event, received)
     }
 }

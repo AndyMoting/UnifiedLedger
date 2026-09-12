@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 class P408CorrectionMigrationTest {
     @Test
     fun versionIsTwentySeven() {
-        assertEquals(27, LedgerDatabase.Schema.version)
+        assertEquals(28, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -45,7 +45,7 @@ class P408CorrectionMigrationTest {
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 assertFailsWith<SQLException> {
                     LedgerDatabase(driver).transaction {
-                        LedgerDatabase.Schema.migrate(driver, 26, 27)
+                        LedgerDatabase.Schema.migrate(driver, 26, 28)
                     }
                 }
             }
@@ -96,7 +96,7 @@ class P408CorrectionMigrationTest {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase(driver).transaction {
-                    LedgerDatabase.Schema.migrate(driver, 26, 27)
+                    LedgerDatabase.Schema.migrate(driver, 26, 28)
                 }
             }
             // Row preservation with the zero backfill: every legacy projection stays
@@ -180,7 +180,7 @@ class P408CorrectionMigrationTest {
                 seedLinkedStateWithLegalInvalidation(driver)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 26, 27) }
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 26, 28) }
             }
             // Fresh side: the same rows on the current terminal schema.
             JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
@@ -216,7 +216,7 @@ class P408CorrectionMigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 27)
+                LedgerDatabase.Schema.migrate(driver, 1, 28)
             }
             JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)

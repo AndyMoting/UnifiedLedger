@@ -2541,3 +2541,42 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **范围冻结：** 零 schema/迁移/账务语义变更；仅文档与描述性注释；`.external/` 零触碰。
 
 **关联决定：** `D-130`（阶段 5 收口登记先例）、`D-133`（阶段 6 入口证据与 SDK/视觉裁决）、`D-141`（技术栈升级批，最近关闭批）。
+
+## D-143 P7-01 账户与分类目录管理（设计门 + Q01/Q02 裁决）
+
+**状态：** 已批准（设计门冻结，2026-09-11）；实施登记待实施批闭合后补登。本决定于 delta closure APPROVE（P0/P1 全闭合，零新增风险；仅余 P3 文档精度项并已收尾）后生效。
+
+**授权依据：** 用户 2026-09-11 常设授权「除不 push 外，其余默认采用推荐方案」；主代理在只读取证（账户/分类权威规则、目录与迁移源码、v27 schema、构建与迁移流程）与独立规格评审（REQUEST-CHANGES → 修正闭环）后，按推荐方案裁决 Q01/Q02。
+
+**决定：** 批准 P7-01「账户与分类目录管理」设计契约 `docs/specs/2026-09-11-p7-01-catalog-management-design.md`（状态 approved）。
+
+**Q01 账户生命周期（裁决）：** A-1 可管理属性仅 name/active，kind/currency/ownedByUser/realAccount/systemRole 创建期固定；A-2 可管理集合 = 同账本 realAccount && ownedByUser && systemRole == null && kind ∈ {ASSET, LIABILITY}；A-3 新建零余额、固定 CNY、无初始余额输入；A-4 改名不改稳定 ID + 名称历史；A-5 停用保留历史与余额、阻止新录入、可重启，本批无账户删除；A-6 名称规范化（去首尾空白、内部空白折叠、拒绝空/控制字符/超 64 码点），同账本非空名称唯一；A-7 空目录幂等种入旧 demo 默认目录，保留旧 demo ID，未知引用 fail-closed。
+
+**Q02 分类生命周期（裁决）：** C-1 两级固定、叶子映射隐藏过账账户；C-2 一级创建原子建立至少一个二级 + 隐藏账户，可追加二级；C-3 一级名称 (账本,kind) 唯一、二级 (账本,parentId) 唯一；C-4 改名追加名称历史；C-5 停用叶子须保留其父 ≥1 可用子；C-6 一级停用级联全子；C-7 仅无任何经济引用可删除；C-8 启用叶子要求父 active，另有整组启用；C-9 不做改父级/历史重分类迁移；C-10 隐藏账户与叶子同生命周期。
+
+**目录版本与提交重校验：** V-1 每账本单调目录版本 + expectedCatalogVersion 乐观并发，失配 `CatalogVersionConflict` 零写入；V-2 提交须在写入事务内按当前权威目录重校验引用对象的 active/存在/kind/叶子身份，失败整笔类型化拒绝零正式写入。
+
+**持久化与承接：** 新增非 rgXX_ 前缀产品表 `catalog_version/account/category/name_history/command_request/command_receipt`；自 schema v27 **加性迁移、纯建结构零回填**（版本号实施基线分配，预计 v28）；运行时幂等 bootstrap 承接旧 demo 目录；未知引用 fail-closed；**不改 `LedgerCatalog.create`**（严格校验仅在产品目录装载路径；停用/历史叶子允许 `posting_account_id == null`，与冻结 golden 一致）。对引用非默认 demo ID 的账本，bootstrap 后未知引用 fail-closed 是本批**期望终点**（保留库文件、仅 Retry/Exit，无本批恢复路径），目录映射补救留待后续批次另行裁决。
+
+**桌面缺陷修复：** `openDesktopLedger` 必须对已存在库做版本检测与条件迁移（低版本迁移、同版本直开、高版本 fail-closed），绝不删除或覆盖库文件；失败映射为 `P503StartupState.StartupError`。
+
+**契约披露：** Account.name/active 为 Kotlin 领域层产品侧扩展（golden fixture 形状不变，默认值不改变回放语义，既有约 198 处构造/解码零改动）；名称长度 ≤64 码点、一级名称唯一为新增产品约束；`catalog_account` 为 golden 账户形状子集（不含 reconciliation_eligible）。
+
+**范围冻结：** 不做账户删除、分类改父级、历史重分类迁移、多币种、余额初始值/余额调整能力；不改 rgXX_ 竖井、golden、P4/P5 正式提交语义。
+
+**验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块 + `:ledger-data:verifyCommonMainLedgerDatabaseMigration` + `ktlintCheck` + `project_docs`；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
+
+**关联决定：** D-022、D-023、D-024、D-025、D-026、D-027、D-046、D-063、D-066、D-077、D-087、D-098、D-113、D-119、D-120、D-126、D-142。
+
+**实施登记（2026-09-12，主代理补登；代码与文档侧已闭环，Android 人工门待 ALas 停止后补）：**
+
+1. **实施提交链（分支 `UL-p7-01`，基线 `a710c6c`）：** 规格冻结/登记 `63aa491` → 实施候选 `d5e6451`（目录表 + v27→v28 加性迁移 + 管理用例/投影/准入 + 两端组合根接线 + 管理 UI）→ 评审回修 `72e587a`（删除/装载引用探针统一、bootstrap 探针补手工入口分类引用、桌面 `user_version==0` 四分支、概览显示当前名、§6.3 可达性收窄、V-2 类型化 token、4 项验收补测）→ R1–R3 `3ab8825`（管理后重跑读模型、桌面 v27 结构哨兵、移除死接线）→ F1 `0857c90`（管理结果派发加 `OverviewEmpty` 守卫，消除读刷新失败后的 reducer 崩溃）。`git diff --stat a710c6c 0857c90` = 59 文件 / +7475 −289。
+2. **规格冻结哈希（更新）：** `e48bdd6408b12644ef4e915d66d840837392584e2f3e6177caefe9632ff5b6e1`（LF 域）。原冻结值 `6d31f3e822564ea98f48969c5459f501d1ce138a46fc968770cc0fdba8d54e65` 因评审回修把 §6.3 命令映射表按**可达性**收窄并加「映射可达性说明」段而变更；A-1..A-7/C-1..C-10/V-1/V-2 语义未变。
+3. **独立评审（高风险拓扑，两评审均 CLOSURE APPROVE）：** 规格一致性评审（首轮 REQUEST-CHANGES：P0-1 `LedgerCatalog.create` 强化与冻结 golden 冲突、P1 若干；回修后 delta CLOSURE APPROVE）与质量/风险评审（首轮 REQUEST-CHANGES：P1-1 删除引用探针不完整为唯一硬阻断；回修后 CLOSURE APPROVE）；R1–R3 与 F1 各自聚焦 closure 亦 APPROVE；F1 阶段两评审**独立发现同一新缺陷**并已修复闭环。
+4. **distinct verifier（13 claims 全 VERIFIED）：** 工作树=冻结提交；规格哈希一致；`:ledger-data:verifyCommonMainLedgerDatabaseMigration` PASS；六模块 1144（domain 152 / application 390 / data 498 / app-ui 92 / desktop 19 / android 7）用例 0 失败 0 错误；`ktlintCheck` 零违例；`27.sqm:8-91` 与 `Ledger.sq:158-241` 字节一致、零数据 DML；生产源码零 `syntheticCatalog`；V-2 在 `SqlDelightConfirmedManualExpenseCommitPort.kt:32` 事务内（factory 于 `:55` 调用）；桌面无删库语句；`LedgerCatalog.create` 未改；无旧版本断言残留。唯一 PARTIAL（C11）= 引用探针未含 `rg02_category_name_history`，经确认属**有意排除**（RG-02 冻结竖井，非产品共享面）。
+5. **主代理收口验证：** 最终候选 `0857c90` 上 `:ledger-data:verifyCommonMainLedgerDatabaseMigration` BUILD SUCCESSFUL、`project_docs` exit 0、Harness `verify-project -Scope trace` `valid: true`；工作树干净、无暂存差异。
+6. **真实缺陷修复（实施中发现）：** (a) SQLDelight `Schema.create`/`Schema.migrate` 不写 `PRAGMA user_version`，原桌面 `migrateToCurrentSchema` 每次打开重复建表 → 修复为在同事务内回写 `user_version`；(b) 分类删除引用探针过窄可删除仍被正式过账引用的分类并连带删隐藏账户（评审 P1-1）→ 修复为与 bootstrap 共用同一引用面 + posting 账户兜底；(c) 管理成功后读模型未刷新导致 HOME 显示旧名（评审 P2-5）→ 修复为成功命令后重跑读模型；(d) R1 引入的读失败后 reducer 崩溃 → 以 `OverviewEmpty` 守卫闭环。
+7. **已知披露（保持现状，另批处置）：** D143-IMP-01 装载校验 `validateProductCatalog` 不检查隐藏账户 `active`（命令不可改该标志，无实际暴露）；D143-IMP-02 隐藏过账账户 `active` 未与叶子停用同步（准入/装载均不读该标志）；D143-IMP-03 `docs/ACCOUNTING_RULES.md` 新增段的「目录版本」措辞与手工支出实际「只重读当前目录、不携带 expectedCatalogVersion」存在表述差异。
+8. **待闭合（阻塞于外部条件）：** **Android 人工门（规格 §7.7）尚未执行** —— 2026-09-12 检查时隔离 server `ANDROID_ADB_SERVER_PORT=5038` 上仅有 `emulator-5554`（`product:daoxiang`，MuMu 伪装机，非本会话自启且 `emu avd name` 不可核实）且 ALas 自动化运行中，按 AGENTS/harness 协议**不得**在 ALas 运行期间启 agent 模拟器、不得触碰用户 MuMu。待 ALas 停止后以本会话自启 AVD（`-port 5680`）执行 §7.7 新增/编辑/停用/删除/返回/重开向量。**本批未 push；CI 聚合门与 Android 人工门同属未闭合项。**
+
+**范围冻结（实施侧）：** 零账户删除、零改父级、零历史重分类迁移、零多币种、零余额调整能力；不改 `rgXX_` 竖井、golden、P4/P5 正式提交语义；`.external/` 零触碰；无个人数据/绝对路径入库。

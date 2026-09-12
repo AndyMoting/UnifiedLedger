@@ -161,7 +161,7 @@ class SqlDelightRg05StoreTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
-            assertEquals(27, LedgerDatabase.Schema.version)
+            assertEquals(28, LedgerDatabase.Schema.version)
             val catalog = catalog()
             val store =
                 SqlDelightRg05Store(

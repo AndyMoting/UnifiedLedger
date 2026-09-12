@@ -14,34 +14,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
+import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
+import com.unifiedledger.application.CatalogBootstrapFailedException
+import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
+import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
+import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
-import com.unifiedledger.application.QueryLedgerCurrentState
-import com.unifiedledger.application.QueryManualExpenseOptions
+import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
-import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.UuidV7CatalogEntityIdSource
+import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
+import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
-import com.unifiedledger.domain.Account
+import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.domain.AccountId
-import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
-import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
-import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
@@ -71,7 +76,7 @@ fun app() {
                     // additionally closes any graph it already holds in its catch block.
                     val handle = createAndroidLedgerDatabase(context, "ledger.db")
                     try {
-                        CloseableLedgerGraph(buildLedgerFacade(handle)) { handle.close() }
+                        buildLedgerGraph(handle)
                     } catch (failure: Exception) {
                         handle.close()
                         throw failure
@@ -162,38 +167,51 @@ internal class AndroidStartupController(
  * P5-04.4 S3: a freshly-built ledger graph wrapped with its close action so the composition
  * root can release the underlying driver connection on retry or mid-failure without leaking
  * it. `close` is idempotent for the underlying drivers (SQLDelight / JDBC).
+ *
+ * P7-01.C (D-143): [catalogSession] and [catalogCommands] are the host-layer entry P7-01.D
+ * consumes: run a management command through [catalogCommands], then
+ * [CatalogConsumerSession.refresh] to reload the authoritative catalog and rebuild the
+ * option/read/summary models without a restart.
  */
 internal data class CloseableLedgerGraph(
     val facade: P503LedgerFacade,
     val close: () -> Unit,
+    val catalogSession: CatalogConsumerSession? = null,
+    val catalogCommands: ExecuteCatalogCommand? = null,
 )
 
 private const val LOG_TAG = "UnifiedLedger"
 
-private fun buildLedgerFacade(handle: AndroidLedgerDatabaseHandle): P503LedgerFacade {
+private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedgerGraph {
     val database = handle.database
+    val store = handle.catalogStore
 
     val ledgerId = LedgerId("ledger-local-test")
-    val currency = CurrencyUnit("CNY", 2)
-    val paymentAccountId = AccountId("asset-payment-local")
-    val expenseAccountId = AccountId("expense-account-local")
-    val parentCategoryId = CategoryId("expense-category-food")
-    val categoryId = CategoryId("expense-category-breakfast")
+    val currency = CATALOG_MANAGED_CURRENCY
+    val paymentAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)
+    val categoryId = CategoryId(DEFAULT_EXPENSE_LEAF_ID)
 
-    val catalog =
-        syntheticCatalog(
+    val authority =
+        when (val bootstrapped = store.bootstrap(ledgerId, defaultCatalogSeed())) {
+            is CatalogBootstrapResult.Seeded -> bootstrapped.authority
+            is CatalogBootstrapResult.AlreadyInitialized -> bootstrapped.authority
+            CatalogBootstrapResult.UnknownReference -> throw CatalogBootstrapFailedException(ledgerId)
+        }
+    val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+    val session =
+        CatalogConsumerSession(
+            reader = store,
             ledgerId = ledgerId,
-            currency = currency,
-            paymentAccountId = paymentAccountId,
-            expenseAccountId = expenseAccountId,
-            parentCategoryId = parentCategoryId,
-            categoryId = categoryId,
+            initialAuthority = authority,
+            readPort = readAdapter,
         )
 
-    val port = handle.commitPort
-    val tracker = CommitOnceInvocationTracker(port)
-    val factory =
+    val tracker = CommitOnceInvocationTracker(handle.commitPort)
+    val delegate =
         ConfirmedExpenseTransactionFactory { request, ids ->
+            val catalog =
+                store.loadCurrent(request.ledgerId)
+                    ?: return@ConfirmedExpenseTransactionFactory DomainResult.Failure(DomainViolation.InvalidCatalog)
             when (
                 val result =
                     createAssetPaidOrdinaryExpense(
@@ -219,84 +237,46 @@ private fun buildLedgerFacade(handle: AndroidLedgerDatabaseHandle): P503LedgerFa
                 is DomainResult.Failure -> result
             }
         }
+    // V-2 (spec 3.3/6.2): the production commit factory revalidates account/category admission
+    // against the persisted catalog before any formal write.
+    val factory = CatalogAdmissionExpenseTransactionFactory(admissionReader = store, delegate = delegate)
     val idSource = UuidV7ConfirmedManualExpenseIdSource(UuidV7Generator(::secureRandomBytes))
     val requestIdSource = UuidV7ManualExpenseRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val ledgerClock = LedgerClock { Clock.System.now() }
     val executeConfirmed = ExecuteConfirmedManualExpense(tracker, idSource, factory)
     val executeSave = ExecuteManualExpenseSave(executeConfirmed)
-    val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-    val queryCurrentState = QueryLedgerCurrentState(readAdapter, ledgerId, catalog)
     val resolver = ResolveManualExpenseCommitStatus(readAdapter)
     val submission = ExecuteManualExpenseSubmission(executeSave, tracker, resolver)
-
-    return P503LedgerFacade(
-        ledgerId = ledgerId,
-        currency = currency,
-        catalog = catalog,
-        parseAmount = ParseManualExpenseAmount(),
-        parseOccurredAt = ParseManualExpenseOccurredAt(),
-        optionsProvider = QueryManualExpenseOptions(ledgerId, catalog),
-        queryCurrentState = queryCurrentState,
-        resolveCommitStatus = resolver,
-        submitExpense = submission,
-        requestIdSource = requestIdSource,
-        ledgerClock = ledgerClock,
-        summarizeActivity = SummarizeLedgerActivity(catalog),
-    )
+    val catalogCommands =
+        ExecuteCatalogCommand(
+            commitPort = store,
+            requestIdSource = UuidV7CatalogManagementRequestIdSource(UuidV7Generator(::secureRandomBytes)),
+            entityIdSource = UuidV7CatalogEntityIdSource(UuidV7Generator(::secureRandomBytes)),
+            categoryReferenceProbe = store,
+        )
+    val snapshotQuery = QueryCatalogSnapshot(store)
+    val facade =
+        P503LedgerFacade(
+            ledgerId = ledgerId,
+            currency = currency,
+            catalog = authority.catalog,
+            parseAmount = ParseManualExpenseAmount(),
+            parseOccurredAt = ParseManualExpenseOccurredAt(),
+            baseOptionsProvider = session.optionsProvider,
+            baseQueryCurrentState = session.queryCurrentState,
+            resolveCommitStatus = resolver,
+            submitExpense = submission,
+            requestIdSource = requestIdSource,
+            ledgerClock = ledgerClock,
+            baseSummarizeActivity = session.summarizeActivity,
+            // P7-01.D: management reads the same session and refreshes it after every command.
+            catalogSnapshot = { snapshotQuery.query(ledgerId) },
+            executeCatalogCommand = catalogCommands,
+            refreshCatalog = { session.refresh() },
+            catalogSession = session,
+        )
+    return CloseableLedgerGraph(facade, handle::close, session, catalogCommands)
 }
-
-private fun syntheticCatalog(
-    ledgerId: LedgerId,
-    currency: CurrencyUnit,
-    paymentAccountId: AccountId,
-    expenseAccountId: AccountId,
-    parentCategoryId: CategoryId,
-    categoryId: CategoryId,
-): LedgerCatalog =
-    when (
-        val result =
-            LedgerCatalog.create(
-                accounts =
-                    listOf(
-                        Account(
-                            id = paymentAccountId,
-                            ledgerId = ledgerId,
-                            kind = AccountKind.ASSET,
-                            currency = currency,
-                            ownedByUser = true,
-                            realAccount = true,
-                        ),
-                        Account(
-                            id = expenseAccountId,
-                            ledgerId = ledgerId,
-                            kind = AccountKind.EXPENSE,
-                            currency = currency,
-                            ownedByUser = false,
-                            realAccount = false,
-                        ),
-                    ),
-                categories =
-                    listOf(
-                        Category(
-                            id = parentCategoryId,
-                            ledgerId = ledgerId,
-                            parentId = null,
-                            postingAccountId = null,
-                            active = true,
-                        ),
-                        Category(
-                            id = categoryId,
-                            ledgerId = ledgerId,
-                            parentId = parentCategoryId,
-                            postingAccountId = expenseAccountId,
-                            active = true,
-                        ),
-                    ),
-            )
-    ) {
-        is DomainResult.Success -> result.value
-        is DomainResult.Failure -> error("synthetic local-test catalog must be valid")
-    }
 
 private val secureRandom = SecureRandom()
 

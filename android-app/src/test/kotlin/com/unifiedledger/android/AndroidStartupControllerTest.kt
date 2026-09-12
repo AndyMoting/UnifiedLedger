@@ -53,7 +53,7 @@ class AndroidStartupControllerTest {
                 if (shouldFail) {
                     throw IllegalStateException("injected open failure")
                 }
-                CloseableLedgerGraph(fakeFacade()) { closeCount += 1 }
+                CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
             }
 
         controller.start()
@@ -99,7 +99,7 @@ class AndroidStartupControllerTest {
                     if (shouldFail) {
                         throw failure
                     }
-                    CloseableLedgerGraph(fakeFacade()) { closeCount += 1 }
+                    CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
                 },
                 logFailure = { loggedFailures += it },
             )
@@ -176,7 +176,7 @@ class AndroidStartupControllerTest {
         val controller =
             controller {
                 openCount += 1
-                CloseableLedgerGraph(fakeFacade()) { closeCount += 1 }
+                CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
             }
 
         // First success holds graph #1 as the single active connection.
@@ -207,7 +207,7 @@ class AndroidStartupControllerTest {
                     // transition is dropped by the in-flight guard: it neither rebuilds nor
                     // double-closes a connection.
                     controller.start()
-                    CloseableLedgerGraph(fakeFacade()) { closeCount += 1 }
+                    CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
                 },
                 logFailure = { failure -> logged += failure.toString() },
             )
@@ -266,13 +266,13 @@ class AndroidStartupControllerTest {
             currency = currency,
             catalog = catalog,
             parseAmount = ParseManualExpenseAmount(),
-            optionsProvider = QueryManualExpenseOptions(ledgerId, catalog),
-            queryCurrentState = QueryLedgerCurrentState(readPort, ledgerId, catalog),
+            baseOptionsProvider = QueryManualExpenseOptions(ledgerId, catalog),
+            baseQueryCurrentState = QueryLedgerCurrentState(readPort, ledgerId, catalog),
             resolveCommitStatus = resolver,
             submitExpense = submission,
             requestIdSource = ManualExpenseRequestIdSource { RequestId("request-startup-test") },
             ledgerClock = LedgerClock { Clock.System.now() },
-            summarizeActivity = SummarizeLedgerActivity(catalog),
+            baseSummarizeActivity = SummarizeLedgerActivity(catalog),
         )
     }
 }

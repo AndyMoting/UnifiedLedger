@@ -131,6 +131,62 @@ class QueryLedgerCurrentStateTest {
     }
 
     @Test
+    fun balancesCarryCurrentCatalogNamesAndAReloadedCatalogShowsTheRenamedName() {
+        val assetId = AccountId("account-asset-renamed")
+        val row =
+            CurrentVersionRow(
+                transactionId = TransactionId("tx-name"),
+                currentVersionId = TransactionVersionId("version-name"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = occurredAt,
+                postings = listOf(Posting(PostingId("p-name"), assetId, Money.ofMinor(-1_200L, cny))),
+            )
+        val before =
+            catalogOfAccounts(
+                Account(assetId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true, name = "旧名"),
+            )
+        val queryBefore = QueryLedgerCurrentState(CurrentStateFixedReadPort(listOf(row)), ledgerId, before)
+        val stateBefore = assertIs<LedgerCurrentStateResult.Success>(queryBefore.query()).state
+        assertEquals("旧名", stateBefore.accountNames.getValue(assetId))
+        assertEquals(-1_200L, stateBefore.balances.single().displayMinorUnits)
+
+        // B1: after a rename the same authoritative read model reports the new name; the stable
+        // id and the amount are unchanged.
+        val after =
+            catalogOfAccounts(
+                Account(assetId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true, name = "新名"),
+            )
+        val queryAfter = QueryLedgerCurrentState(CurrentStateFixedReadPort(listOf(row)), ledgerId, after)
+        val stateAfter = assertIs<LedgerCurrentStateResult.Success>(queryAfter.query()).state
+        assertEquals("新名", stateAfter.accountNames.getValue(assetId))
+        assertEquals(stateBefore.balances, stateAfter.balances)
+        assertEquals(stateBefore.transactions, stateAfter.transactions)
+    }
+
+    @Test
+    fun accountsWithoutACatalogNameAreAbsentFromTheNameProjection() {
+        val assetId = AccountId("account-asset")
+        val row =
+            CurrentVersionRow(
+                transactionId = TransactionId("tx-anon"),
+                currentVersionId = TransactionVersionId("version-anon"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = occurredAt,
+                postings = listOf(Posting(PostingId("p-anon"), assetId, Money.ofMinor(1L, cny))),
+            )
+        val query =
+            QueryLedgerCurrentState(
+                CurrentStateFixedReadPort(listOf(row)),
+                ledgerId,
+                catalogOfAccounts(Account(assetId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true)),
+            )
+
+        val state = assertIs<LedgerCurrentStateResult.Success>(query.query()).state
+        // A nameless catalog row (frozen golden) stays out of the map so the UI keeps the id.
+        assertEquals(emptyMap(), state.accountNames)
+    }
+
+    @Test
     fun readPortExceptionSurfacesAsUnavailable() {
         val query = QueryLedgerCurrentState(CurrentStateThrowingReadPort(), ledgerId, fiveKindCatalog())
 

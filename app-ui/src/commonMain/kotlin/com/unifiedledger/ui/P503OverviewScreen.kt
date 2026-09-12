@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.domain.AccountId
 
 /**
  * Home tab content (D-122): the authoritative current state rendered as-is. An empty
@@ -37,7 +38,7 @@ fun P503OverviewScreen(
         } else {
             Text("当前交易", style = MaterialTheme.typography.titleMedium)
             state.transactions.forEach { row ->
-                CurrentTransactionRow(row)
+                CurrentTransactionRow(row, state.accountNames)
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
@@ -45,7 +46,7 @@ fun P503OverviewScreen(
             Text("账户余额", style = MaterialTheme.typography.titleMedium)
             state.balances.forEach { balance ->
                 Text(
-                    "${balance.accountId.value}（${balance.currency.code}）：" +
+                    "${state.accountNames[balance.accountId] ?: balance.accountId.value}（${balance.currency.code}）：" +
                         formatMinorUnits(balance.displayMinorUnits, balance.currency.precision),
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -55,7 +56,10 @@ fun P503OverviewScreen(
 }
 
 @Composable
-private fun CurrentTransactionRow(row: CurrentVersionRow) {
+private fun CurrentTransactionRow(
+    row: CurrentVersionRow,
+    accountNames: Map<AccountId, String>,
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     ) {
@@ -65,7 +69,7 @@ private fun CurrentTransactionRow(row: CurrentVersionRow) {
         )
         row.postings.forEach { posting ->
             Text(
-                "${posting.accountId.value} " +
+                "${accountNames[posting.accountId] ?: posting.accountId.value} " +
                     formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
                     " ${posting.amount.currency.code}",
                 style = MaterialTheme.typography.bodySmall,
