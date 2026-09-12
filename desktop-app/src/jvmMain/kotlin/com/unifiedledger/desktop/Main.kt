@@ -77,6 +77,7 @@ import com.unifiedledger.data.SqlDelightConfirmedManualIncomeCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
+import com.unifiedledger.data.SqlDelightEntryPreferenceStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
@@ -297,6 +298,7 @@ internal fun buildLedgerGraph(
     val authority = bootstrapAuthority(store, ledgerId)
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
     val counterpartyStore = SqlDelightCounterpartyStore(database, driver)
+    val entryPreferenceStore = SqlDelightEntryPreferenceStore(database)
     val session =
         CatalogConsumerSession(
             reader = store,
@@ -478,6 +480,8 @@ internal fun buildLedgerGraph(
             baseLendingOptionsProvider = session.lendingOptionsProvider,
             lendingPositions = counterpartyStore,
             counterpartyCommands = counterpartyCommands,
+            // P7-02.D: the manual pin preference surface.
+            entryPreferences = entryPreferenceStore,
             // P7-01.D: the management surface reads the same authoritative session and refreshes
             // it after every command, so options/reads/summaries stay on one catalog version.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },

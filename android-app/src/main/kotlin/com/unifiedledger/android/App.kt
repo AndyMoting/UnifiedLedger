@@ -237,6 +237,7 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
         }
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
     val counterpartyStore = handle.counterpartyStore
+    val entryPreferenceStore = handle.entryPreferenceStore
     val session =
         CatalogConsumerSession(
             reader = store,
@@ -412,6 +413,8 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             baseLendingOptionsProvider = session.lendingOptionsProvider,
             lendingPositions = counterpartyStore,
             counterpartyCommands = counterpartyCommands,
+            // P7-02.D: the manual pin preference surface.
+            entryPreferences = entryPreferenceStore,
             // P7-01.D: management reads the same session and refreshes it after every command.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,

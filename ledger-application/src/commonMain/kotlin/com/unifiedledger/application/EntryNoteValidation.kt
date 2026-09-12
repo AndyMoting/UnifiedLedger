@@ -32,6 +32,7 @@ enum class EntryFoundationFailureCode(
 ) {
     NOTE_TOO_LONG("NoteTooLong"),
     ENTRY_TYPE_NOT_SUPPORTED("EntryTypeNotSupported"),
+    ENTRY_PIN_TARGET_NOT_FOUND("EntryPinTargetNotFound"),
     ;
 
     companion object {
@@ -40,6 +41,7 @@ enum class EntryFoundationFailureCode(
             when (violation) {
                 EntryFoundationViolation.NoteTooLong -> NOTE_TOO_LONG
                 EntryFoundationViolation.EntryTypeNotSupported -> ENTRY_TYPE_NOT_SUPPORTED
+                EntryFoundationViolation.EntryPinTargetNotFound -> ENTRY_PIN_TARGET_NOT_FOUND
                 else -> null
             }
     }

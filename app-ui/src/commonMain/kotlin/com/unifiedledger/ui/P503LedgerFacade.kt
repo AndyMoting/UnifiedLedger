@@ -3,6 +3,7 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CounterpartyCommands
+import com.unifiedledger.application.EntryPreferenceStore
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
@@ -88,6 +89,8 @@ class P503LedgerFacade(
     baseLendingOptionsProvider: ManualLendingOptionsProvider? = null,
     val lendingPositions: LendingPositionReadPort? = null,
     val counterpartyCommands: CounterpartyCommands? = null,
+    // P7-02.D E-4 manual pin surface; null keeps legacy constructions valid (no pin UI).
+    val entryPreferences: EntryPreferenceStore? = null,
     // P7-01.D catalog management surface; null/empty defaults keep legacy constructions valid.
     val catalogSnapshot: () -> CatalogSnapshotView? = { null },
     val executeCatalogCommand: ExecuteCatalogCommand? = null,

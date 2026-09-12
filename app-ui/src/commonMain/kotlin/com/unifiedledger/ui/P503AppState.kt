@@ -1,6 +1,8 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.EntryExpressionCode
+import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
@@ -45,6 +47,13 @@ sealed interface P503AppState {
          * ordinary refreshes; never persisted.
          */
         val retainedIntent: RetainedEntryIntent? = null,
+        /**
+         * P7-02.D E-4: the reducer's render copy of the persisted pin set. `TogglePin` flips it
+         * on the overview only (ordering preference, zero accounting effect); the host seeds it
+         * from the [com.unifiedledger.application.EntryPreferenceStore] on load/refresh and
+         * persists each toggle.
+         */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data class Editing(
@@ -53,6 +62,13 @@ sealed interface P503AppState {
         // P5-04.2: overview snapshot + source tab captured when the editor flow started.
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        /**
+         * P7-02.D E-3 (P2-6): the current entry-expression evaluation result. The calculator
+         * shows the exact result (or the typed rejection) first; only an explicit
+         * `ApplyExpressionResult` with a valid preview rewrites the amount text — the reducer
+         * never silently edits the amount.
+         */
+        val expressionPreview: ExpressionPreview? = null,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -147,8 +163,8 @@ enum class UnknownCommitCheckOutcome {
 /**
  * P7-02.A E-2: retained intent for "record again". The host holds this in memory across
  * Submitting/UnknownCommit/Recovered; it is injected into [P503AppState.OverviewEmpty] through
- * [P503UiEvent.RefreshResult.retainedIntent] after a determinate success and its authoritative
- * refresh, and is never persisted across Exit or sessions.
+ * [P503UiEvent.RefreshResult.retainedIntent] after a determinate success and is never persisted
+ * across Exit or sessions.
  */
 data class RetainedEntryIntent(
     val type: EntryType,
@@ -159,6 +175,22 @@ data class RetainedEntryIntent(
     val occurredAt: Instant?,
     val originTab: P503Tab,
 )
+
+/**
+ * P7-02.D E-3: the exact expression evaluation result shown by the calculator. A valid preview
+ * carries the exact minor units and the display text at the currency precision; an invalid one
+ * carries the typed rejection code of the section 5.3 table.
+ */
+sealed interface ExpressionPreview {
+    data class Valid(
+        val minorUnits: Long,
+        val displayText: String,
+    ) : ExpressionPreview
+
+    data class Invalid(
+        val code: EntryExpressionCode,
+    ) : ExpressionPreview
+}
 
 /**
  * The expense draft's former name, kept as a source-compatible alias so pre-P7-02 constructor

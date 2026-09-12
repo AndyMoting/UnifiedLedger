@@ -26,7 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CollectDraft
+import com.unifiedledger.application.EntryPinOrdering
+import com.unifiedledger.application.EntryPinResult
+import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.IncomeDraft
@@ -41,10 +45,12 @@ import com.unifiedledger.application.ManualEntrySaveInput
 import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseInputFailure
 import com.unifiedledger.application.ManualExpenseInputField
+import com.unifiedledger.application.ManualExpenseOptions
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualExpenseSaveInput
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.ManualIncomeSaveInput
 import com.unifiedledger.application.ManualIncomeSaveResult
@@ -54,8 +60,10 @@ import com.unifiedledger.application.ManualLendSaveInput
 import com.unifiedledger.application.ManualLendSaveResult
 import com.unifiedledger.application.ManualLendSubmissionResult
 import com.unifiedledger.application.ManualLendingBehavior
+import com.unifiedledger.application.ManualLendingOptions
 import com.unifiedledger.application.ManualLendingRequestSnapshot
 import com.unifiedledger.application.ManualTransferInputField
+import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferSaveInput
 import com.unifiedledger.application.ManualTransferSaveResult
@@ -113,10 +121,44 @@ fun P503App(
     // reload after a catalog refresh (spec 7.4), because the facade exposes the refreshed
     // session models; options/reads/summaries then all follow one authoritative catalog version.
     val catalogVersion = facade.catalogSnapshot()?.catalogVersion
-    val options = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
-    val incomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
-    val transferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
-    val lendingOptions = remember(facade, catalogVersion) { facade.lendingOptionsProvider.queryOptions() }
+    // P7-02.D E-4: the host's mirror of the persisted pin set. Seeded from the store at startup,
+    // updated after every successful toggle, and injected into the overview through the load and
+    // refresh events; the lists below derive their pinned-first order from it.
+    var pinnedTargets by remember { mutableStateOf(emptySet<EntryPinTarget>()) }
+    val baseExpenseOptions = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
+    val baseIncomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
+    val baseTransferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
+    val baseLendingOptions = remember(facade, catalogVersion) { facade.lendingOptionsProvider.queryOptions() }
+    // E-4: pinned entries first, remaining entries keep the deterministic option order.
+    val options =
+        remember(baseExpenseOptions, pinnedTargets) {
+            ManualExpenseOptions(
+                EntryPinOrdering.sortPaymentAccounts(baseExpenseOptions.paymentAccounts, pinnedTargets),
+                EntryPinOrdering.sortExpenseCategories(baseExpenseOptions.expenseCategories, pinnedTargets),
+            )
+        }
+    val incomeOptions =
+        remember(baseIncomeOptions, pinnedTargets) {
+            ManualIncomeOptions(
+                EntryPinOrdering.sortPaymentAccounts(baseIncomeOptions.receivingAccounts, pinnedTargets),
+                EntryPinOrdering.sortIncomeCategories(baseIncomeOptions.incomeCategories, pinnedTargets),
+            )
+        }
+    val transferOptions =
+        remember(baseTransferOptions, pinnedTargets) {
+            ManualTransferOptions(
+                EntryPinOrdering.sortPaymentAccounts(baseTransferOptions.ownedAssetAccounts, pinnedTargets),
+                EntryPinOrdering.sortExpenseCategories(baseTransferOptions.feeCategories, pinnedTargets),
+            )
+        }
+    val lendingOptions =
+        remember(baseLendingOptions, pinnedTargets) {
+            ManualLendingOptions(
+                EntryPinOrdering.sortPaymentAccounts(baseLendingOptions.ownedAssetAccounts, pinnedTargets),
+                EntryPinOrdering.sortIncomeCategories(baseLendingOptions.interestCategories, pinnedTargets),
+                baseLendingOptions.counterparties,
+            )
+        }
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
@@ -130,8 +172,10 @@ fun P503App(
     var retainedIntent by remember { mutableStateOf<RetainedEntryIntent?>(null) }
 
     fun dispatch(event: P503UiEvent) {
-        // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。
-        if (event is P503UiEvent.StartNewExpense) hoistedOccurredAtText = null
+        // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
+        // 再记一笔开启的新编辑流与 StartNewExpense 同列，同样必须重置，否则旧键入文本会覆盖
+        // 新的时钟 instant。
+        if (event is P503UiEvent.StartNewExpense || event is P503UiEvent.SaveAndRecordAgain) hoistedOccurredAtText = null
         // P7-02.A E-2 lifecycle: the retained intent is cleared once a new intent starts
         // (StartNewExpense / record again / cancel or abandon back into Editing), so a stale
         // intent can never be injected into an unrelated later refresh.
@@ -182,7 +226,9 @@ fun P503App(
                 // P7-02.A E-2: the intent is consumed only by a successful authoritative refresh;
                 // a failed read keeps it so the READ retry can still forward it (P3-3).
                 retainedIntent = null
-                dispatch(P503UiEvent.RefreshResult(result.state, intent))
+                // P7-02.D E-4: every refresh that builds a fresh overview carries the pin mirror
+                // so the persisted pins survive success-result and READ-retry constructions.
+                dispatch(P503UiEvent.RefreshResult(result.state, intent, pinnedTargets))
             }
             else -> dispatch(P503UiEvent.RefreshFailed)
         }
@@ -553,7 +599,11 @@ fun P503App(
     // Initial authoritative load (the facade already implies startup completed).
     LaunchedEffect(Unit) {
         when (val result = facade.queryCurrentState.query()) {
-            is LedgerCurrentStateResult.Success -> dispatch(P503UiEvent.InitialLoadResult(result.state))
+            is LedgerCurrentStateResult.Success -> {
+                // P7-02.D E-4: seed the persisted pins so they survive an app restart.
+                facade.entryPreferences?.let { store -> pinnedTargets = store.pinnedTargets(facade.ledgerId) }
+                dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
+            }
             else -> dispatch(P503UiEvent.InitialLoadFailed)
         }
     }
@@ -578,6 +628,17 @@ fun P503App(
         coordinator.decide(state)
     }
 
+    // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
+    // its account and category lists (ordering only; the rows themselves are untouched).
+    fun pinnedCatalogSnapshot(): CatalogSnapshotView? {
+        val snapshot = facade.catalogSnapshot() ?: return null
+        return CatalogSnapshotView(
+            snapshot.catalogVersion,
+            EntryPinOrdering.sortAccounts(snapshot.manageableAccounts, pinnedTargets),
+            EntryPinOrdering.sortCategories(snapshot.categories, pinnedTargets),
+        )
+    }
+
     // P7-01.D: run one catalog command, then refresh the shared session and read the fresh
     // authoritative snapshot. `refreshCatalog()` reloads the catalog so options/reads/summaries
     // continue from the same version without a restart; a typed conflict is surfaced as a
@@ -591,7 +652,7 @@ fun P503App(
             refresh()
         }
         val fresh =
-            facade.catalogSnapshot()
+            pinnedCatalogSnapshot()
                 ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
                 ?: return
         // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
@@ -614,6 +675,22 @@ fun P503App(
                     else -> return@launch
                 }
             dispatchCatalogCommandResult(result)
+        }
+    }
+
+    // P7-02.D E-4: persist the pin toggle first (typed zero-write rejection for a missing or
+    // cross-ledger target), then let the reducer flip its render copy; a rejection leaves the
+    // pure state untouched.
+    fun runPinToggle(target: EntryPinTarget) {
+        val store = facade.entryPreferences ?: return
+        scope.launch {
+            when (val result = store.togglePin(target, facade.ledgerClock.now())) {
+                is EntryPinResult.Toggled -> {
+                    pinnedTargets = if (result.pinned) pinnedTargets + target else pinnedTargets - target
+                    dispatch(P503UiEvent.TogglePin(target))
+                }
+                is EntryPinResult.Rejected -> Unit
+            }
         }
     }
 
@@ -647,14 +724,34 @@ fun P503App(
     fun refreshCatalogSnapshot() {
         facade.refreshCatalog()
         refresh()
-        val fresh = facade.catalogSnapshot() ?: return
+        val fresh = pinnedCatalogSnapshot() ?: return
         // F1 (N-5): same overview-only guard as the command success path.
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
     }
 
-    // P7-02.A E-2: the "record again" action availability and its host reset (hoisted
-    // occurred-at text) are deferred to the efficiency batch; the reducer effect, the
-    // retainedIntent payload and the injection channel are frozen and implemented here.
+    // P7-02.D E-2: the "record again" affordance and its host reset (hoisted occurred-at text)
+    // live in the dispatch guard and the tab shell below; the reducer effect, the retainedIntent
+    // payload and the injection channel were frozen and implemented in P7-02.A.
+    fun retainedIntentRevalidation(): RetainedIntentRevalidation =
+        RetainedIntentRevalidation(
+            accountIds =
+                buildSet {
+                    options.paymentAccounts.forEach { add(it.accountId) }
+                    incomeOptions.receivingAccounts.forEach { add(it.accountId) }
+                    transferOptions.ownedAssetAccounts.forEach { add(it.accountId) }
+                    lendingOptions.ownedAssetAccounts.forEach { add(it.accountId) }
+                },
+            expenseCategoryIds =
+                buildSet {
+                    options.expenseCategories.forEach { add(it.categoryId) }
+                    transferOptions.feeCategories.forEach { add(it.categoryId) }
+                },
+            incomeCategoryIds =
+                buildSet {
+                    incomeOptions.incomeCategories.forEach { add(it.categoryId) }
+                    lendingOptions.interestCategories.forEach { add(it.categoryId) }
+                },
+        )
 
     // P7-02.A: the account/category labels depend on the draft type; both are resolved from
     // the authoritative options and fall back to the draft id values in the reducer.
@@ -684,12 +781,21 @@ fun P503App(
                     selectedTab = current.selectedTab,
                     onSelectTab = { tab ->
                         if (tab == P503Tab.ACCOUNTS) {
-                            dispatch(P503UiEvent.SelectTab(tab, facade.catalogSnapshot()))
+                            dispatch(P503UiEvent.SelectTab(tab, pinnedCatalogSnapshot()))
                         } else {
                             dispatch(P503UiEvent.SelectTab(tab))
                         }
                     },
                     onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
+                    // P7-02.D E-2: the "record again" affordance is available on the success home
+                    // page; the revalidation view is snapshotted from the current authoritative
+                    // options at click time.
+                    onSaveAndRecordAgain =
+                        if (current.selectedTab == P503Tab.HOME && current.retainedIntent != null) {
+                            { dispatch(P503UiEvent.SaveAndRecordAgain(retainedIntentRevalidation())) }
+                        } else {
+                            null
+                        },
                 ) {
                     when (current.selectedTab) {
                         P503Tab.HOME -> P503OverviewScreen(current.state)
@@ -702,6 +808,8 @@ fun P503App(
                                         is P503UiEvent.ManageCategoryActive,
                                         is P503UiEvent.EnableCategoryGroup,
                                         -> runCatalogToggle(event)
+                                        // P7-02.D E-4: persist the toggle first, then dispatch.
+                                        is P503UiEvent.TogglePin -> runPinToggle(event.target)
                                         else -> dispatch(event)
                                     }
                                 },
@@ -744,6 +852,10 @@ fun P503App(
                     onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
                     onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
                     onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
+                    // P7-02.D E-3: the calculator lives on the editable screen only.
+                    expressionPreview = current.expressionPreview,
+                    onEvaluateExpression = { dispatch(P503UiEvent.EvaluateEntryExpression(it)) },
+                    onApplyExpression = { dispatch(P503UiEvent.ApplyExpressionResult) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                     onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = {

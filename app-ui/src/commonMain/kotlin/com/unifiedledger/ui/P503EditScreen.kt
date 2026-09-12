@@ -48,6 +48,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.unifiedledger.application.CollectDraft
+import com.unifiedledger.application.EntryExpressionCode
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
@@ -123,6 +124,12 @@ fun P503EditScreen(
     onUpdateCollectPrincipal: (String) -> Unit = {},
     onUpdateCollectInterest: (String) -> Unit = {},
     onUpdateCollectInterestCategory: (CategoryId) -> Unit = onUpdateCategory,
+    // P7-02.D E-3 calculator: the host passes the current preview and both callbacks only on
+    // the Editing screen; the conflict/rejection presentations leave the defaults and the
+    // section is not rendered there.
+    expressionPreview: ExpressionPreview? = null,
+    onEvaluateExpression: ((String) -> Unit)? = null,
+    onApplyExpression: (() -> Unit)? = null,
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -131,6 +138,9 @@ fun P503EditScreen(
     var datePickerOpen by remember { mutableStateOf(false) }
     var timePickerOpen by remember { mutableStateOf(false) }
     var pickedLocalDate by remember { mutableStateOf<LocalDate?>(null) }
+    // P7-02.D E-3: the raw calculator input is screen-local typing; only the evaluated result
+    // (the preview) and the applied amount flow through the reducer.
+    var expressionText by remember { mutableStateOf("") }
 
     val latestOnDialogVisibilityChanged by rememberUpdatedState(onDialogVisibilityChanged)
     LaunchedEffect(datePickerOpen, timePickerOpen) {
@@ -463,6 +473,47 @@ fun P503EditScreen(
         )
         Spacer(Modifier.height(8.dp))
 
+        // P7-02.D E-3: the exact amount calculator. Evaluation writes the preview only; the
+        // user confirms the exact result with an explicit apply, which is the sole path that
+        // rewrites the amount text.
+        if (onEvaluateExpression != null && onApplyExpression != null) {
+            OutlinedTextField(
+                value = expressionText,
+                onValueChange = { expressionText = it },
+                label = { Text("金额算式（可选：+ - × ÷ 与括号）") },
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { onEvaluateExpression(expressionText) },
+                    enabled = expressionText.isNotBlank(),
+                ) {
+                    Text("计算")
+                }
+                when (val preview = expressionPreview) {
+                    is ExpressionPreview.Valid -> {
+                        Text("= ${preview.displayText}", style = MaterialTheme.typography.bodyLarge)
+                        TextButton(onClick = onApplyExpression) {
+                            Text("应用到金额", modifier = Modifier.semantics { contentDescription = "应用算式结果到金额" })
+                        }
+                    }
+                    is ExpressionPreview.Invalid -> {
+                        Text(
+                            expressionRejectionText(preview.code),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    null -> {}
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
         OccurredAtField(
             text = occurredAtText,
             isError = occurredAtParseError || errors.missingOccurredAt,
@@ -712,3 +763,16 @@ internal fun P503RejectedBanner() {
         color = MaterialTheme.colorScheme.error,
     )
 }
+
+/**
+ * P7-02.D E-3: user-facing text for the typed expression rejections (section 5.3 codes); the
+ * wording is presentational only and never compared.
+ */
+internal fun expressionRejectionText(code: EntryExpressionCode): String =
+    when (code) {
+        EntryExpressionCode.Invalid -> "算式无法识别：仅支持 + - × ÷ 和括号，且不允许负数"
+        EntryExpressionCode.DivideByZero -> "算式存在除以零"
+        EntryExpressionCode.Overflow -> "算式结果或中间值过大"
+        EntryExpressionCode.NonCurrencyPrecision -> "算式结果无法用该币种精度精确表示（如 1/3 或 1/8）"
+        EntryExpressionCode.NegativeResult -> "算式结果为负"
+    }

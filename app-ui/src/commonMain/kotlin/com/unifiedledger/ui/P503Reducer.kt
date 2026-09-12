@@ -5,6 +5,7 @@ import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedManualIncomeResult
 import com.unifiedledger.application.ConfirmedManualLendingResult
 import com.unifiedledger.application.ConfirmedManualTransferResult
+import com.unifiedledger.application.EntryExpressionEvaluator
 import com.unifiedledger.application.EntryFieldRetention
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
@@ -57,6 +58,9 @@ class P503ReducerImpl(
     // P7-02.A E-2: only the deferred "record again" effect reads the clock; the default exists
     // so pre-P7-02 constructions keep compiling (the effect then leaves occurredAt null).
     private val ledgerClock: LedgerClock? = null,
+    // P7-02.D E-3: the pure expression evaluator behind EvaluateEntryExpression; stateless, so
+    // a default instance keeps pre-D constructions compiling without weakening the product path.
+    private val expressionEvaluator: EntryExpressionEvaluator = EntryExpressionEvaluator(),
 ) : P503Reducer {
     private val validation = P503DraftValidation(parseAmount)
 
@@ -81,8 +85,9 @@ class P503ReducerImpl(
 
     private fun reduceReady(event: P503UiEvent): P503AppState =
         when (event) {
-            // The authoritative load always lands on the home tab (D-122).
-            is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME)
+            // The authoritative load always lands on the home tab (D-122). P7-02.D E-4: the
+            // host seeds the persisted pin set read from the EntryPreferenceStore at startup.
+            is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME, pinnedTargets = event.pinnedTargets)
             P503UiEvent.InitialLoadFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             // P7-02: the entry-foundation events never throw an ISE in any state (§6.2a); before
             // the overview exists they are absorbed.
@@ -104,7 +109,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -140,34 +148,73 @@ class P503ReducerImpl(
                     overview = state.state,
                     originTab = state.selectedTab,
                 )
-            // P7-02 E-2: only a determinate-success retained intent can start a new editor;
-            // the amount/note/old confirmation are cleared, occurredAt is the current clock
-            // instant, and a new (null) requestId is allocated by the host on Continue.
-            P503UiEvent.SaveAndRecordAgain ->
+            // P7-02.D E-2: only a determinate-success retained intent can start a new editor.
+            // The new editor clears the amount, the note and the old confirmation, takes
+            // occurredAt from the current clock instant, and leaves the requestId null so the
+            // host allocates a fresh one on the next Continue. P7-02.D: the intent is
+            // revalidated against the current authoritative catalog (event.revalidation) —
+            // objects the catalog no longer offers are not carried over, their fields are
+            // cleared. A null payload (legacy call sites) keeps the frozen pre-D carry-over.
+            is P503UiEvent.SaveAndRecordAgain ->
                 state.retainedIntent?.let { intent ->
+                    val accounts = event.revalidation?.accountIds
+                    val expenseCategories = event.revalidation?.expenseCategoryIds
+                    val incomeCategories = event.revalidation?.incomeCategoryIds
+                    val account = intent.paymentAccountId?.takeIf { accounts == null || it in accounts }
+                    val expenseCategory = intent.categoryId?.takeIf { expenseCategories == null || it in expenseCategories }
+                    val incomeCategory = intent.categoryId?.takeIf { incomeCategories == null || it in incomeCategories }
+                    val now = ledgerClock?.now()
                     P503AppState.Editing(
                         draft =
                             when (intent.type) {
+                                com.unifiedledger.application.EntryType.EXPENSE ->
+                                    ExpenseDraft(account, expenseCategory, "", now, "")
                                 com.unifiedledger.application.EntryType.INCOME ->
-                                    IncomeDraft(intent.paymentAccountId, intent.categoryId, "", ledgerClock?.now(), "")
+                                    IncomeDraft(account, incomeCategory, "", now, "")
                                 com.unifiedledger.application.EntryType.TRANSFER ->
+                                    // The destination account and the fee never carry over; the
+                                    // fee resets to 0.00 and a zero fee must not carry a fee
+                                    // category (E-1 migration table, T-4).
                                     TransferDraft(
-                                        sourceAccountId = intent.paymentAccountId,
+                                        sourceAccountId = account,
                                         destinationAccountId = null,
                                         destinationCredit = "",
                                         fee = com.unifiedledger.application.DEFAULT_TRANSFER_FEE_TEXT,
                                         feeCategoryId = null,
-                                        occurredAt = ledgerClock?.now(),
+                                        occurredAt = now,
                                         note = "",
                                     )
-                                else ->
-                                    ExpenseDraft(intent.paymentAccountId, intent.categoryId, "", ledgerClock?.now(), "")
+                                com.unifiedledger.application.EntryType.LEND ->
+                                    LendDraft(counterpartyId = null, amount = "", fundingAccountId = account, occurredAt = now, note = "")
+                                com.unifiedledger.application.EntryType.COLLECT ->
+                                    CollectDraft(
+                                        counterpartyId = null,
+                                        totalReceived = "",
+                                        principal = "",
+                                        interest = "",
+                                        interestCategoryId = incomeCategory,
+                                        destinationAccountId = account,
+                                        occurredAt = now,
+                                        note = "",
+                                    )
                             },
                         requestId = null,
                         overview = state.state,
                         originTab = intent.originTab,
                     )
                 } ?: state
+            // P7-02.D E-4: a pin toggle is a pure ordering-preference membership flip on the
+            // overview; zero accounting effect, and inactive objects stay inactive. The host
+            // persists the toggle through the EntryPreferenceStore before dispatching.
+            is P503UiEvent.TogglePin ->
+                state.copy(
+                    pinnedTargets =
+                        if (event.target in state.pinnedTargets) {
+                            state.pinnedTargets - event.target
+                        } else {
+                            state.pinnedTargets + event.target
+                        },
+                )
             // ---- P7-01.D catalog management transitions (pure; no IO) ----
             is P503UiEvent.CatalogCommandCompleted ->
                 state.copy(
@@ -227,6 +274,8 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
             -> state
             // Explicit Back during management closes the open dialog first; with no dialog it
             // leaves the ACCOUNTS tab for HOME (the overview root stays the back floor).
@@ -291,6 +340,32 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.withCollectInterest(event.text))
             is P503UiEvent.UpdateCollectInterestCategory ->
                 state.copy(draft = state.draft.withCollectInterestCategory(event.categoryId))
+            // P7-02.D E-3: evaluating an expression writes the preview only — the reducer never
+            // silently rewrites the amount text; the calculator shows the exact result (or the
+            // typed rejection) first and the user confirms explicitly.
+            is P503UiEvent.EvaluateEntryExpression ->
+                when (val result = expressionEvaluator.evaluate(event.expression, currency)) {
+                    is EntryExpressionEvaluator.Result.Valid ->
+                        state.copy(
+                            expressionPreview =
+                                ExpressionPreview.Valid(
+                                    result.minorUnits,
+                                    formatMinorUnits(result.minorUnits, currency.precision),
+                                ),
+                        )
+                    is EntryExpressionEvaluator.Result.Invalid ->
+                        state.copy(expressionPreview = ExpressionPreview.Invalid(result.code))
+                }
+            // P7-02.D E-3: applying a valid preview is the only path that edits the amount from
+            // the calculator; a missing or invalid preview leaves the state untouched.
+            P503UiEvent.ApplyExpressionResult ->
+                when (val preview = state.expressionPreview) {
+                    is ExpressionPreview.Valid ->
+                        state.copy(draft = state.draft.withAmountText(preview.displayText), expressionPreview = null)
+                    else -> state
+                }
+            // P7-02.D E-4: pin toggles belong to the overview lists; absorbed here (§6.2a).
+            is P503UiEvent.TogglePin -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
                     P503AppState.AwaitingConfirmation(
@@ -347,7 +422,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -392,7 +470,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> state
             else -> unhandled(state, event)
         }
@@ -617,9 +698,15 @@ class P503ReducerImpl(
         when (event) {
             // The authoritative refresh after a submission flow always returns to the home
             // tab; the submission states carry no tab. P7-02 G-C: a determinate-success
-            // refresh carries the host-captured retained intent into the new overview.
+            // refresh carries the host-captured retained intent into the new overview, and
+            // P7-02.D E-4 carries the host's pin mirror.
             is P503UiEvent.RefreshResult ->
-                P503AppState.OverviewEmpty(state = event.currentState, selectedTab = P503Tab.HOME, retainedIntent = event.retainedIntent)
+                P503AppState.OverviewEmpty(
+                    state = event.currentState,
+                    selectedTab = P503Tab.HOME,
+                    retainedIntent = event.retainedIntent,
+                    pinnedTargets = event.pinnedTargets,
+                )
             P503UiEvent.RefreshFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             // P7-02: new entry-foundation events are absorbed in every transient result state.
             is P503UiEvent.SelectEntryType,
@@ -640,7 +727,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> current
             else -> unhandled(current, event)
         }
@@ -696,7 +786,10 @@ class P503ReducerImpl(
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab)
             // P7-02: a type switch and "record again" are absorbed on the conflict screen.
             is P503UiEvent.SelectEntryType,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -757,7 +850,10 @@ class P503ReducerImpl(
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab)
             // P7-02: a type switch and "record again" are absorbed on the rejection screen.
             is P503UiEvent.SelectEntryType,
-            P503UiEvent.SaveAndRecordAgain,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
             -> state
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
@@ -796,16 +892,25 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateCollectPrincipal,
                     is P503UiEvent.UpdateCollectInterest,
                     is P503UiEvent.UpdateCollectInterestCategory,
-                    P503UiEvent.SaveAndRecordAgain,
+                    P503UiEvent.ApplyExpressionResult,
+                    is P503UiEvent.EvaluateEntryExpression,
+                    is P503UiEvent.SaveAndRecordAgain,
+                    is P503UiEvent.TogglePin,
                     -> state
                     else -> unhandled(state, event)
                 }
             InfrastructureFailureContext.READ ->
                 when (event) {
                     P503UiEvent.RetryRefresh -> state
-                    // P7-02 G-C: a successful read retry still forwards the retained intent.
+                    // P7-02 G-C: a successful read retry still forwards the retained intent;
+                    // P7-02.D E-4 also carries the host's pin mirror into the fresh overview.
                     is P503UiEvent.RefreshResult ->
-                        P503AppState.OverviewEmpty(state = event.currentState, selectedTab = P503Tab.HOME, retainedIntent = event.retainedIntent)
+                        P503AppState.OverviewEmpty(
+                            state = event.currentState,
+                            selectedTab = P503Tab.HOME,
+                            retainedIntent = event.retainedIntent,
+                            pinnedTargets = event.pinnedTargets,
+                        )
                     P503UiEvent.RefreshFailed -> state
                     // P7-02: new entry-foundation events are absorbed in READ failure too.
                     is P503UiEvent.SelectEntryType,
@@ -826,7 +931,10 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateCollectPrincipal,
                     is P503UiEvent.UpdateCollectInterest,
                     is P503UiEvent.UpdateCollectInterestCategory,
-                    P503UiEvent.SaveAndRecordAgain,
+                    P503UiEvent.ApplyExpressionResult,
+                    is P503UiEvent.EvaluateEntryExpression,
+                    is P503UiEvent.SaveAndRecordAgain,
+                    is P503UiEvent.TogglePin,
                     -> state
                     else -> unhandled(state, event)
                 }

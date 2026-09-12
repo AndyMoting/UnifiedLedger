@@ -115,12 +115,16 @@ sealed interface OrdinaryIncomeViolation : DomainViolation {
  * P7-02.A S-2/S-4 shared entry-foundation tokens. `NoteTooLong` is produced by the
  * application note validation (mirrored defensively by the commit transaction factories);
  * `EntryTypeNotSupported` marks an entry type that this batch does not implement (TRANSFER /
- * LEND / COLLECT are declared enum values only, per P7-02 S-2).
+ * LEND / COLLECT are declared enum values only, per P7-02 S-2). P7-02.D E-4:
+ * `EntryPinTargetNotFound` marks a pin toggle on a target that does not exist in the ledger
+ * or belongs to a different ledger (a zero-write typed rejection).
  */
 sealed interface EntryFoundationViolation : DomainViolation {
     data object NoteTooLong : EntryFoundationViolation
 
     data object EntryTypeNotSupported : EntryFoundationViolation
+
+    data object EntryPinTargetNotFound : EntryFoundationViolation
 }
 
 /**

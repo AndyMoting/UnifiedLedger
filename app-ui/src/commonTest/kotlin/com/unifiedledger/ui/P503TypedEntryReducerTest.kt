@@ -183,7 +183,7 @@ class P503TypedEntryReducerTest {
                 P503AppState.UnknownCommit(expenseDraft(), requestId),
             )
         for (state in states) {
-            for (event in newEvents + P503UiEvent.SaveAndRecordAgain) {
+            for (event in newEvents + P503UiEvent.SaveAndRecordAgain()) {
                 assertEquals(state, reducer.reduce(state, event), "absorbed $event in $state")
             }
         }
@@ -209,8 +209,8 @@ class P503TypedEntryReducerTest {
             }
         }
         // SaveAndRecordAgain is absorbed on both screens.
-        assertEquals(conflict, reducer.reduce(conflict, P503UiEvent.SaveAndRecordAgain))
-        assertEquals(rejected, reducer.reduce(rejected, P503UiEvent.SaveAndRecordAgain))
+        assertEquals(conflict, reducer.reduce(conflict, P503UiEvent.SaveAndRecordAgain()))
+        assertEquals(rejected, reducer.reduce(rejected, P503UiEvent.SaveAndRecordAgain()))
     }
 
     @Test
@@ -337,7 +337,7 @@ class P503TypedEntryReducerTest {
     fun recordAgainStartsAFreshEditingWithNewClockInstantAndNoConfirmation() {
         val intent = RetainedEntryIntent(EntryType.EXPENSE, "35.80", paymentAccountId, expenseCategoryId, "lunch", occurredAt, P503Tab.ANALYSIS)
         val overview = P503AppState.OverviewEmpty(emptyState, P503Tab.HOME, retainedIntent = intent)
-        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.SaveAndRecordAgain))
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.SaveAndRecordAgain()))
         val draft = assertIs<ExpenseDraft>(editing.draft)
         assertEquals("", draft.amountText)
         assertEquals("", draft.note)
@@ -349,7 +349,7 @@ class P503TypedEntryReducerTest {
 
         // Without a retained intent the event is absorbed.
         val plain = P503AppState.OverviewEmpty(emptyState)
-        assertEquals(plain, reducer.reduce(plain, P503UiEvent.SaveAndRecordAgain))
+        assertEquals(plain, reducer.reduce(plain, P503UiEvent.SaveAndRecordAgain()))
     }
 
     @Test

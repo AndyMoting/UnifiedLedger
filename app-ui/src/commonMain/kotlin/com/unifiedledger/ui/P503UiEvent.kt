@@ -2,6 +2,7 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualEntryCommitResolution
@@ -158,10 +159,38 @@ sealed interface P503UiEvent {
 
     /**
      * P7-02.A E-2: "record again" from the post-success overview. Only meaningful on the
-     * overview with a retained intent; absorbed everywhere else (§6.2a). The actual UI
-     * affordance ships with the efficiency batch, but the reducer semantics are frozen here.
+     * overview with a retained intent; absorbed everywhere else (§6.2a). P7-02.D: [revalidation]
+     * is the authoritative catalog view the host snapshots at re-record time, so invalid
+     * objects are not carried over; a `null` payload (legacy call sites) keeps the frozen
+     * pre-D carry-over behavior.
      */
-    data object SaveAndRecordAgain : P503UiEvent
+    data class SaveAndRecordAgain(
+        val revalidation: RetainedIntentRevalidation? = null,
+    ) : P503UiEvent
+
+    /**
+     * P7-02.D E-3: evaluates the amount expression the user typed in the calculator. Only
+     * `Editing` reacts (it writes [ExpressionPreview]); every other state absorbs it.
+     */
+    data class EvaluateEntryExpression(
+        val expression: String,
+    ) : P503UiEvent
+
+    /**
+     * P7-02.D E-3: applies the current preview to the main amount field. Only a valid preview
+     * rewrites the amount; without one the event is a no-op on `Editing` and absorbed elsewhere.
+     */
+    data object ApplyExpressionResult : P503UiEvent
+
+    /**
+     * P7-02.D E-4: toggles one account/category pin from the overview lists. Ordering
+     * preference only — zero accounting effect; the host persists it through the
+     * EntryPreferenceStore and only dispatches after a successful toggle. Absorbed in every
+     * other state (§6.2a).
+     */
+    data class TogglePin(
+        val target: EntryPinTarget,
+    ) : P503UiEvent
 
     /**
      * The host obtains the requestId per spec section 4.6 and dispatches it. P5-04.3: the
@@ -273,6 +302,11 @@ sealed interface P503UiEvent {
     // ---- async result events ----
     data class InitialLoadResult(
         val currentState: LedgerCurrentState,
+        /**
+         * P7-02.D E-4: the persisted pin set the host read from the EntryPreferenceStore at
+         * startup, so pins survive an app restart. Backward compatible default.
+         */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503UiEvent
 
     data object InitialLoadFailed : P503UiEvent
@@ -304,7 +338,26 @@ sealed interface P503UiEvent {
          * (Created/NoChange/Recovered). Backward compatible; `null` for ordinary refreshes.
          */
         val retainedIntent: RetainedEntryIntent? = null,
+        /**
+         * P7-02.D E-4: the host's current pin mirror, carried on the refreshes that build a
+         * fresh overview (success result / READ retry); an ordinary overview refresh keeps the
+         * state's existing set. Backward compatible default.
+         */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503UiEvent
 
     data object RefreshFailed : P503UiEvent
 }
+
+/**
+ * P7-02.D E-2: the authoritative catalog view the host snapshots from its current options at
+ * re-record time, so the reducer can revalidate the retained intent against the current
+ * authoritative catalog and clear (not carry) objects that are no longer offered. All five
+ * entry types share the same owned-real-ASSET account option set; the category sets are
+ * per kind (EXPENSE for expense/fee categories, INCOME for income/interest categories).
+ */
+data class RetainedIntentRevalidation(
+    val accountIds: Set<AccountId>,
+    val expenseCategoryIds: Set<CategoryId>,
+    val incomeCategoryIds: Set<CategoryId>,
+)

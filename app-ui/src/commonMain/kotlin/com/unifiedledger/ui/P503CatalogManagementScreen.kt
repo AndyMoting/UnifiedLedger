@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.AccountCurrencyBalance
 import com.unifiedledger.application.CategoryTreeView
+import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ManageableAccountView
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -72,6 +73,8 @@ fun P503CatalogManagementScreen(
         AccountsSection(
             accounts = snapshot.manageableAccounts,
             balances = state.state.balances.associateBy { it.accountId },
+            pinnedTargets = state.pinnedTargets,
+            ledgerId = state.state.ledgerId,
             onEvent = onEvent,
         )
         HorizontalDivider()
@@ -79,6 +82,8 @@ fun P503CatalogManagementScreen(
             categories = snapshot.categories,
             kind = CategoryKind.EXPENSE,
             title = "支出分类",
+            pinnedTargets = state.pinnedTargets,
+            ledgerId = state.state.ledgerId,
             onEvent = onEvent,
         )
         HorizontalDivider()
@@ -86,6 +91,8 @@ fun P503CatalogManagementScreen(
             categories = snapshot.categories,
             kind = CategoryKind.INCOME,
             title = "收入分类",
+            pinnedTargets = state.pinnedTargets,
+            ledgerId = state.state.ledgerId,
             onEvent = onEvent,
         )
         Spacer(Modifier.height(24.dp))
@@ -113,6 +120,8 @@ private fun CatalogNoticeBanner(
 private fun AccountsSection(
     accounts: List<ManageableAccountView>,
     balances: Map<AccountId, AccountCurrencyBalance>,
+    pinnedTargets: Set<EntryPinTarget>,
+    ledgerId: com.unifiedledger.domain.LedgerId,
     onEvent: (P503UiEvent) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -133,6 +142,7 @@ private fun AccountsSection(
             val balance = balances[account.accountId]
             val currency = balance?.currency ?: account.currency
             val amount = balance?.displayMinorUnits ?: 0L
+            val pinned = EntryPinTarget.AccountTarget(ledgerId, account.accountId) in pinnedTargets
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(
                     "${account.name}（${accountKindText(account.kind)}）" +
@@ -158,6 +168,13 @@ private fun AccountsSection(
                     ) {
                         Text(if (account.active) "停用" else "启用")
                     }
+                    // P7-02.D E-4: manual pin — ordering preference only; the host persists the
+                    // toggle through the EntryPreferenceStore before the event is dispatched.
+                    TextButton(
+                        onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.AccountTarget(ledgerId, account.accountId))) },
+                    ) {
+                        Text(if (pinned) "取消置顶" else "置顶")
+                    }
                 }
             }
         }
@@ -169,6 +186,8 @@ private fun CategoriesSection(
     categories: List<CategoryTreeView>,
     kind: CategoryKind,
     title: String,
+    pinnedTargets: Set<EntryPinTarget>,
+    ledgerId: com.unifiedledger.domain.LedgerId,
     onEvent: (P503UiEvent) -> Unit,
 ) {
     val groups = categories.filter { it.kind == kind && it.parentId == null }
@@ -185,9 +204,9 @@ private fun CategoriesSection(
         }
         Spacer(Modifier.height(8.dp))
         groups.forEach { group ->
-            GroupRow(group, onEvent)
+            GroupRow(group, pinnedTargets, ledgerId, onEvent)
             childrenByParent[group.categoryId].orEmpty().forEach { child ->
-                LeafRow(groupName = group.name, child = child, onEvent = onEvent)
+                LeafRow(groupName = group.name, child = child, pinnedTargets = pinnedTargets, ledgerId = ledgerId, onEvent = onEvent)
             }
         }
     }
@@ -196,8 +215,11 @@ private fun CategoriesSection(
 @Composable
 private fun GroupRow(
     group: CategoryTreeView,
+    pinnedTargets: Set<EntryPinTarget>,
+    ledgerId: com.unifiedledger.domain.LedgerId,
     onEvent: (P503UiEvent) -> Unit,
 ) {
+    val pinned = EntryPinTarget.CategoryTarget(ledgerId, group.categoryId) in pinnedTargets
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Text(
             group.name + if (group.active) "" else " 已停用",
@@ -224,6 +246,9 @@ private fun GroupRow(
             TextButton(onClick = { onEvent(P503UiEvent.OpenCategoryDeleteDialog(group.categoryId)) }) {
                 Text("删除")
             }
+            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, group.categoryId))) }) {
+                Text(if (pinned) "取消置顶" else "置顶")
+            }
         }
     }
 }
@@ -232,8 +257,11 @@ private fun GroupRow(
 private fun LeafRow(
     groupName: String,
     child: CategoryTreeView,
+    pinnedTargets: Set<EntryPinTarget>,
+    ledgerId: com.unifiedledger.domain.LedgerId,
     onEvent: (P503UiEvent) -> Unit,
 ) {
+    val pinned = EntryPinTarget.CategoryTarget(ledgerId, child.categoryId) in pinnedTargets
     Column(modifier = Modifier.fillMaxWidth().padding(start = 24.dp, top = 4.dp, bottom = 4.dp)) {
         // D-024: level-2 names are disambiguated by their "一级 / 二级" path.
         Text(
@@ -249,6 +277,9 @@ private fun LeafRow(
             }
             TextButton(onClick = { onEvent(P503UiEvent.OpenCategoryDeleteDialog(child.categoryId)) }) {
                 Text("删除")
+            }
+            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, child.categoryId))) }) {
+                Text(if (pinned) "取消置顶" else "置顶")
             }
         }
     }

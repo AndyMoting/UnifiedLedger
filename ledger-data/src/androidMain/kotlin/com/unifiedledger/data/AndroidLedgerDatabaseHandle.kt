@@ -49,6 +49,8 @@ fun createAndroidLedgerDatabase(
             SqlDelightConfirmedManualLendingCommitPort
                 .forPlatformConfiguredDatabase(database),
         counterpartyStore = SqlDelightCounterpartyStore.forPlatformConfiguredDatabase(database),
+        // P7-02.D: the manual pin preference store on the same database connection.
+        entryPreferenceStore = SqlDelightEntryPreferenceStore(database),
         catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
@@ -61,6 +63,7 @@ class AndroidLedgerDatabaseHandle internal constructor(
     val transferCommitPort: SqlDelightConfirmedManualTransferCommitPort,
     val lendingCommitPort: SqlDelightConfirmedManualLendingCommitPort,
     val counterpartyStore: SqlDelightCounterpartyStore,
+    val entryPreferenceStore: SqlDelightEntryPreferenceStore,
     val catalogStore: SqlDelightCatalogStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {

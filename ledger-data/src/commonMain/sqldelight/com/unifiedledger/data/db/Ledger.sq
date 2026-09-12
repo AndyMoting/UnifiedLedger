@@ -9051,6 +9051,20 @@ ORDER BY occurred_at ASC, entry_id ASC;
 countLendingPositions:
 SELECT count(*) FROM lending_position;
 
+-- P7-02.D manual pin preference (E-4): one row per (ledger, target kind, stable id). Toggle
+-- semantics (insert when unpinned, delete when pinned) live in the store's single transaction
+-- after the authoritative catalog existence check, so a rejected toggle performs zero writes.
+insertEntryPin:
+INSERT INTO entry_pin(ledger_id, target_kind, target_id, pinned_at)
+VALUES (?, ?, ?, ?);
+
+deleteEntryPin:
+DELETE FROM entry_pin WHERE ledger_id = ? AND target_kind = ? AND target_id = ?;
+
+selectEntryPins:
+SELECT target_kind, target_id FROM entry_pin WHERE ledger_id = ?
+ORDER BY pinned_at ASC, target_kind ASC, target_id ASC;
+
 -- P7-01 (D-143) catalog queries. Fresh persistence for the ledger-scoped product catalog:
 -- version probe, catalog rows, shared append-only name history, claim-first request/receipt
 -- idempotency and the bootstrap unknown-reference probes.
