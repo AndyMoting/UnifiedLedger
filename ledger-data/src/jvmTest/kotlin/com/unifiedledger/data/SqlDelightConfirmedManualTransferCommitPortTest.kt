@@ -63,6 +63,7 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
             assertEquals(0, callbackCalls)
             // 1 request, 1 receipt, 1 transaction, 1 version, 3 postings (fee-bearing fixture).
             assertEquals(listOf(1L, 1L, 1L, 1L, 3L), harness.counts())
+            harness.assertNoRg08SiloWrites()
         }
     }
 
@@ -141,6 +142,37 @@ private class TransferHarness(
             database.ledgerQueries.countVersions().executeAsOne(),
             database.ledgerQueries.countPostings().executeAsOne(),
         )
+
+    // P702SPEC-05 (R-6): a manual transfer commit must never touch the RG-08 silo — no import
+    // source record, no evidence or link, no formal-transaction source metadata, and no shared
+    // evidence-link / reconciliation row.
+    fun assertNoRg08SiloWrites() {
+        val siloTables =
+            listOf(
+                "rg08_source_record",
+                "rg08_evidence",
+                "rg08_evidence_link",
+                "rg08_formal_transaction_metadata",
+                "evidence_link",
+                "reconciliation_request",
+            )
+        for (table in siloTables) {
+            assertEquals(0L, queryCount("SELECT count(*) FROM $table"), table)
+        }
+    }
+
+    private fun queryCount(sql: String): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 
     override fun close() = driver.close()
 }

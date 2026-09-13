@@ -90,6 +90,7 @@ class SqlDelightConfirmedManualLendingCommitPortTest {
             )
             // Real received = 45.00 (40.00 principal + 5.00 interest) split, not stored as a balance.
             assertEquals(4_500L, harness.receivedTotalForRequest("req-3"))
+            harness.assertNoRg08SiloWrites()
         }
     }
 
@@ -188,6 +189,30 @@ class SqlDelightConfirmedManualLendingCommitPortTest {
         }
     }
 
+    @Test
+    fun sameSecondFractionalEntryRebuildsInChronologicalOrder() {
+        // P702SPEC-07: lexicographic TEXT order would place the fractional instant ('.') before
+        // the whole-second instant ('Z') of the SAME second, reversing history and poisoning the
+        // position rebuild; the parsed-Instant order must win.
+        LendingHarness().use { harness ->
+            val carol = harness.createCounterparty("Carol")
+            assertIs<ConfirmedManualLendingResult.Created>(
+                harness.commit(harness.lendRequest("req-s1", carol), harness.lendSnapshot(carol, 10_000L, "2026-03-05T00:00:00Z")) {
+                    DomainResult.Success(harness.lendCommit("tx-s1", carol, 10_000L, 10_000L, "2026-03-05T00:00:00Z", entryId = "entry-s1"))
+                },
+            )
+            assertIs<ConfirmedManualLendingResult.Created>(
+                harness.commit(harness.lendRequest("req-s2", carol), harness.lendSnapshot(carol, 2_000L, "2026-03-05T00:00:00.500Z")) {
+                    DomainResult.Success(harness.lendCommit("tx-s2", carol, 2_000L, 12_000L, "2026-03-05T00:00:00.500Z", entryId = "entry-s2"))
+                },
+            )
+            val position = checkNotNull(harness.positions.findPosition(harness.ledgerId, carol))
+            assertEquals(listOf("entry-s1", "entry-s2"), position.history.map { it.entryId })
+            assertEquals(listOf(10_000L, 12_000L), position.history.map { it.principalBalanceAfterMinor })
+            assertEquals(12_000L, position.principalBalanceMinor)
+        }
+    }
+
     private fun failureCode(result: ConfirmedManualLendingResult): ManualLendingFailureCode? = ManualLendingFailureCode.of(assertIs<ConfirmedManualLendingResult.Rejected>(result).violation)
 }
 
@@ -217,6 +242,37 @@ private class LendingHarness : AutoCloseable {
         assertIs<CounterpartyCommandResult.Created>(result)
         return id
     }
+
+    // P702SPEC-05 (R-6): a manual lending commit must never touch the RG-08 silo — no
+    // BANK_DEBIT source record, no MATCHED evidence or link, no formal-transaction source
+    // metadata, and no shared evidence-link / reconciliation row.
+    fun assertNoRg08SiloWrites() {
+        val siloTables =
+            listOf(
+                "rg08_source_record",
+                "rg08_evidence",
+                "rg08_evidence_link",
+                "rg08_formal_transaction_metadata",
+                "evidence_link",
+                "reconciliation_request",
+            )
+        for (table in siloTables) {
+            assertEquals(0L, queryCount("SELECT count(*) FROM $table"), table)
+        }
+    }
+
+    private fun queryCount(sql: String): Long =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 
     fun lendRequest(
         requestId: String,

@@ -182,6 +182,25 @@ sealed interface P503UiEvent {
      */
     data object ApplyExpressionResult : P503UiEvent
 
+    // ---- P702SPEC-03 counterparty create/rename affordance (editor-local dialog) ----
+
+    /** Opens the counterparty create form in the editor; absorbed everywhere else (§6.2a). */
+    data object OpenCounterpartyCreateDialog : P503UiEvent
+
+    /** Opens the rename form for one existing counterparty row; absorbed everywhere else. */
+    data class OpenCounterpartyRenameDialog(
+        val counterpartyId: CounterpartyId,
+        val currentName: String,
+    ) : P503UiEvent
+
+    /** Writes the counterparty form's name text while the dialog is open. */
+    data class UpdateCounterpartyFormText(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Closes the counterparty form (dismiss or successful command). */
+    data object DismissCounterpartyDialog : P503UiEvent
+
     /**
      * P7-02.D E-4: toggles one account/category pin from the overview lists. Ordering
      * preference only — zero accounting effect; the host persists it through the

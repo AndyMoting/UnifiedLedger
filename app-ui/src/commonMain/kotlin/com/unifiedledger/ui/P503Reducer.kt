@@ -109,6 +109,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
@@ -163,7 +167,11 @@ class P503ReducerImpl(
                     val account = intent.paymentAccountId?.takeIf { accounts == null || it in accounts }
                     val expenseCategory = intent.categoryId?.takeIf { expenseCategories == null || it in expenseCategories }
                     val incomeCategory = intent.categoryId?.takeIf { incomeCategories == null || it in incomeCategories }
-                    val now = ledgerClock?.now()
+                    // P702SPEC-02: truncate to whole seconds (D-138 second-precision formats;
+                    // kotlin.time.Instant.toString() would carry a fractional part and the frozen
+                    // lenient parser rejects it, blocking Continue on every re-record). The
+                    // "occurredAt = current clock instant" semantics are kept at second precision.
+                    val now = ledgerClock?.now()?.let { kotlin.time.Instant.fromEpochSeconds(it.epochSeconds) }
                     P503AppState.Editing(
                         draft =
                             when (intent.type) {
@@ -274,6 +282,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             -> state
@@ -340,6 +352,22 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.withCollectInterest(event.text))
             is P503UiEvent.UpdateCollectInterestCategory ->
                 state.copy(draft = state.draft.withCollectInterestCategory(event.categoryId))
+            // P702SPEC-03: the editor-local counterparty create/rename form.
+            P503UiEvent.OpenCounterpartyCreateDialog ->
+                state.copy(counterpartyDialog = CounterpartyDialog.Create())
+            is P503UiEvent.OpenCounterpartyRenameDialog ->
+                state.copy(counterpartyDialog = CounterpartyDialog.Rename(event.counterpartyId, event.currentName, ""))
+            is P503UiEvent.UpdateCounterpartyFormText ->
+                state.copy(
+                    counterpartyDialog =
+                        when (val dialog = state.counterpartyDialog) {
+                            is CounterpartyDialog.Create -> dialog.copy(nameText = event.text)
+                            is CounterpartyDialog.Rename -> dialog.copy(nameText = event.text)
+                            null -> null
+                        },
+                )
+            P503UiEvent.DismissCounterpartyDialog ->
+                state.copy(counterpartyDialog = null)
             // P7-02.D E-3: evaluating an expression writes the preview only — the reducer never
             // silently rewrites the amount text; the calculator shows the exact result (or the
             // typed rejection) first and the user confirms explicitly.
@@ -422,6 +450,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
@@ -470,6 +502,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
@@ -727,6 +763,10 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateCollectPrincipal,
             is P503UiEvent.UpdateCollectInterest,
             is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
@@ -790,6 +830,11 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P702SPEC-03: the counterparty form intents are absorbed here too.
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -854,6 +899,11 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P702SPEC-03: the counterparty form intents are absorbed here too.
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
             -> state
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
@@ -892,6 +942,10 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateCollectPrincipal,
                     is P503UiEvent.UpdateCollectInterest,
                     is P503UiEvent.UpdateCollectInterestCategory,
+                    P503UiEvent.OpenCounterpartyCreateDialog,
+                    is P503UiEvent.OpenCounterpartyRenameDialog,
+                    is P503UiEvent.UpdateCounterpartyFormText,
+                    P503UiEvent.DismissCounterpartyDialog,
                     P503UiEvent.ApplyExpressionResult,
                     is P503UiEvent.EvaluateEntryExpression,
                     is P503UiEvent.SaveAndRecordAgain,
@@ -931,6 +985,10 @@ class P503ReducerImpl(
                     is P503UiEvent.UpdateCollectPrincipal,
                     is P503UiEvent.UpdateCollectInterest,
                     is P503UiEvent.UpdateCollectInterestCategory,
+                    P503UiEvent.OpenCounterpartyCreateDialog,
+                    is P503UiEvent.OpenCounterpartyRenameDialog,
+                    is P503UiEvent.UpdateCounterpartyFormText,
+                    P503UiEvent.DismissCounterpartyDialog,
                     P503UiEvent.ApplyExpressionResult,
                     is P503UiEvent.EvaluateEntryExpression,
                     is P503UiEvent.SaveAndRecordAgain,

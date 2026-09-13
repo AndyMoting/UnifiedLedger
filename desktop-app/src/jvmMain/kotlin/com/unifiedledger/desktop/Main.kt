@@ -328,6 +328,9 @@ internal fun buildLedgerGraph(
                                 amount = request.amount,
                                 categoryId = request.categoryId,
                                 paymentAccountId = request.paymentAccountId,
+                                // P7-02.A S-4 (P702IMPL-01): the draft note must reach the formal
+                                // version exactly like the income delegate does.
+                                note = request.note,
                                 times = TransactionTimes.collapsed(request.occurredAt),
                             ),
                         ids = ids.expenseIds,

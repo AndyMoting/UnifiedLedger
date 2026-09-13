@@ -3,6 +3,7 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -129,4 +130,19 @@ class P503DraftValidationTest {
             amountText = amountText,
             occurredAt = occurredAt,
         )
+
+    // P702IMPL-02: a negative fee parses as a valid exact amount, so the transfer gate must
+    // treat fee < 0 as the fee format error; otherwise the submit path can strand the user on
+    // the dead-end UnknownCommit screen instead of a typed field error.
+    @Test
+    fun transferFeeMustNotBeNegative() {
+        val currency = CurrencyUnit("CNY", 2)
+        val draft = TransferDraft(AccountId("asset-a"), AccountId("asset-b"), "10.00", fee = "-5.00", occurredAt = occurredAt)
+        val errors = validation.errors(draft, currency)
+        assertTrue(errors.feeFormatError != null)
+        assertTrue(errors.hasErrors)
+        // A zero fee stays clear of the negative gate.
+        val zero = validation.errors(draft.copy(fee = "0.00"), currency)
+        assertTrue(zero.feeFormatError == null)
+    }
 }

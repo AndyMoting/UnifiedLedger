@@ -127,17 +127,19 @@ class EntryExpressionEvaluator {
                     index++
                 }
                 else -> {
-                    if (!character.isDigit()) return LexOutcome.Failure(EntryExpressionCode.Invalid)
+                    // P702IMPL-03: the frozen grammar is ASCII decimal only; Char.isDigit() would
+                    // also accept Unicode Nd digits on some platforms.
+                    if (character !in '0'..'9') return LexOutcome.Failure(EntryExpressionCode.Invalid)
                     val numberStart = index
-                    while (index < trimmed.length && trimmed[index].isDigit()) index++
+                    while (index < trimmed.length && trimmed[index] in '0'..'9') index++
                     var fractionDigits: String? = null
                     if (index < trimmed.length && trimmed[index] == '.') {
                         index++
                         val fractionStart = index
-                        if (index >= trimmed.length || !trimmed[index].isDigit()) {
+                        if (index >= trimmed.length || trimmed[index] !in '0'..'9') {
                             return LexOutcome.Failure(EntryExpressionCode.Invalid)
                         }
-                        while (index < trimmed.length && trimmed[index].isDigit()) index++
+                        while (index < trimmed.length && trimmed[index] in '0'..'9') index++
                         fractionDigits = trimmed.substring(fractionStart, index)
                     }
                     val literalText = trimmed.substring(numberStart, index)

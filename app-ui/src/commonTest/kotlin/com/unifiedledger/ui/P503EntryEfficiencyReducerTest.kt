@@ -10,6 +10,7 @@ import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.domain.AccountId
@@ -20,6 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -340,6 +342,28 @@ class P503EntryEfficiencyReducerTest {
             assertEquals(nowInstant, draft.occurredAt)
             assertNull(editing.requestId)
         }
+    }
+
+    @Test
+    fun b06RecordAgainTruncatesToWholeSecondsSoContinueIsReachable() {
+        // P702SPEC-02: the clock carries a fractional second; the frozen D-138 parser rejects
+        // fractional ISO text, so the re-record instant is truncated to whole seconds and the
+        // Continue gate stays reachable.
+        val fractionalClock = LedgerClock { Instant.parse("2026-09-12T00:00:00.750Z") }
+        val fractionalReducer = P503ReducerImpl(ParseManualExpenseAmount(), cny, fractionalClock, EntryExpressionEvaluator())
+        val validation = P503DraftValidation(ParseManualExpenseAmount(), ParseManualExpenseOccurredAt(), fractionalClock)
+        val intent = RetainedEntryIntent(EntryType.EXPENSE, "35.80", accountId, expenseCategoryId, "lunch", occurredAt, P503Tab.HOME)
+        val overview = P503AppState.OverviewEmpty(emptyState, P503Tab.HOME, retainedIntent = intent)
+        val editing = assertIs<P503AppState.Editing>(fractionalReducer.reduce(overview, P503UiEvent.SaveAndRecordAgain(revalidation)))
+        val draft = assertIs<ExpenseDraft>(editing.draft)
+        val truncated = Instant.parse("2026-09-12T00:00:00Z")
+        assertEquals(truncated, draft.occurredAt)
+        // Gate level: the displayed ISO text re-parses to exactly the draft instant ...
+        val displayed = draft.occurredAt?.toString() ?: ""
+        assertTrue(validation.occurredAtTextReconciles(displayed, draft.occurredAt))
+        // ... and with the amount typed the full Continue gate passes.
+        val filled = assertIs<P503AppState.Editing>(fractionalReducer.reduce(editing, P503UiEvent.UpdateAmount("20.50")))
+        assertTrue(validation.isValid(filled.draft, cny))
     }
 
     @Test

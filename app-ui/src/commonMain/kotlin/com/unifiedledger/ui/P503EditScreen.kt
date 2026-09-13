@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -130,6 +131,10 @@ fun P503EditScreen(
     expressionPreview: ExpressionPreview? = null,
     onEvaluateExpression: ((String) -> Unit)? = null,
     onApplyExpression: (() -> Unit)? = null,
+    // P702SPEC-03: the minimal counterparty create/rename affordance (LEND/COLLECT editors).
+    counterpartyDialog: CounterpartyDialog? = null,
+    onCounterpartyEvent: (P503UiEvent) -> Unit = {},
+    onCounterpartyFormSubmit: (CounterpartyDialog) -> Unit = {},
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -143,8 +148,8 @@ fun P503EditScreen(
     var expressionText by remember { mutableStateOf("") }
 
     val latestOnDialogVisibilityChanged by rememberUpdatedState(onDialogVisibilityChanged)
-    LaunchedEffect(datePickerOpen, timePickerOpen) {
-        latestOnDialogVisibilityChanged(datePickerOpen || timePickerOpen)
+    LaunchedEffect(datePickerOpen, timePickerOpen, counterpartyDialog) {
+        latestOnDialogVisibilityChanged(datePickerOpen || timePickerOpen || counterpartyDialog != null)
     }
     // 防御性自愈：编辑屏离开组合时补报关闭，防止 editDialogOpen 陈旧滞留
     DisposableEffect(Unit) {
@@ -339,7 +344,17 @@ fun P503EditScreen(
                     Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateLendCounterparty(option.counterpartyId) })
                         Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                        // P702SPEC-03: rename affordance on each existing counterparty row.
+                        TextButton(onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyRenameDialog(option.counterpartyId, option.name)) }) {
+                            Text("改名")
+                        }
                     }
+                }
+                TextButton(
+                    onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyCreateDialog) },
+                    modifier = Modifier.semantics { contentDescription = "新建往来对象" },
+                ) {
+                    Text("新建往来对象")
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -371,7 +386,17 @@ fun P503EditScreen(
                     Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateCollectCounterparty(option.counterpartyId) })
                         Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                        // P702SPEC-03: rename affordance on each existing counterparty row.
+                        TextButton(onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyRenameDialog(option.counterpartyId, option.name)) }) {
+                            Text("改名")
+                        }
                     }
+                }
+                TextButton(
+                    onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyCreateDialog) },
+                    modifier = Modifier.semantics { contentDescription = "新建往来对象" },
+                ) {
+                    Text("新建往来对象")
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -651,6 +676,31 @@ fun P503EditScreen(
             }
         }
     }
+
+    // P702SPEC-03: the minimal counterparty create/rename form. Confirm runs through the host
+    // (which executes the directory command and closes the dialog on success); dismiss stays
+    // local to the reducer.
+    when (val dialog = counterpartyDialog) {
+        is CounterpartyDialog.Create ->
+            CounterpartyFormDialog(
+                title = "新建往来对象",
+                confirmText = "创建",
+                nameText = dialog.nameText,
+                onNameTextChange = { onCounterpartyEvent(P503UiEvent.UpdateCounterpartyFormText(it)) },
+                onDismiss = { onCounterpartyEvent(P503UiEvent.DismissCounterpartyDialog) },
+                onConfirm = { onCounterpartyFormSubmit(dialog) },
+            )
+        is CounterpartyDialog.Rename ->
+            CounterpartyFormDialog(
+                title = "往来对象改名",
+                confirmText = "保存",
+                nameText = dialog.nameText,
+                onNameTextChange = { onCounterpartyEvent(P503UiEvent.UpdateCounterpartyFormText(it)) },
+                onDismiss = { onCounterpartyEvent(P503UiEvent.DismissCounterpartyDialog) },
+                onConfirm = { onCounterpartyFormSubmit(dialog) },
+            )
+        null -> Unit
+    }
 }
 
 /**
@@ -776,3 +826,41 @@ internal fun expressionRejectionText(code: EntryExpressionCode): String =
         EntryExpressionCode.NonCurrencyPrecision -> "算式结果无法用该币种精度精确表示（如 1/3 或 1/8）"
         EntryExpressionCode.NegativeResult -> "算式结果为负"
     }
+
+/**
+ * P702SPEC-03: one-field form for creating or renaming a counterparty. The typed name stays in
+ * the reducer-held dialog state; a typed rejection keeps the dialog open (the host simply does
+ * not dispatch the close), so the input is never lost.
+ */
+@Composable
+private fun CounterpartyFormDialog(
+    title: String,
+    confirmText: String,
+    nameText: String,
+    onNameTextChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = nameText,
+                    onValueChange = onNameTextChange,
+                    label = { Text("名称") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("币种跟随当前账本（CNY）", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = nameText.isNotBlank()) { Text(confirmText) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}

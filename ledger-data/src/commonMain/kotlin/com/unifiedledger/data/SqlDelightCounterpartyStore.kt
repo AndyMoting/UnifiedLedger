@@ -321,6 +321,11 @@ class SqlDelightCounterpartyStore private constructor(
                     transactionId = TransactionId(transactionId),
                 )
             }.executeAsList()
+            // P702SPEC-07: re-sort on the parsed instants (entry_id as the stable tiebreak)
+            // instead of trusting lexicographic TEXT order — a whole-second and a same-second
+            // fractional entry ('Z' vs '.') would otherwise misorder and poison the position
+            // rebuild. The sort is stable, so fully equal keys keep the SQL read order (G-D).
+            .sortedWith(compareBy({ it.occurredAt }, { it.entryId }))
 
     private fun positionId(
         ledgerId: LedgerId,

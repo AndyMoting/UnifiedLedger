@@ -10,6 +10,7 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CounterpartyId
 import kotlin.time.Instant
 
 /**
@@ -69,6 +70,12 @@ sealed interface P503AppState {
          * never silently edits the amount.
          */
         val expressionPreview: ExpressionPreview? = null,
+        /**
+         * P702SPEC-03: the open counterparty create/rename form, if any. Editor-local dialog
+         * state (mirrors the P7-01 catalog dialog pattern at much smaller scope); it is dropped
+         * by every transition away from `Editing` and never blocks the draft.
+         */
+        val counterpartyDialog: CounterpartyDialog? = null,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -175,6 +182,23 @@ data class RetainedEntryIntent(
     val occurredAt: Instant?,
     val originTab: P503Tab,
 )
+
+/**
+ * P702SPEC-03: the minimal counterparty directory form (create; rename one existing object).
+ * No delete and no directory management screen — this only completes the L-1 invocation path
+ * from the LEND/COLLECT editors.
+ */
+sealed interface CounterpartyDialog {
+    data class Create(
+        val nameText: String = "",
+    ) : CounterpartyDialog
+
+    data class Rename(
+        val counterpartyId: CounterpartyId,
+        val currentName: String,
+        val nameText: String,
+    ) : CounterpartyDialog
+}
 
 /**
  * P7-02.D E-3: the exact expression evaluation result shown by the calculator. A valid preview

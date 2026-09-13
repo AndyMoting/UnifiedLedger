@@ -155,14 +155,13 @@ class P503DraftValidation(
             } else {
                 (parseAmount.parse(feeText, currency) as? ParseManualExpenseAmount.Result.Valid)?.minorUnits
             }
+        // P702IMPL-02: a negative fee parses as a valid exact amount, so the fee gate must
+        // treat fee < 0 as a fee format error (T-4: the fee is never negative in the product).
         val feeError =
-            if (feeText.isBlank()) {
-                null
-            } else {
-                when (val parsed = parseAmount.parse(feeText, currency)) {
-                    is ParseManualExpenseAmount.Result.Valid -> null
-                    is ParseManualExpenseAmount.Result.Invalid -> parsed.error
-                }
+            when {
+                feeText.isBlank() -> null
+                feeMinor == null || feeMinor < 0L -> ManualExpenseAmountFormatError.INVALID_FORMAT
+                else -> null
             }
         // T-4: a positive fee requires a fee category; a zero fee must not carry one.
         val feeRequiresCategory = (feeMinor ?: 0L) > 0L

@@ -163,6 +163,14 @@ class EntryExpressionEvaluatorTest {
     }
 
     @Test
+    fun fullWidthDigitsAreRejectedAsIllegalTokens() {
+        // P702IMPL-03: the frozen grammar is ASCII decimal only; Unicode Nd digits are not
+        // decimal literals and must not slip into the magnitude parse.
+        invalid("１２+１", EntryExpressionCode.Invalid)
+        invalid("12.５", EntryExpressionCode.Invalid)
+    }
+
+    @Test
     fun evaluationIsPureAndRepeatable() {
         val first = evaluator.evaluate("12.5+8", cny)
         val second = evaluator.evaluate("12.5+8", cny)

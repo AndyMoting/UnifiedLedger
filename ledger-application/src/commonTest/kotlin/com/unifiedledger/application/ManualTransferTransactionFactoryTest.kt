@@ -147,6 +147,14 @@ class ManualTransferTransactionFactoryTest {
     }
 
     @Test
+    fun `negative fee is rejected with the frozen product token`() {
+        // P702IMPL-02: the frozen `TransferFeeMustNotBeNegative` token must be reachable at the
+        // product factory boundary, not only in the defensive domain rule.
+        val result = ManualTransferTransactionFactory(catalog()).create(snapshot(fee = -200L), ids())
+        assertEquals(ManualTransferViolation.TransferFeeMustNotBeNegative, assertIs<DomainResult.Failure>(result).violation)
+    }
+
+    @Test
     fun `positive fee without a category is rejected`() {
         val result = ManualTransferTransactionFactory(catalog()).create(snapshot(fee = 200L, feeCategory = null), ids())
         assertEquals(ManualTransferViolation.TransferFeeCategoryRequired, assertIs<DomainResult.Failure>(result).violation)

@@ -39,6 +39,9 @@ class ManualTransferTransactionFactory(
         ids: ConfirmedManualTransferCommitIds,
     ): DomainResult<ConfirmedManualTransferCommit> {
         validateEntryNote(request.note)?.let { return DomainResult.Failure(it) }
+        // P702IMPL-02: the frozen `TransferFeeMustNotBeNegative` token is reachable here — a
+        // negative fee is a typed zero-write rejection before any derivation or domain call.
+        if (request.fee.minorUnits < 0L) return DomainResult.Failure(ManualTransferViolation.TransferFeeMustNotBeNegative)
         val currency = request.destinationCredit.currency
         val sum = request.destinationCredit.minorUnits + request.fee.minorUnits
         if (sum < 0L) return DomainResult.Failure(DomainViolation.ArithmeticOverflow)

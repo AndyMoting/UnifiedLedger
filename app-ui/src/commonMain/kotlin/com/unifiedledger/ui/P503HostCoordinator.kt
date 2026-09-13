@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 
@@ -11,6 +12,13 @@ import com.unifiedledger.application.TypedEntryDraft
  * it and dispatches the ordinary `RefreshResult`. Rejections/conflicts never refresh.
  */
 internal fun shouldRefreshReadModelAfterCatalogCommand(result: CatalogCommandResult): Boolean = result is CatalogCommandResult.Accepted || result is CatalogCommandResult.NoChange
+
+/**
+ * P702SPEC-03: a successful counterparty create/rename must refresh the option projections
+ * (the LEND/COLLECT editors read the directory through them); a typed rejection is absorbed
+ * safely — no refresh, no dispatch, and the open dialog keeps the typed text.
+ */
+internal fun shouldRefreshOptionsAfterCounterpartyCommand(result: CounterpartyCommandResult): Boolean = result !is CounterpartyCommandResult.Rejected
 
 /**
  * F1 (N-5): a catalog management outcome may only be published while the overview is still on

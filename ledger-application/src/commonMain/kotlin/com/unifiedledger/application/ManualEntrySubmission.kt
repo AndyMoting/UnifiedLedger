@@ -190,17 +190,19 @@ class ExecuteManualEntrySubmission(
             is ManualEntrySaveInput.Expense -> ManualEntrySubmissionResult.Expense(expense.submit(input.input))
             is ManualEntrySaveInput.Income -> ManualEntrySubmissionResult.Income(income.submit(input.input))
             is ManualEntrySaveInput.Transfer -> {
-                val submission = transfer ?: return ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.UnknownCommit)
+                // P702IMPL-06: a missing delegate is a composition-root wiring bug and must fail
+                // fast; surfacing it as UnknownCommit would strand the user on a dead-end screen.
+                val submission = transfer ?: error("transfer submission delegate is not wired")
                 ManualEntrySubmissionResult.Transfer(submission.submit(input.input))
             }
 
             is ManualEntrySaveInput.Lend -> {
-                val submission = lending ?: return ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.UnknownCommit)
+                val submission = lending ?: error("lending submission delegate is not wired")
                 ManualEntrySubmissionResult.Lend(submission.submitLend(input.input))
             }
 
             is ManualEntrySaveInput.Collect -> {
-                val submission = lending ?: return ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.UnknownCommit)
+                val submission = lending ?: error("lending submission delegate is not wired")
                 ManualEntrySubmissionResult.Collect(submission.submitCollect(input.input))
             }
         }

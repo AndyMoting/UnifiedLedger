@@ -125,6 +125,9 @@ fun P503App(
     // updated after every successful toggle, and injected into the overview through the load and
     // refresh events; the lists below derive their pinned-first order from it.
     var pinnedTargets by remember { mutableStateOf(emptySet<EntryPinTarget>()) }
+    // P702SPEC-03: bumped after every successful counterparty create/rename so the option
+    // projections (which read the directory fresh per query) re-derive.
+    var counterpartyVersion by remember { mutableStateOf(0) }
     val baseExpenseOptions = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
     val baseIncomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
     val baseTransferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
@@ -152,7 +155,7 @@ fun P503App(
             )
         }
     val lendingOptions =
-        remember(baseLendingOptions, pinnedTargets) {
+        remember(baseLendingOptions, pinnedTargets, counterpartyVersion) {
             ManualLendingOptions(
                 EntryPinOrdering.sortPaymentAccounts(baseLendingOptions.ownedAssetAccounts, pinnedTargets),
                 EntryPinOrdering.sortIncomeCategories(baseLendingOptions.interestCategories, pinnedTargets),
@@ -427,6 +430,8 @@ fun P503App(
                                         add(ManualTransferInputField.SOURCE_ACCOUNT)
                                         add(ManualTransferInputField.DESTINATION_ACCOUNT)
                                         add(ManualTransferInputField.DESTINATION_CREDIT)
+                                        // P702IMPL-07: the fee is part of the fallback field set.
+                                        add(ManualTransferInputField.FEE)
                                     },
                                 ),
                             ),
@@ -729,6 +734,24 @@ fun P503App(
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
     }
 
+    // P702SPEC-03: run one counterparty directory command from the editor dialog. A successful
+    // command closes the dialog and bumps the option refresh marker; a typed rejection is
+    // absorbed safely — the dialog stays open with the typed text and nothing is dispatched.
+    fun runCounterpartyForm(dialog: CounterpartyDialog) {
+        val commands = facade.counterpartyCommands ?: return
+        scope.launch {
+            val result =
+                when (dialog) {
+                    is CounterpartyDialog.Create -> commands.create.execute(facade.ledgerId, dialog.nameText)
+                    is CounterpartyDialog.Rename -> commands.rename.execute(facade.ledgerId, dialog.counterpartyId, dialog.nameText)
+                }
+            if (shouldRefreshOptionsAfterCounterpartyCommand(result)) {
+                counterpartyVersion++
+                dispatch(P503UiEvent.DismissCounterpartyDialog)
+            }
+        }
+    }
+
     // P7-02.D E-2: the "record again" affordance and its host reset (hoisted occurred-at text)
     // live in the dispatch guard and the tab shell below; the reducer effect, the retainedIntent
     // payload and the injection channel were frozen and implemented in P7-02.A.
@@ -856,6 +879,10 @@ fun P503App(
                     expressionPreview = current.expressionPreview,
                     onEvaluateExpression = { dispatch(P503UiEvent.EvaluateEntryExpression(it)) },
                     onApplyExpression = { dispatch(P503UiEvent.ApplyExpressionResult) },
+                    // P702SPEC-03: the counterparty create/rename affordance.
+                    counterpartyDialog = current.counterpartyDialog,
+                    onCounterpartyEvent = { dispatch(it) },
+                    onCounterpartyFormSubmit = { runCounterpartyForm(it) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                     onOccurredAtTextChange = { hoistedOccurredAtText = it },
                     onContinue = {
