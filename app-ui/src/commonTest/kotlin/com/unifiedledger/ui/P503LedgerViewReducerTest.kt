@@ -29,9 +29,11 @@ import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import com.unifiedledger.application.MonthlyActivityResult as MonthlyActivityQueryResult
 
@@ -108,6 +110,9 @@ class P503LedgerViewReducerTest {
         )
 
     private val selectableDomain = listOf(YearMonth(2026, 1), YearMonth(2026, 2), march)
+
+    /** The domain around the clock-resolved 本月 (2026-09) used by the shift tests. */
+    private val septemberDomain = listOf(YearMonth(2026, 7), YearMonth(2026, 8), YearMonth(2026, 9))
 
     private fun overview(
         tab: P503Tab = P503Tab.HOME,
@@ -253,10 +258,10 @@ class P503LedgerViewReducerTest {
     // ---- AnalysisMonthShift (matrix: effect on OverviewEmpty, absorbed everywhere else) ----
 
     @Test
-    fun analysisMonthShiftMovesTheCursorFromTheCurrentMonth() {
+    fun analysisMonthShiftMovesTheCursorWithinTheFrozenSelectMonthDomain() {
         val shifted =
             assertIs<P503AppState.OverviewEmpty>(
-                clockedReducer.reduce(overview(), P503UiEvent.AnalysisMonthShift(-1)),
+                clockedReducer.reduce(overview(domain = septemberDomain), P503UiEvent.AnalysisMonthShift(-1)),
             )
         // 本月 resolved from the injected clock (2026-09) shifted back one month.
         assertEquals(YearMonth(2026, 8), shifted.selectedMonth)
@@ -264,11 +269,35 @@ class P503LedgerViewReducerTest {
 
     @Test
     fun analysisMonthShiftMovesTheCursorFromTheSelectedMonthAcrossYearBounds() {
+        val januaryDomain = listOf(YearMonth(2025, 11), YearMonth(2025, 12), YearMonth(2026, 1))
         val shifted =
             assertIs<P503AppState.OverviewEmpty>(
-                clockedReducer.reduce(overview(month = YearMonth(2026, 1)), P503UiEvent.AnalysisMonthShift(-2)),
+                clockedReducer.reduce(overview(month = YearMonth(2026, 1), domain = januaryDomain), P503UiEvent.AnalysisMonthShift(-2)),
             )
         assertEquals(YearMonth(2025, 11), shifted.selectedMonth)
+    }
+
+    @Test
+    fun analysisMonthShiftOutsideTheSelectMonthDomainIsAbsorbed() {
+        // F9 (P703SPEC-10): the analysis region moves the shared cursor under the same admission
+        // rule as SelectMonth, so it can never request a month the selector will never offer.
+        val source = overview(month = march, domain = selectableDomain)
+        assertSame(source, clockedReducer.reduce(source, P503UiEvent.AnalysisMonthShift(1)))
+        assertSame(source, clockedReducer.reduce(source, P503UiEvent.AnalysisMonthShift(-3)))
+        // An in-domain shift still moves: 2026-01 + 1 == 2026-02.
+        val moved =
+            assertIs<P503AppState.OverviewEmpty>(
+                clockedReducer.reduce(overview(month = YearMonth(2026, 1), domain = selectableDomain), P503UiEvent.AnalysisMonthShift(1)),
+            )
+        assertEquals(YearMonth(2026, 2), moved.selectedMonth)
+    }
+
+    @Test
+    fun analysisMonthShiftIsAbsorbedWhenNoSelectableMonthExists() {
+        // An empty ledger (residual boundary (b)) offers no month, so the shared cursor cannot
+        // move onto a month the monthly read would have to invent.
+        val source = overview(domain = emptyList())
+        assertSame(source, clockedReducer.reduce(source, P503UiEvent.AnalysisMonthShift(-1)))
     }
 
     @Test
@@ -311,13 +340,14 @@ class P503LedgerViewReducerTest {
         assertEquals(InfrastructureFailureContext.READ, failed.context)
         assertNull(failed.draft)
         assertNull(failed.requestId)
-        // C04: the last successful payload is preserved with the failure (spec 4.3).
-        assertSame(source, failed.monthlyOverview)
-        val preserved = failed.monthlyOverview
-        if (preserved != null) {
-            assertSame(monthlyPayload, preserved.monthlyActivity)
-            assertEquals(march, preserved.selectedMonth)
-        }
+        // C04 (F8): the last successful overview is preserved unconditionally — the requirement
+        // is asserted, never guarded away by a null check.
+        val preserved = assertIs<P503AppState.OverviewEmpty>(retainedReadFailureOverview(failed))
+        assertSame(source, preserved)
+        assertSame(monthlyPayload, preserved.monthlyActivity)
+        assertEquals(march, preserved.selectedMonth)
+        assertEquals(selectableDomain, preserved.selectableMonths)
+        assertEquals(P503Tab.HOME, preserved.selectedTab)
     }
 
     @Test
@@ -329,6 +359,119 @@ class P503LedgerViewReducerTest {
             )
         assertEquals(InfrastructureFailureContext.READ, failed.context)
         assertSame(source, failed.monthlyOverview)
+    }
+
+    @Test
+    fun readFailuresWithoutARetainedMonthlyOverviewKeepTheBareFailurePresentation() {
+        // F1/F8: every pre-P7-03 READ failure path has no retained monthly overview, so the bare
+        // recoverable page applies; only a monthly-cycle failure selects the retained surface.
+        val failedInitialLoad =
+            assertIs<P503AppState.InfrastructureFailure>(clockedReducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadFailed))
+        assertEquals(InfrastructureFailureContext.READ, failedInitialLoad.context)
+        assertNull(retainedReadFailureOverview(failedInitialLoad))
+
+        val failedRefresh =
+            assertIs<P503AppState.InfrastructureFailure>(clockedReducer.reduce(overview(), P503UiEvent.RefreshFailed))
+        assertEquals(InfrastructureFailureContext.READ, failedRefresh.context)
+        assertNull(retainedReadFailureOverview(failedRefresh))
+
+        val monthlyFailure =
+            assertIs<P503AppState.InfrastructureFailure>(
+                clockedReducer.reduce(
+                    overview(month = march, domain = selectableDomain, payload = monthlyPayload),
+                    P503UiEvent.MonthlyActivityResult(MonthlyActivityQueryResult.Unavailable, emptyList()),
+                ),
+            )
+        assertSame(monthlyFailure.monthlyOverview, retainedReadFailureOverview(monthlyFailure))
+    }
+
+    @Test
+    fun readRetryAfterAMonthlyFailurePreservesTheMonthCursorAndTheSelectableDomain() {
+        // F2 (spec 6.2 residual boundary (a)): RetryRefresh does not re-request the monthly
+        // payload, but it must not strand the user on a month-less, stepper-less overview either.
+        val source = overview(month = march, domain = selectableDomain, payload = monthlyPayload)
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                clockedReducer.reduce(source, P503UiEvent.MonthlyActivityResult(MonthlyActivityQueryResult.Unavailable, emptyList())),
+            )
+        val recovered =
+            assertIs<P503AppState.OverviewEmpty>(
+                clockedReducer.reduce(failed, P503UiEvent.RefreshResult(oneTransactionState)),
+            )
+        assertEquals(P503Tab.HOME, recovered.selectedTab)
+        assertEquals(march, recovered.selectedMonth)
+        assertEquals(selectableDomain, recovered.selectableMonths)
+        // The payload was not re-requested, so the region says so explicitly instead of showing
+        // the stale payload as current (and never as 该月无交易).
+        assertNull(recovered.monthlyActivity)
+        assertEquals(
+            MonthlyRegionState.NOT_LOADED,
+            monthlyRegionState(recovered.monthlyActivity, recovered.monthlyReloadRequired),
+        )
+    }
+
+    @Test
+    fun readRetryWithoutAUsableMonthlyDomainStillSurvivesTheMonthCursor() {
+        // F2: even when the failure happened before any domain was known, a selected month keeps
+        // the re-select affordance usable (SelectMonth re-requests unconditionally via trigger (b)).
+        val source = overview(month = march, domain = emptyList(), payload = null)
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                clockedReducer.reduce(source, P503UiEvent.MonthlyActivityResult(MonthlyActivityQueryResult.Unavailable, emptyList())),
+            )
+        val recovered =
+            assertIs<P503AppState.OverviewEmpty>(
+                clockedReducer.reduce(failed, P503UiEvent.RefreshResult(oneTransactionState)),
+            )
+        assertEquals(march, recovered.selectedMonth)
+        assertEquals(emptyList(), recovered.selectableMonths)
+        assertTrue(recovered.monthlyReloadRequired)
+    }
+
+    @Test
+    fun preMonthlyReadRetryKeepsThePreviousOverviewSemantics() {
+        // F2 regression guard: with no retained monthly overview the refresh arm is unchanged.
+        val recovered =
+            assertIs<P503AppState.OverviewEmpty>(
+                clockedReducer.reduce(
+                    P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ),
+                    P503UiEvent.RefreshResult(oneTransactionState),
+                ),
+            )
+        assertEquals(P503Tab.HOME, recovered.selectedTab)
+        assertNull(recovered.selectedMonth)
+        assertEquals(emptyList(), recovered.selectableMonths)
+        assertNull(recovered.monthlyActivity)
+        assertFalse(recovered.monthlyReloadRequired)
+    }
+
+    @Test
+    fun monthlyCycleSuccessClearsTheReloadFlag() {
+        val source = overview(month = march, domain = emptyList()).copy(monthlyReloadRequired = true)
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                clockedReducer.reduce(source, P503UiEvent.MonthlyActivityResult(MonthlyActivityQueryResult.Success(monthlyPayload), selectableDomain)),
+            )
+        assertSame(monthlyPayload, updated.monthlyActivity)
+        assertFalse(updated.monthlyReloadRequired)
+        assertEquals(MonthlyRegionState.LOADED, monthlyRegionState(updated.monthlyActivity, updated.monthlyReloadRequired))
+    }
+
+    @Test
+    fun everyCycleFailureVariantTakesTheSameTypedReadFailurePath() {
+        // F3: the month payload, the SelectMonth domain and the trend share one typed cycle, so a
+        // sub-read shortfall arrives here as Unavailable/InvalidState — never as a disabled
+        // selector or a bare 暂无趋势数据 — and preserves the same retained overview.
+        val source = overview(month = march, domain = selectableDomain, payload = monthlyPayload)
+        listOf(MonthlyActivityQueryResult.Unavailable, MonthlyActivityQueryResult.InvalidState).forEach { failure ->
+            val failed =
+                assertIs<P503AppState.InfrastructureFailure>(
+                    clockedReducer.reduce(source, P503UiEvent.MonthlyActivityResult(failure, emptyList())),
+                )
+            assertEquals(InfrastructureFailureContext.READ, failed.context)
+            assertSame(source, failed.monthlyOverview)
+            assertSame(source, retainedReadFailureOverview(failed))
+        }
     }
 
     @Test

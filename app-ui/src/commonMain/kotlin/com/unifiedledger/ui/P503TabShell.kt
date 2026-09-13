@@ -134,6 +134,14 @@ fun P503TabShell(
  * (spec 6.1 layering): the month card and category drilldown for the shared month cursor, plus
  * the twelve-month trend (R-Q07-1) with the AnalysisMonthShift affordance. Both tabs consume the
  * same [com.unifiedledger.application.QueryMonthlyActivity] result (plan section 5.1).
+ *
+ * F4 (spec section 8 R-5): the special-kind divergence between the whole-period summary above and
+ * the monthly ordinary totals is disclosed as a single special-kind count line next to the
+ * category region, never mixed into the ordinary rows. F10 (P703SPEC-09): ordinary postings
+ * without a category mapping appear as the explicit 无分类 row, so Σ分类 reconciles with the month
+ * card. F2: [monthlyReloadRequired] swaps the empty-month copy for the explicit re-select
+ * affordance after a READ-retry recovery. [interactionsEnabled] is `false` only on the retained
+ * read-failure surface, where the analysis shift is absorbed (F1).
  */
 @Composable
 fun P503AnalysisScreen(
@@ -144,9 +152,11 @@ fun P503AnalysisScreen(
     resolvedCurrentMonth: kotlinx.datetime.YearMonth? = null,
     selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
     monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+    monthlyReloadRequired: Boolean = false,
     trend: com.unifiedledger.application.MonthlyTrend? = null,
     onSelectMonth: (kotlinx.datetime.YearMonth) -> Unit = {},
     onAnalysisMonthShift: (Int) -> Unit = {},
+    interactionsEnabled: Boolean = true,
 ) {
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarize(state) }
     Column(
@@ -179,15 +189,40 @@ fun P503AnalysisScreen(
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
-            P503MonthCard(monthlyActivity)
+            P503MonthCard(
+                activity = monthlyActivity,
+                reloadRequired = monthlyReloadRequired,
+                onReloadMonth =
+                    if (monthlyReloadRequired) {
+                        (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
+                    } else {
+                        null
+                    },
+            )
             Spacer(Modifier.height(4.dp))
             P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
+            // R-5 disclosure: the special-kind count line explains why this month's ordinary
+            // totals need not equal the whole-period figures above.
+            specialKindDisclosure(monthlyActivity)?.let { disclosure ->
+                Spacer(Modifier.height(8.dp))
+                Text(disclosure, style = MaterialTheme.typography.bodySmall)
+            }
             Spacer(Modifier.height(8.dp))
-            P503CategoryRegion(title = "支出分类", categories = monthlyActivity?.expenseCategories ?: emptyList(), withPie = true)
+            P503CategoryRegion(
+                title = "支出分类",
+                categories = monthlyActivity?.expenseCategories ?: emptyList(),
+                withPie = true,
+                uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
+            )
             Spacer(Modifier.height(8.dp))
-            P503CategoryRegion(title = "收入分类", categories = monthlyActivity?.incomeCategories ?: emptyList(), withPie = false)
+            P503CategoryRegion(
+                title = "收入分类",
+                categories = monthlyActivity?.incomeCategories ?: emptyList(),
+                withPie = false,
+                uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
+            )
             Spacer(Modifier.height(8.dp))
-            P503MonthlyTrendRegion(trend, onAnalysisMonthShift)
+            P503MonthlyTrendRegion(trend, onAnalysisMonthShift, interactionsEnabled)
         }
     }
 }

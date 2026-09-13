@@ -37,6 +37,12 @@ import kotlinx.datetime.YearMonth
  * read-only detail. `entryRows == null` keeps the pre-P7-03 row rendering for legacy facades.
  * Transactions whose statistics time lies after 本月 stay visible in the flow list (spec 6.2
  * residual boundary (c)).
+ *
+ * P7-03.D (F2) adds [monthlyReloadRequired]: the monthly payload is known to be absent after a
+ * READ retry recovered a monthly failure, so the month region presents the explicit
+ * 月度数据未加载——请重新选择月份 affordance instead of an empty month. [interactionsEnabled] is
+ * `false` only for the retained read-failure surface (F1), which renders the same regions without
+ * live clicks the reducer would absorb.
  */
 @Composable
 fun P503OverviewScreen(
@@ -46,9 +52,11 @@ fun P503OverviewScreen(
     resolvedCurrentMonth: YearMonth? = null,
     selectableMonths: List<YearMonth> = emptyList(),
     monthlyActivity: MonthlyActivity? = null,
+    monthlyReloadRequired: Boolean = false,
     entryRows: List<LedgerEntryRow>? = null,
     onSelectTransaction: (TransactionId) -> Unit = {},
     onSelectMonth: (YearMonth) -> Unit = {},
+    interactionsEnabled: Boolean = true,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -56,7 +64,18 @@ fun P503OverviewScreen(
         Text("账本：${state.ledgerId.value}", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         if (showMonthlyRegion) {
-            P503MonthCard(monthlyActivity)
+            P503MonthCard(
+                activity = monthlyActivity,
+                reloadRequired = monthlyReloadRequired,
+                // F2: the explicit re-select action dispatches SelectMonth for the effective
+                // month (trigger (b), which always re-requests).
+                onReloadMonth =
+                    if (monthlyReloadRequired) {
+                        (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
+                    } else {
+                        null
+                    },
+            )
             Spacer(Modifier.height(4.dp))
             P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
             Spacer(Modifier.height(8.dp))
@@ -67,7 +86,7 @@ fun P503OverviewScreen(
             if (entryRows != null) {
                 Text("流水", style = MaterialTheme.typography.titleMedium)
                 entryRows.forEach { row ->
-                    LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction)
+                    LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled)
                     HorizontalDivider()
                 }
             } else {
@@ -95,19 +114,22 @@ fun P503OverviewScreen(
  * One clickable flow row (P7-03.C): effective kind, statistics time (the R-Q06-2 bucket key)
  * and the current note, followed by the exact posting lines. The click opens the read-only
  * detail; TalkBack announces the affordance via the click label while the exact values stay
- * in the visible texts.
+ * in the visible texts. [interactionsEnabled] is `false` only on the retained read-failure
+ * surface, where the reducer absorbs the open-detail event: the row then renders without a dead
+ * click affordance (F1).
  */
 @Composable
 private fun LedgerEntryFlowRow(
     row: LedgerEntryRow,
     accountNames: Map<AccountId, String>,
     onSelectTransaction: (TransactionId) -> Unit,
+    interactionsEnabled: Boolean,
 ) {
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClickLabel = "查看交易详情") { onSelectTransaction(row.transactionId) }
+                .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") { onSelectTransaction(row.transactionId) }
                 .padding(vertical = 4.dp),
     ) {
         Text(

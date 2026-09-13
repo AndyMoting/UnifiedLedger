@@ -33,8 +33,11 @@ class CatalogBootstrapFailedException(
  * P7-03.C/D (D-145) adds the ledger-view read models on the same discipline: [queryLedgerEntryRows]
  * (flow-list rows in the frozen display order), [queryTransactionDetail] (read-only detail) and
  * [queryMonthlyActivity] (unified monthly projection, built only when the host injects the
- * reporting [clock] — R-Q06-2 本月 resolution). All three are rebuilt from the reloaded catalog
- * by [refresh], so renames/deactivations show current names without a restart.
+ * reporting [clock] — R-Q06-2 本月 resolution). [queryTransactionDetail] and
+ * [queryMonthlyActivity] carry a catalog projection and are rebuilt from the reloaded catalog by
+ * [refresh], so renames/deactivations show current names without a restart.
+ * [queryLedgerEntryRows] has no catalog dependency (it is pure row ordering), so it is constructed
+ * once from the read port and is deliberately not rebuilt by [refresh].
  */
 class CatalogConsumerSession(
     private val reader: CatalogAuthorityReader,

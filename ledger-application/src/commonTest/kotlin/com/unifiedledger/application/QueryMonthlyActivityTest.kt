@@ -18,6 +18,7 @@ import com.unifiedledger.domain.TransactionVersionId
 import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -265,6 +266,23 @@ class QueryMonthlyActivityTest {
     }
 
     @Test
+    fun readPortsWithoutTheEntryRowsOverrideSurfaceTypedFailuresNotAnEmptyLedger() {
+        // F5/R-Q06-4: loadLedgerEntryRows has no neutral default, so a read port that does not
+        // implement the P7-03 surface must fail loudly instead of being read as an empty ledger
+        // (which would render zeros and empty months).
+        val port = UnimplementedEntryRowsPort()
+        assertFailsWith<UnsupportedOperationException> { port.loadLedgerEntryRows(ledgerId) }
+        val useCase = QueryMonthlyActivity(port, ledgerId, catalog(), FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")))
+        assertIs<MonthlyActivityResult.Unavailable>(useCase.query(YearMonth(2026, 3)))
+        assertIs<MonthlyTrendResult.Unavailable>(useCase.trend())
+        assertIs<SelectableMonthsResult.Unavailable>(useCase.selectableMonths())
+        assertIs<TransactionDetailResult.Unavailable>(QueryTransactionDetail(port, ledgerId, catalog()).query(TransactionId("tx-1")))
+        // The flow-list query propagates the read failure to its caller, which maps it to the
+        // typed read-failure surface instead of rendering an empty list.
+        assertFailsWith<UnsupportedOperationException> { QueryLedgerEntryRows(port, ledgerId).query() }
+    }
+
+    @Test
     fun emptyMonthRendersExplicitZerosAndEmptyLedgerYieldsNoCurrencies() {
         val rows =
             listOf(
@@ -332,6 +350,16 @@ class QueryMonthlyActivityTest {
         val expenseNode = activity.expenseCategories.single()
         assertEquals(3_000L, expenseNode.totals.single().positiveMinorUnits)
 
+        // F10: it is disclosed as the explicit 无分类 row instead of being silently dropped, so
+        // Σ(category rows) + 无分类 reconciles exactly with the month card's net expense.
+        val uncategorized = activity.uncategorizedExpenseTotals.single()
+        assertEquals(cny, uncategorized.currency)
+        assertEquals(700L, uncategorized.positiveMinorUnits)
+        assertEquals(0L, uncategorized.refundMinorUnits)
+        val categorizedExpense = expenseNode.totals.sumOf { it.positiveMinorUnits + it.refundMinorUnits }
+        assertEquals(3_700L, categorizedExpense + uncategorized.positiveMinorUnits + uncategorized.refundMinorUnits)
+        assertTrue(activity.uncategorizedIncomeTotals.isEmpty())
+
         // Income side mirrors the expense side; the deactivated salary category still counts
         // its history under the current name (R-Q07-2, ACCOUNTING_RULES.md :91/:257).
         val salaryCategory = catalog().categories.first { it.id == salaryId }
@@ -372,6 +400,12 @@ class QueryMonthlyActivityTest {
                     posting("posting-apr-expense", expenseId, 2_000L)
                     posting("posting-apr-expense-payment", assetId, -2_000L)
                 },
+                // Outside the twelve-month trend window (2025-05..2026-04): the section 3.1.2
+                // anchor below must still count it (F7).
+                row("tx-jan-expense", TransactionKind.EXPENSE, "2025-01-20T02:00:00Z") {
+                    posting("posting-jan-expense", expenseId, 500L)
+                    posting("posting-jan-expense-payment", assetId, -500L)
+                },
             )
         val useCase = query(rows, clockAt = "2026-04-15T02:00:00Z")
         val trend = assertIs<MonthlyTrendResult.Success>(useCase.trend()).trend
@@ -390,16 +424,26 @@ class QueryMonthlyActivityTest {
         assertEquals(cardMarch.currencies, trendMarch.currencies)
         assertEquals(cardMarch.expenseCategories, trendMarch.expenseCategories)
 
-        // Section 3.1.2 anchor: summing the trend equals the full-period SummarizeLedgerActivity
-        // totals per currency on a no-special-kind ledger.
+        // Section 3.1.2 anchor: Σ(ALL statistics months) == the full-period
+        // SummarizeLedgerActivity totals per currency on a no-special-kind ledger (F7). The
+        // twelve-month trend window is NOT the anchor: the January 2025 expense above lies
+        // outside 2025-05..2026-04, so summing only the window would silently break the anchor.
         val fullPeriod = SummarizeLedgerActivity(catalog()).summarize(fullPeriodState(rows))
-        val trendIncome = trend.months.sumOf { it.currencies.single().ordinaryIncomeMinorUnits }
-        val trendExpense = trend.months.sumOf { it.currencies.single().netExpenseMinorUnits }
         val fullPeriodTotal = fullPeriod.totalsByCurrency.single()
-        assertEquals(fullPeriodTotal.incomeMinorUnits, trendIncome)
-        assertEquals(fullPeriodTotal.expenseMinorUnits, trendExpense)
+        val trendExpense = trend.months.sumOf { month -> monthNetExpense(useCase, month.month) }
         assertEquals(4_100L, trendExpense)
-        assertEquals(10_000L, trendIncome)
+        assertEquals(4_600L, fullPeriodTotal.expenseMinorUnits)
+        assertTrue(trendExpense != fullPeriodTotal.expenseMinorUnits)
+
+        val domain = assertIs<SelectableMonthsResult.Success>(useCase.selectableMonths()).months
+        assertEquals(YearMonth(2025, 1), domain.first())
+        assertEquals(YearMonth(2026, 4), domain.last())
+        val allMonthsIncome = domain.sumOf { month -> monthOrdinaryIncome(useCase, month) }
+        val allMonthsExpense = domain.sumOf { month -> monthNetExpense(useCase, month) }
+        assertEquals(10_000L, allMonthsIncome)
+        assertEquals(4_600L, allMonthsExpense)
+        assertEquals(fullPeriodTotal.incomeMinorUnits, allMonthsIncome)
+        assertEquals(fullPeriodTotal.expenseMinorUnits, allMonthsExpense)
     }
 
     @Test
@@ -437,6 +481,24 @@ class QueryMonthlyActivityTest {
     }
 
     // --- fixtures -----------------------------------------------------------------------
+
+    /** The month's single-currency ordinary income (the anchor is per currency, D-120). */
+    private fun monthOrdinaryIncome(
+        useCase: QueryMonthlyActivity,
+        month: YearMonth,
+    ): Long {
+        val activity = assertIs<MonthlyActivityResult.Success>(useCase.query(month)).activity
+        return activity.currencies.single().ordinaryIncomeMinorUnits
+    }
+
+    /** The month's single-currency net expense (signed; refunds stay negative). */
+    private fun monthNetExpense(
+        useCase: QueryMonthlyActivity,
+        month: YearMonth,
+    ): Long {
+        val activity = assertIs<MonthlyActivityResult.Success>(useCase.query(month)).activity
+        return activity.currencies.single().netExpenseMinorUnits
+    }
 
     private fun query(
         rows: List<LedgerEntryRow>,
@@ -581,6 +643,45 @@ private class EntryRowsPort(
     ): ManualTransferCommitRecord? = null
 
     override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = rows
+}
+
+/**
+ * F5: a read port that only serves the pre-P7-03 surface and deliberately inherits the
+ * [LedgerCurrentStateReadPort.loadLedgerEntryRows] default (no override), proving that an
+ * unimplemented P7-03 read surfaces as a typed failure instead of an empty ledger.
+ */
+private class UnimplementedEntryRowsPort : LedgerCurrentStateReadPort {
+    override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
+
+    override fun findManualExpenseByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualExpenseCommitRecord? = null
+
+    override fun findManualExpenseByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedExpenseReceipt,
+    ): ManualExpenseCommitRecord? = null
+
+    override fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord? = null
+
+    override fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord? = null
+
+    override fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord? = null
+
+    override fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord? = null
 }
 
 private class ThrowingEntryPort : LedgerCurrentStateReadPort {

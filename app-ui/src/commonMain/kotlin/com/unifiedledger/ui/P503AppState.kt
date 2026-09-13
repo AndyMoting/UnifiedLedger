@@ -76,6 +76,17 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** P7-03.C: the last successful unified monthly payload for the effective month. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /**
+         * P7-03.D (F2): the monthly payload is known to be absent for this overview because the
+         * READ retry that recovered a monthly failure does not re-request it — `RetryRefresh` is
+         * deliberately outside the frozen monthly re-request trigger set (spec 6.2 residual
+         * boundary (a)). The retry still preserves the month cursor and the SelectMonth domain
+         * read from the retained overview, and the monthly region then presents the explicit
+         * 月度数据未加载——请重新选择月份 affordance whose re-select action dispatches
+         * `SelectMonth` (trigger (b), which always re-requests). `false` on every other path,
+         * including all pre-P7-03 flows.
+         */
+        val monthlyReloadRequired: Boolean = false,
     ) : P503AppState
 
     data class Editing(
@@ -146,13 +157,15 @@ sealed interface P503AppState {
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
         /**
-         * P7-03.C (D-145; spec section 6.2 matrix, 4.3, C04): the monthly read failure preserves
+         * P7-03.C/D (D-145; spec section 6.2 matrix, 4.3, C04): the monthly read failure preserves
          * the last successful overview (tab, month cursor and monthly payload) so the read
          * failure keeps the previously rendered month visible next to the explicit failure
-         * banner, never rendered as zeros or an empty month (R-Q06-4). `null` for every
-         * pre-P7-03 failure path. Read-only payload: the existing READ retry semantics are
-         * unchanged (spec 6.3) and recovery from a monthly failure is a re-dispatched
-         * SelectMonth (residual boundary (a) of section 6.2).
+         * banner, never rendered as zeros or an empty month (R-Q06-4). The composition root renders
+         * this retained overview read-only behind the failure banner whenever it is non-null
+         * (F1); when it is `null` (every pre-P7-03 READ failure path) the bare recoverable failure
+         * page is rendered with its unchanged retry. Read-only payload: the existing READ retry
+         * semantics are unchanged (spec 6.3) and recovery from a monthly failure is a
+         * re-dispatched SelectMonth (residual boundary (a) of section 6.2).
          */
         val monthlyOverview: OverviewEmpty? = null,
     ) : P503AppState

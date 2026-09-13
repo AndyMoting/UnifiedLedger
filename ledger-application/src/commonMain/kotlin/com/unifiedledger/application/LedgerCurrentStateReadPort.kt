@@ -97,11 +97,20 @@ interface LedgerCurrentStateReadPort {
 
     /**
      * P7-03.A (D-145): ledger-scoped current-version entry rows with the effective kind
-     * (`COALESCE(canonical_kind, kind)`), both persisted times and the current note. The
-     * default keeps pre-P7-03 read-port fakes source-compatible (same discipline as the
-     * P7-02.C lending lookups above); the real data adapter overrides it.
+     * (`COALESCE(canonical_kind, kind)`), both persisted times and the current note.
+     *
+     * There is deliberately no neutral default: returning an empty list would make an
+     * unimplemented port indistinguishable from an empty ledger and render zeros or empty
+     * months (R-Q06-4). The default fails loudly instead, and every consumer already maps a
+     * read-port exception to its typed failure family
+     * ([MonthlyActivityResult.Unavailable] / [TransactionDetailResult.Unavailable], or the
+     * caller's typed surface for [QueryLedgerEntryRows]); the real data adapter overrides it.
      */
-    fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = emptyList()
+    fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> =
+        throw UnsupportedOperationException(
+            "loadLedgerEntryRows is not implemented by this read port; a missing P7-03 ledger-entry " +
+                "read must surface as a typed read failure, never as an empty ledger (R-Q06-4)",
+        )
 
     /**
      * P7-03.A: reverse creation lineage — the import confirmation that created the

@@ -35,6 +35,7 @@ import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
 import kotlinx.datetime.YearMonth
 
 // P7-03.C/D shared ledger-view presentations (D-145; spec sections 4.2/6.4). All amounts go
@@ -44,7 +45,11 @@ import kotlinx.datetime.YearMonth
 // always accompany them, and zero/net-negative categories never draw a pie sector (R-Q07-3,
 // spec 6.4). The month card three values are 普通收入/净支出/结余 (结余 is never an account
 // balance or a cash flow, plan :110). Empty months/ledgers render explicit copy (该月无交易),
-// distinct from read failures which are typed surfaces (R-Q06-4).
+// distinct from read failures which are typed surfaces (R-Q06-4); a month whose payload was not
+// loaded says so explicitly instead of reading as empty (F2). Special kinds are disclosed as a
+// single count line (R-5) and ordinary postings without a category mapping are shown as the
+// explicit 无分类 row (P703SPEC-09/F10). Every load-bearing decision here is a pure function in
+// P503LedgerViewPresentation.kt so it is covered by the app-ui JVM tests (F6).
 
 /** Fixed slice palette for the small proportion pies; indices cycle, colors carry no meaning. */
 private val P703_PIE_COLORS =
@@ -61,34 +66,46 @@ private val P703_PIE_COLORS =
 
 /**
  * The unified month card (spec 4.2.1): per-currency 普通收入 / 净支出 / 结余 plus the month's
- * transaction count (all effective kinds). `null` payload = the monthly data has not arrived
- * yet (暂无月度数据 — never rendered as zeros, R-Q06-4); an empty month or an empty ledger
- * renders the explicit 该月无交易 copy (spec 6.4).
+ * transaction count (all effective kinds). The headline copy is the pure
+ * [monthRegionHeadline] decision: 该月无交易 for an empty month/ledger, 暂无月度数据 before the
+ * first payload, and an explicit 月度数据未加载——请重新选择月份 for the post-retry absence —
+ * never zeros, and never a failure disguised as empty (R-Q06-4; F2). When [reloadRequired] the
+ * card also offers the re-select action ([onReloadMonth]) that dispatches SelectMonth (trigger
+ * (b), which always re-requests).
  */
 @Composable
-internal fun P503MonthCard(activity: MonthlyActivity?) {
+internal fun P503MonthCard(
+    activity: MonthlyActivity?,
+    reloadRequired: Boolean = false,
+    onReloadMonth: (() -> Unit)? = null,
+) {
     Text("月度小结", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
-    when {
-        activity == null -> Text("暂无月度数据。", style = MaterialTheme.typography.bodyMedium)
-        activity.currencies.isEmpty() || activity.currencies.all { it.transactionCount == 0 } ->
-            Text("${activity.month}：该月无交易。", style = MaterialTheme.typography.bodyMedium)
-        else -> {
+    val state = monthlyRegionState(activity, reloadRequired)
+    Text(
+        monthRegionHeadline(
+            state = state,
+            monthLabel = activity?.month?.toString().orEmpty(),
+            transactionCount = activity?.currencies?.firstOrNull()?.transactionCount ?: 0,
+        ),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (state == MonthlyRegionState.LOADED) {
+        activity?.currencies?.forEach { row ->
             Text(
-                "${activity.month} · 交易 ${activity.currencies.first().transactionCount} 笔",
+                "${row.currency.code}：普通收入 " +
+                    formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
+                    "，净支出 " +
+                    formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
+                    "，结余 " +
+                    formatMinorUnits(row.balanceMinorUnits, row.currency.precision),
                 style = MaterialTheme.typography.bodyMedium,
             )
-            activity.currencies.forEach { row ->
-                Text(
-                    "${row.currency.code}：普通收入 " +
-                        formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
-                        "，净支出 " +
-                        formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
-                        "，结余 " +
-                        formatMinorUnits(row.balanceMinorUnits, row.currency.precision),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
+        }
+    }
+    if (state == MonthlyRegionState.NOT_LOADED && onReloadMonth != null) {
+        TextButton(onClick = onReloadMonth) {
+            Text("重新加载该月")
         }
     }
 }
@@ -128,19 +145,26 @@ internal fun P503MonthSelector(
 /**
  * One category section (支出分类/收入分类) with the level-1 drilldown into level-2 children
  * (R-Q07-2, current names including deactivated categories) and the always-present exact value
- * table. Positive and refund parts stay separated with signs preserved (R-Q07-3).
+ * table. Positive and refund parts stay separated with signs preserved (R-Q07-3). The chart /
+ * exact-table pairing is the pure [categoryChartPresentation] decision: zero and net-negative
+ * categories never draw a sector while their exact values stay in the table (C04). [uncategorized]
+ * is the explicit 无分类 row of ordinary postings whose account carries no category mapping
+ * (P703SPEC-09/F10): it is disclosed, never invented as a category and never mixed into the
+ * ordinary rows' totals, so Σ分类 reconciles with the month card.
  */
 @Composable
 internal fun P503CategoryRegion(
     title: String,
     categories: List<MonthlyCategoryTotal>,
     withPie: Boolean,
+    uncategorized: List<MonthlyCategoryCurrencyTotal> = emptyList(),
 ) {
-    if (categories.isEmpty()) return
+    if (categories.isEmpty() && uncategorized.isEmpty()) return
     Text(title, style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
-    if (withPie) {
-        P503CategoryPies(categories)
+    val presentation = categoryChartPresentation(withPie, categories)
+    if (presentation.rendersChart) {
+        P503CategoryPies(presentation.sectors)
     }
     var expandedIds by remember(categories) { mutableStateOf(emptySet<CategoryId>()) }
     categories.forEach { level1 ->
@@ -159,7 +183,7 @@ internal fun P503CategoryRegion(
                 Text(level1.categoryName, style = MaterialTheme.typography.bodyMedium)
             }
             Text(
-                categoryTotalsLine(level1),
+                categoryTotalsText(level1.totals),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 20.dp),
             )
@@ -168,7 +192,7 @@ internal fun P503CategoryRegion(
                     Column(modifier = Modifier.padding(start = 20.dp)) {
                         Text(child.categoryName, style = MaterialTheme.typography.bodySmall)
                         Text(
-                            categoryTotalsLine(child),
+                            categoryTotalsText(child.totals),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 12.dp),
                         )
@@ -177,32 +201,29 @@ internal fun P503CategoryRegion(
             }
         }
     }
-}
-
-/** Exact per-currency values of one category node: 正向 and 退款 parts with signs (R-Q07-3). */
-private fun categoryTotalsLine(node: MonthlyCategoryTotal): String =
-    if (node.totals.isEmpty()) {
-        "该分类本月无金额"
-    } else {
-        node.totals.joinToString("；") { total ->
-            "${total.currency.code} 正向 ${formatMinorUnits(total.positiveMinorUnits, total.currency.precision)}" +
-                "，退款 ${formatMinorUnits(total.refundMinorUnits, total.currency.precision)}"
+    if (uncategorized.isNotEmpty()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+            Text("无分类（账户未映射分类）", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                categoryTotalsText(uncategorized),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 20.dp),
+            )
         }
     }
+}
 
 /**
  * Small per-currency proportion pies over the expense categories (R-Q07-3, spec 6.4): a
  * category draws a sector only when its signed net contribution is positive — zero and
- * net-negative categories never draw a misleading sector. Currencies are never mixed (D-120);
- * the exact table above always accompanies the graphic.
+ * net-negative categories never draw a misleading sector (the pure [categoryChartSectors]
+ * decision). Currencies are never mixed (D-120); the exact table above always accompanies the
+ * graphic.
  */
 @Composable
-private fun P503CategoryPies(categories: List<MonthlyCategoryTotal>) {
-    val totalsByCurrency = categories.flatMap { it.totals }.groupBy { it.currency }
-    totalsByCurrency.forEach { (currency, totals) ->
-        val slices = totals.mapNotNull { total -> positiveNet(total)?.let { net -> net to total } }
-        val sum = slices.sumOf { it.first }
-        if (sum <= 0L) return@forEach
+private fun P503CategoryPies(sectors: Map<CurrencyUnit, List<CategoryChartSector>>) {
+    sectors.forEach { (currency, currencySectors) ->
+        val sum = currencySectors.sumOf { it.netMinorUnits }
         Text(
             "${currency.code} 构成比例（仅正向净额分类）",
             style = MaterialTheme.typography.bodySmall,
@@ -215,8 +236,8 @@ private fun P503CategoryPies(categories: List<MonthlyCategoryTotal>) {
                     .semantics { contentDescription = "${currency.code} 分类构成比例图形，数值以文本为准" },
         ) {
             var startAngle = -90f
-            slices.forEachIndexed { index, (net, _) ->
-                val sweep = 360f * net / sum
+            currencySectors.forEachIndexed { index, sector ->
+                val sweep = 360f * sector.netMinorUnits / sum
                 drawArc(
                     color = P703_PIE_COLORS[index % P703_PIE_COLORS.size],
                     startAngle = startAngle,
@@ -229,25 +250,22 @@ private fun P503CategoryPies(categories: List<MonthlyCategoryTotal>) {
     }
 }
 
-/** The signed net contribution of one category/currency total, or null when it is not positive. */
-private fun positiveNet(total: MonthlyCategoryCurrencyTotal): Long? {
-    val net = total.positiveMinorUnits + total.refundMinorUnits
-    return if (net > 0L) net else null
-}
-
 /**
  * The twelve-month trend table (R-Q07-1): one exact line per month, old to new, with explicit
  * zero values for empty months and 该月无交易 for a ledger without any activity currency.
+ * [interactionsEnabled] is `false` only on the retained read-failure surface, where
+ * AnalysisMonthShift is absorbed (F1).
  */
 @Composable
 internal fun P503MonthlyTrendRegion(
     trend: MonthlyTrend?,
     onAnalysisMonthShift: (Int) -> Unit,
+    interactionsEnabled: Boolean = true,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("近 12 个月趋势", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        TextButton(onClick = { onAnalysisMonthShift(-1) }) { Text("前移一月") }
-        TextButton(onClick = { onAnalysisMonthShift(1) }) { Text("后移一月") }
+        TextButton(enabled = interactionsEnabled, onClick = { onAnalysisMonthShift(-1) }) { Text("前移一月") }
+        TextButton(enabled = interactionsEnabled, onClick = { onAnalysisMonthShift(1) }) { Text("后移一月") }
     }
     Spacer(Modifier.height(4.dp))
     if (trend == null) {

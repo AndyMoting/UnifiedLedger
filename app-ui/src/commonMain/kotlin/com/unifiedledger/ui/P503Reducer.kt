@@ -296,11 +296,18 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult ->
                 when (val result = event.result) {
                     is com.unifiedledger.application.MonthlyActivityResult.Success ->
-                        state.copy(monthlyActivity = result.activity, selectableMonths = event.selectableMonths)
+                        state.copy(
+                            monthlyActivity = result.activity,
+                            selectableMonths = event.selectableMonths,
+                            monthlyReloadRequired = false,
+                        )
                     // 失败 → READ failure while preserving the last successful overview
                     // (spec 4.3/C04: 上一成功载荷保留 + 显式失败条); the retry stays the existing
                     // RetryRefresh branch (spec 6.3) and recovery is a re-dispatched SelectMonth
-                    // (residual boundary (a)).
+                    // (residual boundary (a)). A shortfall in any part of the cycle (month
+                    // payload, SelectMonth domain, trend) arrives here as the same typed failure
+                    // (F3, R-Q06-4): a disabled selector or a bare 暂无趋势数据 must not stand in
+                    // for an explicit failure.
                     com.unifiedledger.application.MonthlyActivityResult.InvalidState,
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
                     -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state)
@@ -361,7 +368,14 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult ->
                 when (val result = event.result) {
                     is com.unifiedledger.application.MonthlyActivityResult.Success ->
-                        state.copy(overview = state.overview.copy(monthlyActivity = result.activity, selectableMonths = event.selectableMonths))
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
                     com.unifiedledger.application.MonthlyActivityResult.InvalidState,
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
                     -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
@@ -373,7 +387,13 @@ class P503ReducerImpl(
             else -> unhandled(state, event)
         }
 
-    /** P7-03.C: the shifted month cursor, or `null` when no usable base month exists (absorbed). */
+    /**
+     * P7-03.C (F9): the shifted month cursor, or `null` when no usable base month exists or the
+     * shifted month would leave the frozen SelectMonth domain `[first transaction statistics
+     * month, 本月]` (P703SPEC-10). The analysis region therefore moves the shared cursor under
+     * exactly the same admission rule as `SelectMonth` and can never request a month the selector
+     * will never offer; an out-of-domain shift is absorbed with zero state change.
+     */
     private fun analysisMonthShiftTarget(
         state: P503AppState.OverviewEmpty,
         offset: Int,
@@ -397,7 +417,7 @@ class P503ReducerImpl(
                     shifted.minus(1, DateTimeUnit.MONTH)
                 }
         }
-        return shifted
+        return if (shifted in state.selectableMonths) shifted else null
     }
 
     private fun reduceEditing(
@@ -1101,12 +1121,24 @@ class P503ReducerImpl(
                     P503UiEvent.RetryRefresh -> state
                     // P7-02 G-C: a successful read retry still forwards the retained intent;
                     // P7-02.D E-4 also carries the host's pin mirror into the fresh overview.
+                    // P7-03.D (F2): when the failure came from a monthly read, the retry keeps the
+                    // month cursor and the SelectMonth domain that were on screen (so the user is
+                    // never stranded on a month-less, stepper-less overview) and marks the monthly
+                    // payload as not loaded, because RetryRefresh is deliberately outside the
+                    // frozen monthly re-request trigger set (spec 6.2 residual boundary (a)); the
+                    // explicit re-select affordance dispatches SelectMonth (trigger (b)). All
+                    // pre-P7-03 READ failures have monthlyOverview == null and keep this branch
+                    // byte-for-byte at its previous semantics.
                     is P503UiEvent.RefreshResult ->
                         P503AppState.OverviewEmpty(
                             state = event.currentState,
                             selectedTab = P503Tab.HOME,
                             retainedIntent = event.retainedIntent,
                             pinnedTargets = event.pinnedTargets,
+                            selectedMonth = state.monthlyOverview?.selectedMonth,
+                            selectableMonths = state.monthlyOverview?.selectableMonths ?: emptyList(),
+                            monthlyActivity = null,
+                            monthlyReloadRequired = state.monthlyOverview != null,
                         )
                     P503UiEvent.RefreshFailed -> state
                     // P7-02: new entry-foundation events are absorbed in READ failure too.

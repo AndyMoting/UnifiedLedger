@@ -156,22 +156,28 @@ object MonthlyBuckets {
                             if (amount < 0L) amount else 0L,
                             "ordinary expense refund overflow for ${currency.code}",
                         )
-                        leafCategoryByPostingAccount[posting.accountId]?.let { leaf ->
-                            val leafTotals = bucket.expenseLeaves.getOrPut(leaf.id) { CategoryAccumulator() }
-                            addTo(leafTotals.positive, currency, if (amount > 0L) amount else 0L, "expense category positive overflow for ${currency.code}")
-                            addTo(leafTotals.refund, currency, if (amount < 0L) amount else 0L, "expense category refund overflow for ${currency.code}")
-                        }
+                        // P703SPEC-09: a real-account leg without a
+                        // catalog_category.posting_account_id mapping contributes to net
+                        // expense and is accumulated as the explicit 无分类 row, so the
+                        // category region always reconciles with the month card (F10).
+                        val leafTotals =
+                            leafCategoryByPostingAccount[posting.accountId]?.let { leaf ->
+                                bucket.expenseLeaves.getOrPut(leaf.id) { CategoryAccumulator() }
+                            } ?: bucket.uncategorizedExpense
+                        addTo(leafTotals.positive, currency, if (amount > 0L) amount else 0L, "expense category positive overflow for ${currency.code}")
+                        addTo(leafTotals.refund, currency, if (amount < 0L) amount else 0L, "expense category refund overflow for ${currency.code}")
                     }
                     AccountKind.INCOME -> {
                         val negated =
                             checkedNegate(posting.amount.minorUnits)
                                 ?: throw ArithmeticException("income posting negation overflow for ${currency.code}")
                         addTo(bucket.income, currency, negated, "ordinary income overflow for ${currency.code}")
-                        leafCategoryByPostingAccount[posting.accountId]?.let { leaf ->
-                            val leafTotals = bucket.incomeLeaves.getOrPut(leaf.id) { CategoryAccumulator() }
-                            addTo(leafTotals.positive, currency, if (negated > 0L) negated else 0L, "income category positive overflow for ${currency.code}")
-                            addTo(leafTotals.refund, currency, if (negated < 0L) negated else 0L, "income category refund overflow for ${currency.code}")
-                        }
+                        val leafTotals =
+                            leafCategoryByPostingAccount[posting.accountId]?.let { leaf ->
+                                bucket.incomeLeaves.getOrPut(leaf.id) { CategoryAccumulator() }
+                            } ?: bucket.uncategorizedIncome
+                        addTo(leafTotals.positive, currency, if (negated > 0L) negated else 0L, "income category positive overflow for ${currency.code}")
+                        addTo(leafTotals.refund, currency, if (negated < 0L) negated else 0L, "income category refund overflow for ${currency.code}")
                     }
                     AccountKind.ASSET,
                     AccountKind.LIABILITY,
@@ -206,6 +212,8 @@ object MonthlyBuckets {
                 currencies = currencies,
                 expenseCategories = buildCategoryNodes(bucket.expenseLeaves, categoriesById),
                 incomeCategories = buildCategoryNodes(bucket.incomeLeaves, categoriesById),
+                uncategorizedExpenseTotals = bucket.uncategorizedExpense.toTotals(),
+                uncategorizedIncomeTotals = bucket.uncategorizedIncome.toTotals(),
             )
         }
     }
@@ -318,6 +326,10 @@ private class MonthAccumulator {
     val refundExpense = mutableMapOf<CurrencyUnit, Long>()
     val expenseLeaves = mutableMapOf<CategoryId, CategoryAccumulator>()
     val incomeLeaves = mutableMapOf<CategoryId, CategoryAccumulator>()
+
+    /** P703SPEC-09/F10: ordinary postings whose account has no category mapping (无分类). */
+    val uncategorizedExpense = CategoryAccumulator()
+    val uncategorizedIncome = CategoryAccumulator()
 }
 
 /**
@@ -358,6 +370,15 @@ data class MonthlyActivity(
     val expenseCategories: List<MonthlyCategoryTotal>,
     /** Level-1 income category totals, same rollup rule. */
     val incomeCategories: List<MonthlyCategoryTotal>,
+    /**
+     * P703SPEC-09 (F10): ordinary EXPENSE-account postings whose account has no
+     * `catalog_category.posting_account_id` mapping. They contribute to 净支出 and are
+     * presented as one explicit 无分类 row, never as an invented category, so the category
+     * region always reconciles with the month card.
+     */
+    val uncategorizedExpenseTotals: List<MonthlyCategoryCurrencyTotal> = emptyList(),
+    /** P703SPEC-09 (F10): the income-side mirror of [uncategorizedExpenseTotals]. */
+    val uncategorizedIncomeTotals: List<MonthlyCategoryCurrencyTotal> = emptyList(),
 )
 
 data class MonthlyCurrencyActivity(

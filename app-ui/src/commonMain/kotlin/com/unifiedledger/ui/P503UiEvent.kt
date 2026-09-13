@@ -354,9 +354,12 @@ sealed interface P503UiEvent {
     /**
      * Shifts the shared month cursor by [offset] months for the analysis monthly region
      * (trend/month-card linkage). Effect only on OverviewEmpty; the base is the selected month
-     * or, when none is selected, 本月 resolved from the reducer's injected clock — without a
-     * usable base the shift is absorbed. The host re-requests the monthly payload on every
-     * shift (trigger (c), spec 6.2).
+     * or, when none is selected, 本月 resolved from the reducer's injected clock. The shift uses
+     * the same admission rule as [SelectMonth] (P703SPEC-10): a target outside the selectable
+     * domain `[first transaction statistics month, 本月]`, and any shift without a usable base or
+     * domain, is absorbed with zero state change, so the analysis region can never request a month
+     * the selector will never offer. The host re-requests the monthly payload on every shift
+     * (trigger (c), spec 6.2).
      */
     data class AnalysisMonthShift(
         val offset: Int,
