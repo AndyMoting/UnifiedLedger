@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -41,13 +42,16 @@ import com.unifiedledger.ui.theme.glass.rememberGlassBackdrop
  * once around the whole row, so the FAB center and the tab bar center stay on the same
  * horizontal line. Tab selection lives in the shared reducer state
  * ([P503AppState.OverviewEmpty.selectedTab]); the shell only renders the selected tab and
- * keeps the FAB visible in every tab.
+ * keeps the FAB visible in every tab. P7-02.D E-2: when the host passes
+ * [onSaveAndRecordAgain] (HOME tab with a retained determinate-success intent) a "record
+ * again" button joins the row.
  */
 @Composable
 fun P503TabShell(
     selectedTab: P503Tab,
     onSelectTab: (P503Tab) -> Unit,
     onStartNewExpense: () -> Unit,
+    onSaveAndRecordAgain: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val glassBackdrop = rememberGlassBackdrop()
@@ -87,6 +91,15 @@ fun P503TabShell(
                     }
                 }
                 Spacer(Modifier.width(16.dp))
+                if (onSaveAndRecordAgain != null) {
+                    Button(
+                        onClick = onSaveAndRecordAgain,
+                        modifier = Modifier.semantics { contentDescription = "保存后再记一笔" },
+                    ) {
+                        Text("再记一笔")
+                    }
+                    Spacer(Modifier.width(16.dp))
+                }
                 FloatingActionButton(
                     onClick = onStartNewExpense,
                     modifier = Modifier.semantics { contentDescription = "新增支出" },

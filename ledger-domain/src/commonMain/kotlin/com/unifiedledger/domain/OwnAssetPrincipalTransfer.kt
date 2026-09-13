@@ -6,6 +6,14 @@ data class OwnAssetPrincipalTransferCommand(
     val destinationAccountId: AccountId,
     val amount: Money,
     val times: TransactionTimes,
+    /**
+     * P7-02.B T-4/R-1/G-A: nullable and defaulted to `null`, written verbatim into
+     * `TransactionVersion.note` with no `?: ""` fallback. The import spine
+     * (`TransferFlowFormalFactory`) calls this factory without a note, and its
+     * `validateImportFormalBinding` TransferFlow branch requires `version.note != null`; making
+     * this `""` would break the frozen P4-04 import transfer path.
+     */
+    val note: String? = null,
 )
 
 data class OwnAssetPrincipalTransferIds(
@@ -115,6 +123,7 @@ fun createOwnAssetPrincipalTransfer(
             versionNumber = 1,
             postingSetId = ids.postingSetId,
             times = command.times,
+            note = command.note,
         )
     val formal =
         when (

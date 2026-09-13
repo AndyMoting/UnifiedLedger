@@ -6,6 +6,12 @@ data class AssetReceivedOrdinaryIncomeCommand(
     val categoryId: CategoryId,
     val receivingAccountId: AccountId,
     val times: TransactionTimes,
+    /**
+     * P7-02.A S-4/G-A: the note is written verbatim into `TransactionVersion.note`. The
+     * default stays empty so every pre-P7-02 caller (RG-02 replay, tests, old composition
+     * roots) keeps the frozen `""` golden value.
+     */
+    val note: String = "",
 )
 
 data class AssetReceivedOrdinaryIncomeIds(
@@ -70,6 +76,6 @@ fun createAssetReceivedOrdinaryIncome(
             is DomainResult.Failure -> return postings
         }
     val transaction = Transaction(ids.transactionId, command.ledgerId, TransactionKind.INCOME, ids.versionId)
-    val version = TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times, "")
+    val version = TransactionVersion(ids.versionId, ids.transactionId, 1, ids.postingSetId, command.times, command.note)
     return FormalTransaction.create(transaction, listOf(version), listOf(postingSet))
 }

@@ -111,6 +111,46 @@ sealed interface OrdinaryIncomeViolation : DomainViolation {
     data object IncomeCategoryRequired : OrdinaryIncomeViolation
 }
 
+/**
+ * P7-02.A S-2/S-4 shared entry-foundation tokens. `NoteTooLong` is produced by the
+ * application note validation (mirrored defensively by the commit transaction factories);
+ * `EntryTypeNotSupported` marks an entry type that this batch does not implement (TRANSFER /
+ * LEND / COLLECT are declared enum values only, per P7-02 S-2). P7-02.D E-4:
+ * `EntryPinTargetNotFound` marks a pin toggle on a target that does not exist in the ledger
+ * or belongs to a different ledger (a zero-write typed rejection).
+ */
+sealed interface EntryFoundationViolation : DomainViolation {
+    data object NoteTooLong : EntryFoundationViolation
+
+    data object EntryTypeNotSupported : EntryFoundationViolation
+
+    data object EntryPinTargetNotFound : EntryFoundationViolation
+}
+
+/**
+ * P7-02.B T-1..T-5 product manual-transfer tokens. Each maps to exactly one stable failure code
+ * in the application layer (spec section 5.3). The domain `AccountTransferViolation` and
+ * `PrincipalTransferViolation` remain the authoritative reusable domain rules; the product
+ * transaction adapter pre-validates the product-only shapes (derived amount, fee-category
+ * presence, account eligibility) and maps any residual domain rejection onto these tokens so
+ * the product surface always reports the stable transfer code family.
+ */
+sealed interface ManualTransferViolation : DomainViolation {
+    data object TransferSameAccount : ManualTransferViolation
+
+    data object TransferAccountNotEligible : ManualTransferViolation
+
+    data object TransferAmountMustBePositive : ManualTransferViolation
+
+    data object TransferFeeMustNotBeNegative : ManualTransferViolation
+
+    data object TransferAmountMismatch : ManualTransferViolation
+
+    data object TransferFeeCategoryRequired : ManualTransferViolation
+
+    data object TransferFeeCategoryNotAllowed : ManualTransferViolation
+}
+
 enum class AccountTransferField {
     SOURCE_ACCOUNT,
     DESTINATION_ACCOUNT,

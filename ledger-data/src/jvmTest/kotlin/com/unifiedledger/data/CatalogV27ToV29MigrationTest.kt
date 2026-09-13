@@ -13,14 +13,15 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * P7-01 v27 -> v28 additive catalog migration evidence (spec sections 5.2/5.4, D-143).
+ * P7-01 v27 -> v29 additive catalog migration chain evidence (spec sections 5.2/5.4, D-143; the
+ * current schema version is 29 since the P7-02 28.sqm addition).
  * Zero backfill, single outer transaction rollback, same-version reopen, and fresh=migrated
  * schema text equivalence for the six new `catalog_*` product tables.
  */
-class CatalogV27ToV28MigrationTest {
+class CatalogV27ToV29MigrationTest {
     @Test
-    fun versionTwentyEightIsCurrent() {
-        assertEquals(28, LedgerDatabase.Schema.version)
+    fun versionTwentyNineIsCurrent() {
+        assertEquals(29, LedgerDatabase.Schema.version)
     }
 
     @Test

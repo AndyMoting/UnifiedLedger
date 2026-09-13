@@ -205,7 +205,7 @@ class P503ReducerTest {
             )
         val editing = assertIs<P503AppState.Editing>(state)
         assertEquals("35.80", editing.draft.amountText)
-        assertNull(editing.draft.paymentAccountId)
+        assertNull(editing.draft.primaryAccountId)
         assertEquals(requestId1, editing.requestId)
 
         // Completing the fields on the same intent keeps the same requestId.

@@ -102,6 +102,21 @@ class QueryAuthoritativeManualExpenseOptions(
     }
 }
 
+/**
+ * Store-backed manual-income options provider (P7-02.A S-1): every call reloads the current
+ * authoritative catalog, so income options, writes, reads and summaries share the same catalog
+ * version and a successful management command is visible without a restart.
+ */
+class QueryAuthoritativeManualIncomeOptions(
+    private val reader: CatalogAuthorityReader,
+    private val ledgerId: LedgerId,
+) : ManualIncomeOptionsProvider {
+    override fun queryOptions(): ManualIncomeOptions {
+        val catalog = reader.load(ledgerId)?.catalog ?: return ManualIncomeOptions(emptyList(), emptyList())
+        return QueryManualIncomeOptions(ledgerId, catalog).queryOptions()
+    }
+}
+
 private fun Account.toManageableView(balanceMinorUnits: Long?): ManageableAccountView =
     ManageableAccountView(
         accountId = id,

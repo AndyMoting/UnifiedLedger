@@ -13,41 +13,84 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
+import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
+import com.unifiedledger.application.CatalogAdmissionTransferTransactionFactory
 import com.unifiedledger.application.CatalogBootstrapFailedException
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CommitOnceInvocationTracker
+import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
+import com.unifiedledger.application.CommitOnceInvocationTrackerLending
+import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
+import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
+import com.unifiedledger.application.ConfirmedLendingTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.ConfirmedManualIncomeCommit
+import com.unifiedledger.application.ConfirmedTransferTransactionFactory
+import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteConfirmedManualExpense
+import com.unifiedledger.application.ExecuteConfirmedManualIncome
+import com.unifiedledger.application.ExecuteConfirmedManualLending
+import com.unifiedledger.application.ExecuteConfirmedManualTransfer
+import com.unifiedledger.application.ExecuteCreateCounterparty
+import com.unifiedledger.application.ExecuteLendingSubmission
+import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
+import com.unifiedledger.application.ExecuteManualIncomeSave
+import com.unifiedledger.application.ExecuteManualIncomeSubmission
+import com.unifiedledger.application.ExecuteManualLendingSave
+import com.unifiedledger.application.ExecuteManualLendingSubmission
+import com.unifiedledger.application.ExecuteManualTransferSave
+import com.unifiedledger.application.ExecuteManualTransferSubmission
+import com.unifiedledger.application.ExecuteRenameCounterparty
+import com.unifiedledger.application.ExecuteSetCounterpartyActive
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualLendingTransactionFactory
+import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
+import com.unifiedledger.application.ResolveManualIncomeCommitStatus
+import com.unifiedledger.application.ResolveManualLendingCommitStatus
+import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
+import com.unifiedledger.application.UuidV7ConfirmedManualIncomeIdSource
+import com.unifiedledger.application.UuidV7ConfirmedManualLendingIdSource
+import com.unifiedledger.application.UuidV7ConfirmedManualTransferIdSource
+import com.unifiedledger.application.UuidV7CounterpartyIdSource
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
+import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
+import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
+import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
 import com.unifiedledger.data.SqlDelightConfirmedManualExpenseCommitPort
+import com.unifiedledger.data.SqlDelightConfirmedManualIncomeCommitPort
+import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
+import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
+import com.unifiedledger.data.SqlDelightCounterpartyStore
+import com.unifiedledger.data.SqlDelightEntryPreferenceStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
+import com.unifiedledger.domain.AssetReceivedOrdinaryIncomeCommand
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
+import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
@@ -254,12 +297,15 @@ internal fun buildLedgerGraph(
     val store = SqlDelightCatalogStore(database, driver)
     val authority = bootstrapAuthority(store, ledgerId)
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+    val counterpartyStore = SqlDelightCounterpartyStore(database, driver)
+    val entryPreferenceStore = SqlDelightEntryPreferenceStore(database)
     val session =
         CatalogConsumerSession(
             reader = store,
             ledgerId = ledgerId,
             initialAuthority = authority,
             readPort = readAdapter,
+            counterpartyReader = counterpartyStore,
         )
 
     val port = SqlDelightConfirmedManualExpenseCommitPort(database, driver)
@@ -282,6 +328,9 @@ internal fun buildLedgerGraph(
                                 amount = request.amount,
                                 categoryId = request.categoryId,
                                 paymentAccountId = request.paymentAccountId,
+                                // P7-02.A S-4 (P702IMPL-01): the draft note must reach the formal
+                                // version exactly like the income delegate does.
+                                note = request.note,
                                 times = TransactionTimes.collapsed(request.occurredAt),
                             ),
                         ids = ids.expenseIds,
@@ -308,6 +357,96 @@ internal fun buildLedgerGraph(
     val queryCurrentState = session.queryCurrentState
     val resolver = ResolveManualExpenseCommitStatus(readAdapter)
     val submission = ExecuteManualExpenseSubmission(executeSave, tracker, resolver)
+
+    // P7-02.A income product chain, symmetric to the expense chain: its own port/tracker/id
+    // sources, its own V-2 admission wrapper and snapshot-aware resolver.
+    val incomePort = SqlDelightConfirmedManualIncomeCommitPort(database, driver)
+    val incomeTracker = CommitOnceInvocationTrackerIncome(incomePort)
+    val incomeDelegate =
+        ConfirmedIncomeTransactionFactory { request, ids ->
+            val catalog =
+                store.loadCurrent(request.ledgerId)
+                    ?: return@ConfirmedIncomeTransactionFactory DomainResult.Failure(DomainViolation.InvalidCatalog)
+            when (
+                val result =
+                    createAssetReceivedOrdinaryIncome(
+                        catalog = catalog,
+                        command =
+                            AssetReceivedOrdinaryIncomeCommand(
+                                ledgerId = request.ledgerId,
+                                amount = request.amount,
+                                categoryId = request.categoryId,
+                                receivingAccountId = request.receivingAccountId,
+                                times = TransactionTimes.collapsed(request.occurredAt),
+                                note = request.note,
+                            ),
+                        ids = ids.incomeIds,
+                    )
+            ) {
+                is DomainResult.Success ->
+                    DomainResult.Success(
+                        ConfirmedManualIncomeCommit(
+                            confirmationId = ids.confirmationId,
+                            transaction = result.value,
+                        ),
+                    )
+                is DomainResult.Failure -> result
+            }
+        }
+    val incomeFactory = CatalogAdmissionIncomeTransactionFactory(admissionReader = store, delegate = incomeDelegate)
+    val incomeIdSource = UuidV7ConfirmedManualIncomeIdSource(UuidV7Generator(::secureRandomBytes))
+    val incomeRequestIdSource = UuidV7ManualIncomeRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeConfirmedIncome = ExecuteConfirmedManualIncome(incomeTracker, incomeIdSource, incomeFactory)
+    val executeIncomeSave = ExecuteManualIncomeSave(executeConfirmedIncome)
+    val incomeResolver = ResolveManualIncomeCommitStatus(readAdapter)
+    val incomeSubmission = ExecuteManualIncomeSubmission(executeIncomeSave, incomeTracker, incomeResolver)
+
+    // P7-02.B transfer product chain: its own port/tracker/id sources, its own V-2 admission
+    // wrapper (which resolves the delegate against the current catalog inside the write
+    // transaction) and snapshot-aware resolver.
+    val transferPort = SqlDelightConfirmedManualTransferCommitPort(database, driver)
+    val transferTracker = CommitOnceInvocationTrackerTransfer(transferPort)
+    val transferDelegate =
+        ConfirmedTransferTransactionFactory { request, ids ->
+            val catalog =
+                store.loadCurrent(request.ledgerId)
+                    ?: return@ConfirmedTransferTransactionFactory DomainResult.Failure(DomainViolation.InvalidCatalog)
+            ManualTransferTransactionFactory(catalog).create(request, ids)
+        }
+    val transferFactory = CatalogAdmissionTransferTransactionFactory(admissionReader = store, delegate = transferDelegate)
+    val transferIdSource = UuidV7ConfirmedManualTransferIdSource(UuidV7Generator(::secureRandomBytes))
+    val transferRequestIdSource = UuidV7ManualTransferRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeConfirmedTransfer = ExecuteConfirmedManualTransfer(transferTracker, transferIdSource, transferFactory)
+    val executeTransferSave = ExecuteManualTransferSave(executeConfirmedTransfer)
+    val transferResolver = ResolveManualTransferCommitStatus(readAdapter)
+    val transferSubmission = ExecuteManualTransferSubmission(executeTransferSave, transferTracker, transferResolver)
+    // P7-02.C manual lending product chain: its own port/tracker/id sources, its own V-2 +
+    // counterparty + position admission wrapper and snapshot-aware resolver. The store is also
+    // the counterparty directory and the per-object position read model.
+    val lendingPort = SqlDelightConfirmedManualLendingCommitPort(database, driver)
+    val lendingTracker = CommitOnceInvocationTrackerLending(lendingPort)
+    val lendingDelegate =
+        ConfirmedLendingTransactionFactory { request, ids ->
+            ManualLendingTransactionFactory(
+                admissionReader = store,
+                counterpartyReader = counterpartyStore,
+                positionReader = counterpartyStore,
+            ).create(request, ids)
+        }
+    val lendingIdSource = UuidV7ConfirmedManualLendingIdSource(UuidV7Generator(::secureRandomBytes))
+    val lendingRequestIdSource = UuidV7ManualLendingRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeConfirmedLending = ExecuteConfirmedManualLending(lendingTracker, lendingIdSource, lendingDelegate)
+    val executeLendingSave = ExecuteManualLendingSave(executeConfirmedLending)
+    val lendingResolver = ResolveManualLendingCommitStatus(readAdapter)
+    val lendingSubmission = ExecuteManualLendingSubmission(executeLendingSave, lendingTracker, lendingResolver)
+    val counterpartyCommands =
+        CounterpartyCommands(
+            create = ExecuteCreateCounterparty(counterpartyStore, UuidV7CounterpartyIdSource(UuidV7Generator(::secureRandomBytes)), currency),
+            rename = ExecuteRenameCounterparty(counterpartyStore),
+            setActive = ExecuteSetCounterpartyActive(counterpartyStore),
+            reader = counterpartyStore,
+        )
+    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission, transferSubmission, ExecuteLendingSubmission(lendingSubmission))
     val catalogCommands =
         ExecuteCatalogCommand(
             commitPort = store,
@@ -330,6 +469,22 @@ internal fun buildLedgerGraph(
             requestIdSource = requestIdSource,
             ledgerClock = ledgerClock,
             baseSummarizeActivity = session.summarizeActivity,
+            // P7-02.A typed entry surface.
+            submitEntry = entrySubmission,
+            submitIncome = incomeSubmission,
+            resolveIncomeCommitStatus = incomeResolver,
+            incomeRequestIdSource = incomeRequestIdSource,
+            baseIncomeOptionsProvider = session.incomeOptionsProvider,
+            resolveTransferCommitStatus = transferResolver,
+            transferRequestIdSource = transferRequestIdSource,
+            baseTransferOptionsProvider = session.transferOptionsProvider,
+            resolveLendingCommitStatus = lendingResolver,
+            lendingRequestIdSource = lendingRequestIdSource,
+            baseLendingOptionsProvider = session.lendingOptionsProvider,
+            lendingPositions = counterpartyStore,
+            counterpartyCommands = counterpartyCommands,
+            // P7-02.D: the manual pin preference surface.
+            entryPreferences = entryPreferenceStore,
             // P7-01.D: the management surface reads the same authoritative session and refreshes
             // it after every command, so options/reads/summaries stay on one catalog version.
             catalogSnapshot = { snapshotQuery.query(ledgerId) },

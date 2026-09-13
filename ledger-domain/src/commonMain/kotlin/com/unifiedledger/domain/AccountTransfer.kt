@@ -9,6 +9,11 @@ data class OwnAssetAccountTransferCommand(
     val fee: Money,
     val feeCategoryId: CategoryId,
     val times: TransactionTimes,
+    /**
+     * P7-02.B T-4/G-A: the note is written verbatim into `TransactionVersion.note`. The default
+     * stays empty so the RG-03 silo's existing positional callers keep the frozen `""` value.
+     */
+    val note: String = "",
 )
 
 data class AccountTransferIds(
@@ -216,7 +221,7 @@ fun createOwnAssetAccountTransfer(
             versionNumber = 1,
             postingSetId = ids.postingSetId,
             times = command.times,
-            note = "",
+            note = command.note,
         )
     val formal =
         when (

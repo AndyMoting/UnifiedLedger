@@ -14,6 +14,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.unifiedledger.application.EntryType
+import com.unifiedledger.application.TypedEntryDraft
 
 /**
  * Awaiting-confirmation screen (spec section 7.3.4). Shows the complete attempted
@@ -23,7 +25,7 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun P503ConfirmationScreen(
-    draft: ManualExpenseDraft,
+    draft: TypedEntryDraft,
     currencyCode: String,
     paymentAccountLabel: String,
     categoryLabel: String,
@@ -35,11 +37,15 @@ fun P503ConfirmationScreen(
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
-        Text("确认支出", style = MaterialTheme.typography.titleLarge)
+        Text(
+            if (draft.entryType == EntryType.INCOME) "确认收入" else "确认支出",
+            style = MaterialTheme.typography.titleLarge,
+        )
         Spacer(Modifier.height(8.dp))
-        Text("支付账户：$paymentAccountLabel", style = MaterialTheme.typography.bodyMedium)
-        Text("费用分类：$categoryLabel", style = MaterialTheme.typography.bodyMedium)
+        Text("${if (draft.entryType == EntryType.INCOME) "收款账户" else "支付账户"}：$paymentAccountLabel", style = MaterialTheme.typography.bodyMedium)
+        Text("${if (draft.entryType == EntryType.INCOME) "收入分类" else "费用分类"}：$categoryLabel", style = MaterialTheme.typography.bodyMedium)
         Text("金额：${draft.amountText} $currencyCode", style = MaterialTheme.typography.bodyMedium)
+        Text("备注：${draft.note.ifEmpty { "—" }}", style = MaterialTheme.typography.bodyMedium)
         Text("发生时间：${draft.occurredAt?.let(::occurredAtDisplayText) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

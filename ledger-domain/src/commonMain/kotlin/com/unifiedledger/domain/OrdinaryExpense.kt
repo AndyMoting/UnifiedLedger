@@ -6,6 +6,12 @@ data class AssetPaidOrdinaryExpenseCommand(
     val categoryId: CategoryId,
     val paymentAccountId: AccountId,
     val times: TransactionTimes,
+    /**
+     * P7-02.A S-4/G-A: the note is written verbatim into `TransactionVersion.note`. The
+     * default stays empty so every pre-P7-02 caller (RG-01 replay, tests, old composition
+     * roots) keeps the frozen `""` golden value.
+     */
+    val note: String = "",
 )
 
 data class AssetPaidOrdinaryExpenseIds(
@@ -112,7 +118,7 @@ fun createAssetPaidOrdinaryExpense(
             versionNumber = 1,
             postingSetId = ids.postingSetId,
             times = command.times,
-            note = "",
+            note = command.note,
         )
     return FormalTransaction.create(
         transaction = transaction,

@@ -35,11 +35,26 @@ class CatalogConsumerSession(
     val ledgerId: LedgerId,
     initialAuthority: CatalogAuthority,
     private val readPort: LedgerCurrentStateReadPort,
+    // P7-02.C: the counterparty directory is a different persistence surface from the catalog, so
+    // the lending options provider receives it explicitly (null keeps pre-C constructions valid).
+    private val counterpartyReader: CounterpartyDirectoryReader? = null,
 ) {
     var authority: CatalogAuthority = initialAuthority
         private set
 
     var optionsProvider: ManualExpenseOptionsProvider = QueryAuthoritativeManualExpenseOptions(reader, ledgerId)
+        private set
+
+    /** P7-02.A S-1: the authoritative income option projection on the same catalog version. */
+    var incomeOptionsProvider: ManualIncomeOptionsProvider = QueryAuthoritativeManualIncomeOptions(reader, ledgerId)
+        private set
+
+    /** P7-02.B: the authoritative transfer option projection on the same catalog version. */
+    var transferOptionsProvider: ManualTransferOptionsProvider = QueryAuthoritativeManualTransferOptions(reader, ledgerId)
+        private set
+
+    /** P7-02.C: the authoritative lending option projection on the same catalog version. */
+    var lendingOptionsProvider: ManualLendingOptionsProvider = QueryAuthoritativeManualLendingOptions(reader, ledgerId, counterpartyReader)
         private set
 
     var queryCurrentState: QueryLedgerCurrentState = QueryLedgerCurrentState(readPort, ledgerId, authority.catalog)
@@ -60,6 +75,9 @@ class CatalogConsumerSession(
             }
         authority = reloaded
         optionsProvider = QueryAuthoritativeManualExpenseOptions(reader, ledgerId)
+        incomeOptionsProvider = QueryAuthoritativeManualIncomeOptions(reader, ledgerId)
+        transferOptionsProvider = QueryAuthoritativeManualTransferOptions(reader, ledgerId)
+        lendingOptionsProvider = QueryAuthoritativeManualLendingOptions(reader, ledgerId, counterpartyReader)
         queryCurrentState = QueryLedgerCurrentState(readPort, ledgerId, reloaded.catalog)
         summarizeActivity = SummarizeLedgerActivity(reloaded.catalog)
         return reloaded

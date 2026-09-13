@@ -18,13 +18,17 @@ import com.unifiedledger.domain.CatalogAdmissionRejection
 import com.unifiedledger.domain.CatalogViolation
 import com.unifiedledger.domain.CategoryRenameViolation
 import com.unifiedledger.domain.CorrectTransactionVersionViolation
+import com.unifiedledger.domain.CounterpartyViolation
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
+import com.unifiedledger.domain.EntryFoundationViolation
 import com.unifiedledger.domain.ExplicitOperationConfirmationViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LendingViolation
+import com.unifiedledger.domain.ManualLendingViolation
+import com.unifiedledger.domain.ManualTransferViolation
 import com.unifiedledger.domain.MergedPaymentExpenseCommand
 import com.unifiedledger.domain.MergedPaymentItem
 import com.unifiedledger.domain.MergedPaymentPostingRole
@@ -988,6 +992,14 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected =
         is CatalogViolation,
 
         is CatalogAdmissionRejection,
+
+        is EntryFoundationViolation,
+
+        is ManualTransferViolation,
+
+        is ManualLendingViolation,
+
+        is CounterpartyViolation,
 
         -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
     }

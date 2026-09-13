@@ -36,6 +36,21 @@ fun createAndroidLedgerDatabase(
         commitPort =
             SqlDelightConfirmedManualExpenseCommitPort
                 .forPlatformConfiguredDatabase(database),
+        // P7-02.A: the symmetric income commit port on the same database connection.
+        incomeCommitPort =
+            SqlDelightConfirmedManualIncomeCommitPort
+                .forPlatformConfiguredDatabase(database),
+        // P7-02.B: the symmetric transfer commit port on the same database connection.
+        transferCommitPort =
+            SqlDelightConfirmedManualTransferCommitPort
+                .forPlatformConfiguredDatabase(database),
+        // P7-02.C: the symmetric lending commit port, counterparty directory and position reads.
+        lendingCommitPort =
+            SqlDelightConfirmedManualLendingCommitPort
+                .forPlatformConfiguredDatabase(database),
+        counterpartyStore = SqlDelightCounterpartyStore.forPlatformConfiguredDatabase(database),
+        // P7-02.D: the manual pin preference store on the same database connection.
+        entryPreferenceStore = SqlDelightEntryPreferenceStore(database),
         catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
@@ -44,6 +59,11 @@ fun createAndroidLedgerDatabase(
 class AndroidLedgerDatabaseHandle internal constructor(
     val database: LedgerDatabase,
     val commitPort: SqlDelightConfirmedManualExpenseCommitPort,
+    val incomeCommitPort: SqlDelightConfirmedManualIncomeCommitPort,
+    val transferCommitPort: SqlDelightConfirmedManualTransferCommitPort,
+    val lendingCommitPort: SqlDelightConfirmedManualLendingCommitPort,
+    val counterpartyStore: SqlDelightCounterpartyStore,
+    val entryPreferenceStore: SqlDelightEntryPreferenceStore,
     val catalogStore: SqlDelightCatalogStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {

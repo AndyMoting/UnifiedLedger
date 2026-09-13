@@ -126,3 +126,74 @@ fun CatalogAdmissionViolation.toDomainViolation(): CatalogAdmissionRejection =
 
 /** Small helpers kept public for the composition roots that load the current catalog. */
 fun LedgerCatalog.findAccount(id: AccountId): Account? = accounts.firstOrNull { it.id == id }
+
+/**
+ * P7-02.A S-5/V-2 income analogue of [validateManualExpenseAdmission]. The receiving account
+ * must exist, be an active same-ledger owned real ASSET account; the category must exist, be an
+ * active same-ledger leaf INCOME category whose posting account is a same-ledger hidden INCOME
+ * account. Token vocabulary is the shared real [CatalogAdmissionViolation] family; the
+ * category-kind guard judges INCOME.
+ */
+fun validateManualIncomeAdmission(
+    catalog: LedgerCatalog,
+    ledgerId: LedgerId,
+    receivingAccountId: AccountId,
+    categoryId: CategoryId,
+): CatalogAdmissionViolation? {
+    val account =
+        catalog.accounts.firstOrNull { it.id == receivingAccountId }
+            ?: return CatalogAdmissionViolation.PaymentAccountNotFound
+    if (account.ledgerId != ledgerId) return CatalogAdmissionViolation.PaymentAccountNotFound
+    if (account.kind != AccountKind.ASSET) return CatalogAdmissionViolation.PaymentAccountWrongKind
+    if (!account.ownedByUser || !account.realAccount) {
+        return CatalogAdmissionViolation.PaymentAccountNotManageableFinancial
+    }
+    if (!account.active) return CatalogAdmissionViolation.PaymentAccountInactive
+
+    val category =
+        catalog.categories.firstOrNull { it.id == categoryId }
+            ?: return CatalogAdmissionViolation.CategoryNotFound
+    if (category.ledgerId != ledgerId) return CatalogAdmissionViolation.CategoryNotFound
+    if (category.kind != CategoryKind.INCOME) return CatalogAdmissionViolation.CategoryKindMismatch
+    if (category.parentId == null) return CatalogAdmissionViolation.CategoryNotLeaf
+    if (!category.active) return CatalogAdmissionViolation.CategoryInactive
+    val postingAccount =
+        catalog.accounts.firstOrNull { it.id == category.postingAccountId }
+            ?: return CatalogAdmissionViolation.CategoryNotFound
+    if (postingAccount.ledgerId != ledgerId || postingAccount.kind != AccountKind.INCOME) {
+        return CatalogAdmissionViolation.CategoryKindMismatch
+    }
+    return null
+}
+
+/**
+ * P7-02.A S-5/V-2 wrapper around the income formal-transaction factory. It re-reads the
+ * authoritative catalog through [admissionReader] immediately before delegating, so a stale
+ * option snapshot cannot admit an inactive/deleted/mismatched reference; the typed violation
+ * maps to a distinguishable [CatalogAdmissionRejection] token and the income commit port rejects
+ * the whole request with zero formal writes.
+ */
+class CatalogAdmissionIncomeTransactionFactory(
+    private val admissionReader: CatalogAdmissionReader,
+    private val delegate: ConfirmedIncomeTransactionFactory,
+) : ConfirmedIncomeTransactionFactory {
+    override fun create(
+        request: ManualIncomeRequestSnapshot,
+        ids: ConfirmedManualIncomeCommitIds,
+    ): DomainResult<ConfirmedManualIncomeCommit> {
+        val catalog =
+            admissionReader.loadCurrent(request.ledgerId)
+                ?: return DomainResult.Failure(CatalogAdmissionRejection.CatalogUnavailable)
+        val violation =
+            validateManualIncomeAdmission(
+                catalog = catalog,
+                ledgerId = request.ledgerId,
+                receivingAccountId = request.receivingAccountId,
+                categoryId = request.categoryId,
+            )
+        if (violation != null) {
+            return DomainResult.Failure(violation.toDomainViolation())
+        }
+        return delegate.create(request, ids)
+    }
+}

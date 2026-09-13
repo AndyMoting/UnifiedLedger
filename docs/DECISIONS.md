@@ -2580,3 +2580,51 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 8. **待闭合（阻塞于外部条件）：** **Android 人工门（规格 §7.7）尚未执行** —— 2026-09-12 检查时隔离 server `ANDROID_ADB_SERVER_PORT=5038` 上仅有 `emulator-5554`（`product:daoxiang`，MuMu 伪装机，非本会话自启且 `emu avd name` 不可核实）且 ALas 自动化运行中，按 AGENTS/harness 协议**不得**在 ALas 运行期间启 agent 模拟器、不得触碰用户 MuMu。待 ALas 停止后以本会话自启 AVD（`-port 5680`）执行 §7.7 新增/编辑/停用/删除/返回/重开向量。**本批未 push；CI 聚合门与 Android 人工门同属未闭合项。**
 
 **范围冻结（实施侧）：** 零账户删除、零改父级、零历史重分类迁移、零多币种、零余额调整能力；不改 `rgXX_` 竖井、golden、P4/P5 正式提交语义；`.external/` 零触碰；无个人数据/绝对路径入库。
+
+## D-144 P7-02 录入基础（设计门 + Q03/Q04/Q05 裁决）
+
+**状态：** 已批准（设计门冻结，2026-09-12）；实施登记待实施批闭合后补登。本决定于独立规格评审闭环后生效。
+
+**授权依据：** 用户常设授权「除不 push 外，其余默认采用推荐方案」；主代理在只读取证（阶段计划 §4/§7、账务规则转账/借贷/收入/对账/目录准入、Golden Schema、D-084/D-087/D-098/D-100/D-113/D-119/D-120/D-121/D-122/D-125/D-126/D-131/D-138/D-139/D-140/D-143、领域与应用/持久化 DTO 源码）后，按推荐方案裁决 Q03/Q04/Q05。
+
+**决定：** 批准 P7-02「录入基础」设计契约 `docs/specs/2026-09-12-p7-02-entry-foundation-design.md`（状态 approved）。
+
+**S 共享录入基础（P7-02.A/D）：** S-1 统一数据流 = 类型化草稿（含类型判别）→ 校验 → 明确确认快照 → application 用例 → claim-first 原子提交 → 权威回读；共享 UI 只消费 application 类型，不伪造导入来源、不接 RG 回放 store/identity source 为产品默认。S-2 类型集合 `EXPENSE/INCOME/TRANSFER/LEND/COLLECT`，底部「+」默认 `EXPENSE`，编辑页内可切。S-3 每个新意图新 requestId；同 id 同 snapshot 幂等返回原 receipt，同 id 不同内容 `RequestIdentityConflict`；Unknown 不自动重试、不换 id、不启用再记。S-4 类型化草稿增加可选 note（≤200 码点、允许空），**必须真正写入正式交易版本 note**，修复「note 仅存 request 表、`transaction_version.note` 硬编码空串」断层；命令字段**按导入链约束分别取值（G-A）**：支出/收入 `note: String = ""`（rg-01/rg-02 goldens）、纯本金转账 `note: String? = null` 且域工厂原样写入不做 `?: ""` 兜底（导入链 `TransferFlowFormalFactory.kt:185` 直接调用该域工厂，`validateImportFormalBinding` 在 `:300` 要求 `version.note != null`；若默认 `""` 会整体拒绝导入转账破坏冻结 P4-04）、含费用转账 `note: String = ""`（RG-03 现状）。S-5 所有新类型账户/分类引用必须在**写入事务内**按当前权威目录重校验（V-2 扩展），复用既有真实 token 族 `CatalogAdmissionRejection`（`CatalogManagement.kt:64-82`），失败整笔类型化拒绝零正式写入；产品提交路径不携带 `expectedCatalogVersion`，不使用管理面码 `CatalogVersionConflict`/`CatalogObjectNotFound`（映射可达性见规格 §5.4）。
+
+**Q03 转账（P7-02.B）：** T-1 手工转账提供可选手续费（转出账户、转入账户、到账本金、手续费默认 `0.00`、费用分类）。T-2 仅限自有真实资产账户（`ownedByUser && realAccount && kind==ASSET`），两端同账本同币种（本批固定 CNY），同账户拒绝。T-3 不变量 `转出 = 到账本金 + 手续费`、`手续费 ≥ 0`；本金两腿不计收支，手续费计入普通支出并独立对账（`consumption=ordinaryExpense=cashOutflow=fee`、`netWorthChange=-fee`）。T-4 `手续费 > 0` 时费用分类必填且为 active 二级支出分类；`手续费 == 0` 不得携带费用分类；领域复用 `createOwnAssetAccountTransfer`（含费用）/`createOwnAssetPrincipalTransfer`（纯本金），不新增领域规则。T-5 不含负债还款/组合转账/跨币种/信用还款。
+
+**Q04 借贷（P7-02.C）：** L-1 新增最小稳定往来对象目录（产品侧非 RG-08 竖井）：创建、改名、稳定 `CounterpartyId`、名称历史（改名不改余额、历史显示当前名）；每对象关联一个同账本应收资产账户（`ASSET`、非真实、非自有、`systemRole==null`、隐藏，随对象生命周期）。L-2 借出（`LEND`）选对象+金额+出资账户（自有真实资产）+发生时间，按对象累计本金（`PERSON_LEVEL_NET_POSITION`）；收回（`COLLECT`）选对象+实收总额+本金+利息+费用（必须 `0.00`）+到账账户+精确有效利息分类（零利息仍需 active 二级收入分类）+发生时间，`实收总额 = 本金 + 利息 + 费用`。L-3 超额/负组成/非零费用/无效利息分类/无效账户整笔类型化拒绝、不截断不猜测分配；事务内重查剩余本金与当前目录防并发超额。L-4 **对象时间单调（取代倒填）**：借出/收回的 `occurredAt` 必须 ≥ 该往来对象现有历史的最近 `occurred_at`（按对象单调非递减，同刻允许追加，稳定排序键 `(occurred_at, entry_id)`）；任何早于该对象最近历史的操作类型化拒绝 `LendingBackdatedNotAllowed` 零写入；历史只追加、不改写既有行，`principal_balance_after_minor` 逐行存储，`createLendingPosition`（`LendingPosition.kt:51-112`）原样作为唯一重建校验器（不新增重建函数、不改语义）；不同对象相互独立。理由：`ACCOUNTING_RULES.md:74` 要求不可变历史，`LendingPosition.kt:73-103` 按传入顺序逐项校验 `after`，回填会破坏 append-only。L-5 手工借出只形成手工确认，不生成 `BANK_DEBIT`、不虚构哈希、不创建 `MATCHED` 证据，手工资金腿保持待对账，不复用 `Rg08Operations`。L-6 只开放 LEND/COLLECT，借入/还款 UI 不因四种行为码存在而增加。
+
+**Q05 录入效率（P7-02.D）：** E-1 类型切换保留矩阵——金额与发生时间跨类型保留；资产账户类字段仅在语义相容时保留（支出支付账户 ↔ 转账转出账户 ↔ 借出出资账户互相保留；转账转入账户、借贷对象、收入收款账户为类型专有，切走即清空且切回不恢复）；分类不跨类型保留；note 跨类型保留；类型→金额字段迁移表（TRANSFER 到账本金、COLLECT 仅实收总额）见规格 §3.4。E-2 再记（可构造，G-C）：`OverviewEmpty` 增加可选 `retainedIntent: RetainedEntryIntent? = null`，可再记集合 = `Created`/`NoChange`/`Recovered`（`Recovered` 系 D-126 MatchingReceipt 恢复=确定成功，纳入）；**注入通道冻结**：`RefreshResult` 增加可选 `retainedIntent: RetainedEntryIntent? = null`，宿主在提交前捕获意图、从提交前 `Submitting.originTab` 取 originTab，在确定成功后的权威刷新上随 `RefreshResult` 注入，reducer `reduceTransientResult` 透传；`RetainedEntryIntent` 携带类型、可复用字段（金额原始文本、账户/分类稳定 ID、note、发生时间）与 originTab；「再记一笔」在成功后的首页可用，以 `retainedIntent` 为基**对照当前权威目录重新校验**（失效对象不沿用），清空金额/备注/旧确认，`occurredAt` = 当次 `LedgerClock.now()`，分配新 requestId 进入新 `Editing`；**必须重置宿主 hoisted `occurredAtText`**（与 `StartNewExpense` 同列）；`RetainedEntryIntent` 新意图开始后清除、Exit/返回不跨会话保留。E-3 算式支持 `+ - × ÷` 与括号、精确十进制（禁浮点禁静默舍入），`12.5+8` → 精确 `20.50`；文法冻结为二元 `+ - × ÷`、标准优先级、括号可嵌套、**不允许一元负号/负字面量**、token ≤ 64、括号深度 ≤ 8；除零/溢出/非货币精度/负结果可解释地类型化拒绝，计算器先给精确结果再确认。E-4 按账本+稳定 ID 手动置顶账户/分类，持久化重开保留，只影响排序、不改账务、不使停用对象重新可选；不得实现自动频率排序。E-5 保留矩阵与算式运算集在实现前由规格冻结，UI 编写者不得自行定案。
+
+**UI 状态机（G-B）：** 既有 reducer 未被 `when` 分支列出的 `(state,event)` 继续抛 `IllegalStateException`（`P503Reducer.kt:372-375`，测试锁定 `P503ReducerTest.kt:450/611/632/803`）；absorbed 语义**仅限 P7-02 新增事件**（`SelectEntryType`、`UpdateNote`、各类型字段更新、`EvaluateEntryExpression`、`ApplyExpressionResult`、`SaveAndRecordAgain`、`TogglePin`），既有事件一律保持现状转换，任何改变既有 ISE 的行为须显式登记并同步更新测试与 D-125 边界（规格 §6.2 表 6.2a/6.2b）。
+
+**持久化与承接：** 新增非 `rgXX_` 前缀产品表（往来对象目录与名称历史、对象级借贷位置与历史、手工转账/借贷 request/receipt、置顶偏好），当前 schema v28，本批**新增 `28.sqm` 目标 v29、加性迁移纯建结构零回填**；应收账户为命令内部铸造的隐藏账户（`owned=0/real=0/hidden=1`，不满足 A-2 可管理集合谓词，与 RG-08 回放 `owned/real` 要求分属不同持久化面），不进入 P7-01 默认目录种子；MIGRATION 沿 D-113 受控触发器与 fresh=migrated 逐字一致纪律，全仓 `Schema.version` 断言同步至 29。
+
+**契约披露：** note 进 `transaction_version` 的兼容风险以「命令字段按导入链分别取值（G-A：支出/收入空串、纯本金转账 `null`、含费用转账空串）+ 不改 golden/解码器 + 显式空/非空用例」缓解；**回归锚点 = `ImportSpineTransferEndToEndTest`/`ImportSpineBankEndToEndTest`/`ImportSpineAlipayYuebaoTransferEndToEndTest` must-pass**（`Rg09FullStateOracleTest` 版本序列化不含 note，覆盖不到）；算式解析有界 token（≤64）与括号深度（≤8）+ `Long` checked 运算，禁一元负号/负字面量；借贷对象时间单调（L-4）以稳定排序键 `(occurred_at, entry_id)` 确定性（G-D：store 读写/重建一致 `ORDER BY (occurred_at, entry_id)`），`createLendingPosition` 原样作唯一重建校验器；`ManualExpenseDraft` 扩展为类型化草稿时 `EXPENSE` 子类向后兼容（沿 D-125 默认值先例），所有持 draft 状态统一类型并冻结跨态类型保留；本批固定 CNY/2；防御性死码（`EntryTypeNotSupported`/`LendingBehaviorNotSupported`/`TransferAmountMismatch`）与 UI 非负门覆盖的域码登记可达性。
+
+**范围冻结：** 不做多币种、周期/自动记账、成员、多账本、负债还款/组合转账、借入/还款 UI、自动频率排序、往来对象复制/合并；不复用导入工厂与 RG 回放竖井；不改 `rgXX_` 竖井、golden、P4/P5 正式提交语义。
+
+**验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块（`:ledger-domain:jvmTest`/`:ledger-application:jvmTest`/`:ledger-data:jvmTest`/`:app-ui:jvmTest`）+ `:ledger-data:verifyCommonMainLedgerDatabaseMigration` + `ktlintCheck` + `project_docs`；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
+
+**关联决定：** D-084、D-087、D-098、D-100、D-113、D-119、D-120、D-121、D-122、D-125、D-126、D-131、D-138、D-139、D-140、D-143。
+
+**实施登记（2026-09-13，主代理补登）：**
+
+1. **实施提交链（分支 `UL-p7-02`，基线 `4eb41ee`）：** `1eef425`（规格冻结）→ `8208f53`（A 批：共享类型化录入 + 手工收入）→ `f819d7a`（B 批：手工转账 + 可选费用 + `28.sqm` v28→v29 加性迁移含 C/D 表）→ `91a4cac`（C 批：手工借贷 + 往来对象目录；由 WIP `ae6b008` 全量验证后 amend 转正）→ `5456562`（D 批：录入效率 = 算式/再记/置顶）→ `c43cba6`（评审回修批）→ `4ad66e5`（lending options re-key 单行修复）。
+2. **双独立评审拓扑：** 规格一致性评审 + 质量/风险评审并行，首轮均 REQUEST-CHANGES（合并编号 `P702SPEC-01..14`、`P702IMPL-01..10`；实质为 P0×1 [`P702SPEC-01`=`IMPL-01` 两端组合根支出 note 断层，交叉确认] + P1×3 [`IMPL-02` 负手续费穿门死端、`SPEC-02` 再记亚秒 instant 被 D-138 门拦、`SPEC-03` 往来对象零 UI 通路] + P2×5 [`IMPL-03` Unicode 数字、`SPEC-04` `EntryConstraintViolation` 未实现、`SPEC-05` RG-08 零写入断言缺失、`SPEC-06` 往来对象命令幂等措辞偏离、`SPEC-07` 借贷历史 TEXT 排序混合精度错序] + P3×11）。回修 10 项（提交 `c43cba6`）；delta 评审双独立发现新 P1（`P702SPEC-13`=`IMPL-08` `baseLendingOptions` remember 键缺 `counterpartyVersion`，创建/改名不进选择器）→ 单行修复（提交 `4ad66e5`）→ **双原评审 DELTA CLOSURE APPROVE**。5 项实现通道选择两评审均 ACCEPT（RetainedIntentRevalidation 载荷、pinnedTargets 载荷扩展、按类型再记字段迁移、置顶校验置于 store 事务、扁平稳定分区排序）。
+3. **distinct verifier（只读，12 claims）：** C1 工作树/HEAD、C2 提交链父序、C3 规格字节完整性（LF 域 SHA-256 `e1dd63d356c94d316a119ad32fb7349d964e2a24e498db62cb373c7af924ad13`，自 `1eef425` 零改动）、C4 终批单文件 delta、C9 `28.sqm` 自 `f819d7a` 零改动且 `1..28.sqm` 无缺口、C10 D-144 登记在位（DECISIONS.md）、C11 版本断言 `assertEquals(29, ...)` ×8 且无 28 残留 —— 全 VERIFIED；C5/C6（writer 全量套件后过滤运行覆写盘上 XML，最终候选全量证据缺口）由主代理复跑消解；C7 非空 ktlint 报告为 Format 任务日志（Check 任务报告 0 字节 = 零违例）；C8 ` Float` 命中为既有上下文行 `FloatingActionButton(` 非本批新增；C12 本地 ignored 日志历史条目非 tracked 泄漏。
+4. **主代理验收复跑（最终候选 `4ad66e5`，干净树，串行单 worker 1GB 口径，每轮前后 `--stop`）：** 六模块 jvmTest **1319 用例 0 失败 0 错误**（domain 175 / application 457 / data 522 / app-ui 134 / desktop 24 / android 7）；`ImportSpine*` 7 个回归锚点类全绿（含 MigrationCoexistence）；`:ledger-data:verifyCommonMainLedgerDatabaseMigration` PASS；根 `ktlintCheck` 零违例（Check 报告全 0 字节）。命令日志与 summary：`local/artifacts/p702/rerun/`（本地证据，不入库）。
+5. **评审登记项（不改规格，按 §5.4 先例登记）：**
+   - `P702IMPL-04`：算式求值使用 facade 货币而非草稿账户解析货币；单币种演示面下两者一致，多币种精度差异留待后续批次。
+   - `P702SPEC-04`：`EntryConstraintViolation` 登记为 defensive-future——claim 时刻 schema CHECK 异常沿既有 `InfrastructureFailure`/`UnknownCommit` 约定（与支出/收入链一致），不做提交端口内的类型化映射。
+   - `P702SPEC-06`：往来对象 create/rename 以自然键幂等实现于单事务，为 §4.2.5「claim-first request/snapshot/receipt」措辞的注册解读（`28.sqm` 无对应 request/receipt 表；单事务全有或全无、无资金移动，行为安全）。
+   - `P702SPEC-08+14`：`LendingFeeMustBeZero` UI 不可达（`COLLECT` 无费用字段、save 硬编码 0）且 `manual_lending_request.fee_minor CHECK (= 0)` 在 claim 时刻抢先于类型化 token；同理 `manual_transfer_request.fee_minor CHECK (>= 0)` 抢先于 `TransferFeeMustNotBeNegative`——产品用户由 UI 费用格式门（`P702IMPL-02` 修复）覆盖，端口直调的越界调用者走 CHECK 异常 → `UnknownCommit`。
+   - `P702SPEC-09`：E-1 矩阵中 COLLECT 目的账户按「资产账户保留类」处理，注册为该矩阵的冻结解读。
+   - `P702SPEC-10`：稳定码枚举（`EntryFoundationFailureCode` / `ManualTransferFailureCode` / `ManualLendingFailureCode` / `EntryExpressionCode`）冻结 §5.3 字符串并经稳定性测试，生产边界暂无码字符串消费者（与既有支出链一致）。
+   - `P702SPEC-11`：B03 并发收回单赢家由机制覆盖（`commitOnce` 事务内经工厂重读位置 + SQLite 单写者串行化）+ 顺序超额收回类型化测试。
+   - `P702SPEC-12`：置顶排序为顶层列表扁平稳定分区；管理树渲染不重排父组内叶级（入口选择器选项列表为 E-4 主面）。
+   - E-2 整秒截断读法：再记 instant 经 `Instant.fromEpochSeconds(epochSeconds)` 截断，保持「当前时钟 instant」语义于 D-138 冻结的整秒精度（规格未定截断方式，注册为冻结实现读法）。
+   - §6.2a 扩展登记：4 个编辑器内往来对象对话框事件（`OpenCounterpartyCreateDialog` / `OpenCounterpartyRenameDialog` / `UpdateCounterpartyFormText` / `DismissCounterpartyDialog`）仅 Editing 生效、其余态吸收（规格事件清单未列举，注册为按 6.2a 语义的扩展）。
+   - `IMPL-09`：往来对象创建双击竞态（每次 create 新 UUID、无名称去重）与既有 `runCatalogForm` 同暴露，登记不改；`IMPL-10`：`CounterpartyDialog.Rename.currentName` 已捕获未渲染（保留字段）；remember 键缝无组合测试形态（覆盖限制同既有目录对话框）。
+6. **未闭合项：** P7-01（D-143 规格 §7.7）与 P7-02 的 Android 人工门均待 ALas 停止后按隔离 adb 协议（`ANDROID_ADB_SERVER_PORT=5038`、agent 自启 AVD `-port 5680`）执行；push + 同提交 CI 聚合门待用户授权。

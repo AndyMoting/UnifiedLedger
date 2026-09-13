@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -47,9 +48,19 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.unifiedledger.application.CollectDraft
+import com.unifiedledger.application.EntryExpressionCode
+import com.unifiedledger.application.EntryType
+import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseOptions
+import com.unifiedledger.application.ManualIncomeOptions
+import com.unifiedledger.application.ManualLendingOptions
+import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.TransferDraft
+import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -59,28 +70,28 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
- * Edit screen (spec section 7.3.2). Payment account, secondary expense category, amount
- * and occurred time; the currency shown follows the selected payment account and is never
- * free text. Field errors retain the input and are semantically associated with their
- * field (isError+supportingText for text fields, a merged label+error semantics node for
- * the selector groups), so a screen reader reads each error as part of its field. A
- * non-null [onContinue] shows the Continue button; `null` hides it (used by the
- * conflict/rejection result presentation where the user must modify a field or abandon the
- * conflict before continuing). A non-null [onClose] shows the visible close button
- * (P5-04.3); it dispatches the same Back event as the system back: drop the draft and
- * return to the originating overview tab.
+ * Edit screen (spec section 7.3.2; P7-02 sections 6/S-2/S-4). Supports the two entry types
+ * implemented by P7-02.A (EXPENSE/INCOME) through a shared typed draft. The payment/receiving
+ * account, secondary category, amount, optional note and occurred time are edited here; the
+ * currency shown follows the selected account and is never free text. Field errors retain the
+ * input and are semantically associated with their field (isError+supportingText for text
+ * fields, a merged label+error semantics node for the selector groups), so a screen reader
+ * reads each error as part of its field. A non-null [onContinue] shows the Continue button;
+ * `null` hides it (used by the conflict/rejection result presentation where the user must
+ * modify a field or abandon the conflict before continuing). A non-null [onClose] shows the
+ * visible close button (P5-04.3); it dispatches the same Back event as the system back.
  *
  * D-131 R2: the occurred-at field gains a picker entry (DatePickerDialog then TimePicker,
- * spec 3.2); the selected local date-time converts through the fixed Asia/Shanghai zone
- * and is written via [onUpdateOccurredAt] (the reducer is untouched). The initial picker
- * value is the draft instant or the composition-root-injected [ledgerClock]'s current
- * instant; a conversion that fails the round-trip check (historical DST gap) surfaces the
- * field error and dispatches nothing (fail-closed, spec 3.3).
+ * spec 3.2); the selected local date-time converts through the fixed Asia/Shanghai zone and is
+ * written via [onUpdateOccurredAt] (the reducer is untouched). The initial picker value is the
+ * draft instant or the composition-root-injected [ledgerClock]'s current instant; a conversion
+ * that fails the round-trip check (historical DST gap) surfaces the field error and dispatches
+ * nothing (fail-closed, spec 3.3).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun P503EditScreen(
-    draft: ManualExpenseDraft,
+    draft: TypedEntryDraft,
     options: ManualExpenseOptions,
     validation: P503DraftValidation,
     currency: CurrencyUnit,
@@ -93,6 +104,37 @@ fun P503EditScreen(
     occurredAtText: String,
     onOccurredAtTextChange: (String) -> Unit,
     onContinue: (() -> Unit)?,
+    incomeOptions: ManualIncomeOptions = ManualIncomeOptions(emptyList(), emptyList()),
+    transferOptions: ManualTransferOptions = ManualTransferOptions(emptyList(), emptyList()),
+    lendingOptions: ManualLendingOptions = ManualLendingOptions(emptyList(), emptyList()),
+    onSelectEntryType: (EntryType) -> Unit = {},
+    onUpdateNote: (String) -> Unit = {},
+    onUpdateReceivingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateIncomeCategory: (CategoryId) -> Unit = onUpdateCategory,
+    onUpdateTransferSourceAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateTransferDestinationAccount: (AccountId) -> Unit = {},
+    onUpdateTransferDestinationCredit: (String) -> Unit = onUpdateAmount,
+    onUpdateTransferFee: (String) -> Unit = {},
+    onUpdateTransferFeeCategory: (CategoryId) -> Unit = onUpdateCategory,
+    onUpdateLendCounterparty: (com.unifiedledger.domain.CounterpartyId) -> Unit = {},
+    onUpdateLendFundingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
+    onUpdateLendAmount: (String) -> Unit = onUpdateAmount,
+    onUpdateCollectCounterparty: (com.unifiedledger.domain.CounterpartyId) -> Unit = {},
+    onUpdateCollectDestinationAccount: (AccountId) -> Unit = {},
+    onUpdateCollectTotal: (String) -> Unit = onUpdateAmount,
+    onUpdateCollectPrincipal: (String) -> Unit = {},
+    onUpdateCollectInterest: (String) -> Unit = {},
+    onUpdateCollectInterestCategory: (CategoryId) -> Unit = onUpdateCategory,
+    // P7-02.D E-3 calculator: the host passes the current preview and both callbacks only on
+    // the Editing screen; the conflict/rejection presentations leave the defaults and the
+    // section is not rendered there.
+    expressionPreview: ExpressionPreview? = null,
+    onEvaluateExpression: ((String) -> Unit)? = null,
+    onApplyExpression: (() -> Unit)? = null,
+    // P702SPEC-03: the minimal counterparty create/rename affordance (LEND/COLLECT editors).
+    counterpartyDialog: CounterpartyDialog? = null,
+    onCounterpartyEvent: (P503UiEvent) -> Unit = {},
+    onCounterpartyFormSubmit: (CounterpartyDialog) -> Unit = {},
     banner: (@Composable () -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
@@ -101,15 +143,32 @@ fun P503EditScreen(
     var datePickerOpen by remember { mutableStateOf(false) }
     var timePickerOpen by remember { mutableStateOf(false) }
     var pickedLocalDate by remember { mutableStateOf<LocalDate?>(null) }
+    // P7-02.D E-3: the raw calculator input is screen-local typing; only the evaluated result
+    // (the preview) and the applied amount flow through the reducer.
+    var expressionText by remember { mutableStateOf("") }
 
     val latestOnDialogVisibilityChanged by rememberUpdatedState(onDialogVisibilityChanged)
-    LaunchedEffect(datePickerOpen, timePickerOpen) {
-        latestOnDialogVisibilityChanged(datePickerOpen || timePickerOpen)
+    LaunchedEffect(datePickerOpen, timePickerOpen, counterpartyDialog) {
+        latestOnDialogVisibilityChanged(datePickerOpen || timePickerOpen || counterpartyDialog != null)
     }
     // 防御性自愈：编辑屏离开组合时补报关闭，防止 editDialogOpen 陈旧滞留
     DisposableEffect(Unit) {
         onDispose { latestOnDialogVisibilityChanged(false) }
     }
+
+    val isIncome = draft is IncomeDraft
+    val isTransfer = draft is TransferDraft
+    val accountOptions = if (isIncome) incomeOptions.receivingAccounts else options.paymentAccounts
+    val accountFieldLabel = if (isIncome) "收款账户" else "支付账户"
+    val categoryOptions: List<Pair<CategoryId, String>> =
+        if (isIncome) {
+            incomeOptions.incomeCategories.map { it.categoryId to it.label }
+        } else {
+            options.expenseCategories.map { it.categoryId to it.label }
+        }
+    val categoryFieldLabel = if (isIncome) "收入分类" else "费用分类"
+    val amountCurrencyCode =
+        accountOptions.firstOrNull { it.accountId == draft.primaryAccountId }?.currency?.code ?: "—"
 
     Column(
         modifier =
@@ -144,7 +203,13 @@ fun P503EditScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "新增手工支出",
+                when (draft) {
+                    is TransferDraft -> "新增手工转账"
+                    is IncomeDraft -> "新增手工收入"
+                    is LendDraft -> "新增手工借出"
+                    is CollectDraft -> "新增手工收回"
+                    else -> "新增手工支出"
+                },
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
@@ -162,61 +227,317 @@ fun P503EditScreen(
         }
         Spacer(Modifier.height(8.dp))
 
+        // P7-02 S-2: EXPENSE/INCOME/TRANSFER are selectable in this batch (LEND/COLLECT in C);
+        // the type switch uses the frozen retention matrix in the reducer.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("类型：", style = MaterialTheme.typography.titleSmall)
+            listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT).forEach { type ->
+                Row(
+                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = draft.entryType == type,
+                        onClick = { onSelectEntryType(type) },
+                    )
+                    Text(
+                        when (type) {
+                            EntryType.INCOME -> "收入"
+                            EntryType.TRANSFER -> "转账"
+                            EntryType.LEND -> "借出"
+                            EntryType.COLLECT -> "收回"
+                            else -> "支出"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
         val errors = validation.errors(draft, currency)
 
-        SelectorField(
-            label = "支付账户",
-            hasError = errors.missingPaymentAccount,
-            errorMessage = "请选择支付账户",
-        ) {
-            options.paymentAccounts.forEach { option ->
-                val selected = option.accountId == draft.paymentAccountId
-                Row(
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = selected, onClick = { onUpdatePaymentAccount(option.accountId) })
-                    Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+        if (draft is TransferDraft) {
+            SelectorField(
+                label = "转出账户",
+                hasError = errors.missingPaymentAccount,
+                errorMessage = "请选择转出账户",
+            ) {
+                transferOptions.ownedAssetAccounts.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option.accountId == draft.sourceAccountId, onClick = { onUpdateTransferSourceAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-        SelectorField(
-            label = "费用分类",
-            hasError = errors.missingCategory,
-            errorMessage = "请选择费用分类",
-        ) {
-            options.expenseCategories.forEach { option ->
-                val selected = option.categoryId == draft.categoryId
-                Row(
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = selected, onClick = { onUpdateCategory(option.categoryId) })
-                    Text(option.label, style = MaterialTheme.typography.bodyMedium)
+            SelectorField(
+                label = "转入账户",
+                hasError = errors.missingDestinationAccount,
+                errorMessage = "请选择转入账户",
+            ) {
+                transferOptions.ownedAssetAccounts.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option.accountId == draft.destinationAccountId, onClick = { onUpdateTransferDestinationAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-        val selectedAccount = options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }
+            val transferCurrencyCode =
+                transferOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.sourceAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(
+                value = draft.destinationCredit,
+                onValueChange = onUpdateTransferDestinationCredit,
+                label = { Text("到账本金（$transferCurrencyCode）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+                supportingText = { Text("转出金额 = 到账本金 + 手续费") },
+            )
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = draft.fee,
+                onValueChange = onUpdateTransferFee,
+                label = { Text("手续费") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.feeFormatError != null,
+                supportingText = { Text(if (errors.feeFormatError != null) "手续费格式无效" else "无手续费填 0.00") },
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // A fee category is only meaningful (and required) when the fee is positive.
+            if (errors.transferFeeCategoryRequired) {
+                SelectorField(
+                    label = "手续费分类",
+                    hasError = errors.missingCategory,
+                    errorMessage = "请选择手续费分类",
+                ) {
+                    transferOptions.feeCategories.forEach { option ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = option.categoryId == draft.feeCategoryId, onClick = { onUpdateTransferFeeCategory(option.categoryId) })
+                            Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        } else if (draft is LendDraft) {
+            SelectorField(label = "往来对象", hasError = errors.missingCategory, errorMessage = "请选择往来对象") {
+                lendingOptions.counterparties.filter { it.active }.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateLendCounterparty(option.counterpartyId) })
+                        Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                        // P702SPEC-03: rename affordance on each existing counterparty row.
+                        TextButton(onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyRenameDialog(option.counterpartyId, option.name)) }) {
+                            Text("改名")
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyCreateDialog) },
+                    modifier = Modifier.semantics { contentDescription = "新建往来对象" },
+                ) {
+                    Text("新建往来对象")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "出资账户", hasError = errors.missingPaymentAccount, errorMessage = "请选择出资账户") {
+                lendingOptions.ownedAssetAccounts.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.accountId == draft.fundingAccountId, onClick = { onUpdateLendFundingAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            val lendCurrency =
+                lendingOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.fundingAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(
+                value = draft.amount,
+                onValueChange = onUpdateLendAmount,
+                label = { Text("借出金额（$lendCurrency）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+            )
+        } else if (draft is CollectDraft) {
+            SelectorField(label = "往来对象", hasError = errors.missingCategory, errorMessage = "请选择往来对象") {
+                lendingOptions.counterparties.filter { it.active }.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.counterpartyId == draft.counterpartyId, onClick = { onUpdateCollectCounterparty(option.counterpartyId) })
+                        Text(option.name, style = MaterialTheme.typography.bodyMedium)
+                        // P702SPEC-03: rename affordance on each existing counterparty row.
+                        TextButton(onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyRenameDialog(option.counterpartyId, option.name)) }) {
+                            Text("改名")
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = { onCounterpartyEvent(P503UiEvent.OpenCounterpartyCreateDialog) },
+                    modifier = Modifier.semantics { contentDescription = "新建往来对象" },
+                ) {
+                    Text("新建往来对象")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "到账账户", hasError = errors.missingPaymentAccount, errorMessage = "请选择到账账户") {
+                lendingOptions.ownedAssetAccounts.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.accountId == draft.destinationAccountId, onClick = { onUpdateCollectDestinationAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            val collectCurrency =
+                lendingOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.destinationAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(value = draft.totalReceived, onValueChange = onUpdateCollectTotal, label = { Text("实收总额（$collectCurrency）") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = errors.missingAmount)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = draft.principal, onValueChange = onUpdateCollectPrincipal, label = { Text("本金") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = draft.interest, onValueChange = onUpdateCollectInterest, label = { Text("利息") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            Spacer(Modifier.height(8.dp))
+            SelectorField(label = "利息分类", hasError = errors.missingCategory, errorMessage = "请选择利息分类") {
+                lendingOptions.interestCategories.forEach { option ->
+                    Row(modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = option.categoryId == draft.interestCategoryId, onClick = { onUpdateCollectInterestCategory(option.categoryId) })
+                        Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        } else {
+            SelectorField(
+                label = accountFieldLabel,
+                hasError = errors.missingPaymentAccount,
+                errorMessage = "请选择$accountFieldLabel",
+            ) {
+                accountOptions.forEach { option ->
+                    val selected = option.accountId == draft.primaryAccountId
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { if (isIncome) onUpdateReceivingAccount(option.accountId) else onUpdatePaymentAccount(option.accountId) },
+                        )
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            SelectorField(
+                label = categoryFieldLabel,
+                hasError = errors.missingCategory,
+                errorMessage = "请选择$categoryFieldLabel",
+            ) {
+                categoryOptions.forEach { (optionCategoryId, label) ->
+                    val selected = optionCategoryId == draft.categoryId
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { if (isIncome) onUpdateIncomeCategory(optionCategoryId) else onUpdateCategory(optionCategoryId) },
+                        )
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = draft.amountText,
+                onValueChange = onUpdateAmount,
+                label = { Text("金额（$amountCurrencyCode）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+                supportingText = {
+                    when {
+                        errors.missingAmount -> Text("请输入金额")
+                        errors.amountFormatError != null -> Text("金额格式无效")
+                        else -> Text("金额示例：11、35.8 或 35.80")
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // P7-02.A S-4: optional note, length limit enforced by the reducer/commit validation.
         OutlinedTextField(
-            value = draft.amountText,
-            onValueChange = onUpdateAmount,
-            label = { Text("金额（${selectedAccount?.currency?.code ?: "—"}）") },
+            value = draft.note,
+            onValueChange = onUpdateNote,
+            label = { Text("备注（可选）") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            isError = errors.missingAmount || errors.amountFormatError != null,
-            supportingText = {
-                when {
-                    errors.missingAmount -> Text("请输入金额")
-                    errors.amountFormatError != null -> Text("金额格式无效")
-                    else -> Text("金额示例：11、35.8 或 35.80")
-                }
-            },
         )
         Spacer(Modifier.height(8.dp))
+
+        // P7-02.D E-3: the exact amount calculator. Evaluation writes the preview only; the
+        // user confirms the exact result with an explicit apply, which is the sole path that
+        // rewrites the amount text.
+        if (onEvaluateExpression != null && onApplyExpression != null) {
+            OutlinedTextField(
+                value = expressionText,
+                onValueChange = { expressionText = it },
+                label = { Text("金额算式（可选：+ - × ÷ 与括号）") },
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { onEvaluateExpression(expressionText) },
+                    enabled = expressionText.isNotBlank(),
+                ) {
+                    Text("计算")
+                }
+                when (val preview = expressionPreview) {
+                    is ExpressionPreview.Valid -> {
+                        Text("= ${preview.displayText}", style = MaterialTheme.typography.bodyLarge)
+                        TextButton(onClick = onApplyExpression) {
+                            Text("应用到金额", modifier = Modifier.semantics { contentDescription = "应用算式结果到金额" })
+                        }
+                    }
+                    is ExpressionPreview.Invalid -> {
+                        Text(
+                            expressionRejectionText(preview.code),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    null -> {}
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         OccurredAtField(
             text = occurredAtText,
@@ -355,6 +676,31 @@ fun P503EditScreen(
             }
         }
     }
+
+    // P702SPEC-03: the minimal counterparty create/rename form. Confirm runs through the host
+    // (which executes the directory command and closes the dialog on success); dismiss stays
+    // local to the reducer.
+    when (val dialog = counterpartyDialog) {
+        is CounterpartyDialog.Create ->
+            CounterpartyFormDialog(
+                title = "新建往来对象",
+                confirmText = "创建",
+                nameText = dialog.nameText,
+                onNameTextChange = { onCounterpartyEvent(P503UiEvent.UpdateCounterpartyFormText(it)) },
+                onDismiss = { onCounterpartyEvent(P503UiEvent.DismissCounterpartyDialog) },
+                onConfirm = { onCounterpartyFormSubmit(dialog) },
+            )
+        is CounterpartyDialog.Rename ->
+            CounterpartyFormDialog(
+                title = "往来对象改名",
+                confirmText = "保存",
+                nameText = dialog.nameText,
+                onNameTextChange = { onCounterpartyEvent(P503UiEvent.UpdateCounterpartyFormText(it)) },
+                onDismiss = { onCounterpartyEvent(P503UiEvent.DismissCounterpartyDialog) },
+                onConfirm = { onCounterpartyFormSubmit(dialog) },
+            )
+        null -> Unit
+    }
 }
 
 /**
@@ -465,5 +811,56 @@ internal fun P503RejectedBanner() {
         "业务校验未通过，未创建交易。修改输入后可重新提交。",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/**
+ * P7-02.D E-3: user-facing text for the typed expression rejections (section 5.3 codes); the
+ * wording is presentational only and never compared.
+ */
+internal fun expressionRejectionText(code: EntryExpressionCode): String =
+    when (code) {
+        EntryExpressionCode.Invalid -> "算式无法识别：仅支持 + - × ÷ 和括号，且不允许负数"
+        EntryExpressionCode.DivideByZero -> "算式存在除以零"
+        EntryExpressionCode.Overflow -> "算式结果或中间值过大"
+        EntryExpressionCode.NonCurrencyPrecision -> "算式结果无法用该币种精度精确表示（如 1/3 或 1/8）"
+        EntryExpressionCode.NegativeResult -> "算式结果为负"
+    }
+
+/**
+ * P702SPEC-03: one-field form for creating or renaming a counterparty. The typed name stays in
+ * the reducer-held dialog state; a typed rejection keeps the dialog open (the host simply does
+ * not dispatch the close), so the input is never lost.
+ */
+@Composable
+private fun CounterpartyFormDialog(
+    title: String,
+    confirmText: String,
+    nameText: String,
+    onNameTextChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = nameText,
+                    onValueChange = onNameTextChange,
+                    label = { Text("名称") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("币种跟随当前账本（CNY）", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = nameText.isNotBlank()) { Text(confirmText) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
     )
 }
