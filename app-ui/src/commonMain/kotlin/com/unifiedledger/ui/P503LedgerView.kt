@@ -71,7 +71,8 @@ private val P703_PIE_COLORS =
  * first payload, and an explicit 月度数据未加载——请重新选择月份 for the post-retry absence —
  * never zeros, and never a failure disguised as empty (R-Q06-4; F2). When [reloadRequired] the
  * card also offers the re-select action ([onReloadMonth]) that dispatches SelectMonth (trigger
- * (b), which always re-requests).
+ * (b), which always re-requests); without such an action the copy degrades instead of instructing
+ * an impossible one (G4).
  */
 @Composable
 internal fun P503MonthCard(
@@ -87,6 +88,7 @@ internal fun P503MonthCard(
             state = state,
             monthLabel = activity?.month?.toString().orEmpty(),
             transactionCount = activity?.currencies?.firstOrNull()?.transactionCount ?: 0,
+            reloadPossible = onReloadMonth != null,
         ),
         style = MaterialTheme.typography.bodyMedium,
     )
@@ -114,7 +116,8 @@ internal fun P503MonthCard(
  * The month selector over the frozen SelectMonth domain (P703SPEC-10): 上一月/下一月 steps
  * inside `[first transaction statistics month, 本月]`. The buttons disable at the domain
  * edges and stay disabled entirely when nothing is selectable (empty ledger, residual
- * boundary (b)). [selectedMonth] `null` = 本月.
+ * boundary (b)). [selectedMonth] `null` = 本月. The edges are the pure [monthStepEdges] decision,
+ * shared with the trend arrows (G3).
  */
 @Composable
 internal fun P503MonthSelector(
@@ -123,20 +126,17 @@ internal fun P503MonthSelector(
     selectableMonths: List<YearMonth>,
     onSelectMonth: (YearMonth) -> Unit,
 ) {
-    val effectiveMonth = selectedMonth ?: resolvedCurrentMonth
-    val canStep = effectiveMonth != null && selectableMonths.isNotEmpty()
-    val previousMonth = effectiveMonth?.let { current -> selectableMonths.firstOrNull { it < current } }
-    val nextMonth = effectiveMonth?.let { current -> selectableMonths.lastOrNull { it > current } }
+    val edges = monthStepEdges(selectedMonth, resolvedCurrentMonth, selectableMonths)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "月份：${effectiveMonth ?: "本月"}",
+            "月份：${selectedMonth ?: resolvedCurrentMonth ?: "本月"}",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )
-        TextButton(enabled = canStep && previousMonth != null, onClick = { previousMonth?.let(onSelectMonth) }) {
+        TextButton(enabled = edges.previous != null, onClick = { edges.previous?.let(onSelectMonth) }) {
             Text("上一月")
         }
-        TextButton(enabled = canStep && nextMonth != null, onClick = { nextMonth?.let(onSelectMonth) }) {
+        TextButton(enabled = edges.next != null, onClick = { edges.next?.let(onSelectMonth) }) {
             Text("下一月")
         }
     }
@@ -151,6 +151,10 @@ internal fun P503MonthSelector(
  * is the explicit 无分类 row of ordinary postings whose account carries no category mapping
  * (P703SPEC-09/F10): it is disclosed, never invented as a category and never mixed into the
  * ordinary rows' totals, so Σ分类 reconciles with the month card.
+ *
+ * G1: when the monthly cycle has not been loaded for the current overview ([reloadRequired]) the
+ * region renders the explicit not-loaded line instead of vanishing, which would read as "this
+ * month has no categories".
  */
 @Composable
 internal fun P503CategoryRegion(
@@ -158,7 +162,15 @@ internal fun P503CategoryRegion(
     categories: List<MonthlyCategoryTotal>,
     withPie: Boolean,
     uncategorized: List<MonthlyCategoryCurrencyTotal> = emptyList(),
+    reloadRequired: Boolean = false,
 ) {
+    val notLoadedText = categoryRegionPlaceholderText(reloadRequired)
+    if (notLoadedText != null) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(notLoadedText, style = MaterialTheme.typography.bodySmall)
+        return
+    }
     if (categories.isEmpty() && uncategorized.isEmpty()) return
     Text(title, style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
@@ -253,26 +265,40 @@ private fun P503CategoryPies(sectors: Map<CurrencyUnit, List<CategoryChartSector
 /**
  * The twelve-month trend table (R-Q07-1): one exact line per month, old to new, with explicit
  * zero values for empty months and 该月无交易 for a ledger without any activity currency.
+ *
  * [interactionsEnabled] is `false` only on the retained read-failure surface, where
- * AnalysisMonthShift is absorbed (F1).
+ * AnalysisMonthShift is absorbed (F1). The arrows additionally follow the shared
+ * [monthStepEdges] domain decision (G3), so they are disabled exactly where a shift would be
+ * absorbed — including before the first payload and on a single-month ledger — and never present
+ * a dead affordance. G1: when the monthly cycle has not been loaded for the current overview
+ * ([reloadRequired]) the previous cycle's table is replaced by the explicit not-loaded copy
+ * instead of being presented as current (R-Q06-4) — the retained read-failure surface keeps the
+ * last good table behind its banner and therefore passes `false`.
  */
 @Composable
 internal fun P503MonthlyTrendRegion(
     trend: MonthlyTrend?,
     onAnalysisMonthShift: (Int) -> Unit,
     interactionsEnabled: Boolean = true,
+    reloadRequired: Boolean = false,
+    selectedMonth: YearMonth? = null,
+    resolvedCurrentMonth: YearMonth? = null,
+    selectableMonths: List<YearMonth> = emptyList(),
 ) {
+    val edges = monthStepEdges(selectedMonth, resolvedCurrentMonth, selectableMonths)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("近 12 个月趋势", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        TextButton(enabled = interactionsEnabled, onClick = { onAnalysisMonthShift(-1) }) { Text("前移一月") }
-        TextButton(enabled = interactionsEnabled, onClick = { onAnalysisMonthShift(1) }) { Text("后移一月") }
+        TextButton(enabled = interactionsEnabled && edges.previous != null, onClick = { onAnalysisMonthShift(-1) }) { Text("前移一月") }
+        TextButton(enabled = interactionsEnabled && edges.next != null, onClick = { onAnalysisMonthShift(1) }) { Text("后移一月") }
     }
     Spacer(Modifier.height(4.dp))
-    if (trend == null) {
-        Text("暂无趋势数据。", style = MaterialTheme.typography.bodyMedium)
+    val state = trendRegionState(trend, reloadRequired)
+    val placeholder = trendRegionPlaceholderText(state)
+    if (placeholder != null) {
+        Text(placeholder, style = MaterialTheme.typography.bodyMedium)
         return
     }
-    trend.months.forEach { month ->
+    trend?.months?.forEach { month ->
         val values =
             if (month.currencies.isEmpty()) {
                 "该月无交易"

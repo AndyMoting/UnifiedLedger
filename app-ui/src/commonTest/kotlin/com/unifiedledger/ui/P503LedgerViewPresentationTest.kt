@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
@@ -8,15 +9,22 @@ import com.unifiedledger.application.MonthlyCurrencyActivity
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.MonthlyTrendResult
 import com.unifiedledger.application.SelectableMonthsResult
+import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionVersionId
 import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -71,6 +79,115 @@ class P503LedgerViewPresentationTest {
         assertEquals("$marchLabel：该月无交易。", emptyMonth)
         assertEquals("$marchLabel · 交易 3 笔", loaded)
         assertTrue(!notLoaded.contains("无交易"))
+    }
+
+    // ---- G batch: post-retry honesty, banner copy, arrow edges, degraded copy ---------------
+
+    @Test
+    fun monthRegionCopyDegradesWhenNoReloadActionIsPossible() {
+        // G4: without a resolvable month the card must not instruct an action the UI cannot offer.
+        val reloadable = monthRegionHeadline(MonthlyRegionState.NOT_LOADED, marchLabel, transactionCount = 0, reloadPossible = true)
+        val degraded = monthRegionHeadline(MonthlyRegionState.NOT_LOADED, marchLabel, transactionCount = 0, reloadPossible = false)
+        assertEquals("月度数据未加载——请重新选择月份。", reloadable)
+        assertTrue(degraded != reloadable)
+        assertTrue(!degraded.contains("请重新选择月份"))
+        assertEquals("月度数据未加载，且当前无法重新选择月份。", degraded)
+        // The other states are unaffected by the degraded variant.
+        assertEquals(
+            monthRegionHeadline(MonthlyRegionState.EMPTY_MONTH, marchLabel, transactionCount = 0, reloadPossible = true),
+            monthRegionHeadline(MonthlyRegionState.EMPTY_MONTH, marchLabel, transactionCount = 0, reloadPossible = false),
+        )
+    }
+
+    @Test
+    fun trendRegionStateReplacesTheStaleTableAfterARetryRecovery() {
+        // G1: a not-loaded cycle must not present the previous cycle's table as current; the
+        // NOT_LOADED treatment is a different class from the 暂无趋势数据 placeholder.
+        assertEquals(TrendRegionState.AWAITING, trendRegionState(null, reloadRequired = false))
+        assertEquals(TrendRegionState.LOADED, trendRegionState(trend(), reloadRequired = false))
+        assertEquals(TrendRegionState.NOT_LOADED, trendRegionState(trend(), reloadRequired = true))
+        assertEquals(TrendRegionState.NOT_LOADED, trendRegionState(null, reloadRequired = true))
+
+        assertEquals(null, trendRegionPlaceholderText(TrendRegionState.LOADED))
+        val awaiting = trendRegionPlaceholderText(TrendRegionState.AWAITING)
+        val notLoaded = trendRegionPlaceholderText(TrendRegionState.NOT_LOADED)
+        assertEquals("暂无趋势数据。", awaiting)
+        assertEquals("月度数据未加载——趋势需重新选择月份后加载。", notLoaded)
+        assertTrue(notLoaded != awaiting)
+        assertTrue(!notLoaded!!.contains("暂无"))
+    }
+
+    @Test
+    fun categoryRegionSaysNotLoadedInsteadOfRenderingNothing() {
+        // G1: an un-reloaded cycle must not read as "this month has no categories".
+        assertEquals(null, categoryRegionPlaceholderText(reloadRequired = false))
+        assertEquals("月度数据未加载——分类合计需重新选择月份后加载。", categoryRegionPlaceholderText(reloadRequired = true))
+    }
+
+    @Test
+    fun flowRowsFallBackToTheFreshCurrentStateAfterARetryRecovery() {
+        // G1 (R-Q06-4): the stale display-ordered rows must not be presented as the current list.
+        val rows = listOf(ledgerRow())
+        assertSame(rows, flowRowsForDisplay(rows, reloadRequired = false))
+        assertNull(flowRowsForDisplay(rows, reloadRequired = true))
+        assertNull(flowRowsForDisplay(null, reloadRequired = false))
+    }
+
+    @Test
+    fun trendArrowEdgesMirrorTheMonthSelectorAdmissionRule() {
+        // G3: an edge that would be absorbed by the reducer must not be offered as a live arrow.
+        // The returned month is the domain's extreme in that direction — the pre-existing selector
+        // semantics (上一月 jumps to the earliest selectable month, 下一月 to the latest). What the
+        // arrow enablement depends on is whether such a month exists at all, which for the
+        // contiguous frozen domain `[first statistics month, 本月]` is exactly the condition for a
+        // one-month step to stay inside it.
+        val domain = listOf(YearMonth(2026, 1), YearMonth(2026, 2), march)
+        val middle = monthStepEdges(selectedMonth = YearMonth(2026, 2), resolvedCurrentMonth = null, selectableMonths = domain)
+        assertEquals(YearMonth(2026, 1), middle.previous)
+        assertEquals(march, middle.next)
+
+        val atFirst = monthStepEdges(selectedMonth = YearMonth(2026, 1), resolvedCurrentMonth = null, selectableMonths = domain)
+        assertNull(atFirst.previous)
+        assertTrue(atFirst.next != null)
+
+        val atLast = monthStepEdges(selectedMonth = march, resolvedCurrentMonth = null, selectableMonths = domain)
+        assertEquals(YearMonth(2026, 1), atLast.previous)
+        assertNull(atLast.next)
+
+        // The presence of an edge is equivalent to the one-month step landing inside the domain.
+        assertEquals(atFirst.next != null, YearMonth(2026, 2) in domain)
+        assertEquals(atLast.previous != null, YearMonth(2026, 2) in domain)
+
+        // Before the first payload (no domain) and on a single-month ledger both edges are absent.
+        val empty = monthStepEdges(selectedMonth = null, resolvedCurrentMonth = null, selectableMonths = emptyList())
+        assertNull(empty.previous)
+        assertNull(empty.next)
+        val single = monthStepEdges(selectedMonth = null, resolvedCurrentMonth = march, selectableMonths = listOf(march))
+        assertNull(single.previous)
+        assertNull(single.next)
+    }
+
+    @Test
+    fun monthStepEdgesFallBackToTheResolvedCurrentMonth() {
+        // 本月 (selectedMonth == null) resolves to the injected current month, exactly like the
+        // month label and the reducer's shift base.
+        val edges = monthStepEdges(selectedMonth = null, resolvedCurrentMonth = march, selectableMonths = listOf(YearMonth(2026, 2), march))
+        assertEquals(YearMonth(2026, 2), edges.previous)
+        assertNull(edges.next)
+    }
+
+    @Test
+    fun retainedFailureBannerNeverOverClaimsALoadedMonth() {
+        // G2: the banner copy follows the retained overview's own month-region state.
+        val loaded = retainedReadFailureBannerText(MonthlyRegionState.LOADED)
+        val emptyMonth = retainedReadFailureBannerText(MonthlyRegionState.EMPTY_MONTH)
+        val awaiting = retainedReadFailureBannerText(MonthlyRegionState.AWAITING)
+        val notLoaded = retainedReadFailureBannerText(MonthlyRegionState.NOT_LOADED)
+        assertEquals("月度数据读取失败，以下为上一次成功加载的月份。", loaded)
+        assertEquals(loaded, emptyMonth)
+        assertEquals("月度数据读取失败，本月的月度数据尚未加载。", awaiting)
+        assertEquals(awaiting, notLoaded)
+        assertTrue(loaded != awaiting)
     }
 
     // ---- sector eligibility (R-Q07-3/C04) --------------------------------------------------
@@ -286,4 +403,18 @@ class P503LedgerViewPresentationTest {
         val payload = activity(currencies = listOf(currencyRow(transactionCount = 1)))
         return MonthlyTrend(ledgerId = ledgerId, window = listOf(march), months = listOf(payload))
     }
+
+    private fun ledgerRow(): LedgerEntryRow =
+        LedgerEntryRow(
+            transactionId = TransactionId("tx-presentation-1"),
+            currentVersionId = TransactionVersionId("version-presentation-1"),
+            kind = TransactionKind.EXPENSE,
+            occurredAt = kotlin.time.Instant.parse("2026-03-02T02:00:00Z"),
+            statisticsAt = kotlin.time.Instant.parse("2026-03-02T02:00:00Z"),
+            note = null,
+            postings =
+                listOf(
+                    Posting(PostingId("posting-presentation-1"), AccountId("account-presentation-asset"), Money.ofMinor(-3_580L, cny)),
+                ),
+        )
 }

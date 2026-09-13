@@ -141,7 +141,9 @@ fun P503TabShell(
  * without a category mapping appear as the explicit 无分类 row, so Σ分类 reconciles with the month
  * card. F2: [monthlyReloadRequired] swaps the empty-month copy for the explicit re-select
  * affordance after a READ-retry recovery. [interactionsEnabled] is `false` only on the retained
- * read-failure surface, where the analysis shift is absorbed (F1).
+ * read-failure surface, where the analysis shift is absorbed (F1). G1: while
+ * [monthlyReloadRequired] the category region and the trend region say explicitly that the monthly
+ * data is not loaded instead of rendering an empty or stale surface (R-Q06-4).
  */
 @Composable
 fun P503AnalysisScreen(
@@ -213,6 +215,7 @@ fun P503AnalysisScreen(
                 categories = monthlyActivity?.expenseCategories ?: emptyList(),
                 withPie = true,
                 uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
+                reloadRequired = monthlyReloadRequired,
             )
             Spacer(Modifier.height(8.dp))
             P503CategoryRegion(
@@ -220,9 +223,18 @@ fun P503AnalysisScreen(
                 categories = monthlyActivity?.incomeCategories ?: emptyList(),
                 withPie = false,
                 uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
+                reloadRequired = monthlyReloadRequired,
             )
             Spacer(Modifier.height(8.dp))
-            P503MonthlyTrendRegion(trend, onAnalysisMonthShift, interactionsEnabled)
+            P503MonthlyTrendRegion(
+                trend = trend,
+                onAnalysisMonthShift = onAnalysisMonthShift,
+                interactionsEnabled = interactionsEnabled,
+                reloadRequired = monthlyReloadRequired,
+                selectedMonth = selectedMonth,
+                resolvedCurrentMonth = resolvedCurrentMonth,
+                selectableMonths = selectableMonths,
+            )
         }
     }
 }

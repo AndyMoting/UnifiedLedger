@@ -698,16 +698,22 @@ fun P503App(
             )
         }
 
-    // P7-03.C: month selection and trend/month-card shifts dispatch first, then re-request the
-    // monthly payload unconditionally (triggers (b)/(c), including the failure recovery path).
+    // P7-03.C: month selection dispatches first, then re-requests the monthly payload
+    // unconditionally (trigger (b), including the failure-recovery path: re-selecting the same
+    // month must always re-read it).
     fun selectMonth(month: YearMonth) {
         dispatch(P503UiEvent.SelectMonth(month))
         coordinator.requestMonthlyNow(latestState.value)
     }
 
+    // G3: trigger (c) still says a month shift re-requests — but only a shift that actually moved
+    // the shared cursor. An out-of-domain (absorbed) shift leaves the state instance untouched and
+    // must not fire a wasted monthly read.
     fun analysisMonthShift(offset: Int) {
+        val before = latestState.value
         dispatch(P503UiEvent.AnalysisMonthShift(offset))
-        coordinator.requestMonthlyNow(latestState.value)
+        val reRequest = analysisMonthShiftReRequest(before, latestState.value)
+        if (reRequest != null) coordinator.requestMonthlyNow(reRequest)
     }
 
     // Authoritative refresh after Created/NoChange/Recovered; never build the list from
@@ -1253,7 +1259,9 @@ private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.applicati
  * month label, category region, trend and the display-ordered flow list of the retained tab —
  * and is never replaced by zeros or an empty month (R-Q06-4). Only the existing retry is live:
  * while the READ failure stands the reducer absorbs SelectMonth/SelectTransaction, so the same
- * regions are rendered without their interactive affordances rather than with dead ones.
+ * regions are rendered without their interactive affordances rather than with dead ones. G2: the
+ * banner copy follows the retained overview's own month-region state, so it never promises a
+ * previously loaded month when the failed cycle had no successful payload (initial trigger (a)).
  */
 @Composable
 private fun P503RetainedOverviewFailureScreen(
@@ -1269,7 +1277,9 @@ private fun P503RetainedOverviewFailureScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
         Text(
-            "月度数据读取失败，以下为上一次成功加载的月份。",
+            // G2: the banner must not promise a loaded month when the retained overview has no
+            // successful monthly payload (an initial trigger-(a) failure).
+            retainedReadFailureBannerText(monthlyRegionState(overview.monthlyActivity, reloadRequired = false)),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.error,
         )

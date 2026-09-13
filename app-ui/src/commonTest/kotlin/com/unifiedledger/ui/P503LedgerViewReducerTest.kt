@@ -301,6 +301,28 @@ class P503LedgerViewReducerTest {
     }
 
     @Test
+    fun analysisMonthShiftReRequestsOnlyWhenTheCursorActuallyMoved() {
+        // G3: trigger (c) still re-requests for a shift that moves the cursor, but an absorbed
+        // shift must not fire a wasted monthly read.
+        val before = overview(month = YearMonth(2026, 1), domain = selectableDomain)
+        val moved = clockedReducer.reduce(before, P503UiEvent.AnalysisMonthShift(1))
+        val target = assertIs<P503AppState.OverviewEmpty>(analysisMonthShiftReRequest(before, moved))
+        assertEquals(YearMonth(2026, 2), target.selectedMonth)
+
+        val atTheEdge = overview(month = march, domain = selectableDomain)
+        val absorbed = clockedReducer.reduce(atTheEdge, P503UiEvent.AnalysisMonthShift(1))
+        assertSame(atTheEdge, absorbed)
+        assertNull(analysisMonthShiftReRequest(atTheEdge, absorbed))
+
+        val withoutADomain = overview(month = march, domain = emptyList())
+        assertNull(analysisMonthShiftReRequest(withoutADomain, clockedReducer.reduce(withoutADomain, P503UiEvent.AnalysisMonthShift(-1))))
+
+        // No overview on either side: nothing to re-request.
+        assertNull(analysisMonthShiftReRequest(null, atTheEdge))
+        assertNull(analysisMonthShiftReRequest(atTheEdge, P503AppState.Ready))
+    }
+
+    @Test
     fun analysisMonthShiftWithoutAUsableClockOrSelectionIsAbsorbed() {
         // No clock and no selected month: the base month cannot be resolved, so the shift is absorbed.
         val source = overview()

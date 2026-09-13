@@ -42,7 +42,9 @@ import kotlinx.datetime.YearMonth
  * READ retry recovered a monthly failure, so the month region presents the explicit
  * 月度数据未加载——请重新选择月份 affordance instead of an empty month. [interactionsEnabled] is
  * `false` only for the retained read-failure surface (F1), which renders the same regions without
- * live clicks the reducer would absorb.
+ * live clicks the reducer would absorb. G1: with [monthlyReloadRequired] the flow list falls back
+ * to the fresh [LedgerCurrentState.transactions] projection instead of presenting the previous
+ * cycle's [entryRows] as the current list (R-Q06-4).
  */
 @Composable
 fun P503OverviewScreen(
@@ -58,6 +60,9 @@ fun P503OverviewScreen(
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
 ) {
+    // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
+    // the current list, so the fresh authoritative current-state projection is rendered instead.
+    val flowRows = flowRowsForDisplay(entryRows, monthlyReloadRequired)
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
     ) {
@@ -80,12 +85,12 @@ fun P503OverviewScreen(
             P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
             Spacer(Modifier.height(8.dp))
         }
-        if (state.transactions.isEmpty() && entryRows.isNullOrEmpty()) {
+        if (state.transactions.isEmpty() && flowRows.isNullOrEmpty()) {
             Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
         } else {
-            if (entryRows != null) {
+            if (flowRows != null) {
                 Text("流水", style = MaterialTheme.typography.titleMedium)
-                entryRows.forEach { row ->
+                flowRows.forEach { row ->
                     LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled)
                     HorizontalDivider()
                 }

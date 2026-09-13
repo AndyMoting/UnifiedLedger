@@ -17,6 +17,7 @@ import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -267,6 +268,26 @@ class QueryTransactionDetailTest {
         )
     }
 
+    @Test
+    fun unimplementedLineageAndReconciliationReadsFailClosedInsteadOfAnsweringDefinitively() {
+        // G6/R-Q06-4: the three sibling P7-03 reads carry no neutral default either. An
+        // unimplemented port must not render a definitive 来源未标注 (as if no lineage existed) or
+        // an all-ineligible 无对账资格 projection.
+        val port = EntryRowsWithoutLineagePort(listOf(expenseRow()))
+        assertFailsWith<UnsupportedOperationException> {
+            port.findImportCreationConfirmation(ledgerId, TransactionId("tx-expense"))
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            port.findManualCreationReceipt(ledgerId, TransactionId("tx-expense"))
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            port.loadTransactionReconciliationLegs(ledgerId, TransactionId("tx-expense"))
+        }
+        assertIs<TransactionDetailResult.Unavailable>(
+            QueryTransactionDetail(port, ledgerId, catalog()).query(TransactionId("tx-expense")),
+        )
+    }
+
     // --- fixtures -----------------------------------------------------------------------
 
     private fun lendRow() =
@@ -410,6 +431,49 @@ private class EntryDetailPort(
         ledgerId: LedgerId,
         transactionId: TransactionId,
     ): List<TransactionReconciliationLegRow> = legs
+}
+
+/**
+ * G6: a read port that implements only the pre-P7-03 surface plus the entry-row read, so the three
+ * sibling P7-03 read defaults (creation lineage + reconciliation legs) are exercised as inherited
+ * behaviour rather than as explicit overrides.
+ */
+private class EntryRowsWithoutLineagePort(
+    private val rows: List<LedgerEntryRow>,
+) : LedgerCurrentStateReadPort {
+    override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
+
+    override fun findManualExpenseByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualExpenseCommitRecord? = null
+
+    override fun findManualExpenseByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedExpenseReceipt,
+    ): ManualExpenseCommitRecord? = null
+
+    override fun findManualIncomeByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualIncomeCommitRecord? = null
+
+    override fun findManualIncomeByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedIncomeReceipt,
+    ): ManualIncomeCommitRecord? = null
+
+    override fun findManualTransferByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): ManualTransferCommitRecord? = null
+
+    override fun findManualTransferByReceipt(
+        ledgerId: LedgerId,
+        receipt: ConfirmedTransferReceipt,
+    ): ManualTransferCommitRecord? = null
+
+    override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = rows
 }
 
 private class ThrowingDetailPort : LedgerCurrentStateReadPort {
