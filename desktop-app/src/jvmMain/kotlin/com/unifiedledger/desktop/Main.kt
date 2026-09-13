@@ -299,6 +299,9 @@ internal fun buildLedgerGraph(
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
     val counterpartyStore = SqlDelightCounterpartyStore(database, driver)
     val entryPreferenceStore = SqlDelightEntryPreferenceStore(database)
+    // P7-03.C/D: the reporting clock is injected into the session so the unified monthly
+    // projection resolves 本月 (R-Q06-2) on the same authoritative catalog version.
+    val ledgerClock = LedgerClock { Clock.System.now() }
     val session =
         CatalogConsumerSession(
             reader = store,
@@ -306,6 +309,7 @@ internal fun buildLedgerGraph(
             initialAuthority = authority,
             readPort = readAdapter,
             counterpartyReader = counterpartyStore,
+            clock = ledgerClock,
         )
 
     val port = SqlDelightConfirmedManualExpenseCommitPort(database, driver)
@@ -351,7 +355,6 @@ internal fun buildLedgerGraph(
     val factory = CatalogAdmissionExpenseTransactionFactory(admissionReader = store, delegate = delegate)
     val idSource = UuidV7ConfirmedManualExpenseIdSource(UuidV7Generator(::secureRandomBytes))
     val requestIdSource = UuidV7ManualExpenseRequestIdSource(UuidV7Generator(::secureRandomBytes))
-    val ledgerClock = LedgerClock { Clock.System.now() }
     val executeConfirmed = ExecuteConfirmedManualExpense(tracker, idSource, factory)
     val executeSave = ExecuteManualExpenseSave(executeConfirmed)
     val queryCurrentState = session.queryCurrentState
@@ -490,6 +493,10 @@ internal fun buildLedgerGraph(
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,
             refreshCatalog = { session.refresh() },
+            // P7-03.C/D: the ledger-view read surface on the same authoritative session.
+            baseQueryLedgerEntryRows = session.queryLedgerEntryRows,
+            baseQueryMonthlyActivity = session.queryMonthlyActivity,
+            baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,
         )
 

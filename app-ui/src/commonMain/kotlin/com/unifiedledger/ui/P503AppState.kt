@@ -11,10 +11,12 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
 /**
- * P5-03 shared UI state machine (spec sections 7.1-7.2). Exactly twelve states.
+ * P5-03 shared UI state machine (spec sections 7.1-7.2). Twelve P5-03/P7-01/P7-02 states plus
+ * the single P7-03.C read-only detail state.
  *
  * `Ready` is the platform-startup-concluded entry state that consumes the initial
  * authoritative load. `OverviewEmpty` carries the authoritative current state: an empty
@@ -22,6 +24,11 @@ import kotlin.time.Instant
  * per-account balances. `Created`/`NoChange`/`Recovered` are transient result states
  * followed by an authoritative refresh back to `OverviewEmpty`. Startup retry ownership
  * belongs to the platform composition roots and their `P503StartupState`, not this machine.
+ *
+ * P7-03.C (D-145) extends `OverviewEmpty` with the shared month cursor and the unified
+ * monthly payload, and adds `TransactionDetail` (read-only, reached only from a HOME flow
+ * row; spec section 6.1). The new events never throw in any state (table 6.2a); every
+ * pre-existing unlisted combination stays ISE (G-B).
  */
 sealed interface P503AppState {
     data object Ready : P503AppState
@@ -34,6 +41,14 @@ sealed interface P503AppState {
      * [catalogDialog] is the open form and [catalogNotice] the last outcome banner. Every
      * catalog transition stays in the pure reducer. The defaults keep all pre-P7-01 constructor
      * and copy sites compiling.
+     *
+     * P7-03.C (D-145): [selectedMonth] is the shared month cursor of the monthly presentation
+     * (`null` = 本月， resolved from the injected [LedgerClock] at request time; R-Q06-2);
+     * [selectableMonths] is the frozen SelectMonth domain `[first transaction statistics month,
+     * 本月]` the host read from [com.unifiedledger.application.QueryMonthlyActivity.selectableMonths]
+     * (P703SPEC-10; out-of-domain SelectMonth is absorbed, spec section 6.2); [monthlyActivity]
+     * is the last successful unified monthly payload feeding the home month card, the category
+     * drilldown and the trend (plan section 5.1: one result, three presentations).
      */
     data class OverviewEmpty(
         val state: LedgerCurrentState,
@@ -55,6 +70,12 @@ sealed interface P503AppState {
          * persists each toggle.
          */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** P7-03.C: the shared month cursor; `null` = 本月 (clock-resolved, R-Q06-2). */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** P7-03.C: the frozen SelectMonth domain, old to new; empty = nothing selectable. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** P7-03.C: the last successful unified monthly payload for the effective month. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data class Editing(
@@ -124,6 +145,31 @@ sealed interface P503AppState {
         // P5-04.2: overview snapshot + source tab (meaningful only for SUBMISSION; READ is null).
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        /**
+         * P7-03.C (D-145; spec section 6.2 matrix, 4.3, C04): the monthly read failure preserves
+         * the last successful overview (tab, month cursor and monthly payload) so the read
+         * failure keeps the previously rendered month visible next to the explicit failure
+         * banner, never rendered as zeros or an empty month (R-Q06-4). `null` for every
+         * pre-P7-03 failure path. Read-only payload: the existing READ retry semantics are
+         * unchanged (spec 6.3) and recovery from a monthly failure is a re-dispatched
+         * SelectMonth (residual boundary (a) of section 6.2).
+         */
+        val monthlyOverview: OverviewEmpty? = null,
+    ) : P503AppState
+
+    /**
+     * P7-03.C (D-145; spec section 6.1): the read-only transaction detail state. Reached only
+     * from a HOME flow row (仅 HOME 行可达). Carries the overview to return to (so
+     * CloseTransactionDetail/Back restore the exact tab, month cursor and monthly payload, C03),
+     * the origin tab, the requested transaction id and the host-resolved typed detail payload
+     * ([com.unifiedledger.application.TransactionDetailResult]: Success/NotFound/InvalidState/
+     * Unavailable). Zero edit entries: the page renders read-only data only (本批不做编辑 UI).
+     */
+    data class TransactionDetail(
+        val overview: OverviewEmpty,
+        val originTab: P503Tab,
+        val transactionId: TransactionId,
+        val detail: com.unifiedledger.application.TransactionDetailResult,
     ) : P503AppState
 
     /**

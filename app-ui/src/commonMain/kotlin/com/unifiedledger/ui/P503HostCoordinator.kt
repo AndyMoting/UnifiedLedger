@@ -72,17 +72,41 @@ internal fun dispatchCurrentP503Action(
  *   `lastCheckOutcome == NONE` plus the per-instance guard.
  * - Manual retry (READ/SUBMISSION) and manual unknown-commit re-check reuse the same injected
  *   callbacks so the automatic and manual paths stay idempotent against duplicate evaluation.
+ *
+ * P7-03.C (D-145): the unified monthly payload re-request triggers are the FROZEN closed set
+ * of spec section 6.2 (P703SPEC-04) and nothing else:
+ * (a) initial load — the first overview evaluation ([decideMonthly]);
+ * (b) `SelectMonth` — unconditional ([requestMonthlyNow], including the failure recovery
+ *     re-dispatch of residual boundary (a));
+ * (c) `AnalysisMonthShift` — unconditional ([requestMonthlyNow]);
+ * (d) an effective-month change, including 本月 re-resolution across a clock rollover
+ *     ([decideMonthly], C01);
+ * (e) the authoritative refresh after each determinate success ([decide] fires it alongside
+ *     the refresh).
+ * Tab switches, `CloseTransactionDetail`, ordinary refreshes and READ-retry recoveries never
+ * re-request.
  */
 internal class P503HostCoordinator(
     private val onRefresh: () -> Unit,
     private val onSubmit: (draft: TypedEntryDraft, requestId: RequestId) -> Unit,
     private val onCheck: (draft: TypedEntryDraft, requestId: RequestId) -> Unit,
+    // P7-03.C: the monthly request cycle the host runs (query + trend + entry rows + dispatch).
+    private val onMonthlyRequest: () -> Unit = {},
+    // P7-03.C: 本月 resolved by the host's reporting clock (R-Q06-2); null when the clock is
+    // unusable, which still allows the initial request so the typed failure surfaces (R-Q06-4).
+    private val currentMonth: () -> kotlinx.datetime.YearMonth? = { null },
 ) {
     /** The transient-result instance whose automatic refresh has already been dispatched. */
     private var refreshAfterResultServed: P503AppState? = null
 
     /** The unknown-commit instance (reference) that already triggered the read-only check. */
     private var unknownCheckServed: P503AppState? = null
+
+    /** P7-03.C: whether any monthly request has been served (trigger (a) gate). */
+    private var monthlyEverRequested = false
+
+    /** P7-03.C: the effective month of the last monthly request (trigger (d) comparison). */
+    private var monthlyLastEffectiveMonth: kotlinx.datetime.YearMonth? = null
 
     /**
      * State-driven decision, called at every `LaunchedEffect(state)` evaluation (and at the
@@ -102,6 +126,9 @@ internal class P503HostCoordinator(
                 } else {
                     refreshAfterResultServed = state
                     onRefresh()
+                    // Trigger (e): the authoritative refresh of a determinate success re-requests
+                    // the monthly payload for the fresh overview (P703SPEC-04).
+                    requestMonthlyNow(state)
                     HostAction.RefreshAfterResult
                 }
             }
@@ -130,6 +157,37 @@ internal class P503HostCoordinator(
                 null
             }
         }
+
+    /**
+     * P7-03.C: the (a)/(d) decision, called at every `LaunchedEffect(state)` evaluation with the
+     * current overview state. Requests exactly when no monthly request was served yet (initial
+     * load) or when the effective month (selection or clock-resolved 本月) changed since the
+     * last request. Every other state returns false without touching the guards.
+     */
+    internal fun decideMonthly(state: P503AppState): Boolean {
+        val overview = state as? P503AppState.OverviewEmpty ?: return false
+        val effectiveMonth = overview.selectedMonth ?: currentMonth()
+        if (monthlyEverRequested && monthlyLastEffectiveMonth == effectiveMonth) return false
+        monthlyEverRequested = true
+        monthlyLastEffectiveMonth = effectiveMonth
+        onMonthlyRequest()
+        return true
+    }
+
+    /**
+     * P7-03.C: the (b)/(c)/(e) unconditional re-request. The host calls this right after
+     * dispatching SelectMonth/AnalysisMonthShift (including the failure-recovery re-dispatch of
+     * the same month, residual boundary (a)) and [decide] calls it after the determinate-success
+     * refresh. The effective month is recomputed from the (already reduced) state so the
+     * (d) guard sees the month that was actually requested.
+     */
+    internal fun requestMonthlyNow(state: P503AppState): Boolean {
+        val effectiveMonth = (state as? P503AppState.OverviewEmpty)?.selectedMonth ?: currentMonth()
+        monthlyEverRequested = true
+        monthlyLastEffectiveMonth = effectiveMonth
+        onMonthlyRequest()
+        return true
+    }
 
     /**
      * Manual READ retry button: an `InfrastructureFailure(READ)` state triggers one refresh.

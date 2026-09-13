@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -127,11 +128,25 @@ fun P503TabShell(
  * Analysis tab content (D-122): the pure [SummarizeLedgerActivity] derivation over the
  * authoritative current state, rendered as-is. The UI never accumulates amounts itself;
  * signed totals (which can be negative) go through [formatMinorUnits] unchanged.
+ *
+ * P7-03.D (D-145): when the composition root wires the ledger-view surface ([showMonthlyRegion])
+ * the whole-period summary keeps its frozen D-122 face and the monthly region renders below it
+ * (spec 6.1 layering): the month card and category drilldown for the shared month cursor, plus
+ * the twelve-month trend (R-Q07-1) with the AnalysisMonthShift affordance. Both tabs consume the
+ * same [com.unifiedledger.application.QueryMonthlyActivity] result (plan section 5.1).
  */
 @Composable
 fun P503AnalysisScreen(
     state: LedgerCurrentState,
     summarizeActivity: SummarizeLedgerActivity,
+    showMonthlyRegion: Boolean = false,
+    selectedMonth: kotlinx.datetime.YearMonth? = null,
+    resolvedCurrentMonth: kotlinx.datetime.YearMonth? = null,
+    selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+    monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+    trend: com.unifiedledger.application.MonthlyTrend? = null,
+    onSelectMonth: (kotlinx.datetime.YearMonth) -> Unit = {},
+    onAnalysisMonthShift: (Int) -> Unit = {},
 ) {
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarize(state) }
     Column(
@@ -159,6 +174,20 @@ fun P503AnalysisScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
+        }
+        if (showMonthlyRegion) {
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            P503MonthCard(monthlyActivity)
+            Spacer(Modifier.height(4.dp))
+            P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
+            Spacer(Modifier.height(8.dp))
+            P503CategoryRegion(title = "支出分类", categories = monthlyActivity?.expenseCategories ?: emptyList(), withPie = true)
+            Spacer(Modifier.height(8.dp))
+            P503CategoryRegion(title = "收入分类", categories = monthlyActivity?.incomeCategories ?: emptyList(), withPie = false)
+            Spacer(Modifier.height(8.dp))
+            P503MonthlyTrendRegion(trend, onAnalysisMonthShift)
         }
     }
 }

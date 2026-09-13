@@ -17,6 +17,7 @@ import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
 /**
@@ -316,6 +317,62 @@ sealed interface P503UiEvent {
     /** Authoritative snapshot produced by an explicit refresh with no command (e.g. after conflict). */
     data class CatalogSnapshotRefreshed(
         val snapshot: CatalogSnapshotView,
+    ) : P503UiEvent
+
+    // ---- P7-03.C/D ledger-view read-only events (spec sections 6.1/6.2; zero accounting effect) ----
+
+    /**
+     * Opens the read-only transaction detail from a HOME flow row (仅 HOME 行可达). [result] is
+     * the typed payload the host resolved from
+     * [com.unifiedledger.application.QueryTransactionDetail] before dispatching (Success or the
+     * typed NotFound/InvalidState/Unavailable failure — the page renders all four). Absorbed in
+     * every state other than OverviewEmpty (table 6.2a).
+     */
+    data class SelectTransaction(
+        val transactionId: TransactionId,
+        val result: com.unifiedledger.application.TransactionDetailResult,
+    ) : P503UiEvent
+
+    /**
+     * Closes the detail page back to the exact preserved overview (tab, month cursor and
+     * monthly payload kept, C03). Effect only on TransactionDetail; absorbed everywhere else.
+     */
+    data object CloseTransactionDetail : P503UiEvent
+
+    /**
+     * Selects the overview month (the shared month cursor of the home month card and the
+     * analysis monthly region). Effect only on OverviewEmpty and only within the frozen
+     * SelectMonth domain `[first transaction statistics month, 本月]` (P703SPEC-10): an
+     * out-of-domain month is absorbed with zero state change, as is any selection on an empty
+     * domain (residual boundary (b)). The host re-requests the monthly payload on every
+     * accepted selection (trigger (b), spec 6.2).
+     */
+    data class SelectMonth(
+        val month: kotlinx.datetime.YearMonth,
+    ) : P503UiEvent
+
+    /**
+     * Shifts the shared month cursor by [offset] months for the analysis monthly region
+     * (trend/month-card linkage). Effect only on OverviewEmpty; the base is the selected month
+     * or, when none is selected, 本月 resolved from the reducer's injected clock — without a
+     * usable base the shift is absorbed. The host re-requests the monthly payload on every
+     * shift (trigger (c), spec 6.2).
+     */
+    data class AnalysisMonthShift(
+        val offset: Int,
+    ) : P503UiEvent
+
+    /**
+     * Monthly payload event (RefreshResult-shaped, spec section 6.2 table 6.2a): the host's
+     * unified monthly cycle result for the effective overview month plus the fresh SelectMonth
+     * domain it read alongside. Success updates the overview payload; a typed failure
+     * (InvalidState/Unavailable) surfaces the READ failure while preserving the last successful
+     * overview (spec 4.3: 上一成功载荷保留 + 显式失败条). Effect on OverviewEmpty and
+     * TransactionDetail (详情态同语义， updating the stored overview); absorbed everywhere else.
+     */
+    data class MonthlyActivityResult(
+        val result: com.unifiedledger.application.MonthlyActivityResult,
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
     ) : P503UiEvent
 
     // ---- async result events ----

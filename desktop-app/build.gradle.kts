@@ -43,6 +43,9 @@ kotlin {
 
         jvmTest.dependencies {
             implementation(kotlin("test"))
+            // P7-03.C/D: the ledger-view composition-root tests construct the frozen
+            // kotlinx.datetime.YearMonth month cursor types through the facade surface.
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
     }
 }

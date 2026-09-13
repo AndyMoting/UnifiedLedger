@@ -238,6 +238,9 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
     val counterpartyStore = handle.counterpartyStore
     val entryPreferenceStore = handle.entryPreferenceStore
+    // P7-03.C/D: the reporting clock is injected into the session so the unified monthly
+    // projection resolves 本月 (R-Q06-2) on the same authoritative catalog version.
+    val ledgerClock = LedgerClock { Clock.System.now() }
     val session =
         CatalogConsumerSession(
             reader = store,
@@ -245,6 +248,7 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             initialAuthority = authority,
             readPort = readAdapter,
             counterpartyReader = counterpartyStore,
+            clock = ledgerClock,
         )
 
     val tracker = CommitOnceInvocationTracker(handle.commitPort)
@@ -286,7 +290,6 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
     val factory = CatalogAdmissionExpenseTransactionFactory(admissionReader = store, delegate = delegate)
     val idSource = UuidV7ConfirmedManualExpenseIdSource(UuidV7Generator(::secureRandomBytes))
     val requestIdSource = UuidV7ManualExpenseRequestIdSource(UuidV7Generator(::secureRandomBytes))
-    val ledgerClock = LedgerClock { Clock.System.now() }
     val executeConfirmed = ExecuteConfirmedManualExpense(tracker, idSource, factory)
     val executeSave = ExecuteManualExpenseSave(executeConfirmed)
     val resolver = ResolveManualExpenseCommitStatus(readAdapter)
@@ -422,6 +425,10 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             catalogSnapshot = { snapshotQuery.query(ledgerId) },
             executeCatalogCommand = catalogCommands,
             refreshCatalog = { session.refresh() },
+            // P7-03.C/D: the ledger-view read surface on the same authoritative session.
+            baseQueryLedgerEntryRows = session.queryLedgerEntryRows,
+            baseQueryMonthlyActivity = session.queryMonthlyActivity,
+            baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,
         )
     return CloseableLedgerGraph(facade, handle::close, session, catalogCommands)

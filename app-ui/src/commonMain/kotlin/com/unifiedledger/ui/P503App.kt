@@ -35,6 +35,7 @@ import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualCollectInputField
 import com.unifiedledger.application.ManualCollectSaveInput
@@ -68,13 +69,20 @@ import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferSaveInput
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.MonthlyBuckets
+import com.unifiedledger.application.MonthlyTrend
+import com.unifiedledger.application.MonthlyTrendResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SelectableMonthsResult
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TransactionId
 import kotlinx.coroutines.launch
+import kotlinx.datetime.YearMonth
+import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 
 /**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
@@ -175,6 +183,13 @@ fun P503App(
     // P7-02.A E-2 (G-C): the host-held memory of one determinate-success intent for "record
     // again". Captured before submission, consumed by the authoritative refresh; never persisted.
     var retainedIntent by remember { mutableStateOf<RetainedEntryIntent?>(null) }
+    // P7-03.C/D (D-145): host mirrors of the ledger-view read surface. The trend and the sorted
+    // flow rows are presentation data refreshed with the unified monthly cycle (frozen trigger
+    // set, spec 6.2); the month payload and the SelectMonth domain live in the reducer state.
+    var monthlyTrend by remember { mutableStateOf<MonthlyTrend?>(null) }
+    var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
+    var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
+    val ledgerViewWired = facade.queryMonthlyActivity != null || facade.queryLedgerEntryRows != null
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -237,6 +252,44 @@ fun P503App(
             }
             else -> dispatch(P503UiEvent.RefreshFailed)
         }
+    }
+
+    /**
+     * P7-03.C: one unified monthly cycle for the effective overview month (selection or
+     * clock-resolved 本月， R-Q06-2): month card payload, SelectMonth domain, trend and the
+     * sorted flow rows, dispatched as one [P503UiEvent.MonthlyActivityResult]. Read or clock
+     * failures surface as the typed Unavailable payload — never zeros or an empty month
+     * (R-Q06-4). Called only on the frozen trigger set (a)-(e) by the coordinator.
+     */
+    fun requestMonthlyPayload() {
+        val monthlyQuery = facade.queryMonthlyActivity ?: return
+        val overview = latestState.value as? P503AppState.OverviewEmpty
+        try {
+            val clockMonth = MonthlyBuckets.currentMonth(facade.ledgerClock)
+            resolvedCurrentMonth = clockMonth
+            val effectiveMonth = overview?.selectedMonth ?: clockMonth
+            val monthResult = monthlyQuery.query(effectiveMonth)
+            val selectableMonths =
+                when (val selectableResult = monthlyQuery.selectableMonths()) {
+                    is SelectableMonthsResult.Success -> selectableResult.months
+                    SelectableMonthsResult.Unavailable -> emptyList()
+                }
+            monthlyTrend =
+                when (val trendResult = monthlyQuery.trend()) {
+                    is MonthlyTrendResult.Success -> trendResult.trend
+                    else -> null
+                }
+            ledgerEntryRows = facade.queryLedgerEntryRows?.query()
+            dispatch(P503UiEvent.MonthlyActivityResult(monthResult, selectableMonths))
+        } catch (failure: Exception) {
+            dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
+        }
+    }
+
+    /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
+    fun selectTransaction(transactionId: TransactionId) {
+        val detailQuery = facade.queryTransactionDetail ?: return
+        dispatch(P503UiEvent.SelectTransaction(transactionId, detailQuery.query(transactionId)))
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -626,13 +679,37 @@ fun P503App(
                 onRefresh = ::refresh,
                 onSubmit = { draft, requestId -> submit(draft, requestId) },
                 onCheck = { draft, requestId -> checkCommitStatus(draft, requestId) },
+                // P7-03.C: the unified monthly cycle runs only on the frozen trigger set (a)-(e)
+                // (spec 6.2, P703SPEC-04); 本月 resolves from the reporting clock (R-Q06-2).
+                onMonthlyRequest = ::requestMonthlyPayload,
+                currentMonth = {
+                    try {
+                        MonthlyBuckets.currentMonth(facade.ledgerClock)
+                    } catch (failure: Exception) {
+                        null
+                    }
+                },
             )
         }
 
+    // P7-03.C: month selection and trend/month-card shifts dispatch first, then re-request the
+    // monthly payload unconditionally (triggers (b)/(c), including the failure recovery path).
+    fun selectMonth(month: YearMonth) {
+        dispatch(P503UiEvent.SelectMonth(month))
+        coordinator.requestMonthlyNow(latestState.value)
+    }
+
+    fun analysisMonthShift(offset: Int) {
+        dispatch(P503UiEvent.AnalysisMonthShift(offset))
+        coordinator.requestMonthlyNow(latestState.value)
+    }
+
     // Authoritative refresh after Created/NoChange/Recovered; never build the list from
-    // the submission return value or accumulate balances in the UI.
+    // the submission return value or accumulate balances in the UI. P7-03.C: the same
+    // evaluation decides the monthly (a)/(d) re-requests.
     LaunchedEffect(state) {
         coordinator.decide(state)
+        coordinator.decideMonthly(state)
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
@@ -823,7 +900,18 @@ fun P503App(
                         },
                 ) {
                     when (current.selectedTab) {
-                        P503Tab.HOME -> P503OverviewScreen(current.state)
+                        P503Tab.HOME ->
+                            P503OverviewScreen(
+                                state = current.state,
+                                showMonthlyRegion = ledgerViewWired,
+                                selectedMonth = current.selectedMonth,
+                                resolvedCurrentMonth = resolvedCurrentMonth,
+                                selectableMonths = current.selectableMonths,
+                                monthlyActivity = current.monthlyActivity,
+                                entryRows = ledgerEntryRows,
+                                onSelectTransaction = ::selectTransaction,
+                                onSelectMonth = ::selectMonth,
+                            )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
                                 state = current,
@@ -841,9 +929,27 @@ fun P503App(
                                 onSubmit = { dialog -> runCatalogForm(dialog) },
                                 onRefresh = { refreshCatalogSnapshot() },
                             )
-                        P503Tab.ANALYSIS -> P503AnalysisScreen(current.state, facade.summarizeActivity)
+                        P503Tab.ANALYSIS ->
+                            P503AnalysisScreen(
+                                state = current.state,
+                                summarizeActivity = facade.summarizeActivity,
+                                showMonthlyRegion = ledgerViewWired,
+                                selectedMonth = current.selectedMonth,
+                                resolvedCurrentMonth = resolvedCurrentMonth,
+                                selectableMonths = current.selectableMonths,
+                                monthlyActivity = current.monthlyActivity,
+                                trend = monthlyTrend,
+                                onSelectMonth = ::selectMonth,
+                                onAnalysisMonthShift = ::analysisMonthShift,
+                            )
                     }
                 }
+            is P503AppState.TransactionDetail ->
+                P503TransactionDetailScreen(
+                    detail = current.detail,
+                    // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
+                    onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
@@ -1067,6 +1173,8 @@ private fun isBackEnabled(state: P503AppState): Boolean =
     when (state) {
         // P7-01.D: on the ACCOUNTS tab back closes an open catalog dialog, or leaves for HOME.
         is P503AppState.OverviewEmpty -> state.selectedTab == P503Tab.ACCOUNTS
+        // P7-03.C: the read-only detail returns to the preserved overview (C03).
+        is P503AppState.TransactionDetail -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
