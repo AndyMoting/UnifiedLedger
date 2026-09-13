@@ -2628,3 +2628,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - §6.2a 扩展登记：4 个编辑器内往来对象对话框事件（`OpenCounterpartyCreateDialog` / `OpenCounterpartyRenameDialog` / `UpdateCounterpartyFormText` / `DismissCounterpartyDialog`）仅 Editing 生效、其余态吸收（规格事件清单未列举，注册为按 6.2a 语义的扩展）。
    - `IMPL-09`：往来对象创建双击竞态（每次 create 新 UUID、无名称去重）与既有 `runCatalogForm` 同暴露，登记不改；`IMPL-10`：`CounterpartyDialog.Rename.currentName` 已捕获未渲染（保留字段）；remember 键缝无组合测试形态（覆盖限制同既有目录对话框）。
 6. **未闭合项：** P7-01（D-143 规格 §7.7）与 P7-02 的 Android 人工门均待 ALas 停止后按隔离 adb 协议（`ANDROID_ADB_SERVER_PORT=5038`、agent 自启 AVD `-port 5680`）执行；push + 同提交 CI 聚合门待用户授权。
+
+## D-145 P7-03 看账（设计门 + Q06/Q07 裁决）
+
+**状态：** 规格冻结（approved，2026-09-13）：draft-1 独立规格评审 REQUEST-CHANGES（无 P0/P1，4×P2 + 6×P3）→ draft-2 → delta 评审发现 P703SPEC-11（C03 镜像向量与 `ACCOUNTING_RULES.md:80`/`:152` 矛盾）→ draft-3 修正（镜像/合法相似向量分离 + 3 项封闭触发集残余边界登记）→ **DELTA CLOSURE APPROVE**。**冻结 SHA-256（LF 域）= `59D8E68C3E6F438134A56A50C76F3512CF5643DCF7D6CC8D859C0443F7A0CEBB`**。
+
+**授权依据：** 用户常设授权「除不 push 外，其余默认采用推荐方案」；主代理在只读取证（阶段计划 §5/§7/§8.1、账务规则普通收支/转账/借贷/退款/储值/余额调整/对账/时间规则、P7-02 规格 §5/§6、读模型 `Ledger.sq`/`LedgerCurrentStateReadPort`/`SummarizeLedgerActivity`/P408 对账/导入链/目录名称历史源码）后，按推荐方案裁决 Q06/Q07。工作基线 = 分支 `UL-p7-03` @ `b56913d`（P7-02 merge），schema = v29。
+
+**决定：** 启动 P7-03「看账」设计契约 `docs/specs/2026-09-13-p7-03-ledger-view-design.md`（draft-1，待评审）。
+
+**Q06 有效统计时间与报表口径（裁决）：** R-Q06-1 产品读模型一律取当前版本的 `transaction_version.statistics_at`（逐版本 NOT NULL、修正经追加新版本天然生效）；`formal_transaction_metadata.statistics_at_text` 不被产品读模型读取（登记解读：仅 RG-08..12 存在该行、原地更新与版本追加在静止态一致，但非全量存在，统一读版本列避免按交易特判）；`occurred_at` 与 `statistics_at` 均入投影（详情分别展示）。R-Q06-2 报表时区冻结 Asia/Shanghai；月界 = [当地当月1日00:00, 次月1日00:00)；「本月」由注入 `LedgerClock` 的当次 `now()` 在该时区解析；桶归属键 = 统计时间（非 `occurred_at`）。R-Q06-3 普通收支分类按 canonical_kind（读 `COALESCE(canonical_kind, kind)`）+ 分录账户类型分类；本金互转（ACCOUNT_TRANSFER 全部腿）、借贷本金（LEND/COLLECT 的本金腿）、储值/余额调整等特殊 kind 不入普通收支；手续费、实收利息按 `ACCOUNTING_RULES.md` 计入；退款 = 收款期负支出；精确枚举表由规格以 `ACCOUNTING_RULES.md` 行号为据冻结，且普通收支总额必须与既有 `SummarizeLedgerActivity` 全期口径在「无特殊 kind」账本上可核对一致。R-Q06-4 失败不伪装：任何读路径异常/溢出 → 类型化失败（沿用 `Unavailable`/`InvalidState` 族），不以零或空月掩盖。
+
+**Q07 呈现与对账投影（裁决）：** R-Q07-1 趋势 = 近 12 个自然月（含本月），旧→新排序，空月显式零值呈现。R-Q07-2 分类一级汇总下钻二级（两级，与 P7-01 目录层级一致）；停用/改名分类按当前名显示且历史可追溯（`catalog_name_history`）。R-Q07-3 退款呈现：正向支出与退款分开列表，数值保留正负号；零/净负分类不画饼图扇区，精确数值表始终伴随。R-Q07-4 多腿对账状态汇总：腿级资格投影（每腿标注对账资格 有/无——依据既有 reconciliation_eligible 语义与证据链存在性）；交易级 rollup 仅在有资格腿上计算：任一 MISSING → MISSING，否则任一 DIFFERENCE → DIFFERENCE，否则任一 PARTIAL → PARTIAL，否则全部 CHECKED → CHECKED，否则 PENDING；全部腿无资格 → 「无对账资格」；只读，不改对账状态。资格判定操作化为规格 §3.2.1 注册解读（(a) `rg03_transfer_posting_semantic.reconciliation_eligible = 1`，或 (b) active 证据链/对账状态行；rg03 费用腿 `=0` 显式排除；手工 P7-02 转账腿今日显示「无对账资格」），随规格送评审确认。
+
+**draft-2 增补（P703SPEC-01..10 评审修正，2026-09-13）：** 结余入统计契约——月度投影逐币种携带 普通收入/净支出/结余 三值，`结余 = 普通收入 − 净支出`（checked 运算，溢出类型化失败），**结余不得称为账户余额或现金流**（计划 `:110`）；流水排序契约 = `statistics_at` DESC → `occurred_at` DESC → `transaction_id` ASC（UUIDv7 确定性全序；现状 `Ledger.sq:8739` 的 transaction_id 序为创建序、非显示契约）；`QueryMonthlyActivity` 重请求触发冻结为 初始加载 / `SelectMonth`（可选域 [首个交易统计月, 本月]，越界吸收零状态变化）/ `AnalysisMonthShift` / 发生时间跨月重解析 / 确定成功后权威刷新 五项，`CloseTransactionDetail` 不重请求；报表时区为 application 冻结常量、非调用方参数；真实账户腿无分类映射时按「无分类」缺席呈现、不构成 `InvalidState`；交易 kind 枚举为 16 值；RG-12 为第二个原地 metadata 写入方（`SqlDelightRg12Store.kt:610`，其值派生自当前版本 `statistics_at`，读版本列保持正确）。
+
+**范围冻结：** 只读批次——零账务写入路径改动、零正式交易产生；不做编辑/修正 UI、不做对账操作、不做多账本、不做多币种汇总、不做导出/搜索/预算；不改 `rgXX_` 竖井、golden、导入链写入语义；**schema 停留 v29（零 DDL，只新增命名查询）**，确需新列/新表/新索引必须显式登记并给出 `29.sqm`→v30 影响评估。
+
+**契约披露：** 读模型扩展新增独立行类型与端口方法，既有 `CurrentVersionRow`/`loadCurrentRows` 零改动，22 个既有测试锚（`SummarizeLedgerActivityTest` 7 / `QueryLedgerCurrentStateTest` 9 / `SqlDelightLedgerCurrentStateReadAdapterTest` 6）不修改即绿；特殊 kind 账本上月度普通收支与 `SummarizeLedgerActivity` 全期口径的预期差异为 R-Q06-3 既定结果并登记；创建入口仅显示枚举（导入创建/手工创建/来源未标注），不携带来源文件名/URI（计划 D06 脱敏边界）；金额全程 Long minor units checked 运算、禁浮点；UI 沿 P7-02 §6.2 纪律——只为新增事件定义 absorbed，既有 ISE 不反转。
+
+**验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块（`:ledger-application:jvmTest`/`:ledger-data:jvmTest`/`:app-ui:jvmTest`）+ `ktlintCheck` + `project_docs`；本批无迁移，`:ledger-data:verifyCommonMainLedgerDatabaseMigration` 保持 PASS 佐证零 DDL；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
+
+**关联决定：** D-119、D-120、D-122、D-125、D-131、D-138、D-139、D-140、D-143、D-144。
