@@ -131,7 +131,9 @@ fun P503App(
     val baseExpenseOptions = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
     val baseIncomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
     val baseTransferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
-    val baseLendingOptions = remember(facade, catalogVersion) { facade.lendingOptionsProvider.queryOptions() }
+    // P702SPEC-13: the lending projection is the only one that reads the counterparty
+    // directory, so it must re-query when a create/rename command succeeds.
+    val baseLendingOptions = remember(facade, catalogVersion, counterpartyVersion) { facade.lendingOptionsProvider.queryOptions() }
     // E-4: pinned entries first, remaining entries keep the deterministic option order.
     val options =
         remember(baseExpenseOptions, pinnedTargets) {
