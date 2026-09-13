@@ -8738,6 +8738,98 @@ JOIN posting AS posting
 WHERE tx.ledger_id = ?
 ORDER BY tx.transaction_id, posting.posting_index;
 
+-- P7-03 ledger-view read model (D-145; implementation spec sections 4.1/5, Appendix A).
+-- Read-only named queries only: no DDL, no index, schema stays v29. Every query is
+-- ledger-scoped and projects the current version exclusively. The entry-row kind uses
+-- the COALESCE compatibility rule (precedent :2438/:8672) so newer canonical kinds are
+-- not misread as the legacy-compatible kind column.
+
+ledgerEntryRowsForLedger:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+WHERE tx.ledger_id = ?
+ORDER BY tx.transaction_id, posting.posting_index;
+
+importCreationConfirmationByTransaction:
+-- Reverse creation lineage: transaction -> import_confirmation. operation_class is
+-- CHECK-constrained to 'creation' (:7774); the predicate restates it per Appendix A.
+SELECT confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at
+FROM import_confirmation
+WHERE ledger_id = ? AND transaction_id = ? AND operation_class = 'creation';
+
+manualCreationReceiptByTransaction:
+-- Reverse creation lineage: transaction -> manual four-chain receipt (transaction_id
+-- UNIQUE per receipt table). The chain literal discriminates the source receipt table.
+SELECT 'expense' AS chain, confirmation_id FROM confirmed_expense_receipt
+WHERE ledger_id = :ledger_id AND transaction_id = :transaction_id
+UNION ALL
+SELECT 'income' AS chain, confirmation_id FROM confirmed_income_receipt
+WHERE ledger_id = :ledger_id AND transaction_id = :transaction_id
+UNION ALL
+SELECT 'transfer' AS chain, confirmation_id FROM confirmed_transfer_receipt
+WHERE ledger_id = :ledger_id AND transaction_id = :transaction_id
+UNION ALL
+SELECT 'lending' AS chain, confirmation_id FROM confirmed_lending_receipt
+WHERE ledger_id = :ledger_id AND transaction_id = :transaction_id;
+
+transactionReconciliationLegs:
+-- Read-only per-posting reconciliation leg projection for one transaction (R-Q07-4,
+-- row semantics along selectP408ReconciliationReport :8658-8685): COALESCE status
+-- default, active evidence-link existence, and the existing rg03 eligibility column
+-- read as-is (no new semantics, no writes; spec section 3.2.1).
+SELECT p.posting_id, p.posting_index, p.account_id, p.amount_minor, p.currency_code, p.currency_precision,
+  COALESCE(reconciliation.status, 'PENDING') AS status,
+  reconciliation.reconciliation_id AS reconciliation_id,
+  link.link_id AS active_link_id,
+  semantic.reconciliation_eligible AS reconciliation_eligible
+FROM posting AS p
+JOIN transaction_version AS v
+  ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = v.ledger_id
+ AND current_version.transaction_id = v.transaction_id
+ AND current_version.current_version_id = v.version_id
+LEFT JOIN posting_reconciliation AS reconciliation
+  ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+LEFT JOIN evidence_link AS link
+  ON link.ledger_id = p.ledger_id AND link.posting_id = p.posting_id
+ AND EXISTS (
+   SELECT 1 FROM evidence_link_history AS link_history
+   WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+     AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+       WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+     AND link_history.state = 'active'
+ )
+LEFT JOIN rg03_transfer_posting_semantic AS semantic
+  ON semantic.ledger_id = p.ledger_id AND semantic.posting_id = p.posting_id
+WHERE p.ledger_id = ? AND v.transaction_id = ?
+ORDER BY p.posting_index, active_link_id;
+
 manualExpenseCommitByRequest:
 SELECT
   request.ledger_id,

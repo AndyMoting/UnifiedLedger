@@ -6,7 +6,11 @@ import com.unifiedledger.application.ConfirmedIncomeReceipt
 import com.unifiedledger.application.ConfirmedLendingReceipt
 import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.CurrentVersionRow
+import com.unifiedledger.application.ImportCreationConfirmationRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
+import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.ManualCreationChain
+import com.unifiedledger.application.ManualCreationReceiptRow
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualIncomeCommitRecord
@@ -15,6 +19,7 @@ import com.unifiedledger.application.ManualLendingCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransactionReconciliationLegRow
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -174,6 +179,117 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 ).executeAsOneOrNull()
                 ?: return null
         return row.toRecord(ledgerId)
+    }
+
+    /**
+     * P7-03.A (D-145): ledger-view entry rows (spec sections 4.1/5, Appendix A). Same
+     * ledger-scoped current-version-only join shape as [loadCurrentRows], with the
+     * effective kind via the query's `COALESCE(canonical_kind, kind)`, both persisted
+     * times and the current version note. Read-only; exceptions propagate to the use-case
+     * boundary which maps them to `Unavailable`.
+     */
+    override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> {
+        val rows = database.ledgerQueries.ledgerEntryRowsForLedger(ledgerId.value).executeAsList()
+        return rows
+            .groupBy { it.transaction_id }
+            .map { (_, groupedRows) ->
+                val first = groupedRows.first()
+                LedgerEntryRow(
+                    transactionId = TransactionId(first.transaction_id),
+                    currentVersionId = TransactionVersionId(first.current_version_id),
+                    kind = TransactionKind.valueOf(first.kind),
+                    occurredAt = Instant.parse(first.occurred_at),
+                    statisticsAt = Instant.parse(first.statistics_at),
+                    note = first.note,
+                    postings =
+                        groupedRows
+                            .sortedBy { it.posting_index }
+                            .map { row ->
+                                Posting(
+                                    id = PostingId(row.posting_id),
+                                    accountId = AccountId(row.account_id),
+                                    amount =
+                                        Money.ofMinor(
+                                            row.amount_minor,
+                                            CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                                        ),
+                                )
+                            },
+                )
+            }
+    }
+
+    /** P7-03.A: reverse creation lineage into `import_confirmation` (`operation_class='creation'`). */
+    override fun findImportCreationConfirmation(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): ImportCreationConfirmationRow? =
+        database.ledgerQueries
+            .importCreationConfirmationByTransaction(ledgerId.value, transactionId.value)
+            .executeAsOneOrNull()
+            ?.let { row ->
+                ImportCreationConfirmationRow(
+                    confirmationId = row.confirmation_id,
+                    requestId = row.request_id,
+                    candidateId = row.candidate_id,
+                    transactionId = TransactionId(row.transaction_id),
+                    operationClass = row.operation_class,
+                    confirmedAt = row.confirmed_at,
+                )
+            }
+
+    /** P7-03.A: reverse creation lineage into the manual four-chain receipt tables. */
+    override fun findManualCreationReceipt(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): ManualCreationReceiptRow? =
+        database.ledgerQueries
+            .manualCreationReceiptByTransaction(
+                ledger_id = ledgerId.value,
+                transaction_id = transactionId.value,
+            ).executeAsOneOrNull()
+            ?.let { row ->
+                ManualCreationReceiptRow(
+                    chain =
+                        when (row.chain) {
+                            "expense" -> ManualCreationChain.EXPENSE
+                            "income" -> ManualCreationChain.INCOME
+                            "transfer" -> ManualCreationChain.TRANSFER
+                            "lending" -> ManualCreationChain.LENDING
+                            else -> return null
+                        },
+                    confirmationId = row.confirmation_id,
+                )
+            }
+
+    /**
+     * P7-03.A: read-only reconciliation leg projection for one transaction (R-Q07-4,
+     * spec section 3.2.1). Rows follow the `selectP408ReconciliationReport` line semantics
+     * narrowed to the transaction; a posting with several active evidence links yields
+     * several rows, which are folded into one projection row per posting. Existing rows
+     * are only read — no reconciliation, evidence, or rg03 row is ever written here.
+     */
+    override fun loadTransactionReconciliationLegs(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionReconciliationLegRow> {
+        val rows = database.ledgerQueries.transactionReconciliationLegs(ledgerId.value, transactionId.value).executeAsList()
+        return rows
+            .groupBy { it.posting_id }
+            .map { (_, groupedRows) ->
+                val first = groupedRows.first()
+                TransactionReconciliationLegRow(
+                    postingId = PostingId(first.posting_id),
+                    postingIndex = first.posting_index.toInt(),
+                    accountId = AccountId(first.account_id),
+                    amountMinor = first.amount_minor,
+                    currency = CurrencyUnit(first.currency_code, first.currency_precision.toInt()),
+                    statusStorageValue = first.status,
+                    hasReconciliationRow = first.reconciliation_id != null,
+                    hasActiveEvidenceLink = groupedRows.any { it.active_link_id != null },
+                    rg03ReconciliationEligible = first.reconciliation_eligible?.let { it != 0L },
+                )
+            }.sortedBy { it.postingIndex }
     }
 }
 

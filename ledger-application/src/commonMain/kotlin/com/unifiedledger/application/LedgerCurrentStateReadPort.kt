@@ -94,4 +94,39 @@ interface LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         receipt: ConfirmedLendingReceipt,
     ): ManualLendingCommitRecord? = null
+
+    /**
+     * P7-03.A (D-145): ledger-scoped current-version entry rows with the effective kind
+     * (`COALESCE(canonical_kind, kind)`), both persisted times and the current note. The
+     * default keeps pre-P7-03 read-port fakes source-compatible (same discipline as the
+     * P7-02.C lending lookups above); the real data adapter overrides it.
+     */
+    fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = emptyList()
+
+    /**
+     * P7-03.A: reverse creation lineage — the import confirmation that created the
+     * transaction (`operation_class = 'creation'`), or `null` (Appendix A).
+     */
+    fun findImportCreationConfirmation(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): ImportCreationConfirmationRow? = null
+
+    /**
+     * P7-03.A: reverse creation lineage — the manual four-chain receipt for the
+     * transaction, or `null` (Appendix A).
+     */
+    fun findManualCreationReceipt(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): ManualCreationReceiptRow? = null
+
+    /**
+     * P7-03.A: read-only reconciliation leg projection for the transaction's current
+     * version (R-Q07-4 / spec section 3.2.1). Never writes reconciliation state.
+     */
+    fun loadTransactionReconciliationLegs(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionReconciliationLegRow> = emptyList()
 }
