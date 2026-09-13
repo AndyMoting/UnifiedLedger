@@ -2608,3 +2608,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块（`:ledger-domain:jvmTest`/`:ledger-application:jvmTest`/`:ledger-data:jvmTest`/`:app-ui:jvmTest`）+ `:ledger-data:verifyCommonMainLedgerDatabaseMigration` + `ktlintCheck` + `project_docs`；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
 
 **关联决定：** D-084、D-087、D-098、D-100、D-113、D-119、D-120、D-121、D-122、D-125、D-126、D-131、D-138、D-139、D-140、D-143。
+
+**实施登记（2026-09-13，主代理补登）：**
+
+1. **实施提交链（分支 `UL-p7-02`，基线 `4eb41ee`）：** `1eef425`（规格冻结）→ `8208f53`（A 批：共享类型化录入 + 手工收入）→ `f819d7a`（B 批：手工转账 + 可选费用 + `28.sqm` v28→v29 加性迁移含 C/D 表）→ `91a4cac`（C 批：手工借贷 + 往来对象目录；由 WIP `ae6b008` 全量验证后 amend 转正）→ `5456562`（D 批：录入效率 = 算式/再记/置顶）→ `c43cba6`（评审回修批）→ `4ad66e5`（lending options re-key 单行修复）。
+2. **双独立评审拓扑：** 规格一致性评审 + 质量/风险评审并行，首轮均 REQUEST-CHANGES（合并编号 `P702SPEC-01..14`、`P702IMPL-01..10`；实质为 P0×1 [`P702SPEC-01`=`IMPL-01` 两端组合根支出 note 断层，交叉确认] + P1×3 [`IMPL-02` 负手续费穿门死端、`SPEC-02` 再记亚秒 instant 被 D-138 门拦、`SPEC-03` 往来对象零 UI 通路] + P2×5 [`IMPL-03` Unicode 数字、`SPEC-04` `EntryConstraintViolation` 未实现、`SPEC-05` RG-08 零写入断言缺失、`SPEC-06` 往来对象命令幂等措辞偏离、`SPEC-07` 借贷历史 TEXT 排序混合精度错序] + P3×11）。回修 10 项（提交 `c43cba6`）；delta 评审双独立发现新 P1（`P702SPEC-13`=`IMPL-08` `baseLendingOptions` remember 键缺 `counterpartyVersion`，创建/改名不进选择器）→ 单行修复（提交 `4ad66e5`）→ **双原评审 DELTA CLOSURE APPROVE**。5 项实现通道选择两评审均 ACCEPT（RetainedIntentRevalidation 载荷、pinnedTargets 载荷扩展、按类型再记字段迁移、置顶校验置于 store 事务、扁平稳定分区排序）。
+3. **distinct verifier（只读，12 claims）：** C1 工作树/HEAD、C2 提交链父序、C3 规格字节完整性（LF 域 SHA-256 `e1dd63d356c94d316a119ad32fb7349d964e2a24e498db62cb373c7af924ad13`，自 `1eef425` 零改动）、C4 终批单文件 delta、C9 `28.sqm` 自 `f819d7a` 零改动且 `1..28.sqm` 无缺口、C10 D-144 登记在位（DECISIONS.md）、C11 版本断言 `assertEquals(29, ...)` ×8 且无 28 残留 —— 全 VERIFIED；C5/C6（writer 全量套件后过滤运行覆写盘上 XML，最终候选全量证据缺口）由主代理复跑消解；C7 非空 ktlint 报告为 Format 任务日志（Check 任务报告 0 字节 = 零违例）；C8 ` Float` 命中为既有上下文行 `FloatingActionButton(` 非本批新增；C12 本地 ignored 日志历史条目非 tracked 泄漏。
+4. **主代理验收复跑（最终候选 `4ad66e5`，干净树，串行单 worker 1GB 口径，每轮前后 `--stop`）：** 六模块 jvmTest **1319 用例 0 失败 0 错误**（domain 175 / application 457 / data 522 / app-ui 134 / desktop 24 / android 7）；`ImportSpine*` 7 个回归锚点类全绿（含 MigrationCoexistence）；`:ledger-data:verifyCommonMainLedgerDatabaseMigration` PASS；根 `ktlintCheck` 零违例（Check 报告全 0 字节）。命令日志与 summary：`local/artifacts/p702/rerun/`（本地证据，不入库）。
+5. **评审登记项（不改规格，按 §5.4 先例登记）：**
+   - `P702IMPL-04`：算式求值使用 facade 货币而非草稿账户解析货币；单币种演示面下两者一致，多币种精度差异留待后续批次。
+   - `P702SPEC-04`：`EntryConstraintViolation` 登记为 defensive-future——claim 时刻 schema CHECK 异常沿既有 `InfrastructureFailure`/`UnknownCommit` 约定（与支出/收入链一致），不做提交端口内的类型化映射。
+   - `P702SPEC-06`：往来对象 create/rename 以自然键幂等实现于单事务，为 §4.2.5「claim-first request/snapshot/receipt」措辞的注册解读（`28.sqm` 无对应 request/receipt 表；单事务全有或全无、无资金移动，行为安全）。
+   - `P702SPEC-08+14`：`LendingFeeMustBeZero` UI 不可达（`COLLECT` 无费用字段、save 硬编码 0）且 `manual_lending_request.fee_minor CHECK (= 0)` 在 claim 时刻抢先于类型化 token；同理 `manual_transfer_request.fee_minor CHECK (>= 0)` 抢先于 `TransferFeeMustNotBeNegative`——产品用户由 UI 费用格式门（`P702IMPL-02` 修复）覆盖，端口直调的越界调用者走 CHECK 异常 → `UnknownCommit`。
+   - `P702SPEC-09`：E-1 矩阵中 COLLECT 目的账户按「资产账户保留类」处理，注册为该矩阵的冻结解读。
+   - `P702SPEC-10`：稳定码枚举（`EntryFoundationFailureCode` / `ManualTransferFailureCode` / `ManualLendingFailureCode` / `EntryExpressionCode`）冻结 §5.3 字符串并经稳定性测试，生产边界暂无码字符串消费者（与既有支出链一致）。
+   - `P702SPEC-11`：B03 并发收回单赢家由机制覆盖（`commitOnce` 事务内经工厂重读位置 + SQLite 单写者串行化）+ 顺序超额收回类型化测试。
+   - `P702SPEC-12`：置顶排序为顶层列表扁平稳定分区；管理树渲染不重排父组内叶级（入口选择器选项列表为 E-4 主面）。
+   - E-2 整秒截断读法：再记 instant 经 `Instant.fromEpochSeconds(epochSeconds)` 截断，保持「当前时钟 instant」语义于 D-138 冻结的整秒精度（规格未定截断方式，注册为冻结实现读法）。
+   - §6.2a 扩展登记：4 个编辑器内往来对象对话框事件（`OpenCounterpartyCreateDialog` / `OpenCounterpartyRenameDialog` / `UpdateCounterpartyFormText` / `DismissCounterpartyDialog`）仅 Editing 生效、其余态吸收（规格事件清单未列举，注册为按 6.2a 语义的扩展）。
+   - `IMPL-09`：往来对象创建双击竞态（每次 create 新 UUID、无名称去重）与既有 `runCatalogForm` 同暴露，登记不改；`IMPL-10`：`CounterpartyDialog.Rename.currentName` 已捕获未渲染（保留字段）；remember 键缝无组合测试形态（覆盖限制同既有目录对话框）。
+6. **未闭合项：** P7-01（D-143 规格 §7.7）与 P7-02 的 Android 人工门均待 ALas 停止后按隔离 adb 协议（`ANDROID_ADB_SERVER_PORT=5038`、agent 自启 AVD `-port 5680`）执行；push + 同提交 CI 聚合门待用户授权。
