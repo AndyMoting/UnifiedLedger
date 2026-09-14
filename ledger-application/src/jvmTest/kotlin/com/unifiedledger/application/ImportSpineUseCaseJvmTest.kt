@@ -17,7 +17,8 @@ import kotlin.test.assertNull
 
 /**
  * T-26 application layer: use-case assembly, SPINE_INTAKE_INVALID before any port call,
- * confirm/reject wiring, and lazy ID consumption (application side).
+ * confirm/reject wiring, lazy ID consumption, and the demand-parameterized allocation
+ * pass-through (application side; D-146 R-Q09-2, AB-BE-SPEC-02/AB-BE-QUAL-03).
  */
 class ImportSpineUseCaseJvmTest {
     private val ledgerId = LedgerId("ledger-p402")
@@ -56,6 +57,7 @@ class ImportSpineUseCaseJvmTest {
         )
 
     private class RecordingIntakePort(
+        private val demandedDuplicateIds: Int = 0,
         private val result: (ImportRequestIdentity, ImportIntakeSnapshot) -> ImportIntakeResult,
     ) : ImportIntakeCommitPort {
         var commits = 0
@@ -66,12 +68,14 @@ class ImportSpineUseCaseJvmTest {
         override fun commitIntake(
             identity: ImportRequestIdentity,
             snapshot: ImportIntakeSnapshot,
-            allocateIds: () -> ImportIntakeIds,
+            allocateIds: (requiredDuplicateIds: Int) -> ImportIntakeIds,
         ): ImportIntakeResult {
             commits++
             lastIdentity = identity
             lastSnapshot = snapshot
-            allocateIds()
+            // The winning transaction's own demand (the double's simulated in-transaction
+            // duplicate-match count).
+            allocateIds(demandedDuplicateIds)
             allocateInvocations++
             return result(identity, snapshot)
         }
@@ -80,8 +84,12 @@ class ImportSpineUseCaseJvmTest {
     private class CountingIntakeIdSource : ImportIntakeIdSource {
         var calls = 0
 
-        override fun next(): ImportIntakeIds {
+        /** AB-BE-SPEC-02/AB-BE-QUAL-03: records the demand ExecuteImportIntake handed over. */
+        val observedDemands = mutableListOf<Int>()
+
+        override fun next(requiredDuplicateIds: Int): ImportIntakeIds {
             calls++
+            observedDemands += requiredDuplicateIds
             return ImportIntakeIds(ImportSourceId("s"), ImportEvidenceId("e"), ImportCandidateId("c"), ImportStatusHistoryId("h"))
         }
     }
@@ -91,7 +99,7 @@ class ImportSpineUseCaseJvmTest {
         val idSource = CountingIntakeIdSource()
         var observed: ImportIntakeResult? = null
         val port =
-            RecordingIntakePort { identity, snapshot ->
+            RecordingIntakePort(demandedDuplicateIds = 2) { identity, snapshot ->
                 observed =
                     ImportIntakeResult.Accepted(
                         ImportReceipt(identity.requestId, ImportSourceId("s"), ImportEvidenceId("e"), ImportCandidateId("c"), null, null),
@@ -107,6 +115,10 @@ class ImportSpineUseCaseJvmTest {
         assertEquals(1, port.commits)
         assertEquals(1, port.allocateInvocations)
         assertEquals(1, idSource.calls)
+        // AB-BE-SPEC-02/AB-BE-QUAL-03: the demand the winning transaction determined (2
+        // simulated in-transaction matches) reaches the id source unchanged — a silent
+        // constant substitution (e.g. always next(0)) fails here.
+        assertEquals(listOf(2), idSource.observedDemands)
         assertEquals(ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")), port.lastIdentity)
         assertEquals(ImportRequestIdentity(ledgerId, ImportRequestId("req-a-intake")), port.lastSnapshot?.identity)
         assertEquals(ImportCompleteness.VALID_COMPLETE, port.lastSnapshot?.completeness)

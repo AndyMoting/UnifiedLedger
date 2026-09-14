@@ -8830,6 +8830,127 @@ LEFT JOIN rg03_transfer_posting_semantic AS semantic
 WHERE p.ledger_id = ? AND v.transaction_id = ?
 ORDER BY p.posting_index, active_link_id;
 
+-- P7-04 import review / intake read model (D-146; implementation spec sections 4.4/4.5 and
+-- Appendix A). Read-only named queries only: no DDL, no index, schema stays v29 (P7-03
+-- :8741-8745 precedent). Every query is ledger-scoped. comparison_fingerprint is never a
+-- grouping key (P704SPEC-12): the batch-disposition group handle is the subject source's
+-- opaque import_source_record.input_ref (random, no personal identifier, D06-safe).
+
+duplicateMatchCountForIntake:
+-- R-Q09-2 intake demand count: SELECT-only, ledger-scoped, predicate identical to
+-- selectDuplicateMatches (:8296-8301) with no source_id self-exclusion parameter. The count
+-- runs inside the winning claim transaction before the new source row is inserted, so every
+-- counted row is an existing source (transaction-isolated; no race, no pre-guess).
+SELECT count(*) AS match_count
+FROM import_source_record
+WHERE ledger_id = ? AND record_kind = ? AND contract_version = ?
+ AND amount_minor = ? AND currency_code = ? AND currency_precision = ? AND occurred_at = ? AND direction_token = ?
+ AND (status_token = ? OR (status_token IS NULL AND ? = 1))
+ AND funding_state = 'SETTLED'
+ AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved');
+
+importReviewRowsForLedger:
+-- Ledger-scoped candidate review list (spec 4.5.2). One row per (candidate, duplicate
+-- candidate) pair; a candidate without duplicates yields exactly one all-null duplicate row,
+-- and the adapter folds duplicate rows per candidate (blocking verdict first). The latest
+-- candidate status follows selectImportCandidateCurrentStatus (:8409) line semantics narrowed
+-- to the row; the duplicate latest status follows selectDuplicateCurrentStatus (:8318).
+SELECT
+  candidate.candidate_id,
+  candidate.candidate_kind,
+  candidate.confidence,
+  source.input_ref,
+  source.amount_minor,
+  source.currency_code,
+  source.currency_precision,
+  source.occurred_at,
+  source.direction_token,
+  source.status_token,
+  source.funding_state,
+  source.completeness,
+  source.content_hash,
+  latest_candidate_status.status AS candidate_status,
+  EXISTS(SELECT 1 FROM import_candidate_requires_confirmation AS requirement
+     WHERE requirement.ledger_id = candidate.ledger_id
+       AND requirement.candidate_id = candidate.candidate_id
+       AND requirement.requirement = 'formal_transaction_creation') AS requires_confirmation,
+  duplicate.candidate_id AS duplicate_candidate_id,
+  duplicate_status.status AS duplicate_latest_status,
+  profile.variant AS payment_profile_variant,
+  profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+LEFT JOIN import_candidate_status_history AS latest_candidate_status
+  ON latest_candidate_status.ledger_id = candidate.ledger_id
+ AND latest_candidate_status.candidate_id = candidate.candidate_id
+ AND latest_candidate_status.sequence = (SELECT max(s3.sequence) FROM import_candidate_status_history AS s3
+       WHERE s3.ledger_id = candidate.ledger_id AND s3.candidate_id = candidate.candidate_id)
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+LEFT JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS duplicate_status
+  ON duplicate_status.ledger_id = duplicate.ledger_id
+ AND duplicate_status.candidate_id = duplicate.candidate_id
+ AND duplicate_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE candidate.ledger_id = ?
+ORDER BY candidate.candidate_id, duplicate.candidate_id;
+
+importDuplicateReviewsForSource:
+-- Duplicate candidates of one candidate's subject source (spec 4.5, Appendix A). The
+-- candidate -> source join resolves the duplicate table's subject-source granularity
+-- (UNIQUE (ledger_id, source_id) :7686). The latest review snapshot is reached through the
+-- review receipt bound to the candidate's latest duplicate status row, so "latest review" is
+-- exact rather than timestamp-ordered. possible_existing_source facts stay null for a
+-- CLOSED_OR_FAILED_NO_FUNDS row (no directed target, D-105).
+SELECT
+  duplicate.candidate_id,
+  duplicate.kind,
+  duplicate.comparison_fingerprint,
+  duplicate.comparison_snapshot,
+  latest_status.status AS latest_status,
+  review.decision AS review_decision,
+  review.reason_token AS review_reason_token,
+  review.reviewed_at AS reviewed_at,
+  existing.source_id AS existing_source_id,
+  existing.amount_minor AS existing_amount_minor,
+  existing.currency_code AS existing_currency_code,
+  existing.currency_precision AS existing_currency_precision,
+  existing.occurred_at AS existing_occurred_at,
+  existing.direction_token AS existing_direction_token,
+  existing.status_token AS existing_status_token
+FROM import_candidate AS candidate
+JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS latest_status
+  ON latest_status.ledger_id = duplicate.ledger_id
+ AND latest_status.candidate_id = duplicate.candidate_id
+ AND latest_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+LEFT JOIN import_duplicate_review_receipt AS receipt
+  ON receipt.ledger_id = duplicate.ledger_id
+ AND receipt.candidate_id = duplicate.candidate_id
+ AND receipt.history_id = (SELECT status.history_id FROM import_duplicate_status_history AS status
+       WHERE status.ledger_id = duplicate.ledger_id AND status.candidate_id = duplicate.candidate_id
+       ORDER BY status.sequence DESC LIMIT 1)
+LEFT JOIN import_duplicate_review_snapshot AS review
+  ON review.ledger_id = receipt.ledger_id AND review.review_id = receipt.review_id
+LEFT JOIN import_source_record AS existing
+  ON existing.ledger_id = duplicate.ledger_id AND existing.source_id = duplicate.possible_existing_source_id
+WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?
+ORDER BY duplicate.candidate_id;
+
+-- Not added here: candidate detail reuses importReviewRowsForLedger plus the existing
+-- selectImportCandidateLatestSequence (:8425) for the status-history count and the candidate
+-- existence probe; Unknown replay and reopen recovery reuse the existing queries
+-- selectImportSourceByIdentity (:8368) / selectImportReceiptByRequest (:8433) /
+-- selectImportConfirmationByRequest (:8444). Zero DDL: no new index/column/table.
+
 manualExpenseCommitByRequest:
 SELECT
   request.ledger_id,

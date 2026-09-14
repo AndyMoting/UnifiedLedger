@@ -480,8 +480,24 @@ data class ImportDuplicateIntakeIds(
     val statusHistoryId: ImportStatusHistoryId,
 )
 
-fun interface ImportIntakeIdSource {
-    fun next(): ImportIntakeIds
+/**
+ * P7-04.B (R-Q09-2, D-146): intake id allocation is demand-parameterized. The store calls
+ * [next] exactly once, inside the winning claim transaction and after every typed early
+ * rejection, passing the duplicate-id group count the transaction itself determined
+ * (`VALID_COMPLETE + SETTLED` = the transaction-internal match count, `NO_FUNDS` = 1, other
+ * branches = 0). Callers must never pre-query counts or pre-allocate.
+ *
+ * Plain interface on purpose (P704SPEC-07): a `fun interface` cannot carry a fail-loud
+ * default body for its single abstract method, so the no-neutral-default G6 discipline
+ * (LedgerCurrentStateReadPort precedent) requires this shape — an implementation that
+ * forgets to override [next] fails loudly instead of pretending an empty duplicate group.
+ */
+interface ImportIntakeIdSource {
+    fun next(requiredDuplicateIds: Int): ImportIntakeIds =
+        throw UnsupportedOperationException(
+            "ImportIntakeIdSource.next(requiredDuplicateIds) is not implemented; intake id " +
+                "allocation must be a real production or test source (D-146, R-Q09-2)",
+        )
 }
 
 data class ImportFormalIds(
@@ -541,11 +557,17 @@ fun interface ImportCandidateFormalFactory {
     ): DomainResult<ImportFormalCommit>
 }
 
+/**
+ * P7-04.B (R-Q09-2): the allocation callback is demand-parameterized. Implementations invoke
+ * it at most once, only on the winning first request, after every typed early rejection, and
+ * pass the duplicate-id group count the transaction itself determined; a `requiredDuplicateIds`
+ * of `n` must yield [ImportIntakeIds.duplicateIds] with exactly `n` groups.
+ */
 fun interface ImportIntakeCommitPort {
     fun commitIntake(
         identity: ImportRequestIdentity,
         snapshot: ImportIntakeSnapshot,
-        allocateIds: () -> ImportIntakeIds,
+        allocateIds: (requiredDuplicateIds: Int) -> ImportIntakeIds,
     ): ImportIntakeResult
 }
 
@@ -615,7 +637,9 @@ class ExecuteImportIntake(
                 candidateGeneratedAt = request.candidateGeneratedAt,
                 paymentProfile = request.paymentProfile,
             )
-        return commitPort.commitIntake(identity, snapshot) { idSource.next() }
+        return commitPort.commitIntake(identity, snapshot) { requiredDuplicateIds ->
+            idSource.next(requiredDuplicateIds)
+        }
     }
 
     private fun validate(request: ImportIntakeRequest): ImportDiagnostic? {

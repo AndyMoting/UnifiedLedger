@@ -105,7 +105,7 @@ class SqlDelightImportSpineStore private constructor(
     override fun commitIntake(
         identity: ImportRequestIdentity,
         snapshot: ImportIntakeSnapshot,
-        allocateIds: () -> ImportIntakeIds,
+        allocateIds: (requiredDuplicateIds: Int) -> ImportIntakeIds,
     ): ImportIntakeResult {
         require(identity.ledgerId == snapshot.identity.ledgerId) {
             "Request identity and snapshot must belong to the same ledger"
@@ -140,7 +140,38 @@ class SqlDelightImportSpineStore private constructor(
                             ),
                         )
                     }
-                    val ids = allocateIds()
+                    // P7-04.B (R-Q09-2, D-146): the duplicate-id demand is the winning claim
+                    // transaction's own fact. Every typed early rejection (replay, identity
+                    // collision, mixed null-confirmation-time gate on the confirm path) has
+                    // already returned above, so this is the first and only allocation call.
+                    // VALID_COMPLETE + SETTLED counts the existing sources the same predicate
+                    // as selectDuplicateMatches matches (duplicateMatchCountForIntake has no
+                    // source_id self-exclusion parameter: it runs before the new row exists);
+                    // NO_FUNDS always writes exactly one group; every other branch writes none.
+                    val requiredDuplicateIds =
+                        if (snapshot.completeness == ImportCompleteness.VALID_COMPLETE &&
+                            snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.SETTLED
+                        ) {
+                            database.ledgerQueries
+                                .duplicateMatchCountForIntake(
+                                    snapshot.identity.ledgerId.value,
+                                    snapshot.recordKind.storageValue,
+                                    snapshot.recordKind.contractVersion.toLong(),
+                                    snapshot.facts.amountMinor,
+                                    snapshot.facts.currencyCode,
+                                    snapshot.facts.currencyPrecision.toLong(),
+                                    snapshot.facts.occurredAt,
+                                    snapshot.facts.directionToken,
+                                    snapshot.facts.statusToken,
+                                    if (snapshot.facts.statusToken == null) 1L else 0L,
+                                ).executeAsOne()
+                                .toInt()
+                        } else if (snapshot.facts.fundingState == com.unifiedledger.application.ImportFundingState.NO_FUNDS) {
+                            1
+                        } else {
+                            0
+                        }
+                    val ids = allocateIds(requiredDuplicateIds)
                     database.ledgerQueries.insertImportSourceRecord(
                         ledger_id = snapshot.identity.ledgerId.value,
                         source_id = ids.sourceId.value,

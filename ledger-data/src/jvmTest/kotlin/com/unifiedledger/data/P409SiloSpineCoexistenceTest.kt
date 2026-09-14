@@ -841,7 +841,7 @@ class P409SiloSpineCoexistenceTest {
                 database,
                 driver,
                 object : ImportIntakeIdSource {
-                    override fun next() = intakeIds
+                    override fun next(requiredDuplicateIds: Int) = intakeIds
                 },
                 object : ImportIdSource {
                     override fun next() = commitIds
