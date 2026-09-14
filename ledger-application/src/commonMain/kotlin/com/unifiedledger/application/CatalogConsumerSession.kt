@@ -29,6 +29,15 @@ class CatalogBootstrapFailedException(
  * The write path is not held here: it re-reads the authoritative catalog inside its own write
  * transaction through [CatalogAdmissionReader] (V-2) and therefore never relies on a preview of
  * this session.
+ *
+ * P7-03.C/D (D-145) adds the ledger-view read models on the same discipline: [queryLedgerEntryRows]
+ * (flow-list rows in the frozen display order), [queryTransactionDetail] (read-only detail) and
+ * [queryMonthlyActivity] (unified monthly projection, built only when the host injects the
+ * reporting [clock] — R-Q06-2 本月 resolution). [queryTransactionDetail] and
+ * [queryMonthlyActivity] carry a catalog projection and are rebuilt from the reloaded catalog by
+ * [refresh], so renames/deactivations show current names without a restart.
+ * [queryLedgerEntryRows] has no catalog dependency (it is pure row ordering), so it is constructed
+ * once from the read port and is deliberately not rebuilt by [refresh].
  */
 class CatalogConsumerSession(
     private val reader: CatalogAuthorityReader,
@@ -38,6 +47,9 @@ class CatalogConsumerSession(
     // P7-02.C: the counterparty directory is a different persistence surface from the catalog, so
     // the lending options provider receives it explicitly (null keeps pre-C constructions valid).
     private val counterpartyReader: CounterpartyDirectoryReader? = null,
+    // P7-03.C/D: the reporting clock for the unified monthly projection (R-Q06-2); null keeps
+    // pre-P7-03 constructions valid (the monthly surface stays absent).
+    private val clock: LedgerClock? = null,
 ) {
     var authority: CatalogAuthority = initialAuthority
         private set
@@ -63,6 +75,18 @@ class CatalogConsumerSession(
     var summarizeActivity: SummarizeLedgerActivity = SummarizeLedgerActivity(authority.catalog)
         private set
 
+    /** P7-03.C: display-ordered ledger entry rows for the HOME flow list (spec section 4.2.5). */
+    var queryLedgerEntryRows: QueryLedgerEntryRows = QueryLedgerEntryRows(readPort, ledgerId)
+        private set
+
+    /** P7-03.C/D: the read-only transaction detail projection on the same catalog version. */
+    var queryTransactionDetail: QueryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, authority.catalog)
+        private set
+
+    /** P7-03.B/C: the unified monthly projection; `null` without an injected reporting clock. */
+    var queryMonthlyActivity: QueryMonthlyActivity? = clock?.let { QueryMonthlyActivity(readPort, ledgerId, authority.catalog, it) }
+        private set
+
     /**
      * Reloads the authoritative catalog from persistence and rebuilds every read model so they
      * share the reloaded version. Returns the reloaded authority (non-null after bootstrap; a
@@ -80,6 +104,8 @@ class CatalogConsumerSession(
         lendingOptionsProvider = QueryAuthoritativeManualLendingOptions(reader, ledgerId, counterpartyReader)
         queryCurrentState = QueryLedgerCurrentState(readPort, ledgerId, reloaded.catalog)
         summarizeActivity = SummarizeLedgerActivity(reloaded.catalog)
+        queryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, reloaded.catalog)
+        queryMonthlyActivity = clock?.let { QueryMonthlyActivity(readPort, ledgerId, reloaded.catalog, it) }
         return reloaded
     }
 }

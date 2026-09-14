@@ -2628,3 +2628,61 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - §6.2a 扩展登记：4 个编辑器内往来对象对话框事件（`OpenCounterpartyCreateDialog` / `OpenCounterpartyRenameDialog` / `UpdateCounterpartyFormText` / `DismissCounterpartyDialog`）仅 Editing 生效、其余态吸收（规格事件清单未列举，注册为按 6.2a 语义的扩展）。
    - `IMPL-09`：往来对象创建双击竞态（每次 create 新 UUID、无名称去重）与既有 `runCatalogForm` 同暴露，登记不改；`IMPL-10`：`CounterpartyDialog.Rename.currentName` 已捕获未渲染（保留字段）；remember 键缝无组合测试形态（覆盖限制同既有目录对话框）。
 6. **未闭合项：** P7-01（D-143 规格 §7.7）与 P7-02 的 Android 人工门均待 ALas 停止后按隔离 adb 协议（`ANDROID_ADB_SERVER_PORT=5038`、agent 自启 AVD `-port 5680`）执行；push + 同提交 CI 聚合门待用户授权。
+
+## D-145 P7-03 看账（设计门 + Q06/Q07 裁决）
+
+**状态：** 规格冻结（approved，2026-09-13）：draft-1 独立规格评审 REQUEST-CHANGES（无 P0/P1，4×P2 + 6×P3）→ draft-2 → delta 评审发现 P703SPEC-11（C03 镜像向量与 `ACCOUNTING_RULES.md:80`/`:152` 矛盾）→ draft-3 修正（镜像/合法相似向量分离 + 3 项封闭触发集残余边界登记）→ **DELTA CLOSURE APPROVE**。**冻结 SHA-256（LF 域）= `59D8E68C3E6F438134A56A50C76F3512CF5643DCF7D6CC8D859C0443F7A0CEBB`**。
+
+**授权依据：** 用户常设授权「除不 push 外，其余默认采用推荐方案」；主代理在只读取证（阶段计划 §5/§7/§8.1、账务规则普通收支/转账/借贷/退款/储值/余额调整/对账/时间规则、P7-02 规格 §5/§6、读模型 `Ledger.sq`/`LedgerCurrentStateReadPort`/`SummarizeLedgerActivity`/P408 对账/导入链/目录名称历史源码）后，按推荐方案裁决 Q06/Q07。工作基线 = 分支 `UL-p7-03` @ `b56913d`（P7-02 merge），schema = v29。
+
+**决定：** 启动 P7-03「看账」设计契约 `docs/specs/2026-09-13-p7-03-ledger-view-design.md`（draft-1，待评审）。
+
+**Q06 有效统计时间与报表口径（裁决）：** R-Q06-1 产品读模型一律取当前版本的 `transaction_version.statistics_at`（逐版本 NOT NULL、修正经追加新版本天然生效）；`formal_transaction_metadata.statistics_at_text` 不被产品读模型读取（登记解读：仅 RG-08..12 存在该行、原地更新与版本追加在静止态一致，但非全量存在，统一读版本列避免按交易特判）；`occurred_at` 与 `statistics_at` 均入投影（详情分别展示）。R-Q06-2 报表时区冻结 Asia/Shanghai；月界 = [当地当月1日00:00, 次月1日00:00)；「本月」由注入 `LedgerClock` 的当次 `now()` 在该时区解析；桶归属键 = 统计时间（非 `occurred_at`）。R-Q06-3 普通收支分类按 canonical_kind（读 `COALESCE(canonical_kind, kind)`）+ 分录账户类型分类；本金互转（ACCOUNT_TRANSFER 全部腿）、借贷本金（LEND/COLLECT 的本金腿）、储值/余额调整等特殊 kind 不入普通收支；手续费、实收利息按 `ACCOUNTING_RULES.md` 计入；退款 = 收款期负支出；精确枚举表由规格以 `ACCOUNTING_RULES.md` 行号为据冻结，且普通收支总额必须与既有 `SummarizeLedgerActivity` 全期口径在「无特殊 kind」账本上可核对一致。R-Q06-4 失败不伪装：任何读路径异常/溢出 → 类型化失败（沿用 `Unavailable`/`InvalidState` 族），不以零或空月掩盖。
+
+**Q07 呈现与对账投影（裁决）：** R-Q07-1 趋势 = 近 12 个自然月（含本月），旧→新排序，空月显式零值呈现。R-Q07-2 分类一级汇总下钻二级（两级，与 P7-01 目录层级一致）；停用/改名分类按当前名显示且历史可追溯（`catalog_name_history`）。R-Q07-3 退款呈现：正向支出与退款分开列表，数值保留正负号；零/净负分类不画饼图扇区，精确数值表始终伴随。R-Q07-4 多腿对账状态汇总：腿级资格投影（每腿标注对账资格 有/无——依据既有 reconciliation_eligible 语义与证据链存在性）；交易级 rollup 仅在有资格腿上计算：任一 MISSING → MISSING，否则任一 DIFFERENCE → DIFFERENCE，否则任一 PARTIAL → PARTIAL，否则全部 CHECKED → CHECKED，否则 PENDING；全部腿无资格 → 「无对账资格」；只读，不改对账状态。资格判定操作化为规格 §3.2.1 注册解读（(a) `rg03_transfer_posting_semantic.reconciliation_eligible = 1`，或 (b) active 证据链/对账状态行；rg03 费用腿 `=0` 显式排除；手工 P7-02 转账腿今日显示「无对账资格」），随规格送评审确认。
+
+**draft-2 增补（P703SPEC-01..10 评审修正，2026-09-13）：** 结余入统计契约——月度投影逐币种携带 普通收入/净支出/结余 三值，`结余 = 普通收入 − 净支出`（checked 运算，溢出类型化失败），**结余不得称为账户余额或现金流**（计划 `:110`）；流水排序契约 = `statistics_at` DESC → `occurred_at` DESC → `transaction_id` ASC（UUIDv7 确定性全序；现状 `Ledger.sq:8739` 的 transaction_id 序为创建序、非显示契约）；`QueryMonthlyActivity` 重请求触发冻结为 初始加载 / `SelectMonth`（可选域 [首个交易统计月, 本月]，越界吸收零状态变化）/ `AnalysisMonthShift` / 发生时间跨月重解析 / 确定成功后权威刷新 五项，`CloseTransactionDetail` 不重请求；报表时区为 application 冻结常量、非调用方参数；真实账户腿无分类映射时按「无分类」缺席呈现、不构成 `InvalidState`；交易 kind 枚举为 16 值；RG-12 为第二个原地 metadata 写入方（`SqlDelightRg12Store.kt:610`，其值派生自当前版本 `statistics_at`，读版本列保持正确）。
+
+**范围冻结：** 只读批次——零账务写入路径改动、零正式交易产生；不做编辑/修正 UI、不做对账操作、不做多账本、不做多币种汇总、不做导出/搜索/预算；不改 `rgXX_` 竖井、golden、导入链写入语义；**schema 停留 v29（零 DDL，只新增命名查询）**，确需新列/新表/新索引必须显式登记并给出 `29.sqm`→v30 影响评估。
+
+**契约披露：** 读模型扩展新增独立行类型与端口方法，既有 `CurrentVersionRow`/`loadCurrentRows` 零改动，22 个既有测试锚（`SummarizeLedgerActivityTest` 7 / `QueryLedgerCurrentStateTest` 9 / `SqlDelightLedgerCurrentStateReadAdapterTest` 6）不修改即绿；特殊 kind 账本上月度普通收支与 `SummarizeLedgerActivity` 全期口径的预期差异为 R-Q06-3 既定结果并登记；创建入口仅显示枚举（导入创建/手工创建/来源未标注），不携带来源文件名/URI（计划 D06 脱敏边界）；金额全程 Long minor units checked 运算、禁浮点；UI 沿 P7-02 §6.2 纪律——只为新增事件定义 absorbed，既有 ISE 不反转。
+
+**验证路由：** 高风险路由（单 writer + 独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核）；本机聚焦测试 + 受影响模块（`:ledger-application:jvmTest`/`:ledger-data:jvmTest`/`:app-ui:jvmTest`）+ `ktlintCheck` + `project_docs`；本批无迁移，`:ledger-data:verifyCommonMainLedgerDatabaseMigration` 保持 PASS 佐证零 DDL；聚合门以同提交 CI 为准；Android 人工门遵守隔离 adb 协议。
+
+**关联决定：** D-119、D-120、D-122、D-125、D-131、D-138、D-139、D-140、D-143、D-144。
+
+**实施登记（2026-09-14）：** P7-03「看账」全链交付并合入本地 `main`（merge `--no-ff`，父 `b56913d`；分支 `UL-p7-03` 终点见提交链）。**代码侧完成；唯余 Android 人工门（待 ALas 停止）与 push + 同提交 CI 聚合门（待用户显式授权）。**
+
+**提交链：** 规格冻结 `63c1bbf`（LF SHA-256 `59D8E68C3E6F438134A56A50C76F3512CF5643DCF7D6CC8D859C0443F7A0CEBB`）→ A/B 读模型与统一月度投影 `1a23131` → C/D 首页详情/分类下钻/趋势 `d8ffe2c` → 评审修复批 F1–F10 `1251e46` → delta 修复批 G1–G6 `f554fa5` → 本实施登记。
+
+**评审拓扑与闭环（全部以仓库现实为准，双轮独立评审 + 两轮 distinct verifier）：**
+- **首轮双独立评审于 `d8ffe2c` 均 REQUEST-CHANGES。** 规格一致性评审：P1-1 —— `monthlyOverview`（读失败保留载荷）无任何生产读者，月度读失败清空整屏已渲染月份，直接违反规格 §4.3 / 表 6.2a / 验收向量 C04（该批次测试只断言字段、无可观测覆盖）；另有 P2×3、P3×10。质量/风险评审：P1-1 同因独立复现，另 P1-2（READ 重试后月游标丢失 → HOME 静默「暂无月度数据」死路，R-Q06-4 被绕过）、P2×3、P3×6。**无 P0**；零 DDL、只读不变量、会计分类（§3.1.1 枚举表 / §3.1.2 核对锚）、对账资格投影（§3.2.1）、22 个既有锚点未修改、隐私 D06 —— 经两名评审独立核验清白。
+- **修复批 F1–F10（`1251e46`）**：F1 保留态渲染（`retainedReadFailureOverview` + 保留面 composable，`monthlyOverview == null` 时保持裸失败页）、F2 READ 重试继承月游标与可选域并置 `monthlyReloadRequired`（仍不自动重请求月度载荷）、F3 月载荷/域名/趋势折叠为单一类型化周期（子读失败不再静默 `null`/`emptyList()`）、F4 R-5 特殊科目单列计数披露、F5 端口默认 fail-loud、F6 抽出纯展示决策模块 + 断言、F7 §3.1.2 锚点跨全部统计月求和、F8 失败保留断言去条件化、F9 `AnalysisMonthShift` 域准入、F10 无分类显式行。
+- **delta 首轮闭环**：规格一致性 **CLOSURE APPROVE**（**§6.3 裁决 = 不违反**：F2 carry-over 仅由 `monthlyOverview` 键控，该字段在全部前 P7-03 路径恒为 null，故既有转换逐字段保持并有回归断言；且 §6.2 残余边界 (a) 声明的恢复路径在不继承 domain 时被 P703SPEC-10 空域吸收而不可达，F2 为其最小可实施调和）；质量/风险 **REQUEST-CHANGES** 单条阻断（重试恢复后趋势表与 HOME 流水仍把上一周期呈现为当前且无标记，仅月卡标注未加载）。主代理裁决：该阻断与本轮主题同属 R-Q06-4「失败/未加载不得伪装为当前数据」诚实性族，**选择修复而非豁免**。
+- **delta 修复批 G1–G6（`f554fa5`）→ 第二轮双评审均 CLOSURE APPROVE**（规格一致性 + 质量/风险，均附 file:line 级闭环表；§6.2 触发集裁定：G3 只移除吸收平移的无谓重复，未修改冻结触发集 (b)–(e)）。
+
+**独立验证（distinct verifier，两轮）：** `d8ffe2c` 预修复轮仅 domain/静态项 VERIFIED（候选中止后其余未作为证据）；`1251e46` 轮 N1–N9 全部 VERIFIED（app-ui 183 / application 489 / desktop 30 / data 锚点类 6 / 迁移校验 PASS / ktlint 零违例 / `project_docs` exit 0 含负控制 / 静态零 ledger-data 与锚点未改 / P1 生产消费者存在性）；`f554fa5` 终轮 F1–F11 全部 VERIFIED（app-ui **191** / application **490** / desktop **30** / domain **175** / android **7** / data 锚点类 **6**，全部 0 失败 0 错误 0 跳过；迁移校验 PASS，最高迁移仍 `28.sqm`、schema v29；ktlint 23 报告全 0 字节；`project_docs` exit 0 且有负控制证明退出码有效；静态改动集 15 文件全在 `app-ui`/`ledger-application`，零 `ledger-data`/`.sqm`/`Ledger.sq`/锚点；G1 三个纯函数经生产 composable 消费且 HOME 回退 `state.transactions` 已核实）。
+
+**实现范围：** `ledger-data` 只新增 4 条只读命名查询（`ledgerEntryRowsForLedger` 以 `COALESCE(canonical_kind, kind)` 取真实 kind + 双时间 + note；`importCreationConfirmationByTransaction` 反向创建溯源；`manualCreationReceiptByTransaction` 手工四链 UNION；`transactionReconciliationLegs` 沿 P408 行语义并按交易收窄，rg03 资格列原样只读）与 adapter 覆盖；`ledger-application` 读模型端口扩展（四个新方法默认一律 fail-loud）、`MonthlyBuckets`（含无分类累计）、`QueryMonthlyActivity`、`QueryTransactionDetail`、`QueryLedgerEntryRows`、纯展示决策模块 `P503LedgerViewPresentation`；`app-ui` 首页月卡/可点流水/详情只读面/月选择器/分类一级下钻二级/精确数值表/12 月趋势/失败与未加载态；桌面与 Android 组合根接线。**零 DDL（schema 停留 v29）、零账务写入路径改动、零导入链语义改动、零 `rgXX_`/golden 改动、零新依赖、金额全程 Long minor units checked 运算且禁浮点。**
+
+**操作化登记（对冻结规格的操作化，随本登记留存，均由两轮评审确认）：**
+1. **F2 carry-over = §6.2 残余边界 (a) 的操作化**：READ 失败的 `RefreshResult` 转换从 `monthlyOverview` 继承 `selectedMonth`/`selectableMonths`、置 `monthlyActivity = null` 与 `monthlyReloadRequired`；`RetryRefresh` 仍不重新请求月度载荷（边界 (a)），恢复路径 = 用户重派 `SelectMonth`（触发 (b)，无条件重请求）。前 P7-03 路径（`monthlyOverview == null`）逐字段保持原语义（有回归断言）。
+2. **`AnalysisMonthShift` 的冻结域准入与无谓请求抑制**：与 `SelectMonth` 同用 `[首个交易统计月, 本月]`（P703SPEC-10），越界/无基月平移吸收为零状态变化；表 6.2a 的 effect 语义由「在域内移动游标」承载，域边界处趋势箭头禁用；被吸收的平移不再触发重请求（触发 (c) 仅在游标实际移动时请求），**触发集 (b)–(e) 本身未修改**。
+3. **F10 无分类呈现**：未映射分类的真实账户腿按 `无分类` 显式行呈现（新增 `uncategorizedExpenseTotals`/`uncategorizedIncomeTotals`，带默认），Σ一级分类 + 无分类 == 净支出；无分类不入饼图扇区（饼图标注「仅正向净额分类」且精确数值表恒伴随）。
+4. **G1 未加载态呈现**：`monthlyReloadRequired` 置位时，趋势区与分类区显示显式「未加载」文案（区别于「该月无交易」与失败文案），HOME 流水回退为权威 `state.transactions`；READ 失败态内的保留面仍完整呈现上一成功周期于显式横幅之后（F1 意图）。
+5. **G6 端口 fail-loud 契约**：`loadLedgerEntryRows` / `findImportCreationConfirmation` / `findManualCreationReceipt` / `loadTransactionReconciliationLegs` 的接口默认一律抛 `UnsupportedOperationException` 并映射为类型化 `Unavailable` —— 未实现的读端口绝不以空表或中性值给出「来源未标注」「无对账资格」等看似确定的错误结论；「无该行」仍可由实现方显式返回 `null` 表达。
+
+**治理登记（主代理显式裁决）：** `ACCOUNTING_RULES.md:296-299`「看账读模型（P7-03）」的普通收支分类收窄由规格冻结提交 `63c1bbf` 引入。主代理**显式接受**：该规则属已独立评审并 DELTA CLOSURE APPROVE 的冻结设计门范围，在用户常设授权「除不 push 外默认采用推荐方案」下随规格冻结；作用域限于看账读模型的普通收支呈现，不改写储值/预付各自口径（`:182`/`:196-198`），不产生任何写入路径；其承诺的屏幕披露（R-5 特殊科目单列计数）已由 F4 落地。
+
+**残余与披露登记（如实留存，不改动已验证制品）：**
+- **N1（P3）**：当前状态读失败（裸失败页，`monthlyOverview == null`）经重试恢复后无可发现的月度重载入口；同一窗口内 HOME 呈现 `当前交易`（权威当前态投影，沿既有 legacy `kind` 显示且不可点入详情而非 §4.2.5 排序流水列表）、趋势仍为上一成功周期。触及 §6.3 冻结转换，留待后续批次（对账/看账增强批次）定义。
+- **N2（P3）**：保留面在「连续两次失败」子情形下（保留载荷为 null）横幅为月级措辞而保留面为周期级，趋势表未被标记。
+- **N3（P3）**：触发集文档注释滞后——`P503UiEvent.kt` 与 `P503HostCoordinator.kt` 仍称 `AnalysisMonthShift` 无条件重请求，与 G3 的实际条件不一致（语义已由规格一致性评审裁定为「按准入移动时请求」，仅注释待后续批次同步）。
+- **`SelectMonth`（游标, 载荷）中周期不一致**：失效周期内游标已移动而载荷保留旧月；卡片标题以 `activity.month` 呈现，故无金额错标。
+- **R-5 口径差异**：含特殊 kind 账本上月度普通收支 ≠ 全期 `SummarizeLedgerActivity`（§3.1.2 核对锚限定「无特殊 kind」账本），现由分类区特殊科目计数行披露。
+- **UI 呈现层既有 P3**：饼图扇区角用 `Float`（仅显示比例，精确数值表恒伴随）；`transactionCount` 为月级计数被复制到每个币种行；`SelectTransaction` 载荷与 id 无绑定不变量（生产派发点唯一）；详情呈现原始枚举/`Instant` 文案（规格未冻结）；`ledgerEntryRowsForLedger` 保留继承自既有查询的 `ORDER BY`（显示序由 application 纯函数施加，零 DDL 不变）。
+- **P7-03.C/D 首轮 5 项偏差候选裁决**：①`MonthlyActivityResult` 携带 `selectableMonths`、②`SelectTransaction` 携带宿主预解析详情载荷、④`AnalysisMonthShift` 移动共享游标、⑤新增 `QueryLedgerEntryRows` + `CatalogConsumerSession` 时钟 —— 均 **ACCEPT**（评审确认不改变冻结语义）；③保留载荷载体 **ACCEPT 载体**，其「C04 已满足」的声明被否决并由 F1/F2 落地修复。
+
+**未闭合（外部条件/授权，非代码侧）：** ①Android 人工门（P7-01 §7.7 + P7-02 双端向量）——MuMu/ALas 栈活动确证期间按协议不启 agent 模拟器、不做重型构建（APK 需重型构建窗口或授权后 CI artifact），待用户确认 ALas 停止；②push + 同提交 CI 聚合门——待用户显式授权（本地 `main` 领先 `origin/main`，未 push）。
+
+**验证路由：** 高风险路由（单 bounded writer（含被 reaper 收割后恢复同一 writer）+ 独立规格评审 + 独立质量评审 + 两轮 distinct verifier + 主代理关键 diff 复核与验收复跑）；本机受影响模块 JVM 套件（domain/application/data 锚点类/app-ui/desktop/android）+ 22 个既有锚点 + `:ledger-data:verifyCommonMainLedgerDatabaseMigration`（PASS 佐证零 DDL）+ `ktlintCheck`（零违例）+ `project_docs`（exit 0）；聚合门（完整 `check`、Android/KMP 编译、APK、Python 全套、Desktop build）以同提交 CI 为权威证据，待 push 授权后取得。

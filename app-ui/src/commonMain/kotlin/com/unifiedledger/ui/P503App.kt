@@ -35,6 +35,7 @@ import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualCollectInputField
 import com.unifiedledger.application.ManualCollectSaveInput
@@ -68,13 +69,19 @@ import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferSaveInput
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.MonthlyBuckets
+import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TransactionId
 import kotlinx.coroutines.launch
+import kotlinx.datetime.YearMonth
+import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 
 /**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
@@ -175,6 +182,13 @@ fun P503App(
     // P7-02.A E-2 (G-C): the host-held memory of one determinate-success intent for "record
     // again". Captured before submission, consumed by the authoritative refresh; never persisted.
     var retainedIntent by remember { mutableStateOf<RetainedEntryIntent?>(null) }
+    // P7-03.C/D (D-145): host mirrors of the ledger-view read surface. The trend and the sorted
+    // flow rows are presentation data refreshed with the unified monthly cycle (frozen trigger
+    // set, spec 6.2); the month payload and the SelectMonth domain live in the reducer state.
+    var monthlyTrend by remember { mutableStateOf<MonthlyTrend?>(null) }
+    var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
+    var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
+    val ledgerViewWired = facade.queryMonthlyActivity != null || facade.queryLedgerEntryRows != null
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -237,6 +251,51 @@ fun P503App(
             }
             else -> dispatch(P503UiEvent.RefreshFailed)
         }
+    }
+
+    /**
+     * P7-03.C/D: one unified monthly cycle for the effective overview month (selection or
+     * clock-resolved 本月， R-Q06-2): month card payload, SelectMonth domain, trend and the
+     * sorted flow rows, dispatched as one [P503UiEvent.MonthlyActivityResult]. The three reads
+     * are folded by [foldMonthlyCycle] (F3): a shortfall in ANY of them surfaces as the same
+     * typed failure (InvalidState/Unavailable) — never as a disabled selector or a bare
+     * 暂无趋势数据 (R-Q06-4). The host mirrors (trend, flow rows) are replaced only by a fully
+     * successful cycle, so the retained-overview failure surface keeps the last successful
+     * payload on screen (spec 4.3/C04). Called only on the frozen trigger set (a)-(e) by the
+     * coordinator.
+     */
+    fun requestMonthlyPayload() {
+        val monthlyQuery = facade.queryMonthlyActivity ?: return
+        val overview = latestState.value as? P503AppState.OverviewEmpty
+        try {
+            val clockMonth = MonthlyBuckets.currentMonth(facade.ledgerClock)
+            resolvedCurrentMonth = clockMonth
+            val effectiveMonth = overview?.selectedMonth ?: clockMonth
+            val outcome =
+                foldMonthlyCycle(
+                    monthResult = monthlyQuery.query(effectiveMonth),
+                    selectableMonthsResult = monthlyQuery.selectableMonths(),
+                    trendResult = monthlyQuery.trend(),
+                )
+            when (outcome) {
+                is MonthlyCycleOutcome.Ready -> {
+                    val rows = facade.queryLedgerEntryRows?.query()
+                    monthlyTrend = outcome.trend
+                    ledgerEntryRows = rows
+                    dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Success(outcome.activity), outcome.selectableMonths))
+                }
+                is MonthlyCycleOutcome.Failed ->
+                    dispatch(P503UiEvent.MonthlyActivityResult(outcome.result, emptyList()))
+            }
+        } catch (failure: Exception) {
+            dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
+        }
+    }
+
+    /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
+    fun selectTransaction(transactionId: TransactionId) {
+        val detailQuery = facade.queryTransactionDetail ?: return
+        dispatch(P503UiEvent.SelectTransaction(transactionId, detailQuery.query(transactionId)))
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -626,13 +685,43 @@ fun P503App(
                 onRefresh = ::refresh,
                 onSubmit = { draft, requestId -> submit(draft, requestId) },
                 onCheck = { draft, requestId -> checkCommitStatus(draft, requestId) },
+                // P7-03.C: the unified monthly cycle runs only on the frozen trigger set (a)-(e)
+                // (spec 6.2, P703SPEC-04); 本月 resolves from the reporting clock (R-Q06-2).
+                onMonthlyRequest = ::requestMonthlyPayload,
+                currentMonth = {
+                    try {
+                        MonthlyBuckets.currentMonth(facade.ledgerClock)
+                    } catch (failure: Exception) {
+                        null
+                    }
+                },
             )
         }
 
+    // P7-03.C: month selection dispatches first, then re-requests the monthly payload
+    // unconditionally (trigger (b), including the failure-recovery path: re-selecting the same
+    // month must always re-read it).
+    fun selectMonth(month: YearMonth) {
+        dispatch(P503UiEvent.SelectMonth(month))
+        coordinator.requestMonthlyNow(latestState.value)
+    }
+
+    // G3: trigger (c) still says a month shift re-requests — but only a shift that actually moved
+    // the shared cursor. An out-of-domain (absorbed) shift leaves the state instance untouched and
+    // must not fire a wasted monthly read.
+    fun analysisMonthShift(offset: Int) {
+        val before = latestState.value
+        dispatch(P503UiEvent.AnalysisMonthShift(offset))
+        val reRequest = analysisMonthShiftReRequest(before, latestState.value)
+        if (reRequest != null) coordinator.requestMonthlyNow(reRequest)
+    }
+
     // Authoritative refresh after Created/NoChange/Recovered; never build the list from
-    // the submission return value or accumulate balances in the UI.
+    // the submission return value or accumulate balances in the UI. P7-03.C: the same
+    // evaluation decides the monthly (a)/(d) re-requests.
     LaunchedEffect(state) {
         coordinator.decide(state)
+        coordinator.decideMonthly(state)
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
@@ -823,7 +912,19 @@ fun P503App(
                         },
                 ) {
                     when (current.selectedTab) {
-                        P503Tab.HOME -> P503OverviewScreen(current.state)
+                        P503Tab.HOME ->
+                            P503OverviewScreen(
+                                state = current.state,
+                                showMonthlyRegion = ledgerViewWired,
+                                selectedMonth = current.selectedMonth,
+                                resolvedCurrentMonth = resolvedCurrentMonth,
+                                selectableMonths = current.selectableMonths,
+                                monthlyActivity = current.monthlyActivity,
+                                monthlyReloadRequired = current.monthlyReloadRequired,
+                                entryRows = ledgerEntryRows,
+                                onSelectTransaction = ::selectTransaction,
+                                onSelectMonth = ::selectMonth,
+                            )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
                                 state = current,
@@ -841,9 +942,28 @@ fun P503App(
                                 onSubmit = { dialog -> runCatalogForm(dialog) },
                                 onRefresh = { refreshCatalogSnapshot() },
                             )
-                        P503Tab.ANALYSIS -> P503AnalysisScreen(current.state, facade.summarizeActivity)
+                        P503Tab.ANALYSIS ->
+                            P503AnalysisScreen(
+                                state = current.state,
+                                summarizeActivity = facade.summarizeActivity,
+                                showMonthlyRegion = ledgerViewWired,
+                                selectedMonth = current.selectedMonth,
+                                resolvedCurrentMonth = resolvedCurrentMonth,
+                                selectableMonths = current.selectableMonths,
+                                monthlyActivity = current.monthlyActivity,
+                                monthlyReloadRequired = current.monthlyReloadRequired,
+                                trend = monthlyTrend,
+                                onSelectMonth = ::selectMonth,
+                                onAnalysisMonthShift = ::analysisMonthShift,
+                            )
                     }
                 }
+            is P503AppState.TransactionDetail ->
+                P503TransactionDetailScreen(
+                    detail = current.detail,
+                    // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
+                    onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
@@ -1033,14 +1153,34 @@ fun P503App(
                 )
             is P503AppState.InfrastructureFailure ->
                 when (current.context) {
-                    InfrastructureFailureContext.READ ->
-                        P503InfrastructureReadScreen(
-                            onRetryRefresh = {
-                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryRefresh }, ::dispatch) {
-                                    coordinator.retryRefresh(current)
-                                }
-                            },
-                        )
+                    InfrastructureFailureContext.READ -> {
+                        val retryRefresh = {
+                            dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryRefresh }, ::dispatch) {
+                                coordinator.retryRefresh(current)
+                            }
+                        }
+                        // F1 (spec 4.3/C04, table 6.2a): a monthly read failure keeps the already
+                        // rendered month visible next to the explicit failure banner instead of
+                        // replacing the whole HOME/ANALYSIS surface with the bare failure page.
+                        // The retained surface is deliberately read-only: while the READ failure
+                        // stands the reducer absorbs every interaction except the retry, so no
+                        // affordance is left dead. `monthlyOverview == null` (every pre-P7-03 READ
+                        // failure) keeps the bare recoverable page and its exact retry semantics.
+                        val retained = retainedReadFailureOverview(current)
+                        if (retained != null) {
+                            P503RetainedOverviewFailureScreen(
+                                overview = retained,
+                                showMonthlyRegion = ledgerViewWired,
+                                resolvedCurrentMonth = resolvedCurrentMonth,
+                                monthlyTrend = monthlyTrend,
+                                entryRows = ledgerEntryRows,
+                                summarizeActivity = facade.summarizeActivity,
+                                onRetryRefresh = retryRefresh,
+                            )
+                        } else {
+                            P503InfrastructureReadScreen(onRetryRefresh = retryRefresh)
+                        }
+                    }
                     InfrastructureFailureContext.SUBMISSION ->
                         P503InfrastructureSubmissionScreen(
                             onRetry = {
@@ -1067,6 +1207,8 @@ private fun isBackEnabled(state: P503AppState): Boolean =
     when (state) {
         // P7-01.D: on the ACCOUNTS tab back closes an open catalog dialog, or leaves for HOME.
         is P503AppState.OverviewEmpty -> state.selectedTab == P503Tab.ACCOUNTS
+        // P7-03.C: the read-only detail returns to the preserved overview (C03).
+        is P503AppState.TransactionDetail -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -1110,6 +1252,78 @@ private fun TypedEntryDraft.toRetainedIntent(originTab: P503Tab): RetainedEntryI
 
 /** P7-02.A: the typed submit entry point, falling back to the expense-only path for legacy roots. */
 private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.application.ExecuteManualEntrySubmission = submitEntry ?: throw IllegalStateException("facade is missing the typed entry submission")
+
+/**
+ * P7-03.D (F1; spec section 4.3, table 6.2a, C04): the retained monthly overview behind the
+ * explicit read-failure banner. The month that was already on screen stays visible — month card,
+ * month label, category region, trend and the display-ordered flow list of the retained tab —
+ * and is never replaced by zeros or an empty month (R-Q06-4). Only the existing retry is live:
+ * while the READ failure stands the reducer absorbs SelectMonth/SelectTransaction, so the same
+ * regions are rendered without their interactive affordances rather than with dead ones. G2: the
+ * banner copy follows the retained overview's own month-region state, so it never promises a
+ * previously loaded month when the failed cycle had no successful payload (initial trigger (a)).
+ */
+@Composable
+private fun P503RetainedOverviewFailureScreen(
+    overview: P503AppState.OverviewEmpty,
+    showMonthlyRegion: Boolean,
+    resolvedCurrentMonth: YearMonth?,
+    monthlyTrend: MonthlyTrend?,
+    entryRows: List<LedgerEntryRow>?,
+    summarizeActivity: SummarizeLedgerActivity,
+    onRetryRefresh: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+    ) {
+        Text(
+            // G2: the banner must not promise a loaded month when the retained overview has no
+            // successful monthly payload (an initial trigger-(a) failure).
+            retainedReadFailureBannerText(monthlyRegionState(overview.monthlyActivity, reloadRequired = false)),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = onRetryRefresh) {
+            Text("重试")
+        }
+        Spacer(Modifier.height(8.dp))
+        when (overview.selectedTab) {
+            P503Tab.HOME ->
+                P503OverviewScreen(
+                    state = overview.state,
+                    showMonthlyRegion = showMonthlyRegion,
+                    selectedMonth = overview.selectedMonth,
+                    resolvedCurrentMonth = resolvedCurrentMonth,
+                    // Empty domain: the steppers stay disabled (SelectMonth is absorbed here).
+                    selectableMonths = emptyList(),
+                    monthlyActivity = overview.monthlyActivity,
+                    entryRows = entryRows,
+                    onSelectTransaction = {},
+                    onSelectMonth = {},
+                    interactionsEnabled = false,
+                )
+            P503Tab.ANALYSIS ->
+                P503AnalysisScreen(
+                    state = overview.state,
+                    summarizeActivity = summarizeActivity,
+                    showMonthlyRegion = showMonthlyRegion,
+                    selectedMonth = overview.selectedMonth,
+                    resolvedCurrentMonth = resolvedCurrentMonth,
+                    selectableMonths = emptyList(),
+                    monthlyActivity = overview.monthlyActivity,
+                    trend = monthlyTrend,
+                    onSelectMonth = {},
+                    onAnalysisMonthShift = {},
+                    interactionsEnabled = false,
+                )
+            // The management surface is command-driven and has no transition while the READ
+            // failure stands; keep an honest note instead of a dead management form.
+            P503Tab.ACCOUNTS ->
+                Text("账户管理需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
 
 @Composable
 private fun P503InfrastructureReadScreen(onRetryRefresh: () -> Unit) {

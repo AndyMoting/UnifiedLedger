@@ -26,6 +26,7 @@ import com.unifiedledger.application.ManualLendingCommitResolution
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
@@ -34,6 +35,9 @@ import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
 
 /**
  * Pure UI state-machine reducer (spec sections 7.1-7.2; P7-02 section 6). The reducer never
@@ -71,6 +75,7 @@ class P503ReducerImpl(
         when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
+            is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -117,6 +122,12 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P7-03.C/D: the read-only ledger-view events are absorbed before the overview exists (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -262,6 +273,45 @@ class P503ReducerImpl(
             is P503UiEvent.ManageCategoryActive,
             is P503UiEvent.EnableCategoryGroup,
             -> state
+            // ---- P7-03.C/D ledger-view read-only transitions (table 6.2a) ----
+            is P503UiEvent.SelectTransaction ->
+                // Effect (the UI affords it only on HOME rows): enter the read-only detail with
+                // the exact overview preserved as the back-target payload (C03).
+                P503AppState.TransactionDetail(
+                    overview = state,
+                    originTab = state.selectedTab,
+                    transactionId = event.transactionId,
+                    detail = event.result,
+                )
+            P503UiEvent.CloseTransactionDetail -> state
+            // P703SPEC-10: within the frozen SelectMonth domain the cursor moves and the host
+            // re-requests (trigger (b)); out-of-domain months and empty domains (empty ledger)
+            // are absorbed with zero state change.
+            is P503UiEvent.SelectMonth ->
+                if (event.month in state.selectableMonths) state.copy(selectedMonth = event.month) else state
+            // Trend/month-card linkage: the shared cursor moves from the selected month or 本月
+            // (R-Q06-2); without a usable base the shift is absorbed.
+            is P503UiEvent.AnalysisMonthShift ->
+                analysisMonthShiftTarget(state, event.offset)?.let { state.copy(selectedMonth = it) } ?: state
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            monthlyActivity = result.activity,
+                            selectableMonths = event.selectableMonths,
+                            monthlyReloadRequired = false,
+                        )
+                    // 失败 → READ failure while preserving the last successful overview
+                    // (spec 4.3/C04: 上一成功载荷保留 + 显式失败条); the retry stays the existing
+                    // RetryRefresh branch (spec 6.3) and recovery is a re-dispatched SelectMonth
+                    // (residual boundary (a)). A shortfall in any part of the cycle (month
+                    // payload, SelectMonth domain, trend) arrives here as the same typed failure
+                    // (F3, R-Q06-4): a disabled selector or a bare 暂无趋势数据 must not stand in
+                    // for an explicit failure.
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state)
+                }
             // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
@@ -299,6 +349,76 @@ class P503ReducerImpl(
                 }
             else -> unhandled(state, event)
         }
+
+    /**
+     * P7-03.C read-only detail state (spec section 6.1/6.2). Only its designed events react:
+     * CloseTransactionDetail/Back return to the exact preserved overview (tab, month and
+     * monthly payload kept, C03), MonthlyActivityResult applies the 详情态同语义 payload update
+     * on the stored overview, the other new read-only events are absorbed, and every
+     * pre-existing event stays unlisted (ISE, G-B). The page has zero edit entries.
+     */
+    private fun reduceTransactionDetail(
+        state: P503AppState.TransactionDetail,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CloseTransactionDetail -> state.overview
+            // System back = CloseTransactionDetail semantics (spec section 6.2 back bullet).
+            P503UiEvent.Back -> state.overview
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
+                }
+            is P503UiEvent.SelectTransaction,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P7-03.C (F9): the shifted month cursor, or `null` when no usable base month exists or the
+     * shifted month would leave the frozen SelectMonth domain `[first transaction statistics
+     * month, 本月]` (P703SPEC-10). The analysis region therefore moves the shared cursor under
+     * exactly the same admission rule as `SelectMonth` and can never request a month the selector
+     * will never offer; an out-of-domain shift is absorbed with zero state change.
+     */
+    private fun analysisMonthShiftTarget(
+        state: P503AppState.OverviewEmpty,
+        offset: Int,
+    ): kotlinx.datetime.YearMonth? {
+        if (offset == 0) return state.selectedMonth
+        val base =
+            state.selectedMonth ?: ledgerClock?.let { clock ->
+                try {
+                    MonthlyBuckets.currentMonth(clock)
+                } catch (failure: Exception) {
+                    // An unusable clock cannot resolve 本月 (R-Q06-4): absorb instead of guessing.
+                    null
+                }
+            } ?: return null
+        var shifted = base
+        repeat(kotlin.math.abs(offset)) {
+            shifted =
+                if (offset > 0) {
+                    shifted.plus(1, DateTimeUnit.MONTH)
+                } else {
+                    shifted.minus(1, DateTimeUnit.MONTH)
+                }
+        }
+        return if (shifted in state.selectableMonths) shifted else null
+    }
 
     private fun reduceEditing(
         state: P503AppState.Editing,
@@ -394,6 +514,13 @@ class P503ReducerImpl(
                 }
             // P7-02.D E-4: pin toggles belong to the overview lists; absorbed here (§6.2a).
             is P503UiEvent.TogglePin -> state
+            // P7-03.C/D: the read-only ledger-view events are absorbed inside the editor (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
+            -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
                     P503AppState.AwaitingConfirmation(
@@ -458,6 +585,12 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -510,6 +643,12 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> state
             else -> unhandled(state, event)
         }
@@ -771,6 +910,12 @@ class P503ReducerImpl(
             is P503UiEvent.EvaluateEntryExpression,
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
+            // P7-03.C/D: the read-only ledger-view events are absorbed in every transient state.
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> current
             else -> unhandled(current, event)
         }
@@ -835,6 +980,12 @@ class P503ReducerImpl(
             is P503UiEvent.OpenCounterpartyRenameDialog,
             is P503UiEvent.UpdateCounterpartyFormText,
             P503UiEvent.DismissCounterpartyDialog,
+            // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -904,6 +1055,12 @@ class P503ReducerImpl(
             is P503UiEvent.OpenCounterpartyRenameDialog,
             is P503UiEvent.UpdateCounterpartyFormText,
             P503UiEvent.DismissCounterpartyDialog,
+            // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
             -> state
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
@@ -950,6 +1107,12 @@ class P503ReducerImpl(
                     is P503UiEvent.EvaluateEntryExpression,
                     is P503UiEvent.SaveAndRecordAgain,
                     is P503UiEvent.TogglePin,
+                    // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+                    is P503UiEvent.SelectTransaction,
+                    P503UiEvent.CloseTransactionDetail,
+                    is P503UiEvent.SelectMonth,
+                    is P503UiEvent.AnalysisMonthShift,
+                    is P503UiEvent.MonthlyActivityResult,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -958,12 +1121,24 @@ class P503ReducerImpl(
                     P503UiEvent.RetryRefresh -> state
                     // P7-02 G-C: a successful read retry still forwards the retained intent;
                     // P7-02.D E-4 also carries the host's pin mirror into the fresh overview.
+                    // P7-03.D (F2): when the failure came from a monthly read, the retry keeps the
+                    // month cursor and the SelectMonth domain that were on screen (so the user is
+                    // never stranded on a month-less, stepper-less overview) and marks the monthly
+                    // payload as not loaded, because RetryRefresh is deliberately outside the
+                    // frozen monthly re-request trigger set (spec 6.2 residual boundary (a)); the
+                    // explicit re-select affordance dispatches SelectMonth (trigger (b)). All
+                    // pre-P7-03 READ failures have monthlyOverview == null and keep this branch
+                    // byte-for-byte at its previous semantics.
                     is P503UiEvent.RefreshResult ->
                         P503AppState.OverviewEmpty(
                             state = event.currentState,
                             selectedTab = P503Tab.HOME,
                             retainedIntent = event.retainedIntent,
                             pinnedTargets = event.pinnedTargets,
+                            selectedMonth = state.monthlyOverview?.selectedMonth,
+                            selectableMonths = state.monthlyOverview?.selectableMonths ?: emptyList(),
+                            monthlyActivity = null,
+                            monthlyReloadRequired = state.monthlyOverview != null,
                         )
                     P503UiEvent.RefreshFailed -> state
                     // P7-02: new entry-foundation events are absorbed in READ failure too.
@@ -993,6 +1168,12 @@ class P503ReducerImpl(
                     is P503UiEvent.EvaluateEntryExpression,
                     is P503UiEvent.SaveAndRecordAgain,
                     is P503UiEvent.TogglePin,
+                    // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+                    is P503UiEvent.SelectTransaction,
+                    P503UiEvent.CloseTransactionDetail,
+                    is P503UiEvent.SelectMonth,
+                    is P503UiEvent.AnalysisMonthShift,
+                    is P503UiEvent.MonthlyActivityResult,
                     -> state
                     else -> unhandled(state, event)
                 }

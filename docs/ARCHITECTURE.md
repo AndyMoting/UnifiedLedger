@@ -80,6 +80,8 @@ commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 le
 
 `D-144`（P7-02）补齐统一录入边界：共享 `app-ui` 的编辑流以类型化草稿（`EXPENSE/INCOME/TRANSFER/LEND/COLLECT`，默认 `EXPENSE`）承载类型判别，只消费 `ledger-application` 类型；数据流固定为「校验 → 明确确认快照 → 应用用例 → claim-first 原子提交 → 权威回读」，每个新意图分配新 requestId，等价 replay 幂等、同 id 不同内容冲突、Unknown 不自动重试。备注由类型化草稿贯通并真正写入正式交易版本 `note`。手工转账复用领域 `createOwnAssetAccountTransfer`/`createOwnAssetPrincipalTransfer`（不接导入工厂），手工借贷复用 `LendingPosition`/`LendingSettlement` 领域规则并新增产品侧最小稳定往来对象目录、对象级本金查询与**按对象时间单调校验（倒填拒绝 `LendingBackdatedNotAllowed`，既有 `createLendingPosition` 原样作唯一重建校验器）**，**不复用 RG-08 回放来源编排、不生成 `BANK_DEBIT`/`MATCHED` 证据**。产品持久化为非 `rgXX_` 前缀新表（往来对象目录与名称历史、借贷位置与历史、手工转账/借贷 request/receipt、置顶偏好），自当前 v28 新增 `28.sqm` 目标 v29、加性迁移零回填。P7-01 的提交目录准入（V-2，真实 token 族 `CatalogAdmissionRejection`）扩展到全部新类型，在写入事务内重校验并整笔类型化拒绝；D-125/D-138/D-139/D-140 的支出编辑语义保持不变。具体契约见 `docs/specs/2026-09-12-p7-02-entry-foundation-design.md`。
 
+`D-145`（P7-03，规格冻结 approved，LF SHA-256 `59D8E68C…0CEBB`）规划看账只读读边界：读模型以新增命名查询与端口方法扩展（有效 kind 读 `COALESCE(canonical_kind, kind)`、双时间与当前版本 note 入投影），既有 `CurrentVersionRow`/`loadCurrentRows` 与 22 个既有测试锚零改动；月度桶、普通收支分类（特殊 kind 与本金互转/借贷本金不入普通收支）与对账资格投影全部为 application 纯函数与只读查询，零 DDL、零账务写入路径改动、schema 停留 v29；有效统计时间一律取当前版本 `transaction_version.statistics_at`，不读 `formal_transaction_metadata`；月度投影逐币种携带普通收入/净支出/结余（结余不得称为账户余额或现金流），流水按统计时间倒序稳定排序，月度重请求触发由规格 §6.2 冻结。具体契约见 `docs/specs/2026-09-13-p7-03-ledger-view-design.md`。
+
 ## 正式数据流
 
 ### 手工入口

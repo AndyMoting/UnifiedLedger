@@ -24,6 +24,9 @@ import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryLedgerCurrentState
+import com.unifiedledger.application.QueryLedgerEntryRows
+import com.unifiedledger.application.QueryMonthlyActivity
+import com.unifiedledger.application.QueryTransactionDetail
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
@@ -95,12 +98,21 @@ class P503LedgerFacade(
     val catalogSnapshot: () -> CatalogSnapshotView? = { null },
     val executeCatalogCommand: ExecuteCatalogCommand? = null,
     val refreshCatalog: () -> Unit = {},
+    // P7-03.C/D ledger-view read surface (D-145); null defaults keep legacy constructions valid
+    // (no month card, no flow list, no detail). The product roots wire the session-built models,
+    // so every query follows refreshCatalog onto the same authoritative catalog version.
+    baseQueryLedgerEntryRows: QueryLedgerEntryRows? = null,
+    baseQueryMonthlyActivity: QueryMonthlyActivity? = null,
+    baseQueryTransactionDetail: QueryTransactionDetail? = null,
     catalogSession: CatalogConsumerSession? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
     private val fallbackQueryCurrentState = baseQueryCurrentState
     private val fallbackSummarizeActivity = baseSummarizeActivity
+    private val fallbackQueryLedgerEntryRows = baseQueryLedgerEntryRows
+    private val fallbackQueryMonthlyActivity = baseQueryMonthlyActivity
+    private val fallbackQueryTransactionDetail = baseQueryTransactionDetail
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
     private val fallbackTransferOptionsProvider =
@@ -131,4 +143,20 @@ class P503LedgerFacade(
     /** Current authoritative summary model; follows [refreshCatalog] when a session is injected. */
     val summarizeActivity: SummarizeLedgerActivity
         get() = session?.summarizeActivity ?: fallbackSummarizeActivity
+
+    /**
+     * P7-03.C: display-ordered ledger entry rows for the HOME flow list (spec section 4.2.5);
+     * follows [refreshCatalog] when a session is injected. `null` when neither the session nor
+     * the construction site provides the P7-03 read surface (legacy facades).
+     */
+    val queryLedgerEntryRows: QueryLedgerEntryRows?
+        get() = session?.queryLedgerEntryRows ?: fallbackQueryLedgerEntryRows
+
+    /** P7-03.B/C: the unified monthly projection; follows [refreshCatalog] when a session is injected. */
+    val queryMonthlyActivity: QueryMonthlyActivity?
+        get() = session?.queryMonthlyActivity ?: fallbackQueryMonthlyActivity
+
+    /** P7-03.C/D: the read-only transaction detail projection; follows [refreshCatalog] when a session is injected. */
+    val queryTransactionDetail: QueryTransactionDetail?
+        get() = session?.queryTransactionDetail ?: fallbackQueryTransactionDetail
 }
