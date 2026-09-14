@@ -36,6 +36,7 @@ import com.unifiedledger.application.ExecuteConfirmedManualIncome
 import com.unifiedledger.application.ExecuteConfirmedManualLending
 import com.unifiedledger.application.ExecuteConfirmedManualTransfer
 import com.unifiedledger.application.ExecuteCreateCounterparty
+import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteLendingSubmission
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
@@ -48,6 +49,9 @@ import com.unifiedledger.application.ExecuteManualTransferSave
 import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
+import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
@@ -66,10 +70,12 @@ import com.unifiedledger.application.UuidV7ConfirmedManualLendingIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualTransferIdSource
 import com.unifiedledger.application.UuidV7CounterpartyIdSource
 import com.unifiedledger.application.UuidV7Generator
+import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
 import com.unifiedledger.data.SqlDelightConfirmedManualExpenseCommitPort
@@ -78,6 +84,7 @@ import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
 import com.unifiedledger.data.SqlDelightEntryPreferenceStore
+import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
@@ -98,6 +105,7 @@ import com.unifiedledger.ui.P503StartupState
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
+import java.io.FileInputStream
 import java.nio.file.Files
 import java.security.SecureRandom
 import kotlin.io.path.absolutePathString
@@ -458,6 +466,37 @@ internal fun buildLedgerGraph(
             categoryReferenceProbe = store,
         )
     val snapshotQuery = QueryCatalogSnapshot(store)
+
+    // P7-04.A/B (D-146): the import spine store on the desktop's own JDBC driver (the driver
+    // is in hand here, so the public constructor applies the JDBC connection configuration);
+    // the intake id source is the production UUIDv7 source (R-Q09-2: ids are minted only
+    // inside the store's winning claim transaction); the candidate audit-time source is the
+    // injected LedgerClock (processing times only, never source times). The session factory
+    // mints one fresh opaque UUIDv7 handle per file pick (R-Q09-1) — a new session per pick,
+    // never shared across concurrent dispatches.
+    val importSpineStore = SqlDelightImportSpineStore(database, driver)
+    val importIntakeGenerator = UuidV7Generator(::secureRandomBytes)
+    val executeImportIntake =
+        ExecuteImportIntake(
+            commitPort = importSpineStore,
+            idSource = UuidV7ImportIntakeIdSource(UuidV7Generator(::secureRandomBytes)),
+            fingerprint = ImportContentFingerprint(),
+        )
+    val importFileIntake =
+        JvmImportFileIntake(
+            ledgerId = ledgerId,
+            executeIntake = executeImportIntake,
+            candidateGeneratedAt = { ledgerClock.now().toString() },
+        )
+    // The desktop pick port: the real Swing chooser dialog plus FileInputStream; results
+    // fail loudly until P7-04.C wires the shared coordinator channel — nothing can launch a
+    // pick before that wiring, so the placeholder is unreachable in this batch.
+    val importFilePickPort =
+        DesktopImportFilePickPort(
+            onResult = { error("desktop import pick result channel is not wired until P7-04.C") },
+            showOpenFileChooser = ::showSwingOpenFileChooser,
+            openInputStream = { file -> FileInputStream(file) },
+        )
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -498,6 +537,13 @@ internal fun buildLedgerGraph(
             baseQueryMonthlyActivity = session.queryMonthlyActivity,
             baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,
+            // P7-04.A/B (D-146): the import surface — the Swing pick port and the jvmMain
+            // intake orchestration on the same ledger; the P7-04.C host consumes both
+            // through the facade to build the typed intake input.
+            importFilePickPort = importFilePickPort,
+            importFileIntake = importFileIntake,
+            importPlatformKind = ImportPlatformKind.DESKTOP,
+            importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
         )
 
     return DesktopLedgerGraph(

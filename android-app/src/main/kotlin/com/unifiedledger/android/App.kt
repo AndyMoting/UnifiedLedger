@@ -1,8 +1,11 @@
 package com.unifiedledger.android
 
 import android.app.Activity
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -39,6 +42,7 @@ import com.unifiedledger.application.ExecuteConfirmedManualIncome
 import com.unifiedledger.application.ExecuteConfirmedManualLending
 import com.unifiedledger.application.ExecuteConfirmedManualTransfer
 import com.unifiedledger.application.ExecuteCreateCounterparty
+import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteLendingSubmission
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
@@ -51,6 +55,9 @@ import com.unifiedledger.application.ExecuteManualTransferSave
 import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
+import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
@@ -69,10 +76,12 @@ import com.unifiedledger.application.UuidV7ConfirmedManualLendingIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualTransferIdSource
 import com.unifiedledger.application.UuidV7CounterpartyIdSource
 import com.unifiedledger.application.UuidV7Generator
+import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
@@ -105,8 +114,29 @@ import kotlin.time.Clock
 fun app() {
     val context = LocalContext.current
     val activity = context as? Activity
+    // P7-04.A (D-146 R-Q08-1): the SAF OpenDocument launcher must be registered in
+    // composition before the activity is RESUMED; its result callback reaches the pick port
+    // through a plain holder because the port is created together with the ledger graph,
+    // after the launcher.
+    val importPickPortRef = remember { arrayOfNulls<AndroidImportFilePickPort<Uri>?>(1) }
+    val importSafLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            importPickPortRef[0]?.onOpenDocumentResult(uri)
+        }
     val controller =
         remember(context) {
+            // The Android pick port with SAF launch/metadata/stream closures; one-shot
+            // ContentResolver read, no persistable URI permission, no copy. Results fail
+            // loudly until P7-04.C wires the shared coordinator channel — nothing can launch
+            // a pick before that wiring, so the placeholder is unreachable in this batch.
+            val importFilePickPort =
+                AndroidImportFilePickPort<Uri>(
+                    launchOpenDocument = importSafLauncher::launch,
+                    resolveMetadata = { uri -> resolveSafFileMetadata(context.contentResolver, uri) },
+                    openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
+                    onResult = { error("android import pick result channel is not wired until P7-04.C") },
+                )
+            importPickPortRef[0] = importFilePickPort
             AndroidStartupController(
                 openDatabase = {
                     // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak
@@ -114,7 +144,7 @@ fun app() {
                     // additionally closes any graph it already holds in its catch block.
                     val handle = createAndroidLedgerDatabase(context, "ledger.db")
                     try {
-                        buildLedgerGraph(handle)
+                        buildLedgerGraph(handle, importFilePickPort)
                     } catch (failure: Exception) {
                         handle.close()
                         throw failure
@@ -220,7 +250,10 @@ internal data class CloseableLedgerGraph(
 
 private const val LOG_TAG = "UnifiedLedger"
 
-private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedgerGraph {
+private fun buildLedgerGraph(
+    handle: AndroidLedgerDatabaseHandle,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+): CloseableLedgerGraph {
     val database = handle.database
     val store = handle.catalogStore
 
@@ -391,6 +424,27 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             categoryReferenceProbe = store,
         )
     val snapshotQuery = QueryCatalogSnapshot(store)
+
+    // P7-04.A/B (D-146): the import spine store comes from the handle's platform-configured
+    // connection (the driver is private to the data-assembly handle); the intake id source
+    // is the production UUIDv7 id source (R-Q09-2: ids are minted only inside the store's
+    // winning claim transaction); the candidate audit-time source is the injected LedgerClock
+    // (the processing clock supplies processing times only, never source times). The session
+    // factory mints one fresh opaque UUIDv7 handle per file pick (R-Q09-1) — a new session
+    // per pick, never shared across concurrent dispatches.
+    val importIntakeGenerator = UuidV7Generator(::secureRandomBytes)
+    val executeImportIntake =
+        ExecuteImportIntake(
+            commitPort = handle.importSpineStore,
+            idSource = UuidV7ImportIntakeIdSource(UuidV7Generator(::secureRandomBytes)),
+            fingerprint = ImportContentFingerprint(),
+        )
+    val importFileIntake =
+        JvmImportFileIntake(
+            ledgerId = ledgerId,
+            executeIntake = executeImportIntake,
+            candidateGeneratedAt = { ledgerClock.now().toString() },
+        )
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -430,6 +484,13 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             baseQueryMonthlyActivity = session.queryMonthlyActivity,
             baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,
+            // P7-04.A/B (D-146): the import surface — the SAF pick port and the jvmMain
+            // intake orchestration on the same ledger; the P7-04.C host consumes both
+            // through the facade to build the typed intake input.
+            importFilePickPort = importFilePickPort,
+            importFileIntake = importFileIntake,
+            importPlatformKind = ImportPlatformKind.ANDROID,
+            importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
         )
     return CloseableLedgerGraph(facade, handle::close, session, catalogCommands)
 }

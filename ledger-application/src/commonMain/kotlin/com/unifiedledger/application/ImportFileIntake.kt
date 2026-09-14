@@ -129,8 +129,11 @@ data class ImportIntakeRecordSummary(
 sealed interface ImportFileIntakeOutcome {
     /**
      * At least one record produced a new intake or a typed per-record spine rejection; the
-     * summaries list every dispatched record plus every parser-rejected row. Re-dispatching
-     * a session whose records are all `INTAKE_NO_CHANGE` yields [NoChangeAll] instead.
+     * summaries list every dispatched record plus every parser-rejected row. A zero-record
+     * dispatch also routes here with both lists empty (the empty-set addendum of
+     * [aggregateImportIntakeRecords]: an empty first pick is an empty `Accepted`, never a
+     * `NoChangeAll` re-dispatch). Re-dispatching a session whose records are all
+     * `INTAKE_NO_CHANGE` yields [NoChangeAll] instead.
      */
     data class Accepted(
         val records: List<ImportIntakeRecordSummary>,

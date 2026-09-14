@@ -102,6 +102,21 @@ class SqlDelightImportSpineStore private constructor(
         configureSqliteConnection(driver)
     }
 
+    companion object {
+        /**
+         * Platform-configured factory (the `forPlatformConfiguredDatabase` precedent of the
+         * four manual commit ports): for a database whose connection the platform already
+         * configured — the Android `ForeignKeysCallback` path, which intentionally sets no
+         * JDBC busy timeout — this factory skips the JDBC-only `configureSqliteConnection`
+         * PRAGMA setup and only constructs the store. Internal like its precedents: the
+         * platform data-assembly handle (ledger-data androidMain) calls it; app composition
+         * roots never see the driver (P7-04.A/B wiring, D-146).
+         */
+        internal fun forPlatformConfiguredDatabase(
+            database: LedgerDatabase,
+        ): SqlDelightImportSpineStore = SqlDelightImportSpineStore(database, NO_IMPORT_SPINE_FAILURE, ImportContentFingerprint())
+    }
+
     override fun commitIntake(
         identity: ImportRequestIdentity,
         snapshot: ImportIntakeSnapshot,

@@ -8,6 +8,9 @@ import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
+import com.unifiedledger.application.ImportFileIntakePort
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendingPositionReadPort
 import com.unifiedledger.application.ManualExpenseOptionsProvider
@@ -105,6 +108,18 @@ class P503LedgerFacade(
     baseQueryMonthlyActivity: QueryMonthlyActivity? = null,
     baseQueryTransactionDetail: QueryTransactionDetail? = null,
     catalogSession: CatalogConsumerSession? = null,
+    // P7-04.A/B import surface (D-146; spec sections 4.1/4.2); null defaults keep legacy
+    // constructions valid (startup tests). The product roots inject the platform pick port,
+    // the jvmMain intake orchestration, the platform kind, and a per-pick session factory
+    // (one fresh opaque UUIDv7 handle per file pick, R-Q09-1 — never a shared session across
+    // concurrent dispatches). Unlike the P7-03 read surface there is no catalog-session
+    // following here: the import surface is not catalog-versioned, so these stay plain
+    // nullable values; the P7-04.C host consumes them to launch picks and build the typed
+    // intake input (format + platform + session + bounded bytes).
+    val importFilePickPort: ImportFilePickPort? = null,
+    val importFileIntake: ImportFileIntakePort? = null,
+    val importPlatformKind: ImportPlatformKind? = null,
+    val importIntakeSessionFactory: () -> ImportIntakeSessionIdentity? = { null },
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
