@@ -89,6 +89,14 @@ fun P503TabShell(
                             icon = { Text("析") },
                             label = { Text("分析") },
                         )
+                        // P7-04.C (D-146, R-13): the fourth IMPORT tab item — the D-122 bottom-bar
+                        // layout semantics are unchanged, only the item is added.
+                        NavigationBarItem(
+                            selected = selectedTab == P503Tab.IMPORT,
+                            onClick = { onSelectTab(P503Tab.IMPORT) },
+                            icon = { Text("导") },
+                            label = { Text("导入") },
+                        )
                     }
                 }
                 Spacer(Modifier.width(16.dp))

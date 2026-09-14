@@ -157,20 +157,29 @@ fun readImportPickBounded(
         } catch (failure: Exception) {
             return BoundedFileRead.ReadFailed(ImportPickReadFailure.STREAM_OPEN_FAILED)
         }
-    // The read loop maps its own failures internally; this net keeps any unexpected
-    // read-path throw on the read side of the first-failure-wins order below.
+    // AB-CLI-QUAL-06 hardening: the outcome computation is wrapped in try/finally so the platform
+    // resource is ALWAYS released — including when the read path throws an `Error` (OOM, linkage,
+    // StackOverflow...), which the previous shape let leak with the stream still open. An `Error`
+    // still propagates after the close attempt (never swallowed), and a close `Exception` is
+    // captured into `closeFailed` so it cannot mask the primary read verdict below.
+    var closeFailed = false
     val outcome =
         try {
-            readImportPickChunks(raw.read)
-        } catch (failure: Exception) {
-            BoundedFileRead.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)
-        }
-    val closeFailed =
-        try {
-            raw.close()
-            false
-        } catch (failure: Exception) {
-            true
+            // The read loop maps its own failures internally; this net keeps any unexpected
+            // read-path throw on the read side of the first-failure-wins order below.
+            try {
+                readImportPickChunks(raw.read)
+            } catch (failure: Exception) {
+                BoundedFileRead.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)
+            }
+        } finally {
+            closeFailed =
+                try {
+                    raw.close()
+                    false
+                } catch (failure: Exception) {
+                    true
+                }
         }
     return if (closeFailed && outcome !is BoundedFileRead.ReadFailed) {
         // Close is the only failure (the read completed determinately), so it is reported.

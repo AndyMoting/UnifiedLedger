@@ -50,18 +50,25 @@ import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
 import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportDuplicateReviewId
 import com.unifiedledger.application.ImportIntakeSessionIdentity
 import com.unifiedledger.application.ImportPlatformKind
+import com.unifiedledger.application.ImportRequestId
+import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
+import com.unifiedledger.application.QueryImportCandidateDetail
+import com.unifiedledger.application.QueryImportDuplicateReviews
+import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
@@ -84,6 +91,7 @@ import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
 import com.unifiedledger.data.SqlDelightEntryPreferenceStore
+import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
@@ -98,6 +106,8 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.ImportDuplicateReviewIds
+import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
@@ -488,15 +498,24 @@ internal fun buildLedgerGraph(
             executeIntake = executeImportIntake,
             candidateGeneratedAt = { ledgerClock.now().toString() },
         )
-    // The desktop pick port: the real Swing chooser dialog plus FileInputStream; results
-    // fail loudly until P7-04.C wires the shared coordinator channel — nothing can launch a
-    // pick before that wiring, so the placeholder is unreachable in this batch.
+    // The desktop pick port: the real Swing chooser dialog plus FileInputStream. P7-04.C wires the
+    // results into the shared channel; the modal chooser blocks the calling (UI event handler)
+    // thread until closed, so onResult delivers on the UI thread (the frozen disclosure).
+    val importPickChannel = ImportFilePickResultChannel()
     val importFilePickPort =
         DesktopImportFilePickPort(
-            onResult = { error("desktop import pick result channel is not wired until P7-04.C") },
+            onResult = importPickChannel::deliver,
             showOpenFileChooser = ::showSwingOpenFileChooser,
             openInputStream = { file -> FileInputStream(file) },
         )
+    // P7-04.C (D-146; spec sections 4.5/6.1): the import review read surface over the same
+    // database — the adapter, the three read use cases, and the core duplicate-review use case
+    // (commit port = the spine store) with a per-intent UUIDv7 id mint: a fresh
+    // requestId/reviewId/historyId triple for every review intent (R-Q09-2; claim-gated,
+    // replay/conflict paths never consume ids).
+    val importReviewReadAdapter = SqlDelightImportReviewReadAdapter(database)
+    val importReviewIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importDuplicateReview = ReviewImportDuplicateCandidate(commitPort = importSpineStore)
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -544,6 +563,20 @@ internal fun buildLedgerGraph(
             importFileIntake = importFileIntake,
             importPlatformKind = ImportPlatformKind.DESKTOP,
             importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P7-04.C: the review read surface + the duplicate-review use case + its id mint +
+            // the shared pick-result channel (the Swing onResult above delivers into it).
+            baseQueryImportReviewRows = QueryImportReviewRows(importReviewReadAdapter),
+            baseQueryImportCandidateDetail = QueryImportCandidateDetail(importReviewReadAdapter),
+            baseQueryImportDuplicateReviews = QueryImportDuplicateReviews(importReviewReadAdapter),
+            importDuplicateReview = importDuplicateReview,
+            importDuplicateReviewIds = {
+                ImportDuplicateReviewIds(
+                    ImportRequestId(importReviewIdGenerator.next()),
+                    ImportDuplicateReviewId(importReviewIdGenerator.next()),
+                    ImportStatusHistoryId(importReviewIdGenerator.next()),
+                )
+            },
+            importPickResultChannel = importPickChannel,
         )
 
     return DesktopLedgerGraph(

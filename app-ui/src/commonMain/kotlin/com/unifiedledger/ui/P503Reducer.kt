@@ -76,6 +76,7 @@ class P503ReducerImpl(
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
+            is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -128,6 +129,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed before the overview exists (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -312,6 +330,58 @@ class P503ReducerImpl(
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
                     -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state)
                 }
+            // ---- P7-04.C import review transitions (D-146; spec table 6.2a) ----
+            // Request-intent events: the effect is the host action (launching the platform picker /
+            // re-reading the list); the reducer keeps the state (不切态), so the reducer-observable
+            // transition equals the absorbed columns — the coordinator tests pin the host action.
+            is P503UiEvent.StartImportFilePick,
+            P503UiEvent.RefreshImportReview,
+            -> state
+            // Host-channel pick events: absorbed in every state (the pick itself never switches
+            // state; the pipeline result arrives as ImportFileIntakeResult).
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            -> state
+            is P503UiEvent.ImportFileIntakeResult -> reduceImportFileIntakeResult(state, event)
+            is P503UiEvent.ImportReviewResult -> reduceImportReviewResult(state, event)
+            is P503UiEvent.SelectImportCandidate ->
+                // Effect (the UI affords it only on IMPORT rows): enter the detail with the exact
+                // overview preserved as the back-target payload and the same candidate's in-session
+                // decision draft restored (spec section 6.2 表单字段保留).
+                P503AppState.ImportCandidateDetail(
+                    overview = state,
+                    candidateId = event.candidateId,
+                    detail = event.detail,
+                    duplicates = event.duplicates,
+                    form = state.importReview?.decisionDrafts?.get(event.candidateId) ?: ImportDecisionDraft(),
+                )
+            // No detail is open on the overview; the form belongs to the detail state.
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            // The review submit lives only in the detail (table 6.2a: absorbed on the overview).
+            is P503UiEvent.SubmitImportDuplicateReview,
+            -> state
+            is P503UiEvent.ToggleImportCandidateSelection -> toggleImportSelectionOnOverview(state, event.candidateId)
+            is P503UiEvent.ImportDuplicateReviewResult -> reduceImportDuplicateReviewResultOnOverview(state, event)
+            is P503UiEvent.StartImportDuplicateGroupDisposition ->
+                state.importReview?.let { view ->
+                    state.copy(
+                        importReview =
+                            view.copy(
+                                groupDisposition =
+                                    ImportDuplicateGroupDispositionPage(
+                                        inputRef = event.inputRef,
+                                        items = event.items.map { ImportDuplicateGroupItemState(it) },
+                                    ),
+                            ),
+                    )
+                } ?: state
+            is P503UiEvent.ImportDuplicateGroupDispositionResult -> reduceImportGroupDispositionResult(state, event)
+            P503UiEvent.CloseImportDuplicateGroupDisposition ->
+                state.importReview?.let { view ->
+                    state.copy(importReview = view.copy(groupDisposition = null))
+                } ?: state
             // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
@@ -383,6 +453,24 @@ class P503ReducerImpl(
             is P503UiEvent.SelectTransaction,
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
+            // P7-04.C: the import review events are absorbed inside the read-only detail (table
+            // 6.2a; the detail has no import affordances).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             else -> unhandled(state, event)
         }
@@ -418,6 +506,337 @@ class P503ReducerImpl(
                 }
         }
         return if (shifted in state.selectableMonths) shifted else null
+    }
+
+    /**
+     * P7-04.C: applies one pick pipeline result on the overview (table 6.2a). The session summary
+     * always replaces the previous one; a successful intake replaces the candidate rows while a
+     * typed failure keeps the previous list and surfaces the explicit failure banner (失败条 +
+     * 保留上一清单); a successful intake whose list re-read failed keeps the previous rows and
+     * surfaces the typed read-failure banner (F1). ANY intake result landing also closes an open
+     * group disposition page (P704C-SPEC-08: the page's session handle is superseded by the new
+     * pick even on a failed pipeline — the old handle's page must not coexist with the new
+     * session summary).
+     */
+    private fun reduceImportFileIntakeResult(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ImportFileIntakeResult,
+    ): P503AppState {
+        val view = state.importReview ?: ImportReviewView()
+        val outcome = event.session.outcome
+        val success =
+            outcome is ImportIntakePipelineOutcome.Intaken &&
+                outcome.outcome !is com.unifiedledger.application.ImportFileIntakeOutcome.Rejected
+        val nextRows =
+            if (success && event.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
+                event.rows.rows
+            } else {
+                view.rows
+            }
+        val notice =
+            when {
+                !success -> ImportReviewNotice.IntakeFailed(event.session.outcome)
+                event.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> ImportReviewNotice.ReviewReadFailed
+                else -> null
+            }
+        return state.copy(
+            importReview =
+                view.copy(
+                    rows = nextRows,
+                    lastIntakeSession = event.session,
+                    notice = notice,
+                    groupDisposition = null,
+                ),
+        )
+    }
+
+    /**
+     * P7-04.C: the review-list read result (table 6.2a). Success replaces the rows and clears the
+     * banner; a typed failure keeps the previous successful list and surfaces the explicit
+     * failure banner (读失败不篡改， F1). A first-ever failure still materializes the projection so
+     * the banner has a place to live — the screen never renders a bare empty list next to a
+     * failure notice.
+     */
+    private fun reduceImportReviewResult(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ImportReviewResult,
+    ): P503AppState {
+        val view = state.importReview ?: ImportReviewView()
+        return when (val result = event.result) {
+            is com.unifiedledger.application.ImportReviewRowsResult.Rows ->
+                state.copy(importReview = view.copy(rows = result.rows, notice = null))
+            com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                state.copy(importReview = view.copy(notice = ImportReviewNotice.ReviewReadFailed))
+        }
+    }
+
+    /**
+     * P7-04.C: one selection toggle under the section 3.3.1 gate (先审后勾， R-Q10-1/R-Q10-3). A row
+     * whose classification is not selectable absorbs the toggle, as does an unknown candidate id
+     * or a missing projection; the returned overview is the SAME instance on every absorbed path
+     * so the detail state can detect "no change" by reference.
+     */
+    private fun toggleImportSelectionOnOverview(
+        state: P503AppState.OverviewEmpty,
+        candidateId: com.unifiedledger.application.ImportCandidateId,
+    ): P503AppState.OverviewEmpty {
+        val view = state.importReview ?: return state
+        val row = view.rows.firstOrNull { it.candidateId == candidateId } ?: return state
+        if (!classifyImportCandidate(row).selectable) return state
+        val next =
+            if (candidateId in view.selectedCandidateIds) {
+                view.selectedCandidateIds - candidateId
+            } else {
+                view.selectedCandidateIds + candidateId
+            }
+        return state.copy(importReview = view.copy(selectedCandidateIds = next))
+    }
+
+    /**
+     * P7-04.C: the core duplicate-review result on the overview (the review was submitted inside
+     * the detail and the detail closed before the result arrived, or the group loop reported
+     * typed). Success refreshes the list (拒绝类型化呈现 otherwise); a list re-read failure keeps
+     * the previous rows plus the typed read-failure banner (F1).
+     */
+    private fun reduceImportDuplicateReviewResultOnOverview(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ImportDuplicateReviewResult,
+    ): P503AppState.OverviewEmpty {
+        val view = state.importReview ?: return state
+        val nextRows =
+            if (event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
+                event.refresh.rows.rows
+            } else {
+                view.rows
+            }
+        val notice =
+            when {
+                event.review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                    ImportReviewNotice.ReviewRejected(event.review.diagnostic.code)
+                event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                    ImportReviewNotice.ReviewReadFailed
+                else -> null
+            }
+        return state.copy(importReview = view.copy(rows = nextRows, notice = notice))
+    }
+
+    /**
+     * P7-04.C: the group disposition loop's completion on the open 整组确认页 (可见部分成功).
+     * Re-run idempotency (P704C-QUAL-01/SPEC-03): an item whose verdict is already
+     * [ImportDuplicateGroupItemResult.Reviewed] is never overwritten by a later result — the host
+     * loop never re-submits a Reviewed item, and this merge keeps the guard at the state layer too
+     * (a spurious late outcome for an already-succeeded item cannot relabel it 失败).
+     */
+    private fun reduceImportGroupDispositionResult(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ImportDuplicateGroupDispositionResult,
+    ): P503AppState {
+        val view = state.importReview ?: return state
+        val page = view.groupDisposition ?: return state
+        val updatedItems =
+            page.items.map { itemState ->
+                val outcome = event.outcomes.firstOrNull { it.duplicateCandidateId == itemState.item.duplicateCandidateId }
+                when {
+                    outcome == null -> itemState
+                    // 幂等：已成功判定不被后续结果覆写（已成功项不再被重提交）。
+                    itemState.outcome is ImportDuplicateGroupItemResult.Reviewed -> itemState
+                    else -> itemState.copy(outcome = outcome.result)
+                }
+            }
+        val nextRows =
+            if (event.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
+                event.rows.rows
+            } else {
+                view.rows
+            }
+        val notice =
+            if (event.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable) {
+                ImportReviewNotice.ReviewReadFailed
+            } else {
+                null
+            }
+        return state.copy(
+            importReview =
+                view.copy(
+                    rows = nextRows,
+                    notice = notice,
+                    groupDisposition = page.copy(items = updatedItems),
+                ),
+        )
+    }
+
+    /**
+     * P7-04.C: the import candidate detail state (spec sections 6.1/6.2). Only its designed
+     * events react: Close/Back return to the exact preserved IMPORT overview with the decision
+     * draft written back (SPEC:281/283), the form update is a pure draft write, the selection
+     * toggle applies the same section 3.3.1 gate on the carried overview, the review submit sets
+     * the in-flight marker (期间禁重复提交) when a reviewable target exists, and the review result
+     * refreshes the 详情内 duplicate state. Every pre-existing event is absorbed (新态不发起编辑/
+     * 管理/月度流) except `Exit`, which stays unlisted (ISE, spec section 6.3 / P7-02 §6.2b — the
+     * unlisted-combination discipline keeps a future event from being silently swallowed).
+     */
+    private fun reduceImportCandidateDetail(
+        state: P503AppState.ImportCandidateDetail,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CloseImportCandidateDetail -> closeImportCandidateDetail(state)
+            // SPEC:281: system back = close semantics (返回 OverviewEmpty(IMPORT) 保留清单/勾选集).
+            P503UiEvent.Back -> closeImportCandidateDetail(state)
+            is P503UiEvent.UpdateImportDecisionField ->
+                state.copy(form = state.form.withImportDecisionUpdate(event.update))
+            is P503UiEvent.ToggleImportCandidateSelection -> {
+                val row =
+                    (state.detail as? com.unifiedledger.application.ImportCandidateDetailResult.Found)
+                        ?.detail
+                        ?.row
+                val carried =
+                    if (row != null && row.candidateId == event.candidateId && classifyImportCandidate(row).selectable) {
+                        toggleImportSelectionOnOverview(state.overview, event.candidateId)
+                    } else {
+                        // 详情内勾选同门：the classification gate decides; unknown/unselectable absorbs.
+                        state.overview
+                    }
+                if (carried === state.overview) state else state.copy(overview = carried)
+            }
+            is P503UiEvent.SubmitImportDuplicateReview ->
+                when {
+                    // 期间禁重复提交：a duplicate submit while one review is in flight is absorbed.
+                    state.reviewPending -> state
+                    importDuplicateReviewTarget(state.duplicates) != null -> state.copy(reviewPending = true)
+                    // No reviewable target (nothing DEFERRED/EXACT_BUSINESS_TUPLE): absorbed.
+                    else -> state
+                }
+            is P503UiEvent.ImportDuplicateReviewResult -> {
+                val refreshedOverview =
+                    reduceImportDuplicateReviewResultOnOverview(
+                        state.overview,
+                        P503UiEvent.ImportDuplicateReviewResult(event.review, event.refresh),
+                    )
+                val detail = event.refresh.detail
+                val duplicates = event.refresh.duplicates
+                // Success clears any previous rejection banner (成功刷新详情重复状态); a typed
+                // rejection surfaces its code (拒绝类型化呈现); a re-read failure keeps the
+                // previous payloads and surfaces the typed read-failure banner (F1).
+                val notice =
+                    when {
+                        event.review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                            ImportReviewNotice.ReviewRejected(event.review.diagnostic.code)
+                        event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                            ImportReviewNotice.ReviewReadFailed
+                        else -> null
+                    }
+                state.copy(
+                    overview = refreshedOverview,
+                    detail = detail ?: state.detail,
+                    duplicates = duplicates ?: state.duplicates,
+                    reviewPending = false,
+                    notice = notice,
+                )
+            }
+            // The host-channel pick events, the pick pipeline result and the list refresh events
+            // are absorbed here (table 6.2a; 清单经详情关闭后刷新).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // A second SelectImportCandidate while a detail is open stays on the open detail
+            // (the UI affords no nested navigation).
+            is P503UiEvent.SelectImportCandidate,
+            // P7-02: the entry-foundation events are absorbed (the new state never starts an
+            // editor flow; §6.2a).
+            is P503UiEvent.SelectEntryType,
+            is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateReceivingAccount,
+            is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
+            // P7-01.D: the catalog management events are absorbed (新增入口仅存在于 overview).
+            is P503UiEvent.OpenAccountCreateDialog,
+            is P503UiEvent.OpenAccountRenameDialog,
+            is P503UiEvent.OpenCategoryGroupDialog,
+            is P503UiEvent.OpenCategoryAppendChildDialog,
+            is P503UiEvent.OpenCategoryRenameDialog,
+            is P503UiEvent.OpenCategoryDeleteDialog,
+            is P503UiEvent.ManageAccountActive,
+            is P503UiEvent.ManageCategoryActive,
+            is P503UiEvent.EnableCategoryGroup,
+            is P503UiEvent.UpdateCatalogFormText,
+            is P503UiEvent.UpdateCatalogFormSecondaryText,
+            is P503UiEvent.UpdateCatalogFormKind,
+            P503UiEvent.DismissCatalogDialog,
+            P503UiEvent.DismissCatalogNotice,
+            is P503UiEvent.CatalogCommandCompleted,
+            is P503UiEvent.CatalogSnapshotRefreshed,
+            // P7-03.C/D: the read-only ledger-view events are absorbed (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
+            // The remaining pre-existing events are absorbed too (既有事件在新态全部 absorbed，
+            // spec section 6.2): tab switching, the edit/submit flows and the async results all
+            // leave the import detail untouched.
+            is P503UiEvent.SelectTab,
+            P503UiEvent.StartNewExpense,
+            is P503UiEvent.UpdateAmount,
+            is P503UiEvent.UpdatePaymentAccount,
+            is P503UiEvent.UpdateCategory,
+            is P503UiEvent.UpdateOccurredAt,
+            is P503UiEvent.Continue,
+            P503UiEvent.Cancel,
+            P503UiEvent.Confirm,
+            P503UiEvent.RetrySubmission,
+            P503UiEvent.RetryRefresh,
+            P503UiEvent.RetryCommitStatusCheck,
+            P503UiEvent.AbandonConflict,
+            is P503UiEvent.SubmissionResult,
+            is P503UiEvent.CommitStatusResolved,
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P7-04.C: close/Back semantics (SPEC:281/283). The exact preserved overview returns with its
+     * list payload and selection set, and the current decision draft is written back into the
+     * carried projection so re-entering the same candidate keeps it within the session (进程重启
+     * 丢失可接受 — the drafts are session memory, never persisted).
+     */
+    private fun closeImportCandidateDetail(state: P503AppState.ImportCandidateDetail): P503AppState {
+        val view = state.overview.importReview ?: return state.overview
+        return state.overview.copy(
+            importReview = view.copy(decisionDrafts = view.decisionDrafts + (state.candidateId to state.form)),
+        )
     }
 
     private fun reduceEditing(
@@ -520,6 +939,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
@@ -591,6 +1027,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -649,6 +1102,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             else -> unhandled(state, event)
         }
@@ -916,6 +1386,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed in every transient state (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> current
             else -> unhandled(current, event)
         }
@@ -986,6 +1473,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -1061,6 +1565,23 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
             -> state
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
@@ -1113,6 +1634,23 @@ class P503ReducerImpl(
                     is P503UiEvent.SelectMonth,
                     is P503UiEvent.AnalysisMonthShift,
                     is P503UiEvent.MonthlyActivityResult,
+                    // P7-04.C: the import review events are absorbed here too (table 6.2a).
+                    is P503UiEvent.StartImportFilePick,
+                    is P503UiEvent.ImportFilePicked,
+                    P503UiEvent.ImportFilePickCancelled,
+                    is P503UiEvent.ImportFilePickFailed,
+                    is P503UiEvent.ImportFileIntakeResult,
+                    P503UiEvent.RefreshImportReview,
+                    is P503UiEvent.ImportReviewResult,
+                    is P503UiEvent.SelectImportCandidate,
+                    P503UiEvent.CloseImportCandidateDetail,
+                    is P503UiEvent.UpdateImportDecisionField,
+                    is P503UiEvent.ToggleImportCandidateSelection,
+                    is P503UiEvent.SubmitImportDuplicateReview,
+                    is P503UiEvent.ImportDuplicateReviewResult,
+                    is P503UiEvent.StartImportDuplicateGroupDisposition,
+                    is P503UiEvent.ImportDuplicateGroupDispositionResult,
+                    P503UiEvent.CloseImportDuplicateGroupDisposition,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -1174,6 +1712,23 @@ class P503ReducerImpl(
                     is P503UiEvent.SelectMonth,
                     is P503UiEvent.AnalysisMonthShift,
                     is P503UiEvent.MonthlyActivityResult,
+                    // P7-04.C: the import review events are absorbed here too (table 6.2a).
+                    is P503UiEvent.StartImportFilePick,
+                    is P503UiEvent.ImportFilePicked,
+                    P503UiEvent.ImportFilePickCancelled,
+                    is P503UiEvent.ImportFilePickFailed,
+                    is P503UiEvent.ImportFileIntakeResult,
+                    P503UiEvent.RefreshImportReview,
+                    is P503UiEvent.ImportReviewResult,
+                    is P503UiEvent.SelectImportCandidate,
+                    P503UiEvent.CloseImportCandidateDetail,
+                    is P503UiEvent.UpdateImportDecisionField,
+                    is P503UiEvent.ToggleImportCandidateSelection,
+                    is P503UiEvent.SubmitImportDuplicateReview,
+                    is P503UiEvent.ImportDuplicateReviewResult,
+                    is P503UiEvent.StartImportDuplicateGroupDisposition,
+                    is P503UiEvent.ImportDuplicateGroupDispositionResult,
+                    P503UiEvent.CloseImportDuplicateGroupDisposition,
                     -> state
                     else -> unhandled(state, event)
                 }

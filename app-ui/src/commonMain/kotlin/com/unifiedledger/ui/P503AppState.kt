@@ -29,6 +29,11 @@ import kotlin.time.Instant
  * monthly payload, and adds `TransactionDetail` (read-only, reached only from a HOME flow
  * row; spec section 6.1). The new events never throw in any state (table 6.2a); every
  * pre-existing unlisted combination stays ISE (G-B).
+ *
+ * P7-04.C (D-146) adds the IMPORT tab's [OverviewEmpty.importReview] projection and the
+ * [ImportCandidateDetail] state (reached only from an IMPORT list row). The import events are
+ * absorbed in every state outside their designed effects and never throw; every pre-existing
+ * unlisted combination — including `Exit` (spec section 6.3, P7-02 §6.2b) — stays unlisted.
  */
 sealed interface P503AppState {
     data object Ready : P503AppState
@@ -87,6 +92,14 @@ sealed interface P503AppState {
          * including all pre-P7-03 flows.
          */
         val monthlyReloadRequired: Boolean = false,
+        /**
+         * P7-04.C (D-146; spec section 6.1): the IMPORT tab's authoritative projection (candidate
+         * list through the section 3.3.1 classification matrix, selection set, in-session decision
+         * drafts, the most recent intake session summary and the typed failure banners). `null`
+         * before the first IMPORT load — the catalogSnapshot-style optional field keeps every
+         * pre-P7-04 constructor site compiling untouched.
+         */
+        val importReview: ImportReviewView? = null,
     ) : P503AppState
 
     data class Editing(
@@ -186,6 +199,27 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-04.C (D-146; spec sections 6.1/6.2): the import candidate detail state. Reached only
+     * from an IMPORT list row (仅 IMPORT 清单行可达). Carries the overview to return to (so
+     * CloseImportCandidateDetail/Back restore the exact IMPORT tab with its list payload,
+     * selection set and — written back on close — the same candidate's decision draft, spec
+     * section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail and
+     * duplicate-comparison payloads, the pure decision-form draft, the in-flight duplicate-review
+     * marker (期间禁重复提交) and the typed notice banner. The D-batch confirm affordances are
+     * deliberately absent from this state.
+     */
+    data class ImportCandidateDetail(
+        val overview: OverviewEmpty,
+        val candidateId: com.unifiedledger.application.ImportCandidateId,
+        val detail: com.unifiedledger.application.ImportCandidateDetailResult,
+        val duplicates: com.unifiedledger.application.ImportDuplicateReviewsResult,
+        val form: ImportDecisionDraft,
+        /** True while the host's duplicate-review use case call is in flight (duplicate submits absorbed). */
+        val reviewPending: Boolean = false,
+        val notice: ImportReviewNotice? = null,
+    ) : P503AppState
+
+    /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status
      * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
      * follow the InfrastructureFailure SUBMISSION precedent.
@@ -204,11 +238,15 @@ sealed interface P503AppState {
 /**
  * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an
  * authoritative refresh can always return the overview to the home tab.
+ *
+ * P7-04.C (D-146, R-13): the frozen three-tab contract (D-122) is extended by [IMPORT] as the
+ * fourth tab; the bottom-bar layout semantics are unchanged, only the tab item is added.
  */
 enum class P503Tab {
     HOME,
     ACCOUNTS,
     ANALYSIS,
+    IMPORT,
 }
 
 enum class InfrastructureFailureContext {

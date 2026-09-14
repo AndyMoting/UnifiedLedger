@@ -4,6 +4,7 @@ import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
+import kotlin.concurrent.Volatile
 
 /**
  * R1 (spec 6.2/7.3, D-027): a successful catalog command must refresh the authoritative read
@@ -95,6 +96,11 @@ internal class P503HostCoordinator(
     // P7-03.C: 本月 resolved by the host's reporting clock (R-Q06-2); null when the clock is
     // unusable, which still allows the initial request so the typed failure surfaces (R-Q06-4).
     private val currentMonth: () -> kotlinx.datetime.YearMonth? = { null },
+    // P7-04.C: the bounded read + intake pipeline the host runs for a picked file (spec sections
+    // 4.1/4.2/6.2); invoked at most once at a time (single flight, the checkCommitStatus
+    // precedent). The production host may instead act on the decision
+    // [handleImportPickResult] returns; the callback is the injection/counting seam.
+    private val onImportPickIntake: (PickedImportFile) -> Unit = {},
 ) {
     /** The transient-result instance whose automatic refresh has already been dispatched. */
     private var refreshAfterResultServed: P503AppState? = null
@@ -107,6 +113,38 @@ internal class P503HostCoordinator(
 
     /** P7-03.C: the effective month of the last monthly request (trigger (d) comparison). */
     private var monthlyLastEffectiveMonth: kotlinx.datetime.YearMonth? = null
+
+    /**
+     * P7-04.C (P704C-QUAL-02): an intake pipeline is currently running; a concurrent second pick
+     * is dropped. `@Volatile`: the flag is written from the pipeline's completion hop and read on
+     * the pick-callback thread — after the P704C-SPEC-01/QUAL-02 threading fix both are the UI
+     * thread, but the annotation keeps the single-flight contract safe under any future
+     * background access.
+     */
+    @Volatile
+    private var importIntakeInFlight = false
+
+    /**
+     * P7-04.C: a duplicate-review submission is currently in flight; duplicates are dropped
+     * (期间禁重复提交). `@Volatile` for the same reason as [importIntakeInFlight].
+     */
+    @Volatile
+    private var importDuplicateReviewInFlight = false
+
+    /**
+     * P7-04.C (P704C-SPEC-01/QUAL-02): the group-disposition enumeration (the per-candidate
+     * duplicate-review reads behind the 整组确认页) is currently running; a concurrent second
+     * enumeration is dropped (double-tap interleaving guard).
+     */
+    @Volatile
+    private var importGroupEnumerationInFlight = false
+
+    /**
+     * P7-04.C (P704C-SPEC-01/QUAL-02): the group-disposition per-item review loop is currently
+     * running; a concurrent second loop is dropped (double-tap interleaving guard).
+     */
+    @Volatile
+    private var importGroupDispositionInFlight = false
 
     /**
      * State-driven decision, called at every `LaunchedEffect(state)` evaluation (and at the
@@ -236,6 +274,108 @@ internal class P503HostCoordinator(
         }
         return null
     }
+
+    // ---- P7-04.C import host decisions (D-146; spec sections 4.1/4.2/6.2) ----
+
+    /**
+     * The pick→intake decision skeleton (table 6.2a: the pick channel events are absorbed by the
+     * reducer; this method owns what the HOST does). A picked file starts the bounded-read +
+     * intake pipeline exactly once at a time — a concurrent second pick is dropped
+     * ([ImportPickIntakeDecision.AlreadyInFlight], the single-flight marker the host clears via
+     * [importIntakeCompleted]); a cancellation or a typed platform failure starts nothing (zero
+     * diagnostics on a cancellation, spec 4.1.4).
+     *
+     * P704C-QUAL-03: the AlreadyInFlight drop is practically unreachable in the product wiring
+     * (SAF is single-shot and the desktop chooser is modal, so two picks cannot overlap); it is
+     * kept as the structural single-flight guard, not as a user-facing path.
+     */
+    internal fun handleImportPickResult(result: ImportFilePickResult): ImportPickIntakeDecision =
+        when (result) {
+            is ImportFilePickResult.Picked ->
+                if (importIntakeInFlight) {
+                    ImportPickIntakeDecision.AlreadyInFlight
+                } else {
+                    importIntakeInFlight = true
+                    onImportPickIntake(result.file)
+                    ImportPickIntakeDecision.StartIntake(result.file)
+                }
+            ImportFilePickResult.Cancelled -> ImportPickIntakeDecision.NoPipeline
+            is ImportFilePickResult.Failed -> ImportPickIntakeDecision.NoPipeline
+        }
+
+    /** Clears the single-flight marker once the pipeline result has been dispatched. */
+    internal fun importIntakeCompleted() {
+        importIntakeInFlight = false
+    }
+
+    /**
+     * The duplicate-review single-flight (期间禁重复提交): one core review submission may be in
+     * flight; duplicate evaluations are dropped until [importDuplicateReviewCompleted] clears the
+     * marker. Returns whether this evaluation started the submission.
+     */
+    internal fun submitImportDuplicateReviewOnce(action: () -> Unit): Boolean {
+        if (importDuplicateReviewInFlight) return false
+        importDuplicateReviewInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the review single-flight marker once the review result has been dispatched. */
+    internal fun importDuplicateReviewCompleted() {
+        importDuplicateReviewInFlight = false
+    }
+
+    /**
+     * P7-04.C (P704C-SPEC-01/QUAL-02): the group-enumeration single flight — the per-candidate
+     * duplicate-review reads behind the 整组确认页 run at most once at a time; a duplicate
+     * evaluation (double tap) is dropped until [importGroupEnumerationCompleted] clears the
+     * marker. Returns whether this evaluation started the enumeration.
+     */
+    internal fun startImportDuplicateGroupDispositionOnce(action: () -> Unit): Boolean {
+        if (importGroupEnumerationInFlight) return false
+        importGroupEnumerationInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the group-enumeration single-flight marker once its outcome has been dispatched. */
+    internal fun importGroupEnumerationCompleted() {
+        importGroupEnumerationInFlight = false
+    }
+
+    /**
+     * P7-04.C (P704C-SPEC-01/QUAL-02): the group-disposition per-item review loop single flight
+     * — the sequential core review loop runs at most once at a time; a duplicate evaluation
+     * (double tap) is dropped until [importGroupDispositionCompleted] clears the marker. Returns
+     * whether this evaluation started the loop.
+     */
+    internal fun confirmImportDuplicateGroupDispositionOnce(action: () -> Unit): Boolean {
+        if (importGroupDispositionInFlight) return false
+        importGroupDispositionInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the group-disposition loop single-flight marker once its result has been dispatched. */
+    internal fun importGroupDispositionCompleted() {
+        importGroupDispositionInFlight = false
+    }
+}
+
+/**
+ * P7-04.C: the host decision for one platform pick result. [StartIntake] runs the bounded read +
+ * intake pipeline (the injected callback), [AlreadyInFlight] drops a concurrent second pick, and
+ * [NoPipeline] means the pick itself resolved (cancellation or typed platform failure) with zero
+ * pipeline work.
+ */
+internal sealed interface ImportPickIntakeDecision {
+    data class StartIntake(
+        val file: PickedImportFile,
+    ) : ImportPickIntakeDecision
+
+    data object AlreadyInFlight : ImportPickIntakeDecision
+
+    data object NoPipeline : ImportPickIntakeDecision
 }
 
 /**

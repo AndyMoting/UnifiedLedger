@@ -378,6 +378,146 @@ sealed interface P503UiEvent {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
     ) : P503UiEvent
 
+    // ---- P7-04.C import review events (D-146; spec sections 3.3.1/6.1/6.2, table 6.2a) ----
+    // Discipline: every new event is absorbed in every state outside its designed effect and
+    // never throws anywhere (table 6.2a); every pre-existing unlisted combination stays ISE (G-B).
+
+    /**
+     * Starts one platform file pick for the matrix format. Effect on OverviewEmpty is the host's
+     * pick launch (经宿主发起平台选择器；不切态 — the reducer state itself is unchanged, the
+     * coordinator/testable host action owns the effect); absorbed everywhere else.
+     */
+    data class StartImportFilePick(
+        val format: com.unifiedledger.application.ImportFormatId,
+    ) : P503UiEvent
+
+    /**
+     * Host-channel pick events (table 6.2a: absorbed in EVERY state — the pick itself never
+     * switches state). A [ImportFilePicked] file's bounded read + intake run off the UI thread and
+     * the result flows back as [ImportFileIntakeResult]; [ImportFilePickCancelled] is the user's
+     * cancellation (non-failure); [ImportFilePickFailed] is the typed platform launch failure.
+     */
+    data class ImportFilePicked(
+        val file: PickedImportFile,
+    ) : P503UiEvent
+
+    data object ImportFilePickCancelled : P503UiEvent
+
+    data class ImportFilePickFailed(
+        val reason: ImportFilePickFailure,
+    ) : P503UiEvent
+
+    /**
+     * The pick pipeline's result (OverviewEmpty effect: the session summary replaces the previous
+     * one; a successful intake replaces the candidate list, a typed failure keeps the previous
+     * list and surfaces the explicit failure banner). Absorbed everywhere else.
+     */
+    data class ImportFileIntakeResult(
+        val session: ImportIntakeSessionSummary,
+        val rows: com.unifiedledger.application.ImportReviewRowsResult,
+    ) : P503UiEvent
+
+    /**
+     * Review-list refresh request intent. Effect on OverviewEmpty is the host's re-read (the
+     * reducer state itself is unchanged; the result lands as [ImportReviewResult]); absorbed
+     * everywhere else.
+     */
+    data object RefreshImportReview : P503UiEvent
+
+    /**
+     * The review-list read result (OverviewEmpty effect: success replaces the rows and clears the
+     * banner; a typed failure keeps the previous successful list and surfaces the explicit
+     * failure banner, F1). Absorbed everywhere else (the list refreshes after the detail closes).
+     */
+    data class ImportReviewResult(
+        val result: com.unifiedledger.application.ImportReviewRowsResult,
+    ) : P503UiEvent
+
+    /**
+     * Opens the import candidate detail from an IMPORT list row (仅 IMPORT 清单行可达； the
+     * SelectTransaction precedent — the reducer effect is unconditional, the UI affordance
+     * restricts). [detail] and [duplicates] are the host-resolved typed payloads; the reducer
+     * restores the same candidate's in-session decision draft when one exists.
+     */
+    data class SelectImportCandidate(
+        val candidateId: com.unifiedledger.application.ImportCandidateId,
+        val detail: com.unifiedledger.application.ImportCandidateDetailResult,
+        val duplicates: com.unifiedledger.application.ImportDuplicateReviewsResult,
+    ) : P503UiEvent
+
+    /**
+     * Closes the detail back to the exact preserved IMPORT overview (list payload and selection
+     * kept; the decision draft written back so a re-enter of the same candidate keeps it,
+     * spec section 6.2 表单字段保留). Effect only on ImportCandidateDetail; absorbed everywhere
+     * else.
+     */
+    data object CloseImportCandidateDetail : P503UiEvent
+
+    /**
+     * One typed decision-field update of the detail's pure form (表单为纯 reducer 草稿). Effect
+     * only on ImportCandidateDetail; absorbed everywhere else.
+     */
+    data class UpdateImportDecisionField(
+        val update: ImportDecisionFieldUpdate,
+    ) : P503UiEvent
+
+    /**
+     * Toggles one candidate in the batch-selection set under the section 3.3.1 gate (先审后勾：
+     * a non-selectable classification absorbs the toggle; unknown ids absorb). Effect on
+     * OverviewEmpty and ImportCandidateDetail (详情内勾选同门 — the detail updates its carried
+     * overview's selection); absorbed everywhere else.
+     */
+    data class ToggleImportCandidateSelection(
+        val candidateId: com.unifiedledger.application.ImportCandidateId,
+    ) : P503UiEvent
+
+    /**
+     * Submits one duplicate review to the core use case (decision set frozen to the three values,
+     * P704SPEC-09; the target is the detail's first unreviewed EXACT_BUSINESS_TUPLE/DEFERRED row).
+     * Effect only on ImportCandidateDetail (the host calls the core use case and returns
+     * [ImportDuplicateReviewResult]; a duplicate submit while one is in flight is absorbed —
+     * 期间禁重复提交); absorbed everywhere else.
+     */
+    data class SubmitImportDuplicateReview(
+        val decision: ImportDuplicateReviewUiDecision,
+        val reasonToken: String,
+    ) : P503UiEvent
+
+    /**
+     * The core duplicate-review result plus the host's post-review re-read (OverviewEmpty and
+     * ImportCandidateDetail effect: success refreshes the list/详情重复状态; a typed rejection is
+     * presented typed with zero writes). Absorbed everywhere else.
+     */
+    data class ImportDuplicateReviewResult(
+        val review: com.unifiedledger.application.ImportDuplicateReviewResult,
+        val refresh: ImportDuplicateReviewRefresh,
+    ) : P503UiEvent
+
+    /**
+     * P704SPEC-12 registered mechanism: opens the 整组确认页 for the current pick session's
+     * suspected-duplicate group. The host resolved the per-item enumeration (each item one
+     * duplicate candidate with its privacy-safe comparison snapshot); the page's confirm action
+     * authorizes the per-item sequential core review loop (逐项独立 requestId/reviewId、可见部分
+     * 成功、已成功项经组重算幂等不重复处置). Effect only on OverviewEmpty; absorbed everywhere else.
+     */
+    data class StartImportDuplicateGroupDisposition(
+        val inputRef: String,
+        val items: List<ImportDuplicateGroupDispositionItem>,
+    ) : P503UiEvent
+
+    /**
+     * The group disposition loop's completion: the per-item outcomes plus the refreshed list
+     * (OverviewEmpty effect; a list re-read failure keeps the previous rows and surfaces the
+     * typed banner, F1). Absorbed everywhere else.
+     */
+    data class ImportDuplicateGroupDispositionResult(
+        val outcomes: List<ImportDuplicateGroupItemOutcome>,
+        val rows: com.unifiedledger.application.ImportReviewRowsResult,
+    ) : P503UiEvent
+
+    /** Closes the group disposition page (already-disposed items stay disposed core-side). */
+    data object CloseImportDuplicateGroupDisposition : P503UiEvent
+
     // ---- async result events ----
     data class InitialLoadResult(
         val currentState: LedgerCurrentState,

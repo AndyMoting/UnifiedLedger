@@ -3,8 +3,10 @@ package com.unifiedledger.ui
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 
 /**
  * P7-04.A L0 bounded-read helper tests (D-146 R-Q08-1/R-Q08-2, spec section 4.1).
@@ -215,5 +217,33 @@ class ImportFilePickBoundedReadTest {
         assertEquals(ImportPickReadFailure.STREAM_READ_FAILED, failed.reason)
         assertEquals(1, readCalls)
         assertEquals(true, closed)
+    }
+
+    /**
+     * AB-CLI-QUAL-06: an `Error` thrown by the read path (OOM, linkage, ...) still propagates
+     * (never swallowed into a typed failure) but the close has already been attempted — the
+     * platform resource is not leaked. A close `Exception` under the same `Error` is captured
+     * into `closeFailed` so it cannot mask the propagating primary `Error`.
+     */
+    @Test
+    fun readPathErrorStillClosesTheSourceAndPropagates() {
+        val readError = AssertionError("synthetic read-path Error")
+        var closeAttempted = false
+        var closeFailureCount = 0
+        val raw =
+            ImportPickRawRead(
+                read = { throw readError },
+                close = {
+                    closeAttempted = true
+                    if (closeFailureCount == 0) {
+                        closeFailureCount += 1
+                        throw IllegalStateException("synthetic close failure under the Error")
+                    }
+                },
+            )
+
+        val thrown = assertFailsWith<AssertionError> { readImportPickBounded(sizeBytes = null) { raw } }
+        assertSame(readError, thrown)
+        assertEquals(true, closeAttempted)
     }
 }

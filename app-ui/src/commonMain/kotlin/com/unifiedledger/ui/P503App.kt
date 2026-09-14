@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,14 @@ import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateStatus
+import com.unifiedledger.application.ImportFileIntakeInput
+import com.unifiedledger.application.ImportFormatCapabilities
+import com.unifiedledger.application.ImportFormatId
+import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.LedgerEntryRow
@@ -79,6 +88,7 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.TransactionId
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
@@ -189,6 +199,14 @@ fun P503App(
     var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
     var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
     val ledgerViewWired = facade.queryMonthlyActivity != null || facade.queryLedgerEntryRows != null
+    // P7-04.C: the matrix format of the pick currently in flight. PickedImportFile deliberately
+    // carries no format (frozen shape, spec 4.1.1), so the host remembers the launched format and
+    // consumes the slot when the picked result arrives (one pick at a time: SAF is single-shot and
+    // the desktop chooser is modal).
+    var pendingImportFormat by remember { mutableStateOf<ImportFormatId?>(null) }
+    // P7-04.C: the decision-form validation over the shared parse facade (P503DraftValidation
+    // pattern; the detail screen renders its one-shot errors).
+    val importDecisionValidation = remember(facade) { P503ImportDecisionValidation(facade.parseAmount) }
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -724,6 +742,289 @@ fun P503App(
         coordinator.decideMonthly(state)
     }
 
+    // ---------------------------------------------------------------- P7-04.C import host surface
+
+    /** P7-04.C: dispatches the request intent, then launches the platform picker (不切态). */
+    fun startImportFilePick(format: ImportFormatId) {
+        dispatch(P503UiEvent.StartImportFilePick(format))
+        val port = facade.importFilePickPort ?: return
+        val descriptor = ImportFormatCapabilities.byIdentifier(format)
+        pendingImportFormat = format
+        port.launch(ImportFilePickRequest(descriptor.identifier, descriptor.mimeFilters))
+    }
+
+    /**
+     * P7-04.C (P704C-SPEC-01/QUAL-02): the pick→intake pipeline (spec 4.1.2): the L0 bounded
+     * read, the intake and the list re-read run OFF the UI thread (`Dispatchers.Default` — the
+     * only non-UI dispatcher commonMain can name; the desktop modal chooser itself already
+     * blocked the UI thread inside `launch`, which is the registered frozen disclosure). The
+     * result is then dispatched back ON the composition's main dispatcher (the nested
+     * `scope.launch` hop): every existing async dispatch point is serial on the main dispatcher,
+     * and `dispatch` is a non-atomic read-modify-write — a Default-thread dispatch interleaved
+     * with main-thread user events could drop a transition. The session identity is minted per
+     * pick (`ImportIntakeSessionIdentity.forFilePick`, R-Q09-1) and the pipeline result returns
+     * as one `ImportFileIntakeResult` with the re-read review list.
+     */
+    fun runImportIntakePipeline(file: PickedImportFile) {
+        val format = pendingImportFormat
+        val intake = facade.importFileIntake
+        val platform = facade.importPlatformKind
+        val session = facade.importIntakeSessionFactory()
+        if (format == null || intake == null || platform == null || session == null) {
+            // No pipeline can run (unwired surface or a lost format slot): release the coordinator's
+            // single-flight slot so a later pick is not permanently blocked.
+            coordinator.importIntakeCompleted()
+            return
+        }
+        pendingImportFormat = null
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                when (val read = file.readBoundedBytes()) {
+                    is BoundedFileRead.Bytes ->
+                        ImportIntakePipelineOutcome.Intaken(
+                            intake.intake(ImportFileIntakeInput(format, platform, session, read.bytes)),
+                        )
+                    is BoundedFileRead.ExceedsLimit -> ImportIntakePipelineOutcome.ReadExceedsLimit(read.actualBytes)
+                    is BoundedFileRead.ReadFailed -> ImportIntakePipelineOutcome.ReadFailed(read.reason)
+                }
+            val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
+            // Back on the composition's (main) dispatcher: the single-flight slot is released and
+            // the event is dispatched serially with every other main-thread dispatch.
+            scope.launch {
+                coordinator.importIntakeCompleted()
+                dispatch(
+                    P503UiEvent.ImportFileIntakeResult(
+                        ImportIntakeSessionSummary(
+                            displayName = file.displayName,
+                            inputRef = session.inputRef,
+                            outcome = outcome,
+                        ),
+                        rows,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * P7-04.C: one platform pick result (table 6.2a — the channel events are reducer-absorbed; this
+     * handler owns the host action). A picked file starts the single-flight bounded-read + intake
+     * pipeline; a cancellation or a typed platform failure starts nothing.
+     */
+    fun handleImportPickResult(result: ImportFilePickResult) {
+        when (result) {
+            is ImportFilePickResult.Picked -> dispatch(P503UiEvent.ImportFilePicked(result.file))
+            ImportFilePickResult.Cancelled -> dispatch(P503UiEvent.ImportFilePickCancelled)
+            is ImportFilePickResult.Failed -> dispatch(P503UiEvent.ImportFilePickFailed(result.reason))
+        }
+        when (val decision = coordinator.handleImportPickResult(result)) {
+            is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file)
+            ImportPickIntakeDecision.AlreadyInFlight,
+            ImportPickIntakeDecision.NoPipeline,
+            -> Unit
+        }
+    }
+
+    /**
+     * P7-04.C: re-reads the ledger-scoped review list and returns it as
+     * [P503UiEvent.ImportReviewResult] (read off the UI thread, dispatched back on the main
+     * dispatcher — P704C-SPEC-01/QUAL-02).
+     */
+    fun requestImportReview() {
+        dispatch(P503UiEvent.RefreshImportReview)
+        val query = facade.queryImportReviewRows ?: return
+        scope.launch(Dispatchers.Default) {
+            val result = query.query(facade.ledgerId)
+            scope.launch { dispatch(P503UiEvent.ImportReviewResult(result)) }
+        }
+    }
+
+    /** P7-04.C: reads the candidate detail + duplicate comparison (off the UI thread), then opens the detail state (main dispatcher). */
+    fun selectImportCandidate(candidateId: ImportCandidateId) {
+        val detailQuery = facade.queryImportCandidateDetail ?: return
+        val duplicatesQuery = facade.queryImportDuplicateReviews ?: return
+        scope.launch(Dispatchers.Default) {
+            val detail = detailQuery.query(facade.ledgerId, candidateId)
+            val duplicates = duplicatesQuery.query(facade.ledgerId, candidateId)
+            scope.launch { dispatch(P503UiEvent.SelectImportCandidate(candidateId, detail, duplicates)) }
+        }
+    }
+
+    /**
+     * P7-04.C: submits one duplicate review to the core use case (spec sections 3.2.1/6.2). The
+     * request shape follows the frozen core contract: candidate id + expected fingerprint from
+     * the detail's first unreviewed comparison row, the frozen three-value decision set, the fixed
+     * reason token/reviewer reference, `reviewedAt`/`generatedAt` sampled once from the injected
+     * LedgerClock (Q09.4 — a review is a processing/audit time, never a source time), and a fresh
+     * requestId/reviewId/historyId UUIDv7 triple per intent (claim-gated; replay/conflict paths
+     * never consume ids). The result returns with the refreshed list/detail/duplicates.
+     */
+    fun submitImportDuplicateReview(decision: ImportDuplicateReviewUiDecision) {
+        val detailState = latestState.value as? P503AppState.ImportCandidateDetail ?: return
+        val target = importDuplicateReviewTarget(detailState.duplicates) ?: return
+        val reviewUseCase = facade.importDuplicateReview ?: return
+        val ids = facade.importDuplicateReviewIds() ?: return
+        val now = facade.ledgerClock.now().toString()
+        val request =
+            ImportDuplicateReviewRequest(
+                identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
+                candidateId = target.duplicateCandidateId,
+                expectedComparisonFingerprint = target.comparisonFingerprint,
+                decision = decision.coreStatus,
+                reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
+                reviewedAt = now,
+                reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
+                generatedAt = now,
+                reviewId = ids.reviewId,
+                historyId = ids.historyId,
+            )
+        // Single flight (期间禁重复提交): the reducer's reviewPending marker absorbs duplicate
+        // events; the coordinator guard blocks a duplicate host submission.
+        coordinator.submitImportDuplicateReviewOnce {
+            scope.launch(Dispatchers.Default) {
+                val review = reviewUseCase.execute(request)
+                val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                val detail = facade.queryImportCandidateDetail?.query(facade.ledgerId, detailState.candidateId)
+                val duplicates = facade.queryImportDuplicateReviews?.query(facade.ledgerId, detailState.candidateId)
+                // Back on the main dispatcher: release the slot and dispatch serially (P704C-SPEC-01/QUAL-02).
+                scope.launch {
+                    coordinator.importDuplicateReviewCompleted()
+                    dispatch(P503UiEvent.ImportDuplicateReviewResult(review, ImportDuplicateReviewRefresh(rows, detail, duplicates)))
+                }
+            }
+        }
+    }
+
+    /**
+     * P7-04.C (P704SPEC-12): opens the 整组确认页 by enumerating the current pick session's
+     * suspected-duplicate group. The enumeration decision itself is the pure, JVM-tested
+     * [enumerateImportDuplicateGroupItems] (P704C-SPEC-05): per candidate every
+     * EXACT_BUSINESS_TUPLE/DEFERRED row (subject handle = the session handle) becomes one item
+     * carrying its privacy-safe comparison snapshot, and any typed read failure aborts the
+     * enumeration with the typed list-failure banner (never a silently partial group). The
+     * enumeration is single-flight; the outcome is dispatched back on the main dispatcher.
+     */
+    fun startImportDuplicateGroupDisposition() {
+        val overviewState = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val view = overviewState.importReview ?: return
+        val sessionInputRef = view.lastIntakeSession?.inputRef ?: return
+        val reviewQuery = facade.queryImportDuplicateReviews ?: return
+        // P704C-SPEC-01/QUAL-02: the enumeration is single-flight — a double tap must not
+        // interleave two enumerations (two Start events would race the page state).
+        coordinator.startImportDuplicateGroupDispositionOnce {
+            scope.launch(Dispatchers.Default) {
+                // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision — any
+                // typed duplicate-review read failure aborts wholesale (never a silent partial
+                // group) and the typed list-failure banner is surfaced instead.
+                val enumeration =
+                    enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                        reviewQuery.query(facade.ledgerId, candidateId)
+                    }
+                // Back on the main dispatcher: release the slot and dispatch serially.
+                scope.launch {
+                    coordinator.importGroupEnumerationCompleted()
+                    when (enumeration) {
+                        ImportDuplicateGroupEnumeration.ReadFailed ->
+                            dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
+                        is ImportDuplicateGroupEnumeration.Ready ->
+                            // An empty Ready is the defensive no-op path (the affordance only
+                            // appears for a non-empty row-level group).
+                            if (enumeration.items.isNotEmpty()) {
+                                dispatch(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, enumeration.items))
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * P7-04.C (P704SPEC-12, spec section 3.3.1): the batch disposition loop — one independent core
+     * review request per item (fresh ids per intent, claim-gated, replayable), strictly sequential,
+     * one item's typed rejection never stops the others (可见部分成功). The loop is single-flight
+     * (P704C-SPEC-01/QUAL-02: a double tap must not interleave two loops). Re-run idempotency
+     * (P704C-QUAL-01/SPEC-03): a re-run never re-submits an item whose page verdict is already
+     * [ImportDuplicateGroupItemResult.Reviewed] — re-submitting would draw the core's typed
+     * candidateNotPending rejection and could relabel a succeeded item 失败； already-Rejected
+     * items ARE re-attempted (their outcome updates with the fresh verdict). The Start affordance
+     * is where the group itself is recomputed from the fresh rows (already-disposed candidates
+     * left DEFERRED and no longer appear).
+     */
+    fun confirmImportDuplicateGroupDisposition() {
+        val page =
+            (latestState.value as? P503AppState.OverviewEmpty)
+                ?.importReview
+                ?.groupDisposition ?: return
+        val reviewUseCase = facade.importDuplicateReview ?: return
+        coordinator.confirmImportDuplicateGroupDispositionOnce {
+            scope.launch(Dispatchers.Default) {
+                val outcomes =
+                    page.items
+                        // 已成功项幂等不重复处置：never re-submit a Reviewed item on a re-run.
+                        .filter { it.outcome !is ImportDuplicateGroupItemResult.Reviewed }
+                        .map { itemState ->
+                            val item = itemState.item
+                            val ids = facade.importDuplicateReviewIds()
+                            if (ids == null) {
+                                ImportDuplicateGroupItemOutcome(
+                                    item.duplicateCandidateId,
+                                    // P704C-SPEC-07: a UI-owned guard code never borrows the core
+                                    // SPINE_ diagnostic namespace (the spine family must stay 原样).
+                                    ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"),
+                                )
+                            } else {
+                                val now = facade.ledgerClock.now().toString()
+                                val request =
+                                    ImportDuplicateReviewRequest(
+                                        identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
+                                        candidateId = item.duplicateCandidateId,
+                                        expectedComparisonFingerprint = item.expectedComparisonFingerprint,
+                                        decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                                        reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
+                                        reviewedAt = now,
+                                        reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
+                                        generatedAt = now,
+                                        reviewId = ids.reviewId,
+                                        historyId = ids.historyId,
+                                    )
+                                when (val result = reviewUseCase.execute(request)) {
+                                    is com.unifiedledger.application.ImportDuplicateReviewResult.Accepted ->
+                                        ImportDuplicateGroupItemOutcome(
+                                            item.duplicateCandidateId,
+                                            ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                        )
+                                    is com.unifiedledger.application.ImportDuplicateReviewResult.NoChange ->
+                                        ImportDuplicateGroupItemOutcome(
+                                            item.duplicateCandidateId,
+                                            ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                        )
+                                    is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                                        ImportDuplicateGroupItemOutcome(
+                                            item.duplicateCandidateId,
+                                            ImportDuplicateGroupItemResult.Rejected(result.diagnostic.code),
+                                        )
+                                }
+                            }
+                        }
+                val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                // Back on the main dispatcher: release the slot and dispatch serially.
+                scope.launch {
+                    coordinator.importGroupDispositionCompleted()
+                    dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes, rows))
+                }
+            }
+        }
+    }
+
+    // The platform pick results flow back through the composition root's channel (spec 4.1.1: the
+    // result never rides the port's signature). The delivery thread is the UI thread on both ends
+    // (the SAF callback runs on main; the desktop modal chooser blocks inside the UI event
+    // handler, AB-CLI-QUAL-05), so the dispatch and the coordinator decision are safe there.
+    DisposableEffect(facade) {
+        facade.importPickResultChannel?.subscribe(::handleImportPickResult)
+        onDispose { facade.importPickResultChannel?.subscribe(null) }
+    }
+
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
     // its account and category lists (ordering only; the rows themselves are untouched).
     fun pinnedCatalogSnapshot(): CatalogSnapshotView? {
@@ -899,6 +1200,11 @@ fun P503App(
                         } else {
                             dispatch(P503UiEvent.SelectTab(tab))
                         }
+                        // P7-04.C: the first IMPORT entry requests the review list (the
+                        // projection starts null; the refresh button re-requests later loads).
+                        if (tab == P503Tab.IMPORT && (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null) {
+                            requestImportReview()
+                        }
                     },
                     onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
                     // P7-02.D E-2: the "record again" affordance is available on the success home
@@ -956,12 +1262,65 @@ fun P503App(
                                 onSelectMonth = ::selectMonth,
                                 onAnalysisMonthShift = ::analysisMonthShift,
                             )
+                        // P7-04.C: the IMPORT tab content — the review projection, the matrix
+                        // format entries, the session summary and the group disposition surface.
+                        P503Tab.IMPORT ->
+                            P503ImportScreen(
+                                view = current.importReview,
+                                platform = facade.importPlatformKind,
+                                onRefresh = ::requestImportReview,
+                                onStartFilePick = { format -> startImportFilePick(format) },
+                                onSelectCandidate = ::selectImportCandidate,
+                                onToggleSelection = { candidateId ->
+                                    dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
+                                },
+                                onGroupDisposition = ::startImportDuplicateGroupDisposition,
+                                onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
+                                onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
+                            )
                     }
                 }
             is P503AppState.TransactionDetail ->
                 P503TransactionDetailScreen(
                     detail = current.detail,
                     // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
+                    onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
+            // are the same authoritative projections the entry flow consumes (D-143 同源).
+            is P503AppState.ImportCandidateDetail ->
+                P503ImportCandidateDetailScreen(
+                    state = current,
+                    defaultCurrency = facade.currency,
+                    validation = importDecisionValidation,
+                    catalogAccounts = facade.catalogSnapshot()?.manageableAccounts ?: emptyList(),
+                    expenseCategories = options.expenseCategories,
+                    onUpdateDecisionField = { update -> dispatch(P503UiEvent.UpdateImportDecisionField(update)) },
+                    onToggleSelection = { candidateId ->
+                        dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
+                    },
+                    onSubmitDuplicateReview = { decision ->
+                        // P704C-QUAL-04 call-site guard: the wiring/target precondition runs
+                        // BEFORE the reducer marks the detail reviewPending — with an unwired
+                        // facade the event must never be dispatched, or the page would be
+                        // stranded in 审核提交中 forever. The guard mints one id triple that is
+                        // then discarded (fresh per intent, nothing persisted); the submit path
+                        // mints its own.
+                        val current = latestState.value as? P503AppState.ImportCandidateDetail
+                        val reviewable = current != null && importDuplicateReviewTarget(current.duplicates) != null
+                        val wired = current != null && facade.importDuplicateReview != null && facade.importDuplicateReviewIds() != null
+                        if (reviewable && wired) {
+                            dispatchCurrentP503Action(
+                                current,
+                                latestState.value,
+                                { P503UiEvent.SubmitImportDuplicateReview(decision, IMPORT_DUPLICATE_REVIEW_REASON_TOKEN) },
+                                ::dispatch,
+                            ) {
+                                submitImportDuplicateReview(decision)
+                            }
+                        }
+                    },
+                    // Back = close semantics (SPEC:281: 返回 OverviewEmpty(IMPORT) 保留清单/勾选集).
                     onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
                 )
             is P503AppState.Editing ->
@@ -1209,6 +1568,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.OverviewEmpty -> state.selectedTab == P503Tab.ACCOUNTS
         // P7-03.C: the read-only detail returns to the preserved overview (C03).
         is P503AppState.TransactionDetail -> true
+        // P7-04.C (SPEC:281): the import candidate detail returns to the preserved IMPORT
+        // overview (清单/勾选集保留； the draft is written back by the reducer on close).
+        is P503AppState.ImportCandidateDetail -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -1321,6 +1683,11 @@ private fun P503RetainedOverviewFailureScreen(
             // failure stands; keep an honest note instead of a dead management form.
             P503Tab.ACCOUNTS ->
                 Text("账户管理需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
+            // P7-04.C: the import surface is read-driven the same way; the honest note replaces a
+            // dead review form while the READ failure stands (the retained list would read as
+            // current even though interactions are absorbed).
+            P503Tab.IMPORT ->
+                Text("导入审核需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
