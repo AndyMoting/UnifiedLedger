@@ -14,6 +14,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
@@ -135,6 +137,10 @@ private fun LedgerEntryFlowRow(
             Modifier
                 .fillMaxWidth()
                 .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") { onSelectTransaction(row.transactionId) }
+                // C04 (spec 6.4): the flow row announces as one node carrying the effective
+                // kind, the statistics time and every exact posting value with sign, account
+                // name and currency code — the ordered list's values stay TalkBack-reachable.
+                .semantics { contentDescription = flowRowContentDescription(row, accountNames) }
                 .padding(vertical = 4.dp),
     ) {
         Text(

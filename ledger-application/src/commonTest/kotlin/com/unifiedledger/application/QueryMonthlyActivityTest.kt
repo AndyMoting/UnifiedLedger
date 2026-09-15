@@ -148,6 +148,74 @@ class QueryMonthlyActivityTest {
         assertEquals(3_000L, march.currencies.single().balanceMinorUnits)
     }
 
+    /**
+     * C01 statistics-time correction vector (spec section 7 C01, R-Q06-1/R-Q06-2): a correction
+     * appends a newer version whose statistics_at moved the transaction into another Asia/Shanghai
+     * month. The read model yields exactly that current version (R-Q06-1), so the corrected
+     * transaction contributes once to the new month, zero to the old month, and the superseded
+     * version is never double-counted — the per-month totals reconcile with the full-period
+     * projection over the same current rows (the section 3.1.2 anchor pattern).
+     */
+    @Test
+    fun statisticsAtCorrectionLandsOnlyInTheNewShanghaiMonthWithoutDoubleCounting() {
+        // The post-correction read state: the appended current version carries the April
+        // statistics time (the R-Q06-2 bucket key) while the occurrence time stays in March;
+        // a stable March transaction keeps the old month non-empty.
+        val correctedRow =
+            LedgerEntryRow(
+                transactionId = TransactionId("tx-corrected"),
+                currentVersionId = TransactionVersionId("version-tx-corrected-2"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = Instant.parse("2026-03-10T02:00:00Z"),
+                statisticsAt = Instant.parse("2026-04-10T02:00:00Z"),
+                note = "corrected statistics month",
+                postings =
+                    listOf(
+                        Posting(PostingId("posting-corrected"), expenseId, Money.ofMinor(4_500L, cny)),
+                        Posting(PostingId("posting-corrected-payment"), assetId, Money.ofMinor(-4_500L, cny)),
+                    ),
+            )
+        val stableMarchRow =
+            LedgerEntryRow(
+                transactionId = TransactionId("tx-march-stable"),
+                currentVersionId = TransactionVersionId("version-tx-march-stable-1"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = Instant.parse("2026-03-10T02:00:00Z"),
+                statisticsAt = Instant.parse("2026-03-10T02:00:00Z"),
+                note = null,
+                postings =
+                    listOf(
+                        Posting(PostingId("posting-march"), expenseId, Money.ofMinor(3_000L, cny)),
+                        Posting(PostingId("posting-march-payment"), assetId, Money.ofMinor(-3_000L, cny)),
+                    ),
+            )
+        val useCase = query(listOf(correctedRow, stableMarchRow), clockAt = "2026-04-20T02:00:00Z")
+
+        // Old month: only the stable transaction counts; the corrected one contributes zero
+        // (its superseded March statistics time is no longer part of any current row).
+        val march = assertIs<MonthlyActivityResult.Success>(useCase.query(YearMonth(2026, 3))).activity
+        assertEquals(3_000L, march.currencies.single().netExpenseMinorUnits)
+        assertEquals(1, march.currencies.single().transactionCount)
+        assertEquals(mapOf(TransactionKind.EXPENSE to 1), march.currencies.single().countByKind)
+
+        // New month: the corrected transaction lands exactly once.
+        val april = assertIs<MonthlyActivityResult.Success>(useCase.query(YearMonth(2026, 4))).activity
+        assertEquals(4_500L, april.currencies.single().netExpenseMinorUnits)
+        assertEquals(1, april.currencies.single().transactionCount)
+        assertEquals(mapOf(TransactionKind.EXPENSE to 1), april.currencies.single().countByKind)
+
+        // The previous version is not double-counted: the two months sum to the full-period
+        // projection of the same current rows (a second, March-bucketed contribution for the
+        // superseded version would break the equality).
+        val fullPeriod = SummarizeLedgerActivity(catalog()).summarize(fullPeriodState(listOf(correctedRow, stableMarchRow)))
+        val fullPeriodTotal = fullPeriod.totalsByCurrency.single()
+        assertEquals(7_500L, fullPeriodTotal.expenseMinorUnits)
+        assertEquals(
+            fullPeriodTotal.expenseMinorUnits,
+            march.currencies.single().netExpenseMinorUnits + april.currencies.single().netExpenseMinorUnits,
+        )
+    }
+
     @Test
     fun perCurrencyTotalsNeverSumAcrossCurrencies() {
         val rows =

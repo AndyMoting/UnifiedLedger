@@ -95,13 +95,11 @@ internal fun P503MonthCard(
     if (state == MonthlyRegionState.LOADED) {
         activity?.currencies?.forEach { row ->
             Text(
-                "${row.currency.code}：普通收入 " +
-                    formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
-                    "，净支出 " +
-                    formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
-                    "，结余 " +
-                    formatMinorUnits(row.balanceMinorUnits, row.currency.precision),
+                monthCardCurrencyLineText(row),
                 style = MaterialTheme.typography.bodyMedium,
+                // C04 (spec 6.4): the three exact values with sign and currency code stay
+                // reachable as one explicit TalkBack label.
+                modifier = Modifier.semantics { contentDescription = monthCardCurrencyLineText(row) },
             )
         }
     }
@@ -187,7 +185,10 @@ internal fun P503CategoryRegion(
                         .fillMaxWidth()
                         .clickable(onClickLabel = "展开或收起${level1.categoryName}") {
                             expandedIds = if (level1.categoryId in expandedIds) expandedIds - level1.categoryId else expandedIds + level1.categoryId
-                        },
+                        }
+                        // C04 (spec 6.4): the interactive level-1 row announces its exact totals
+                        // (signs and currency codes preserved) alongside the click label.
+                        .semantics { contentDescription = categoryRowContentDescription(level1.categoryName, level1.totals) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(if (level1.categoryId in expandedIds) "▾" else "▸", style = MaterialTheme.typography.bodyMedium)
@@ -201,7 +202,16 @@ internal fun P503CategoryRegion(
             )
             if (level1.categoryId in expandedIds) {
                 level1.children.forEach { child ->
-                    Column(modifier = Modifier.padding(start = 20.dp)) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .padding(start = 20.dp)
+                                // C04: one announced node per drilldown row carrying the exact
+                                // child totals with sign and currency code.
+                                .semantics(mergeDescendants = true) {
+                                    contentDescription = categoryRowContentDescription(child.categoryName, child.totals)
+                                },
+                    ) {
                         Text(child.categoryName, style = MaterialTheme.typography.bodySmall)
                         Text(
                             categoryTotalsText(child.totals),
@@ -214,7 +224,16 @@ internal fun P503CategoryRegion(
         }
     }
     if (uncategorized.isNotEmpty()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp)
+                    // C04: the explicit 无分类 row is announced as one node with its exact values.
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = categoryRowContentDescription("无分类（账户未映射分类）", uncategorized)
+                    },
+        ) {
             Text("无分类（账户未映射分类）", style = MaterialTheme.typography.bodyMedium)
             Text(
                 categoryTotalsText(uncategorized),
@@ -245,7 +264,9 @@ private fun P503CategoryPies(sectors: Map<CurrencyUnit, List<CategoryChartSector
                 Modifier
                     .fillMaxWidth()
                     .height(72.dp)
-                    .semantics { contentDescription = "${currency.code} 分类构成比例图形，数值以文本为准" },
+                    // C04 (spec 6.4): TalkBack reads the exact per-sector values with currency
+                    // codes — never precisionless percentages; the graphic stays a proportion aid.
+                    .semantics { contentDescription = categoryChartContentDescription(currency, currencySectors) },
         ) {
             var startAngle = -90f
             currencySectors.forEachIndexed { index, sector ->
@@ -299,20 +320,13 @@ internal fun P503MonthlyTrendRegion(
         return
     }
     trend?.months?.forEach { month ->
-        val values =
-            if (month.currencies.isEmpty()) {
-                "该月无交易"
-            } else {
-                month.currencies.joinToString("；") { row ->
-                    "${row.currency.code} 普通收入 " +
-                        formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
-                        "，净支出 " +
-                        formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
-                        "，结余 " +
-                        formatMinorUnits(row.balanceMinorUnits, row.currency.precision)
-                }
-            }
-        Text("${month.month}：$values", style = MaterialTheme.typography.bodySmall)
+        Text(
+            trendMonthLineText(month),
+            style = MaterialTheme.typography.bodySmall,
+            // C04: the trend row's exact values (or the explicit 该月无交易 copy) stay reachable
+            // as one TalkBack label per month, in the frozen old-to-new order.
+            modifier = Modifier.semantics { contentDescription = trendMonthLineText(month) },
+        )
     }
 }
 
@@ -351,11 +365,11 @@ internal fun P503TransactionDetailScreen(
                 Text("金额明细", style = MaterialTheme.typography.titleMedium)
                 data.legs.forEach { leg ->
                     Text(
-                        "${leg.accountName} " +
-                            formatMinorUnits(leg.amount.minorUnits, leg.amount.currency.precision) +
-                            " ${leg.amount.currency.code}" +
-                            (leg.categoryName?.let { "（分类：$it）" } ?: "（无分类）"),
+                        transactionDetailLegContentDescription(leg),
                         style = MaterialTheme.typography.bodySmall,
+                        // C04: the leg's exact signed amount, currency and category stay reachable
+                        // as one explicit TalkBack label.
+                        modifier = Modifier.semantics { contentDescription = transactionDetailLegContentDescription(leg) },
                     )
                 }
                 Spacer(Modifier.height(8.dp))
@@ -367,7 +381,14 @@ internal fun P503TransactionDetailScreen(
                         } else {
                             "—（无对账资格）"
                         }
-                    Text("${leg.leg.accountName}：$statusText", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${leg.leg.accountName}：$statusText",
+                        style = MaterialTheme.typography.bodySmall,
+                        // C04: the reconciliation row announces the leg's exact amount with its
+                        // currency code alongside the status (the visible line carries the name
+                        // and status only).
+                        modifier = Modifier.semantics { contentDescription = reconciliationLegContentDescription(leg) },
+                    )
                 }
                 Text(
                     "对账汇总：${data.reconciliation.rollup?.label ?: "无对账资格"}",

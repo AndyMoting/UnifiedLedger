@@ -5,10 +5,15 @@ import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
 import com.unifiedledger.application.MonthlyCategoryTotal
+import com.unifiedledger.application.MonthlyCurrencyActivity
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.MonthlyTrendResult
 import com.unifiedledger.application.OrdinaryFlowClassification
+import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.SelectableMonthsResult
+import com.unifiedledger.application.TransactionDetailLeg
+import com.unifiedledger.application.TransactionReconciliationLeg
+import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.YearMonth
@@ -184,10 +189,11 @@ internal fun retainedReadFailureBannerText(state: MonthlyRegionState): String =
         -> "月度数据读取失败，本月的月度数据尚未加载。"
     }
 
-/** One chart sector: the exact category total it came from and its positive net contribution. */
+/** One chart sector: the exact category total it came from, its category name and positive net contribution. */
 internal data class CategoryChartSector(
     val total: MonthlyCategoryCurrencyTotal,
     val netMinorUnits: Long,
+    val categoryName: String,
 )
 
 /** The signed net contribution of one category/currency total, or `null` when it is not positive. */
@@ -200,6 +206,8 @@ internal fun positiveNetMinorUnits(total: MonthlyCategoryCurrencyTotal): Long? {
  * R-Q07-3 sector eligibility: a category draws a sector only when its signed net contribution is
  * positive; zero and net-negative categories never do. Currencies are never mixed (D-120), and a
  * currency whose eligible contributions do not sum to a positive value draws nothing at all.
+ * Each sector carries its category name so the chart's accessibility label can enumerate the
+ * exact per-category values (C04: exact values, never precisionless percentages).
  */
 internal fun categoryChartSectors(
     categories: List<MonthlyCategoryTotal>,
@@ -207,12 +215,12 @@ internal fun categoryChartSectors(
 ): Map<CurrencyUnit, List<CategoryChartSector>> {
     if (!withPie || categories.isEmpty()) return emptyMap()
     return categories
-        .flatMap { it.totals }
-        .groupBy { it.currency }
-        .mapNotNull { (currency, totals) ->
+        .flatMap { category -> category.totals.map { total -> category.categoryName to total } }
+        .groupBy { it.second.currency }
+        .mapNotNull { (currency, namedTotals) ->
             val sectors =
-                totals.mapNotNull { total ->
-                    positiveNetMinorUnits(total)?.let { net -> CategoryChartSector(total, net) }
+                namedTotals.mapNotNull { (categoryName, total) ->
+                    positiveNetMinorUnits(total)?.let { net -> CategoryChartSector(total, net, categoryName) }
                 }
             if (sectors.sumOf { it.netMinorUnits } <= 0L) null else currency to sectors
         }.toMap()
@@ -332,4 +340,114 @@ internal fun foldMonthlyCycle(
         selectableMonths = selectableMonthsResult.months,
         trend = trendResult.trend,
     )
+}
+
+// ---------------------------------------------------------------- TalkBack labels (C04, spec 6.4)
+// Pure accessibility-label builders for the P7-03 read-only surfaces. Every label states the
+// exact `formatMinorUnits` values with their sign and currency code, so TalkBack reads precise
+// numbers and currencies (never precisionless percentages), and every valued element is
+// reachable as one announced node (C04: 长列表数值对无障碍可达). The composables pass these
+// builders into `Modifier.semantics` only; the visible copy stays exactly as frozen.
+
+/** The month-card line of one currency: the three exact values, signs and code preserved (spec 6.4). */
+internal fun monthCardCurrencyLineText(row: MonthlyCurrencyActivity): String =
+    "${row.currency.code}：普通收入 " +
+        formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
+        "，净支出 " +
+        formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
+        "，结余 " +
+        formatMinorUnits(row.balanceMinorUnits, row.currency.precision)
+
+/**
+ * The flow-row accessibility label (C04): effective kind, the R-Q06-2 bucket key (the statistics
+ * time), the current note and every exact posting amount with account name, sign and currency
+ * code, so one announced node carries all values of the ordered flow row.
+ */
+internal fun flowRowContentDescription(
+    row: LedgerEntryRow,
+    accountNames: Map<AccountId, String>,
+): String {
+    val head = "${row.kind}，统计时间 ${row.statisticsAt}" + (row.note?.let { "，备注 $it" } ?: "")
+    val legs =
+        row.postings.joinToString("；") { posting ->
+            "${accountNames[posting.accountId] ?: posting.accountId.value} " +
+                formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
+                " ${posting.amount.currency.code}"
+        }
+    return if (legs.isEmpty()) head else "$head；$legs"
+}
+
+/**
+ * The category-row accessibility label (C04): the category's current name plus its exact
+ * per-currency totals (positive and refund parts, signs preserved, R-Q07-3) — one announced
+ * node per category row, drilldown row or 无分类 row.
+ */
+internal fun categoryRowContentDescription(
+    categoryName: String,
+    totals: List<MonthlyCategoryCurrencyTotal>,
+): String = "$categoryName：${categoryTotalsText(totals)}"
+
+/**
+ * The pie's accessibility label (C04): the exact per-sector net values with category names and
+ * currency code — never precisionless percentages; the graphic stays a proportion aid only and
+ * the exact value table always accompanies it (R-Q07-3).
+ */
+internal fun categoryChartContentDescription(
+    currency: CurrencyUnit,
+    sectors: List<CategoryChartSector>,
+): String {
+    val values =
+        sectors.joinToString("；") { sector ->
+            "${sector.categoryName} 净 ${formatMinorUnits(sector.netMinorUnits, currency.precision)} ${currency.code}"
+        }
+    return "${currency.code} 构成比例，精确数值：$values；图形仅供参考，数值以文本为准"
+}
+
+/**
+ * The trend line of one trend month (C04/R-Q07-1): exact per-currency values, or the explicit
+ * 该月无交易 copy for an empty month — distinct from any read-failure copy (R-Q06-4).
+ */
+internal fun trendMonthLineText(month: MonthlyActivity): String {
+    val values =
+        if (month.currencies.isEmpty()) {
+            "该月无交易"
+        } else {
+            month.currencies.joinToString("；") { row ->
+                "${row.currency.code} 普通收入 " +
+                    formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision) +
+                    "，净支出 " +
+                    formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision) +
+                    "，结余 " +
+                    formatMinorUnits(row.balanceMinorUnits, row.currency.precision)
+            }
+        }
+    return "${month.month}：$values"
+}
+
+/**
+ * The detail amount-leg label (C04): account name, exact signed amount, currency code and the
+ * category current name (or the explicit 无分类 absence, P703SPEC-09).
+ */
+internal fun transactionDetailLegContentDescription(leg: TransactionDetailLeg): String =
+    "${leg.accountName} " +
+        formatMinorUnits(leg.amount.minorUnits, leg.amount.currency.precision) +
+        " ${leg.amount.currency.code}" +
+        (leg.categoryName?.let { "（分类：$it）" } ?: "（无分类）")
+
+/**
+ * The reconciliation-leg accessibility label (C04): the leg's exact signed amount with currency
+ * code plus its displayed status (eligible legs their status label, ineligible legs the
+ * explicit 无对账资格 absence, R-Q07-4).
+ */
+internal fun reconciliationLegContentDescription(leg: TransactionReconciliationLeg): String {
+    val amount =
+        formatMinorUnits(leg.leg.amount.minorUnits, leg.leg.amount.currency.precision) +
+            " ${leg.leg.amount.currency.code}"
+    val status =
+        if (leg.eligible) {
+            leg.status?.label ?: P408ReconciliationStatus.PENDING.label
+        } else {
+            "—（无对账资格）"
+        }
+    return "${leg.leg.accountName} $amount：对账状态 $status"
 }
