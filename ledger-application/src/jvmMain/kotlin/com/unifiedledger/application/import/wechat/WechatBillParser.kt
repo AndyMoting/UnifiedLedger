@@ -5,11 +5,6 @@ import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportSourceFacts
-import org.apache.poi.ss.usermodel.Cell
-import org.apache.poi.ss.usermodel.CellType
-import org.apache.poi.ss.usermodel.Row
-import org.apache.poi.xssf.usermodel.XSSFCell
-import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.math.BigDecimal
@@ -29,6 +24,13 @@ import java.util.zip.ZipInputStream
  * batch outcome. Money is derived only from the exact decimal text of the amount cell
  * (never through binary floating point). Container/input/structure diagnostics reuse
  * the D-097:1459 codes; SPINE_WEIXIN_* are the three provider-specific codes.
+ *
+ * P7-04.A (D-146, D-099 production-read revision): the production read is the bounded
+ * minimal XLSX reader [BoundedXlsxReader] (java.util.zip + javax.xml.parsers SAX, dual
+ * platform); POI XSSF remains the jvmTest fixture generator only (spec section 3.1.3).
+ * The frozen format contract (0-based header row 17, 11-column tokens, five-fact mapping,
+ * reject sets, diagnostic codes) is unchanged — the parser oracle expectations are the
+ * equivalence proof.
  */
 object WechatBillParser {
     fun parse(
@@ -40,16 +42,15 @@ object WechatBillParser {
         }
         containerViolation(inputRef, bytes)?.let { return rejected(it) }
         return try {
-            XSSFWorkbook(ByteArrayInputStream(bytes)).use { workbook ->
-                parseWorkbook(inputRef, workbook)
-            }
+            parseWorkbook(inputRef, BoundedXlsxReader.read(bytes))
         } catch (failure: Exception) {
             classifiedOpenFailure(inputRef, failure)
         }
     }
 
-    // Container-level checks run before POI opens the package. ZipSecureFile defaults
-    // remain untouched (no inflate-ratio or entry-size relaxation anywhere).
+    // Container-level checks run before the reader opens the package. The bounded reader's
+    // inflate-ratio guard mirrors the untouched POI ZipSecureFile defaults (no inflate-ratio
+    // or entry-size relaxation anywhere).
     private fun containerViolation(
         inputRef: String,
         bytes: ByteArray,
@@ -82,16 +83,16 @@ object WechatBillParser {
 
     private fun parseWorkbook(
         inputRef: String,
-        workbook: XSSFWorkbook,
+        workbook: BoundedXlsxReader.Workbook,
     ): WechatBatchResult {
         if (workbook.numberOfSheets == 0) {
             return rejected(WechatDiagnostics.structureMismatchHeader(inputRef))
         }
-        val sheet = workbook.getSheetAt(0)
+        val sheet = workbook.firstSheet
         val headerRow =
             sheet.getRow(WechatSourceTokens.HEADER_ROW_INDEX)
                 ?: return rejected(WechatDiagnostics.structureMismatchHeader(inputRef))
-        if (headerRow.lastCellNum.toInt() != WechatSourceTokens.HEADER_TOKENS.size) {
+        if (headerRow.lastCellNum != WechatSourceTokens.HEADER_TOKENS.size) {
             return rejected(WechatDiagnostics.structureMismatchHeader(inputRef))
         }
         WechatSourceTokens.HEADER_TOKENS.forEachIndexed { index, token ->
@@ -108,7 +109,7 @@ object WechatBillParser {
             for (rowIndex in WechatSourceTokens.FIRST_DATA_ROW_INDEX..sheet.lastRowNum) {
                 val ordinal = rowIndex - WechatSourceTokens.FIRST_DATA_ROW_INDEX
                 val row = sheet.getRow(rowIndex) ?: continue // fully empty row: no record, no renumbering
-                val width = row.lastCellNum.toInt()
+                val width = row.lastCellNum
                 if (width <= 0) continue // all-empty row: no record, no renumbering
                 if (width > WechatSourceTokens.HEADER_TOKENS.size) {
                     rows +=
@@ -139,7 +140,7 @@ object WechatBillParser {
     private fun parseDataRow(
         inputRef: String,
         ordinal: Int,
-        row: Row,
+        row: BoundedXlsxReader.Row,
     ): WechatRowResult {
         val typeToken = textOf(row.getCell(1))
         val statusTokenRaw = textOf(row.getCell(7))
@@ -229,8 +230,8 @@ object WechatBillParser {
 
     // Amount: NUMERIC cell, cached raw decimal text only. Precision = fractional digit
     // count of the exact cell text; negative values are out of the frozen domain.
-    private fun parseAmount(cell: Cell?): ParsedAmount? {
-        if (cell == null || cell.cellType != CellType.NUMERIC) return null
+    private fun parseAmount(cell: BoundedXlsxReader.Cell?): ParsedAmount? {
+        if (cell == null || cell.type != BoundedXlsxReader.CellType.NUMERIC) return null
         val raw = rawTextOf(cell)
         if (raw.isEmpty() || !AMOUNT_DECIMAL.matches(raw)) return null
         val precision = if (raw.contains('.')) raw.length - raw.indexOf('.') - 1 else 0
@@ -247,8 +248,8 @@ object WechatBillParser {
 
     // Time: NUMERIC cell (excel datetime serial), exact BigDecimal conversion at second
     // resolution, frozen +08:00 offset. No Clock, no timezone read from the file.
-    private fun parseTime(cell: Cell?): String? {
-        if (cell == null || cell.cellType != CellType.NUMERIC) return null
+    private fun parseTime(cell: BoundedXlsxReader.Cell?): String? {
+        if (cell == null || cell.type != BoundedXlsxReader.CellType.NUMERIC) return null
         return excelSerialToIso(rawTextOf(cell))
     }
 
@@ -283,22 +284,24 @@ object WechatBillParser {
         return "${date}T$hh:$mm:$ss${WechatSourceTokens.UTC_OFFSET}"
     }
 
-    // STRING cells read via the shared string table; every other type via the raw
-    // cached value text. Columns 2/3/6/8/9/10 values are never materialized into
-    // output/diagnostics; only their cell presence feeds the row-width contract.
-    private fun textOf(cell: Cell?): String =
+    // STRING cells read via the shared string table (or the inline/formula-cached string);
+    // every other type via the raw cached value text. Columns 2/3/6/8/9/10 values are never
+    // materialized into output/diagnostics; only their cell presence feeds the row-width
+    // contract.
+    private fun textOf(cell: BoundedXlsxReader.Cell?): String =
         when {
             cell == null -> ""
-            cell.cellType == CellType.STRING -> cell.stringCellValue
+            cell.type == BoundedXlsxReader.CellType.STRING -> cell.string ?: ""
             else -> rawTextOf(cell)
         }
 
-    private fun rawTextOf(cell: Cell): String = (cell as? XSSFCell)?.getRawValue() ?: ""
+    private fun rawTextOf(cell: BoundedXlsxReader.Cell): String = cell.rawValue ?: ""
 
-    // POI open failures: ZipSecureFile protection triggers (default parameters, never
-    // relaxed) map to INPUT_UNSAFE_OR_OVER_LIMIT; other container failures to
-    // INPUT_DECODE_FAILED. The cause chain is walked so wrapper exceptions do not
-    // change the classification.
+    // Reader open failures: the bounded reader's inflate-ratio guard triggers with the
+    // frozen `Zip bomb detected!` IOException marker (POI ZipSecureFile default mirror),
+    // mapped to INPUT_UNSAFE_OR_OVER_LIMIT with container scope; every other container or
+    // structure failure maps to INPUT_DECODE_FAILED. The cause chain is walked so wrapper
+    // exceptions do not change the classification.
     private fun classifiedOpenFailure(
         inputRef: String,
         failure: Exception,

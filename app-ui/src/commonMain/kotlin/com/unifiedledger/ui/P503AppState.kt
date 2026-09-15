@@ -29,6 +29,16 @@ import kotlin.time.Instant
  * monthly payload, and adds `TransactionDetail` (read-only, reached only from a HOME flow
  * row; spec section 6.1). The new events never throw in any state (table 6.2a); every
  * pre-existing unlisted combination stays ISE (G-B).
+ *
+ * P7-04.C (D-146) adds the IMPORT tab's [OverviewEmpty.importReview] projection and the
+ * [ImportCandidateDetail] state (reached only from an IMPORT list row). The import events are
+ * absorbed in every state outside their designed effects and never throw; every pre-existing
+ * unlisted combination — including `Exit` (spec section 6.3, P7-02 §6.2b) — stays unlisted.
+ *
+ * P7-04.D (D-146) adds the batch confirmation states: [ImportBatchConfirm] (the authorization
+ * snapshot confirm page) and [ImportBatchSubmitting] (the per-item dispatch state, back
+ * intercepted 沿 Submitting 语义). Their events follow the same table 6.2a discipline: effect in
+ * the designed state, absorbed elsewhere, never an ISE; `Exit` stays unlisted on them too.
  */
 sealed interface P503AppState {
     data object Ready : P503AppState
@@ -87,6 +97,14 @@ sealed interface P503AppState {
          * including all pre-P7-03 flows.
          */
         val monthlyReloadRequired: Boolean = false,
+        /**
+         * P7-04.C (D-146; spec section 6.1): the IMPORT tab's authoritative projection (candidate
+         * list through the section 3.3.1 classification matrix, selection set, in-session decision
+         * drafts, the most recent intake session summary and the typed failure banners). `null`
+         * before the first IMPORT load — the catalogSnapshot-style optional field keeps every
+         * pre-P7-04 constructor site compiling untouched.
+         */
+        val importReview: ImportReviewView? = null,
     ) : P503AppState
 
     data class Editing(
@@ -186,6 +204,56 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-04.C (D-146; spec sections 6.1/6.2): the import candidate detail state. Reached only
+     * from an IMPORT list row (仅 IMPORT 清单行可达). Carries the overview to return to (so
+     * CloseImportCandidateDetail/Back restore the exact IMPORT tab with its list payload,
+     * selection set and — written back on close — the same candidate's decision draft, spec
+     * section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail and
+     * duplicate-comparison payloads, the pure decision-form draft, the in-flight duplicate-review
+     * marker (期间禁重复提交) and the typed notice banner.
+     */
+    data class ImportCandidateDetail(
+        val overview: OverviewEmpty,
+        val candidateId: com.unifiedledger.application.ImportCandidateId,
+        val detail: com.unifiedledger.application.ImportCandidateDetailResult,
+        val duplicates: com.unifiedledger.application.ImportDuplicateReviewsResult,
+        val form: ImportDecisionDraft,
+        /** True while the host's duplicate-review use case call is in flight (duplicate submits absorbed). */
+        val reviewPending: Boolean = false,
+        val notice: ImportReviewNotice? = null,
+    ) : P503AppState
+
+    /**
+     * P7-04.D (D-146; spec sections 3.2.3/6.1): the 授权快照确认页. Reached from the IMPORT
+     * overview (a non-empty selection) or from the candidate detail (携详情决策—— the detail's
+     * decision draft is written back into the carried overview on entry, SPEC:283). Pure
+     * presentation of the carried overview's checked items, their decision-field summaries and
+     * the R-10 per-item submission semantics; the authorization action carries the host-sampled
+     * LedgerClock instant and the per-item requestIds into [ImportBatchSubmitting]. Cancel/Back
+     * return to the exact preserved overview (保留勾选集与清单).
+     */
+    data class ImportBatchConfirm(
+        val overview: OverviewEmpty,
+    ) : P503AppState
+
+    /**
+     * P7-04.D (D-146; spec sections 3.2.3/3.3.2/6.1): the per-item dispatch state. Carries the
+     * authorization snapshot — [confirmedAt] is the ONE LedgerClock sample of the authorization
+     * action (Q09.4; reused by every item through `explicitConfirmedAt`, by the resume
+     * continuation and by the unknown-item replay) and [items] the per-item requestIds minted
+     * once for this intent (不换 ID). An Unknown item outcome sets [dispatchPaused]; the only
+     * exits are the explicit Resume/Abandon affordances (and the automatic leave once every
+     * item is terminal — system back is intercepted, 沿既有 Submitting 语义).
+     */
+    data class ImportBatchSubmitting(
+        val overview: OverviewEmpty,
+        val confirmedAt: String,
+        val items: List<ImportBatchSubmittingItem>,
+        /** True once an Unknown outcome paused the loop (派发暂停； Resume clears it, Abandon leaves). */
+        val dispatchPaused: Boolean = false,
+    ) : P503AppState
+
+    /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status
      * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
      * follow the InfrastructureFailure SUBMISSION precedent.
@@ -204,11 +272,15 @@ sealed interface P503AppState {
 /**
  * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an
  * authoritative refresh can always return the overview to the home tab.
+ *
+ * P7-04.C (D-146, R-13): the frozen three-tab contract (D-122) is extended by [IMPORT] as the
+ * fourth tab; the bottom-bar layout semantics are unchanged, only the tab item is added.
  */
 enum class P503Tab {
     HOME,
     ACCOUNTS,
     ANALYSIS,
+    IMPORT,
 }
 
 enum class InfrastructureFailureContext {

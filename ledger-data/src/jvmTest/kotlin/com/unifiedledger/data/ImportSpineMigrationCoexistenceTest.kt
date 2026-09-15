@@ -244,7 +244,7 @@ class ImportSpineMigrationCoexistenceTest {
                 )
             val intakeIds =
                 object : ImportIntakeIdSource {
-                    override fun next() =
+                    override fun next(requiredDuplicateIds: Int) =
                         ImportIntakeIds(
                             ImportSourceId("source-a"),
                             ImportEvidenceId("evidence-a"),

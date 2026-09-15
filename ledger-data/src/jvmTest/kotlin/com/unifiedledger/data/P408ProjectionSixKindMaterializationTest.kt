@@ -110,7 +110,7 @@ class P408ProjectionSixKindMaterializationTest {
     ) : ImportIntakeIdSource {
         private var n = 0
 
-        override fun next(): ImportIntakeIds {
+        override fun next(requiredDuplicateIds: Int): ImportIntakeIds {
             n += 1
             return ImportIntakeIds(
                 sourceId = com.unifiedledger.application.ImportSourceId("$prefix-source-$n"),

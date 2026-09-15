@@ -8,6 +8,9 @@ import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
+import com.unifiedledger.application.ImportFileIntakePort
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendingPositionReadPort
 import com.unifiedledger.application.ManualExpenseOptionsProvider
@@ -23,6 +26,9 @@ import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.QueryImportCandidateDetail
+import com.unifiedledger.application.QueryImportDuplicateReviews
+import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
 import com.unifiedledger.application.QueryMonthlyActivity
@@ -31,6 +37,7 @@ import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
@@ -105,6 +112,43 @@ class P503LedgerFacade(
     baseQueryMonthlyActivity: QueryMonthlyActivity? = null,
     baseQueryTransactionDetail: QueryTransactionDetail? = null,
     catalogSession: CatalogConsumerSession? = null,
+    // P7-04.A/B import surface (D-146; spec sections 4.1/4.2); null defaults keep legacy
+    // constructions valid (startup tests). The product roots inject the platform pick port,
+    // the jvmMain intake orchestration, the platform kind, and a per-pick session factory
+    // (one fresh opaque UUIDv7 handle per file pick, R-Q09-1 — never a shared session across
+    // concurrent dispatches). Unlike the P7-03 read surface there is no catalog-session
+    // following here: the import surface is not catalog-versioned, so these stay plain
+    // nullable values; the P7-04.C host consumes them to launch picks and build the typed
+    // intake input (format + platform + session + bounded bytes).
+    val importFilePickPort: ImportFilePickPort? = null,
+    val importFileIntake: ImportFileIntakePort? = null,
+    val importPlatformKind: ImportPlatformKind? = null,
+    val importIntakeSessionFactory: () -> ImportIntakeSessionIdentity? = { null },
+    // P7-04.C (D-146; spec sections 4.5/6.1): the import review read surface (the three read use
+    // cases over the fail-loud read port), the core duplicate-review use case, its per-intent id
+    // mint (requestId/reviewId/historyId, fresh UUIDv7 per review intent, R-Q09-2), and the
+    // platform pick-result channel the composition root wires into its pick port's onResult. All
+    // nullable with plain defaults so legacy constructions (startup tests) keep compiling; like
+    // the P7-04.A/B surface there is no catalog-session following here (the import surface is not
+    // catalog-versioned).
+    baseQueryImportReviewRows: QueryImportReviewRows? = null,
+    baseQueryImportCandidateDetail: QueryImportCandidateDetail? = null,
+    baseQueryImportDuplicateReviews: QueryImportDuplicateReviews? = null,
+    val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
+    val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
+    val importPickResultChannel: ImportFilePickResultChannel? = null,
+    // P7-04.D (D-146; spec sections 3.2.3/3.3.2/6.1): the batch confirmation surface. The
+    // composition root owns the per-kind ConfirmImportCandidate wiring (commitPort = the spine
+    // store, an ImportCommitIds mint with the kind's frozen posting count, the existing
+    // per-kind formal factories, the catalog) and hands it over as a FACTORY so every dispatch
+    // run constructs its set from the CURRENT catalog (the manual-flow V-2 admission precedent:
+    // fresh admission data per dispatch run, within the frozen use-case's construction-time
+    // catalog parameter). The per-item requestId mint is a plain nullable function (a fresh
+    // UUIDv7 per item, minted once per authorization intent by the host; claim-gated, replay
+    // paths never consume). Plain nullable defaults keep legacy constructions (startup tests)
+    // compiling.
+    val importConfirmUseCases: () -> ImportConfirmUseCaseSet? = { null },
+    val importConfirmRequestIdSource: (() -> String)? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
@@ -113,6 +157,9 @@ class P503LedgerFacade(
     private val fallbackQueryLedgerEntryRows = baseQueryLedgerEntryRows
     private val fallbackQueryMonthlyActivity = baseQueryMonthlyActivity
     private val fallbackQueryTransactionDetail = baseQueryTransactionDetail
+    private val fallbackQueryImportReviewRows = baseQueryImportReviewRows
+    private val fallbackQueryImportCandidateDetail = baseQueryImportCandidateDetail
+    private val fallbackQueryImportDuplicateReviews = baseQueryImportDuplicateReviews
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
     private val fallbackTransferOptionsProvider =
@@ -159,4 +206,16 @@ class P503LedgerFacade(
     /** P7-03.C/D: the read-only transaction detail projection; follows [refreshCatalog] when a session is injected. */
     val queryTransactionDetail: QueryTransactionDetail?
         get() = session?.queryTransactionDetail ?: fallbackQueryTransactionDetail
+
+    /** P7-04.C: the ledger-scoped import review list projection (plain nullable, no session following). */
+    val queryImportReviewRows: QueryImportReviewRows?
+        get() = fallbackQueryImportReviewRows
+
+    /** P7-04.C: the single-candidate detail projection (plain nullable, no session following). */
+    val queryImportCandidateDetail: QueryImportCandidateDetail?
+        get() = fallbackQueryImportCandidateDetail
+
+    /** P7-04.C: the candidate's duplicate comparison projection (plain nullable, no session following). */
+    val queryImportDuplicateReviews: QueryImportDuplicateReviews?
+        get() = fallbackQueryImportDuplicateReviews
 }

@@ -52,6 +52,10 @@ fun createAndroidLedgerDatabase(
         // P7-02.D: the manual pin preference store on the same database connection.
         entryPreferenceStore = SqlDelightEntryPreferenceStore(database),
         catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database),
+        // P7-04.A/B (D-146): the import spine store on the same platform-configured
+        // connection; the driver stays private to this handle, so the store comes from the
+        // platform-configured factory exactly like the four manual commit ports above.
+        importSpineStore = SqlDelightImportSpineStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
 }
@@ -65,6 +69,7 @@ class AndroidLedgerDatabaseHandle internal constructor(
     val counterpartyStore: SqlDelightCounterpartyStore,
     val entryPreferenceStore: SqlDelightEntryPreferenceStore,
     val catalogStore: SqlDelightCatalogStore,
+    val importSpineStore: SqlDelightImportSpineStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {
     override fun close() {

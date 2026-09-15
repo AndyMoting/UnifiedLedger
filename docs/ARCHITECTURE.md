@@ -82,6 +82,8 @@ commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 le
 
 `D-145`（P7-03，规格冻结 approved，LF SHA-256 `59D8E68C…0CEBB`）规划看账只读读边界：读模型以新增命名查询与端口方法扩展（有效 kind 读 `COALESCE(canonical_kind, kind)`、双时间与当前版本 note 入投影），既有 `CurrentVersionRow`/`loadCurrentRows` 与 22 个既有测试锚零改动；月度桶、普通收支分类（特殊 kind 与本金互转/借贷本金不入普通收支）与对账资格投影全部为 application 纯函数与只读查询，零 DDL、零账务写入路径改动、schema 停留 v29；有效统计时间一律取当前版本 `transaction_version.statistics_at`，不读 `formal_transaction_metadata`；月度投影逐币种携带普通收入/净支出/结余（结余不得称为账户余额或现金流），流水按统计时间倒序稳定排序，月度重请求触发由规格 §6.2 冻结。具体契约见 `docs/specs/2026-09-13-p7-03-ledger-view-design.md`。
 
+`D-146`（P7-04，设计门已冻结：规格 approved，2026-09-14 DELTA CLOSURE APPROVE；实施登记随实施批闭合后补登）规划导入与草稿确认边界：共享 `app-ui` 新增文件选择与有界读取端口（commonMain 定义接口与值类型，承担 16 MiB 读取上限——两端组合根闭包实现；display name 仅当次显示、绝不入身份与持久化；平台选择 Android 经系统文件选择器（SAF）一次性读取，Desktop 经文件选择对话框，均不持久系统文件引用、不保存文件副本）；`ledger-application` commonMain 以代码声明格式能力矩阵（UI 只显示当前平台声明可用的格式：支付宝 CSV 与招行 CSV 双端可用，支付宝 GB18030 以运行时字符集探测为界、不支持时类型化失败；微信 XLSX 双端可用，生产读取改用 jvmMain 内新「有界最小 XLSX 读取器」（`java.util.zip` + `javax.xml.parsers`，POI XSSF 退出生产读取路径、仅保留测试造数，`poi-ooxml` 依赖收敛至 jvmTest、`poi` 显式留 jvmMain 供建行 HSSF——此为 D-099 生产读取技术路径的修订，其格式契约不变）；建行 XLS 桌面可用、Android 诚实标记待设备运行验证不显示为可用）、导入接治编排端口（commonMain 接口 + jvmMain 实现，承担单文件 10,000 接治候选上限，超限类型化失败携带实收值、绝不静默截断）与导入候选/重复/恢复只读读取端口（fail-loud 默认，沿 D-145 G6 纪律）；生产 ID 端口修订——`ImportIntakeIdSource` 增需求量参数，由存储在获胜 claim 事务内按入站分支与事务内实际匹配数确定需求后调用，类型化早拒绝一律先于 ID 分配、拒绝与重试不消耗正式 ID，调用方严禁预查数量预分配；文件身份 = 每次文件选择生成的不透明随机句柄（UUIDv7，不含 URI、文件名、内容或任何个人标识；内容诊断哈希仍只作交叉校验、不构成身份、不参与去重），请求级重试沿既有 intake 幂等（NoChange/身份碰撞 hard reject），同文件重选/改名 = 新候选 + 疑似重复人工审核阻断（`CONFIRMED_DUPLICATE` 不再入账，不产生第二次余额/报表影响），绝不自动去重——审核含批量处置：同一次文件选择产生的疑似重复（`EXACT_BUSINESS_TUPLE` 且最新重复状态为待处置）可整组标记 `CONFIRMED_DUPLICATE`（组键 = kind + 本次文件选择句柄 + 待处置状态；比较快照为整组确认页的逐项呈现核验义务而非查询键；UI 层对逐项既有审核用例的顺序循环、每项独立请求与回执，零 core 语义改动、无整组原子性、可见部分成功）；批量确认 = 对勾选快照一次明确授权下的逐项原子提交与可见部分成功（无批次表、无整批事务承诺；恢复从既有持久化逐候选状态重建 ledger 级待确认清单）；确认时间 = 用户授权动作时间（注入 LedgerClock），来源记录时间不由处理时钟补写。schema 停留 v29（零 DDL，只新增只读命名查询，沿 D-145 先例）；导航面扩展为四 Tab（新增导入审核 Tab，D-122 三 Tab 契约由本批扩展）。四格式的目标 Android 运行证据整体为外部阻塞待办，不以设计侧证据替代。具体契约见 `docs/specs/2026-09-14-p7-04-import-draft-confirmation-design.md`。
+
 ## 正式数据流
 
 ### 手工入口
@@ -165,7 +167,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |
 | 产品运行时 ID 算法 | 已确定 | UUIDv7（RFC 9562），在持久化首请求 callback 内惰性物化，P5-02 实装；当前无产品存量 ID 数据、无需迁移；Golden v2 UUID 命名空间与名字布局仍不是产品默认（D-117） |
-| CSV/XLSX 解析技术 | 首个来源已定案（D-099） | 微信账单 XLSX 采用 Apache POI 5.5.x（ledger-application jvm 作用域）；支付宝 CSV/P4-05 与银行 PDF 继续待决，届时单独评估具体库或自研实现 |
+| CSV/XLSX 解析技术 | 四来源已定案（D-099 微信、D-101 支付宝、D-116 招行/建行）；微信生产读取已按 D-146 修订并实装（有界最小 XLSX 读取器） | 微信账单 XLSX 生产读取采用有界最小 XLSX 读取器（`java.util.zip` + `javax.xml.parsers` SAX，jvmMain；D-146 修订 D-099 第 2 条的生产读取技术路径，格式契约不变）；Apache POI XSSF 仅保留 jvmTest 造数、`poi-ooxml` 收敛至 jvmTest，`poi`（HSSF）留 jvmMain；支付宝 CSV 自研解析器（D-101）；招行 CSV 自研 + 建行 XLS 采用 POI HSSF（D-116）；银行 PDF 继续待决，届时单独评估具体库或自研实现 |
 | 网络库 | 暂缓决定 | 第一个可选网络边界及其安全、离线和替换要求确认后选择 |
 | 同步实现 | 暂缓决定 | 本地闭环、版本语义、冲突策略、加密和恢复要求通过验收后选择 |
 

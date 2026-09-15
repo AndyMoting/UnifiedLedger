@@ -65,6 +65,13 @@ class O2PrecisionRescaleDataTest {
     private val generatedAt = "2026-08-23T08:00:00Z"
     private val confirmedAt = "2026-08-23T10:00:00+08:00"
 
+    /** P7-04.B (R-Q09-2): demand-parameterized intake double returning one fixed batch. */
+    private class FixedIntakeIdSource(
+        private val ids: ImportIntakeIds,
+    ) : ImportIntakeIdSource {
+        override fun next(requiredDuplicateIds: Int): ImportIntakeIds = ids
+    }
+
     @Test
     fun unvalidatedFactoryGraphCannotCrossFormalPersistenceBoundary() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -76,7 +83,7 @@ class O2PrecisionRescaleDataTest {
             val profile = ImportPaymentProfile(ImportPaymentVariant.CREDIT_EXPENSE_DIRECT, null, "credit")
             val intakeIds =
                 object : ImportIntakeIdSource {
-                    override fun next() =
+                    override fun next(requiredDuplicateIds: Int) =
                         ImportIntakeIds(
                             ImportSourceId("source-o2-boundary"),
                             com.unifiedledger.application.ImportEvidenceId("evidence-o2-boundary"),
@@ -202,7 +209,7 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     store,
                     object : ImportIntakeIdSource {
-                        override fun next() =
+                        override fun next(requiredDuplicateIds: Int) =
                             ImportIntakeIds(
                                 ImportSourceId("source-o2"),
                                 com.unifiedledger.application.ImportEvidenceId("evidence-o2"),
@@ -300,14 +307,14 @@ class O2PrecisionRescaleDataTest {
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(
                     store,
-                    ImportIntakeIdSource {
+                    FixedIntakeIdSource(
                         ImportIntakeIds(
                             ImportSourceId("source-o2-provider-original"),
                             com.unifiedledger.application.ImportEvidenceId("evidence-o2-provider-original"),
                             com.unifiedledger.application.ImportCandidateId("candidate-o2-provider-original"),
                             ImportStatusHistoryId("status-o2-provider-original-1"),
-                        )
-                    },
+                        ),
+                    ),
                     ImportContentFingerprint(),
                 ).execute(
                     request(
@@ -351,14 +358,14 @@ class O2PrecisionRescaleDataTest {
             assertIs<ImportIntakeResult.Accepted>(
                 ExecuteImportIntake(
                     store,
-                    ImportIntakeIdSource {
+                    FixedIntakeIdSource(
                         ImportIntakeIds(
                             ImportSourceId("source-o2-provider-refund"),
                             com.unifiedledger.application.ImportEvidenceId("evidence-o2-provider-refund"),
                             refundCandidateId,
                             ImportStatusHistoryId("status-o2-provider-refund-1"),
-                        )
-                    },
+                        ),
+                    ),
                     ImportContentFingerprint(),
                 ).execute(
                     request(
@@ -494,7 +501,7 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     store,
                     object : ImportIntakeIdSource {
-                        override fun next() =
+                        override fun next(requiredDuplicateIds: Int) =
                             ImportIntakeIds(
                                 ImportSourceId("source-o2-malformed-time"),
                                 com.unifiedledger.application.ImportEvidenceId("evidence-o2-malformed-time"),
@@ -582,7 +589,7 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     store,
                     object : ImportIntakeIdSource {
-                        override fun next() =
+                        override fun next(requiredDuplicateIds: Int) =
                             ImportIntakeIds(
                                 ImportSourceId("source-o2-high-scale"),
                                 com.unifiedledger.application.ImportEvidenceId("evidence-o2-high-scale"),
@@ -654,7 +661,7 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     store,
                     object : ImportIntakeIdSource {
-                        override fun next() =
+                        override fun next(requiredDuplicateIds: Int) =
                             ImportIntakeIds(
                                 ImportSourceId("source-o2-missing-confirmed-at"),
                                 com.unifiedledger.application.ImportEvidenceId("evidence-o2-missing-confirmed-at"),
@@ -777,7 +784,7 @@ class O2PrecisionRescaleDataTest {
             val profile = ImportPaymentProfile(ImportPaymentVariant.MIXED_PAYMENT, "asset", "credit")
             val intakeIds =
                 object : ImportIntakeIdSource {
-                    override fun next() =
+                    override fun next(requiredDuplicateIds: Int) =
                         ImportIntakeIds(
                             ImportSourceId("source-mixed-o2"),
                             com.unifiedledger.application.ImportEvidenceId("evidence-mixed-o2"),
@@ -857,7 +864,7 @@ class O2PrecisionRescaleDataTest {
                 object : ImportIntakeIdSource {
                     private var index = 0
 
-                    override fun next(): ImportIntakeIds {
+                    override fun next(requiredDuplicateIds: Int): ImportIntakeIds {
                         val prefix = cases[index++].first
                         return ImportIntakeIds(
                             ImportSourceId("source-o2-$prefix"),
@@ -1290,7 +1297,7 @@ class O2PrecisionRescaleDataTest {
                 ExecuteImportIntake(
                     SqlDelightImportSpineStore(database, driver),
                     object : ImportIntakeIdSource {
-                        override fun next() =
+                        override fun next(requiredDuplicateIds: Int) =
                             ImportIntakeIds(
                                 ImportSourceId("source-o2-$prefix"),
                                 com.unifiedledger.application.ImportEvidenceId("evidence-o2-$prefix"),

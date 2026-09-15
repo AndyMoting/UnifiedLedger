@@ -1,8 +1,11 @@
 package com.unifiedledger.android
 
 import android.app.Activity
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,6 +27,7 @@ import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
 import com.unifiedledger.application.CommitOnceInvocationTrackerLending
 import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
+import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
 import com.unifiedledger.application.ConfirmedLendingTransactionFactory
@@ -31,6 +35,7 @@ import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
 import com.unifiedledger.application.ConfirmedTransferTransactionFactory
 import com.unifiedledger.application.CounterpartyCommands
+import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
@@ -39,6 +44,7 @@ import com.unifiedledger.application.ExecuteConfirmedManualIncome
 import com.unifiedledger.application.ExecuteConfirmedManualLending
 import com.unifiedledger.application.ExecuteConfirmedManualTransfer
 import com.unifiedledger.application.ExecuteCreateCounterparty
+import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteLendingSubmission
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSave
@@ -51,16 +57,29 @@ import com.unifiedledger.application.ExecuteManualTransferSave
 import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
+import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportDuplicateReviewId
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
+import com.unifiedledger.application.ImportRequestId
+import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
+import com.unifiedledger.application.MixedPaymentFlowFormalFactory
+import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
+import com.unifiedledger.application.QueryImportCandidateDetail
+import com.unifiedledger.application.QueryImportDuplicateReviews
+import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
+import com.unifiedledger.application.TransferFlowFormalFactory
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
@@ -69,12 +88,15 @@ import com.unifiedledger.application.UuidV7ConfirmedManualLendingIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualTransferIdSource
 import com.unifiedledger.application.UuidV7CounterpartyIdSource
 import com.unifiedledger.application.UuidV7Generator
+import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
+import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
@@ -88,10 +110,15 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.ImportConfirmUseCaseSet
+import com.unifiedledger.ui.ImportDuplicateReviewIds
+import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
+import com.unifiedledger.ui.UuidV7ImportCommitIdSource
+import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import java.security.SecureRandom
 import kotlin.time.Clock
 
@@ -105,8 +132,33 @@ import kotlin.time.Clock
 fun app() {
     val context = LocalContext.current
     val activity = context as? Activity
+    // P7-04.A (D-146 R-Q08-1): the SAF OpenDocument launcher must be registered in
+    // composition before the activity is RESUMED; its result callback reaches the pick port
+    // through a plain holder because the port is created together with the ledger graph,
+    // after the launcher.
+    val importPickPortRef = remember { arrayOfNulls<AndroidImportFilePickPort<Uri>?>(1) }
+    // P7-04.C (D-146; spec 4.1.1): the shared result channel — the SAF port's onResult delivers
+    // here and the shared P503App host subscribes through the facade (the frozen port shape never
+    // carries the result in its signature).
+    val importPickChannel = remember { ImportFilePickResultChannel() }
+    val importSafLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            importPickPortRef[0]?.onOpenDocumentResult(uri)
+        }
     val controller =
         remember(context) {
+            // The Android pick port with SAF launch/metadata/stream closures; one-shot
+            // ContentResolver read, no persistable URI permission, no copy. P7-04.C wires the
+            // results into the shared coordinator channel; the SAF callback runs on the main
+            // thread, so the deliveries are UI-thread-safe.
+            val importFilePickPort =
+                AndroidImportFilePickPort<Uri>(
+                    launchOpenDocument = importSafLauncher::launch,
+                    resolveMetadata = { uri -> resolveSafFileMetadata(context.contentResolver, uri) },
+                    openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
+                    onResult = importPickChannel::deliver,
+                )
+            importPickPortRef[0] = importFilePickPort
             AndroidStartupController(
                 openDatabase = {
                     // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak
@@ -114,7 +166,7 @@ fun app() {
                     // additionally closes any graph it already holds in its catch block.
                     val handle = createAndroidLedgerDatabase(context, "ledger.db")
                     try {
-                        buildLedgerGraph(handle)
+                        buildLedgerGraph(handle, importFilePickPort, importPickChannel)
                     } catch (failure: Exception) {
                         handle.close()
                         throw failure
@@ -220,7 +272,11 @@ internal data class CloseableLedgerGraph(
 
 private const val LOG_TAG = "UnifiedLedger"
 
-private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedgerGraph {
+private fun buildLedgerGraph(
+    handle: AndroidLedgerDatabaseHandle,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+): CloseableLedgerGraph {
     val database = handle.database
     val store = handle.catalogStore
 
@@ -391,6 +447,70 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             categoryReferenceProbe = store,
         )
     val snapshotQuery = QueryCatalogSnapshot(store)
+
+    // P7-04.A/B (D-146): the import spine store comes from the handle's platform-configured
+    // connection (the driver is private to the data-assembly handle); the intake id source
+    // is the production UUIDv7 id source (R-Q09-2: ids are minted only inside the store's
+    // winning claim transaction); the candidate audit-time source is the injected LedgerClock
+    // (the processing clock supplies processing times only, never source times). The session
+    // factory mints one fresh opaque UUIDv7 handle per file pick (R-Q09-1) — a new session
+    // per pick, never shared across concurrent dispatches.
+    val importIntakeGenerator = UuidV7Generator(::secureRandomBytes)
+    val executeImportIntake =
+        ExecuteImportIntake(
+            commitPort = handle.importSpineStore,
+            idSource = UuidV7ImportIntakeIdSource(UuidV7Generator(::secureRandomBytes)),
+            fingerprint = ImportContentFingerprint(),
+        )
+    val importFileIntake =
+        JvmImportFileIntake(
+            ledgerId = ledgerId,
+            executeIntake = executeImportIntake,
+            candidateGeneratedAt = { ledgerClock.now().toString() },
+        )
+    // P7-04.C (D-146; spec sections 4.5/6.1): the import review read surface over the same
+    // database — the adapter over the handle's platform-configured connection, the three read
+    // use cases, and the core duplicate-review use case (commit port = the spine store) with a
+    // per-intent UUIDv7 id mint: a fresh requestId/reviewId/historyId triple for every review
+    // intent (R-Q09-2; claim-gated, replay/conflict paths never consume ids).
+    val importReviewReadAdapter = SqlDelightImportReviewReadAdapter(database)
+    val importReviewIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importDuplicateReview = ReviewImportDuplicateCandidate(commitPort = handle.importSpineStore)
+    // P7-04.D (D-146; spec section 9 P7-04.D row): the per-kind ConfirmImportCandidate wiring
+    // over the handle's platform-configured spine store — commitPort = the spine store, an
+    // ImportCommitIds mint with the kind's frozen posting count (the shape-gated 3/2 split),
+    // the existing per-kind formal factories and the catalog. The set is built FRESH on every
+    // dispatch run (the facade calls this factory per run) so the frozen use case's
+    // construction-time catalog parameter is always the CURRENT catalog — the manual-flow V-2
+    // admission precedent (fresh admission data per write attempt). The credit kinds share one
+    // CreditFlowFormalFactory (the direct/refund/repayment variants dispatch on the
+    // decision-fields type, exactly like the core's confirm kind gate); its refund
+    // original-expense reader resolves through the P7-03 read model. The transfer direction
+    // gate observes the ledger's seed real asset account (the demo composition's single payment
+    // account; the wallet/bank factory variants share the identical predicate and differ only
+    // in the observed account identity).
+    val importCommitIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importConfirmRequestIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importConfirmUseCasesFactory: () -> ImportConfirmUseCaseSet = {
+        val currentCatalog = store.loadCurrent(ledgerId) ?: authority.catalog
+        val creditFormalFactory =
+            CreditFlowFormalFactory(currentCatalog, importCreditRefundOriginalExpenseProvider(session.queryTransactionDetail))
+        val twoPostingIds = UuidV7ImportCommitIdSource(importCommitIdGenerator, postingCount = 2)
+        val threePostingIds = UuidV7ImportCommitIdSource(importCommitIdGenerator, postingCount = 3)
+        ImportConfirmUseCaseSet(
+            ordinaryFlow = ConfirmImportCandidate(handle.importSpineStore, twoPostingIds, OrdinaryFlowFormalFactory(currentCatalog), currentCatalog),
+            transferFlow =
+                ConfirmImportCandidate(
+                    handle.importSpineStore,
+                    twoPostingIds,
+                    TransferFlowFormalFactory(currentCatalog, AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)),
+                    currentCatalog,
+                ),
+            creditExpense = ConfirmImportCandidate(handle.importSpineStore, twoPostingIds, creditFormalFactory, currentCatalog),
+            creditRepayment = ConfirmImportCandidate(handle.importSpineStore, twoPostingIds, creditFormalFactory, currentCatalog),
+            mixedPayment = ConfirmImportCandidate(handle.importSpineStore, threePostingIds, MixedPaymentFlowFormalFactory(currentCatalog), currentCatalog),
+        )
+    }
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -430,6 +550,32 @@ private fun buildLedgerGraph(handle: AndroidLedgerDatabaseHandle): CloseableLedg
             baseQueryMonthlyActivity = session.queryMonthlyActivity,
             baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,
+            // P7-04.A/B (D-146): the import surface — the SAF pick port and the jvmMain
+            // intake orchestration on the same ledger; the P7-04.C host consumes both
+            // through the facade to build the typed intake input.
+            importFilePickPort = importFilePickPort,
+            importFileIntake = importFileIntake,
+            importPlatformKind = ImportPlatformKind.ANDROID,
+            importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P7-04.C: the review read surface + the duplicate-review use case + its id mint +
+            // the shared pick-result channel (the SAF onResult above delivers into it).
+            baseQueryImportReviewRows = QueryImportReviewRows(importReviewReadAdapter),
+            baseQueryImportCandidateDetail = QueryImportCandidateDetail(importReviewReadAdapter),
+            baseQueryImportDuplicateReviews = QueryImportDuplicateReviews(importReviewReadAdapter),
+            importDuplicateReview = importDuplicateReview,
+            importDuplicateReviewIds = {
+                ImportDuplicateReviewIds(
+                    ImportRequestId(importReviewIdGenerator.next()),
+                    ImportDuplicateReviewId(importReviewIdGenerator.next()),
+                    ImportStatusHistoryId(importReviewIdGenerator.next()),
+                )
+            },
+            importPickResultChannel = importPickChannel,
+            // P7-04.D: the batch confirmation surface — the per-kind confirm use case factory
+            // (fresh catalog per dispatch run) and the per-item requestId mint (a fresh UUIDv7
+            // per item, minted once per authorization intent by the host).
+            importConfirmUseCases = importConfirmUseCasesFactory,
+            importConfirmRequestIdSource = { importConfirmRequestIdGenerator.next() },
         )
     return CloseableLedgerGraph(facade, handle::close, session, catalogCommands)
 }

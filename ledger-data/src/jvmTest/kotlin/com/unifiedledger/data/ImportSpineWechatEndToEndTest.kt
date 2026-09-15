@@ -259,7 +259,7 @@ class ImportSpineWechatEndToEndTest {
     ) : ImportIntakeIdSource {
         val calls = AtomicInteger(0)
 
-        override fun next(): ImportIntakeIds {
+        override fun next(requiredDuplicateIds: Int): ImportIntakeIds {
             val index = calls.getAndIncrement()
             require(index < batches.size) { "intake id batch exhausted" }
             return batches[index]

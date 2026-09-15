@@ -43,9 +43,19 @@ kotlin {
             implementation(kotlin("test"))
         }
 
-        // P4-03 (D-099, spec section 6): Apache POI is JVM-only. It must never move to
-        // commonMain: a future Android target must not inherit the POI classpath.
+        // P4-03 (D-099) / P7-04.A (D-146): Apache POI is JVM-only and must never move to
+        // commonMain: a future Android target must not inherit the POI classpath. `poi`
+        // stays in jvmMain for the CCB XLS parser (HSSF, spec section 3.1.3); since P7-04.A
+        // the WeChat XLSX production read is the bounded minimal XLSX reader
+        // (java.util.zip + javax.xml.parsers), so `poi-ooxml` (XSSF) is jvmTest only — the
+        // WechatBillParserJvmTest fixture generator is its sole consumer.
         val jvmMain by getting {
+            dependencies {
+                implementation("org.apache.poi:poi:5.5.1")
+            }
+        }
+
+        jvmTest {
             dependencies {
                 implementation("org.apache.poi:poi-ooxml:5.5.1")
             }
