@@ -518,6 +518,108 @@ class P503ImportReviewPresentationTest {
         assertFalse(submitFailed.contains("审核未通过"))
     }
 
+    // ---- D06 sanitization: failure/diagnostic copy never echoes the pick's sensitive values ----
+
+    /**
+     * D06 (plan section 6.3; spec sections 6.4/7 D06): the sanitized failure and diagnostic
+     * lines never leak the original file name, a URI, raw row content, personal identifiers or
+     * underlying exception text. The display name's ONLY sanctioned surface is the in-session
+     * summary line（文件显示名仅出现于当次会话摘要；the D06 acceptance row exempts 会话显示）， so the
+     * absence assertions cover every line after that one plus the notice banner and the
+     * per-record lines — never the 最近导入 session line itself.
+     */
+    @Test
+    fun sanitizedFailureAndDiagnosticCopyNeverLeaksThePickSensitiveValues() {
+        val sensitiveName = "张三"
+        val sensitiveUri = "file:///vault/synthetic-user/个人账单-张三-2026-08.csv"
+        val sensitiveFileName = "个人账单-$sensitiveName-2026-08.csv"
+        val rawRow = "2026-09-01 08:30:00,张三,消费,6222020200112233445,12.34"
+        val exceptionText = "FileNotFoundException: $sensitiveUri (系统找不到指定的路径)"
+        val tokens = listOf(sensitiveName, sensitiveUri, sensitiveFileName, rawRow, exceptionText, "6222020200112233445")
+
+        fun assertSanitized(lines: List<String>) = tokens.forEach { token -> assertTrue(lines.none { it.contains(token) }) }
+
+        // (1) Every pipeline outcome renders the display name on the session line only; every
+        // failure/diagnostic line after it stays token-free.
+        val outcomes =
+            listOf(
+                ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_OPEN_FAILED),
+                ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED),
+                ImportIntakePipelineOutcome.ReadExceedsLimit(actualBytes = 17_000_000),
+                ImportIntakePipelineOutcome.Intaken(
+                    ImportFileIntakeOutcome.Rejected(
+                        ImportIntakeBatchFailure.ParserRejected(
+                            com.unifiedledger.application.ImportBatchParserDiagnostic(
+                                code = "SPINE_CMB_UNKNOWN_TOKEN",
+                                severity = "fatal",
+                                scope = "record",
+                                inputRef = "pick-handle-1",
+                                recordOrdinal = 3,
+                                fieldRole = "tx_type",
+                            ),
+                        ),
+                    ),
+                ),
+                ImportIntakePipelineOutcome.Intaken(
+                    ImportFileIntakeOutcome.Accepted(
+                        records =
+                            listOf(
+                                ImportIntakeRecordSummary(
+                                    recordOrdinal = 0,
+                                    disposition = ImportIntakeRecordDisposition.PARSER_REJECTED,
+                                    diagnosticCode = "SPINE_CMB_UNKNOWN_TOKEN",
+                                ),
+                                ImportIntakeRecordSummary(
+                                    recordOrdinal = 1,
+                                    disposition = ImportIntakeRecordDisposition.INTAKE_ACCEPTED,
+                                ),
+                            ),
+                        newCandidateIds = listOf(ImportCandidateId("candidate-1")),
+                    ),
+                ),
+            )
+        outcomes.forEach { outcome ->
+            val lines = importIntakeSessionLines(ImportIntakeSessionSummary(sensitiveFileName, "pick-handle-1", outcome))
+            // The spec-sanctioned session display line: the ONLY surface allowed to show the name.
+            assertEquals("最近导入：$sensitiveFileName", lines.first())
+            assertSanitized(lines.drop(1))
+        }
+
+        // (2) The intake-failure notice banner (a failure surface, not the session summary)
+        // never echoes the display name or any injected token.
+        assertSanitized(
+            listOf(
+                importReviewNoticeText(ImportReviewNotice.IntakeFailed(ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_OPEN_FAILED))),
+                importReviewNoticeText(
+                    ImportReviewNotice.IntakeFailed(
+                        ImportIntakePipelineOutcome.Intaken(
+                            ImportFileIntakeOutcome.Rejected(
+                                ImportIntakeBatchFailure.BatchExceedsLimit(actualAcceptedRecords = 10_001),
+                            ),
+                        ),
+                    ),
+                ),
+                importPickReadFailureText(ImportPickReadFailure.STREAM_READ_FAILED),
+            ),
+        )
+
+        // (3) Per-record lines carry the ordinal and the diagnostic code token only.
+        val records =
+            listOf(
+                ImportIntakeRecordSummary(
+                    recordOrdinal = 0,
+                    disposition = ImportIntakeRecordDisposition.PARSER_REJECTED,
+                    diagnosticCode = "SPINE_CMB_UNKNOWN_TOKEN",
+                ),
+                ImportIntakeRecordSummary(
+                    recordOrdinal = 1,
+                    disposition = ImportIntakeRecordDisposition.INTAKE_REJECTED,
+                    diagnosticCode = "SPINE_DUPLICATE_NOT_CONFIRMABLE",
+                ),
+            )
+        assertSanitized(importIntakeRecordLines(records))
+    }
+
     // ---- decision form face (spec section 4.5.3; ImportConfirmDecisionFields mapping) ----
 
     @Test

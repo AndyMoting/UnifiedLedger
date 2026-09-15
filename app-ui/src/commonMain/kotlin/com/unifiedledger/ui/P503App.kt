@@ -25,6 +25,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
@@ -1947,6 +1950,9 @@ private fun P503RetainedOverviewFailureScreen(
             retainedReadFailureBannerText(monthlyRegionState(overview.monthlyActivity, reloadRequired = false)),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.error,
+            // C04 (spec section 6.4; the P503ResultScreen failure-banner precedent): the read
+            // failure is announced to TalkBack instead of silently replacing the retained month.
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
         )
         Spacer(Modifier.height(8.dp))
         Button(onClick = onRetryRefresh) {

@@ -316,4 +316,81 @@ class JvmImportFileIntakeJvmTest {
         assertEquals("INPUT_DECODE_FAILED", failure.diagnostic.code)
         assertEquals(0, port.snapshots.size)
     }
+
+    // ---------------------------------------------------------------- D06 sanitization (plan 6.3)
+
+    /**
+     * D06 (plan section 6.3, spec sections 6.4/7 D06): sanitized intake diagnostics never echo
+     * the original file content. Sensitive-looking synthetic tokens — a personal-looking name,
+     * a `file:///` URI with a path, and a card-like number — are injected into the parsed bytes
+     * both in a row that parses (its free-text remark carries them, so the spine snapshot
+     * legitimately holds the parsed facts) and in a row that is typed-rejected, plus into bytes
+     * that fail decoding whole-batch; every string field of the SURFACED outcomes (record
+     * summaries and the batch diagnostic) must contain none of them, and the only reference
+     * field carries the session's opaque handle (R-Q09-1), never content. The display name never
+     * enters this layer at all: [ImportFileIntakeInput] carries bytes only, so no file-name
+     * channel exists here (the session display-name surface is covered in app-ui).
+     */
+    @Test
+    fun intakeDiagnosticsNeverEchoInjectedSensitiveFileContent() {
+        val sensitiveName = "张三"
+        val sensitiveUri = "file:///vault/synthetic-user/个人账单-2026-08.csv"
+        val sensitiveCard = "6222020200112233445"
+        val tokens = listOf(sensitiveName, sensitiveUri, sensitiveCard)
+        val sensitiveRemark = "转账给$sensitiveName 卡号$sensitiveCard $sensitiveUri"
+        // The remark is free text inside the raw row; a non-empty CMB remark must carry the
+        // frozen leading tab, and the injected content must not contain a comma (it does not).
+        val remarkRow =
+            listOf("\t20260903", "\t09:15:00", "", "2.00", "999.00", "网联协议支付", "\t$sensitiveRemark")
+                .joinToString(",") { "\"$it\"" }
+        // The rejected row carries the same sensitive tokens in its type token and remark.
+        val rejectedTypeRow =
+            listOf("\t20260904", "\t10:00:00", "", "3.00", "996.00", "消费-$sensitiveName", "\t$sensitiveUri")
+                .joinToString(",") { "\"$it\"" }
+
+        val outcome =
+            orchestrator(RecordingIntakePort()).intake(cmbInput(newSession(), listOf(remarkRow, rejectedTypeRow)))
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(
+            listOf(ImportIntakeRecordDisposition.INTAKE_ACCEPTED, ImportIntakeRecordDisposition.PARSER_REJECTED),
+            accepted.records.map { it.disposition },
+        )
+        val recordFields =
+            accepted.records
+                .flatMap { record ->
+                    listOf(record.diagnosticCode, record.diagnosticSeverity, record.diagnosticScope, record.diagnosticFieldRole)
+                }.filterNotNull()
+        // D-097 safe-location digests only: no raw row, name, URI or identifier text surfaces.
+        tokens.forEach { token -> assertTrue(recordFields.none { it.contains(token) }) }
+
+        // Whole-batch decode failure over poisoned bytes that embed the same tokens.
+        val session = newSession()
+        val poisonedBytes =
+            ("\uFEFF日期,备注\n$sensitiveName,$sensitiveCard,").toByteArray(Charsets.UTF_8) +
+                byteArrayOf(0xFF.toByte(), 0xFE.toByte())
+        val rejectedOutcome =
+            orchestrator(RecordingIntakePort()).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.CMB_CSV.identifier,
+                    platform = ImportPlatformKind.DESKTOP,
+                    session = session,
+                    bytes = poisonedBytes,
+                ),
+            )
+        val rejected = assertIs<ImportFileIntakeOutcome.Rejected>(rejectedOutcome)
+        val failure = assertIs<ImportIntakeBatchFailure.ParserRejected>(rejected.failure)
+        assertEquals("INPUT_DECODE_FAILED", failure.diagnostic.code)
+        val diagnosticFields =
+            listOfNotNull(
+                failure.diagnostic.code,
+                failure.diagnostic.severity,
+                failure.diagnostic.scope,
+                failure.diagnostic.inputRef,
+                failure.diagnostic.fieldRole,
+            )
+        tokens.forEach { token -> assertTrue(diagnosticFields.none { it.contains(token) }) }
+        // The only reference field is the session's opaque pick handle (R-Q09-1: a random
+        // UUIDv7, never derived from URI, file name or content).
+        assertEquals(session.inputRef, failure.diagnostic.inputRef)
+    }
 }

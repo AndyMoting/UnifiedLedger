@@ -179,6 +179,77 @@ class SqlDelightLedgerEntryReadAdapterTest {
         }
     }
 
+    /**
+     * C01 statistics-time correction vector (spec section 7 C01, R-Q06-1/R-Q06-2): a correction
+     * that appends a newer version whose `statistics_at` differs must land the transaction in
+     * the new month via the version pointer — the read model projects only the pointed version,
+     * exactly once, with the new statistics time; no second current row keeps the old time and
+     * the superseded version is never double-counted as an extra row.
+     */
+    @Test
+    fun statisticsAtCorrectionAppendsAVersionAndOnlyTheNewTimeIsProjected() {
+        val path = newDatabaseFile("p7-03-entry-statistics-correction-")
+        try {
+            val harness = EntryReadHarness(path)
+            harness.insertTransaction(
+                transactionId = TransactionId("tx-corrected-time"),
+                kind = TransactionKind.EXPENSE,
+                versions =
+                    listOf(
+                        EntryVersion(
+                            // 2026-03-05T02:00:00Z = March 5 in Asia/Shanghai (the old month).
+                            versionId = TransactionVersionId("version-corrected-1"),
+                            occurredAt = "2026-03-05T02:00:00Z",
+                            statisticsAt = "2026-03-05T02:00:00Z",
+                            note = "pre-correction note",
+                        ),
+                    ),
+                postings =
+                    listOf(
+                        EntryPosting(PostingId("posting-corrected-expense"), 0, expenseAccountId, 3_000L),
+                        EntryPosting(PostingId("posting-corrected-payment"), 1, assetAccountId, -3_000L),
+                    ),
+            )
+            val transactionsBefore = harness.countTransactions()
+            // The correction appends a newer version (the same append-then-move-pointer seam the
+            // note-only correction at copyCurrentVersionWithNewNote uses) whose statistics_at moved
+            // to 2026-04-05T02:00:00Z = April 5 in Asia/Shanghai, while occurred_at/effective_at and
+            // the posting set stay shared with the superseded version.
+            harness.database.ledgerQueries.insertTransactionVersion(
+                "version-corrected-2",
+                "tx-corrected-time",
+                ledgerId.value,
+                2L,
+                "posting-set-version-corrected-1",
+                "2026-03-05T02:00:00Z",
+                "2026-04-05T02:00:00Z",
+                "2026-03-05T02:00:00Z",
+                "corrected statistics month",
+            )
+            harness.database.ledgerQueries.updateCurrentVersion(
+                transaction_id = "tx-corrected-time",
+                current_version_id = "version-corrected-2",
+            )
+
+            val rows = harness.adapter.loadLedgerEntryRows(ledgerId)
+            assertEquals(1, rows.size)
+            val row = rows.single()
+            assertEquals(TransactionId("tx-corrected-time"), row.transactionId)
+            assertEquals(TransactionVersionId("version-corrected-2"), row.currentVersionId)
+            assertEquals(Instant.parse("2026-04-05T02:00:00Z"), row.statisticsAt)
+            assertEquals(Instant.parse("2026-03-05T02:00:00Z"), row.occurredAt)
+            assertEquals("corrected statistics month", row.note)
+            assertEquals(
+                listOf("posting-corrected-expense", "posting-corrected-payment"),
+                row.postings.map { it.id.value },
+            )
+            assertEquals(transactionsBefore, harness.countTransactions())
+            harness.close()
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
     @Test
     fun importCreationConfirmationReverseLookupResolvesOnlyImportedTransactions() {
         val path = newDatabaseFile("p7-03-entry-import-")

@@ -79,7 +79,9 @@ internal fun dispatchCurrentP503Action(
  * (a) initial load — the first overview evaluation ([decideMonthly]);
  * (b) `SelectMonth` — unconditional ([requestMonthlyNow], including the failure recovery
  *     re-dispatch of residual boundary (a));
- * (c) `AnalysisMonthShift` — unconditional ([requestMonthlyNow]);
+ * (c) `AnalysisMonthShift` — only when the reduced shift actually moved the cursor inside the
+ *     frozen SelectMonth domain (the G3 `analysisMonthShiftReRequest` decision, then
+ *     [requestMonthlyNow]); an absorbed shift re-requests nothing;
  * (d) an effective-month change, including 本月 re-resolution across a clock rollover
  *     ([decideMonthly], C01);
  * (e) the authoritative refresh after each determinate success ([decide] fires it alongside
@@ -213,9 +215,12 @@ internal class P503HostCoordinator(
     }
 
     /**
-     * P7-03.C: the (b)/(c)/(e) unconditional re-request. The host calls this right after
-     * dispatching SelectMonth/AnalysisMonthShift (including the failure-recovery re-dispatch of
-     * the same month, residual boundary (a)) and [decide] calls it after the determinate-success
+     * P7-03.C: the (b)/(c)/(e) re-request — (b) `SelectMonth` and (e) the determinate-success
+     * refresh unconditionally, (c) `AnalysisMonthShift` only when the pure G3 decision
+     * (`analysisMonthShiftReRequest`) shows the reduced shift actually moved the cursor inside
+     * the frozen SelectMonth domain (an absorbed shift never calls this). The host calls this
+     * right after dispatching SelectMonth (including the failure-recovery re-dispatch of the
+     * same month, residual boundary (a)) and [decide] calls it after the determinate-success
      * refresh. The effective month is recomputed from the (already reduced) state so the
      * (d) guard sees the month that was actually requested.
      */

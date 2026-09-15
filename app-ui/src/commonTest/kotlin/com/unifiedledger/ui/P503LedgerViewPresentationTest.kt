@@ -8,7 +8,10 @@ import com.unifiedledger.application.MonthlyCategoryTotal
 import com.unifiedledger.application.MonthlyCurrencyActivity
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.MonthlyTrendResult
+import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.SelectableMonthsResult
+import com.unifiedledger.application.TransactionDetailLeg
+import com.unifiedledger.application.TransactionReconciliationLeg
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -351,6 +354,128 @@ class P503LedgerViewPresentationTest {
             MonthlyActivityResult.Unavailable,
             assertIs<MonthlyCycleOutcome.Failed>(foldMonthlyCycle(successMonth, successMonths, MonthlyTrendResult.Unavailable)).result,
         )
+    }
+
+    // ---- TalkBack labels (C04, spec section 6.4) -------------------------------------------
+
+    @Test
+    fun monthCardLabelStatesTheThreeExactValuesWithSignAndCurrencyCode() {
+        // A refund month keeps the negative sign (R-Q07-3: never masked with an absolute value).
+        val row =
+            MonthlyCurrencyActivity(
+                currency = cny,
+                ordinaryIncomeMinorUnits = 10_500L,
+                netExpenseMinorUnits = -3_000L,
+                balanceMinorUnits = 13_500L,
+                positiveExpenseMinorUnits = 0L,
+                refundMinorUnits = -3_000L,
+                transactionCount = 2,
+                countByKind = emptyMap(),
+            )
+        assertEquals("CNY：普通收入 105.00，净支出 -30.00，结余 135.00", monthCardCurrencyLineText(row))
+        assertTrue(monthCardCurrencyLineText(row.copy(currency = usd)).startsWith("USD："))
+    }
+
+    @Test
+    fun flowRowLabelAnnouncesKindStatisticsNoteAndExactPostingValues() {
+        val row =
+            LedgerEntryRow(
+                transactionId = TransactionId("tx-flow-label"),
+                currentVersionId = TransactionVersionId("version-flow-label-1"),
+                kind = TransactionKind.LEND,
+                occurredAt = kotlin.time.Instant.parse("2026-03-01T02:00:00Z"),
+                statisticsAt = kotlin.time.Instant.parse("2026-03-05T02:00:00Z"),
+                note = "lend note",
+                postings =
+                    listOf(
+                        Posting(PostingId("posting-flow-out"), AccountId("account-asset"), Money.ofMinor(-10_000L, cny)),
+                        Posting(PostingId("posting-flow-in"), AccountId("account-receivable"), Money.ofMinor(10_000L, cny)),
+                    ),
+            )
+        val names = mapOf(AccountId("account-asset") to "资产-现金", AccountId("account-receivable") to "资产-应收")
+        val label = flowRowContentDescription(row, names)
+        assertTrue(label.contains("LEND"))
+        assertTrue(label.contains("统计时间 2026-03-05T02:00:00Z"))
+        assertTrue(label.contains("备注 lend note"))
+        assertTrue(label.contains("资产-现金 -100.00 CNY"))
+        assertTrue(label.contains("资产-应收 100.00 CNY"))
+        // An unmapped account falls back to the account id; a note-less row omits the note part.
+        val fallback = flowRowContentDescription(row.copy(note = null), emptyMap())
+        assertTrue(fallback.contains("account-asset -100.00 CNY"))
+        assertTrue(!fallback.contains("备注"))
+    }
+
+    @Test
+    fun categoryRowLabelCarriesTheCurrentNameAndExactTotals() {
+        assertEquals(
+            "餐饮：CNY 正向 35.80，退款 -30.00",
+            categoryRowContentDescription("餐饮", listOf(MonthlyCategoryCurrencyTotal(cny, 3_580L, -3_000L))),
+        )
+        assertEquals("餐饮：该分类本月无金额", categoryRowContentDescription("餐饮", emptyList()))
+    }
+
+    @Test
+    fun chartLabelAnnouncesExactSectorValuesAndNeverAPercentage() {
+        val categories =
+            listOf(
+                category("category-food", "餐饮", MonthlyCategoryCurrencyTotal(cny, 3_000L, 0L)),
+                category("category-transport", "交通", MonthlyCategoryCurrencyTotal(cny, 1_200L, -200L)),
+                category("category-zero", "零额", MonthlyCategoryCurrencyTotal(cny, 0L, 0L)),
+            )
+        val sectors = categoryChartSectors(categories, withPie = true).getValue(cny)
+        val label = categoryChartContentDescription(cny, sectors)
+        assertTrue(label.contains("CNY 构成比例，精确数值："))
+        assertTrue(label.contains("餐饮 净 30.00 CNY"))
+        assertTrue(label.contains("交通 净 10.00 CNY"))
+        // A zero category draws no sector (R-Q07-3) and its name stays out of the label.
+        assertTrue(!label.contains("零额"))
+        // C04: TalkBack never hears a precisionless percentage.
+        assertTrue(!label.contains("%"))
+    }
+
+    @Test
+    fun trendMonthLabelKeepsExactValuesAndTheDistinctEmptyMonthCopy() {
+        val loaded = trendMonthLineText(activity(currencies = listOf(currencyRow(transactionCount = 1))))
+        assertEquals("2026-03：CNY 普通收入 0.00，净支出 35.80，结余 -35.80", loaded)
+        // R-Q06-4: the explicit empty-month copy is distinct from any read-failure copy.
+        val empty = trendMonthLineText(activity(currencies = emptyList()))
+        assertEquals("2026-03：该月无交易", empty)
+        assertTrue(!empty.contains("读取失败"))
+        assertTrue(empty != retainedReadFailureBannerText(MonthlyRegionState.AWAITING))
+    }
+
+    @Test
+    fun detailLegLabelsStateExactAmountsCategoryAndReconciliationStatus() {
+        val leg =
+            TransactionDetailLeg(
+                postingId = PostingId("posting-detail-label"),
+                accountId = AccountId("account-expense"),
+                accountName = "支出-早餐账户",
+                amount = Money.ofMinor(-3_000L, cny),
+                categoryName = "早餐（改名后）",
+            )
+        assertEquals(
+            "支出-早餐账户 -30.00 CNY（分类：早餐（改名后））",
+            transactionDetailLegContentDescription(leg),
+        )
+        assertTrue(transactionDetailLegContentDescription(leg.copy(categoryName = null)).endsWith("（无分类）"))
+
+        val checked =
+            TransactionReconciliationLeg(
+                leg = leg,
+                eligible = true,
+                status = P408ReconciliationStatus.CHECKED,
+            )
+        val checkedLabel = reconciliationLegContentDescription(checked)
+        assertTrue(checkedLabel.contains("支出-早餐账户 -30.00 CNY"))
+        assertTrue(checkedLabel.contains(P408ReconciliationStatus.CHECKED.label))
+        val ineligible =
+            TransactionReconciliationLeg(
+                leg = leg,
+                eligible = false,
+                status = null,
+            )
+        assertTrue(reconciliationLegContentDescription(ineligible).contains("—（无对账资格）"))
     }
 
     // ---- fixtures --------------------------------------------------------------------------

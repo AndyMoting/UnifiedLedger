@@ -7,6 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
  * P7-04.A L0 bounded-read helper tests (D-146 R-Q08-1/R-Q08-2, spec section 4.1).
@@ -245,5 +246,45 @@ class ImportFilePickBoundedReadTest {
         val thrown = assertFailsWith<AssertionError> { readImportPickBounded(sizeBytes = null) { raw } }
         assertSame(readError, thrown)
         assertEquals(true, closeAttempted)
+    }
+
+    /**
+     * D06 (plan section 6.3, spec sections 4.1.2/6.4): a platform read failure surfaces only the
+     * typed reason. Exceptions whose messages carry sensitive-looking text — a `file:///` URI
+     * with a personal-looking path, a raw CSV-row-shaped fragment and a path-bearing exception
+     * message — are injected at the open, mid-read and close seams; neither the typed outcome
+     * nor the failure copy the UI renders from it ([importPickReadFailureText]) ever echoes
+     * any of them.
+     */
+    @Test
+    fun readFailureSurfacesOnlyTheTypedReasonAndNeverTheExceptionText() {
+        val sensitiveUri = "file:///vault/synthetic-user/个人账单-张三-2026-08.csv"
+        val sensitiveName = "张三"
+        val sensitiveCard = "6222020200112233445"
+        val rawRowInMessage = "行内容：2026-09-01 08:30:00,张三,消费,$sensitiveCard"
+        val exceptionText = "FileNotFoundException: $sensitiveUri (系统找不到指定的路径)"
+
+        val openTyped =
+            assertIs<BoundedFileRead.ReadFailed>(
+                readImportPickBounded(sizeBytes = null) { throw IllegalStateException(exceptionText) },
+            )
+        assertEquals(ImportPickReadFailure.STREAM_OPEN_FAILED, openTyped.reason)
+
+        val midReadSource = FakeSource(ByteArray(0), readFailure = IllegalStateException("$exceptionText；$rawRowInMessage"))
+        val midReadTyped =
+            assertIs<BoundedFileRead.ReadFailed>(readImportPickBounded(sizeBytes = null) { midReadSource.raw })
+        assertEquals(ImportPickReadFailure.STREAM_READ_FAILED, midReadTyped.reason)
+
+        val closeSource = FakeSource(synthetic(10), closeFailure = IllegalStateException(exceptionText))
+        val closeTyped =
+            assertIs<BoundedFileRead.ReadFailed>(readImportPickBounded(sizeBytes = null) { closeSource.raw })
+        assertEquals(ImportPickReadFailure.STREAM_OPEN_FAILED, closeTyped.reason)
+
+        // The rendered failure copy over both typed reasons carries none of the injected text.
+        val tokens = listOf(sensitiveUri, sensitiveName, rawRowInMessage, exceptionText, sensitiveCard)
+        val surfaced =
+            importPickReadFailureText(ImportPickReadFailure.STREAM_OPEN_FAILED) +
+                importPickReadFailureText(ImportPickReadFailure.STREAM_READ_FAILED)
+        tokens.forEach { token -> assertTrue(!surfaced.contains(token)) }
     }
 }
