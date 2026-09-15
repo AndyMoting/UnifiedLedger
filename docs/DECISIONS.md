@@ -2737,3 +2737,52 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **关联决定：** D-043、D-073、D-081、D-092、D-093～D-097（运行时 ID/解析/来源身份边界链）、D-098、D-099（本批修订其生产读取技术路径）、D-100、D-101、D-102、D-103、D-104、D-105、D-107、D-108、D-111（O-2 精度重标定——锚点 `O2PrecisionRescaleDataTest` 属其交付，本批为其扩展断言而不改期望）、D-112、D-113、D-114、D-116、D-117、D-118、D-119、D-120、D-121、D-122（四 Tab 扩展登记）、D-125、D-131、D-138、D-139、D-140、D-143、D-144、D-145。
 
 （关联决定说明：主代理裁决包拟列 D-098、D-099、D-103、D-104、D-105、D-112、D-113、D-116、D-119～D-122、D-125、D-138～D-140、D-143～D-145；bounded writer 实读后补充 D-043、D-073、D-081、D-092、D-093～D-097、D-100、D-101、D-102、D-107、D-108、D-111、D-114、D-117、D-118、D-131——均为规格 Authority And Boundary 实读引用的既有决定，随冻结装配定稿一并复核。）
+
+**实施登记（2026-09-15，随 P7-04.A/B/C/D 全部实施批闭合补登）：**
+
+1. **实施提交链**（分支 `UL-p7-04`，基线 `b490bea`）：`77214f9`（设计门：冻结规格 + D-146 + PRD/ARCHITECTURE 回写）→ `d46c990`（A/B 后端：import intake 与 identity wiring，29 files +3155/−68）→ `1b9923f`（A/B 客户端端口：file pick ports 与组合根接线，12 files +1301/−4）→ `0efa2aa`（C：import candidate review UI 与 duplicate disposition，18 files +4462/−21）→ `ecfc4b2`（D：batch confirm 与 recovery，18 files +4017/−92）；随本登记合入本地 `main`（merge `--no-ff`，父 `b490bea`）。
+
+2. **高风险拓扑逐批闭合**（每批：单 bounded writer 于隔离 worktree + 独立规格评审 + 独立质量评审（评审中发现的问题均回原 writer 修复并 delta 闭环）+ distinct verifier + 主代理关键 diff 亲检与全套复跑）：
+   - A/B 后端：规格评审 APPROVE（4×P3）；质量评审 REQUEST-CHANGES（P1：`BoundedXlsxReader` SAX 配置在 Android libcore 必抛与矩阵 AVAILABLE 声明矛盾 + P2：commonMain `synchronized`）→ 修复批（hardenSaxFactory 守卫降级 + FailClosedHandler fail-closed + lexical-handler 显式注册 + getOrPut 单线程契约 + 需求量断言双侧 + 空集分支补决）→ delta 双 APPROVE。final 8 任务 1272 用例 0 失败（含 data 全量 75 类历史首次全绿）+ distinct verifier 8/8。
+   - A/B 客户端端口：双评审 APPROVE（7×P3）→ P3 收尾（首次失败优先 close 裁决 + read>chunk.size 违约测试 + Desktop 模态 KDoc）→ delta 双 APPROVE。final 8 任务 1299 用例 0 失败 + distinct verifier 9/9（类数=源文件数 165/165、184 锚点用例全绿）。
+   - C：双评审 REQUEST-CHANGES（P2：结果事件在 Dispatchers.Default 直接派发破坏单线程派发模型；P2：组处置重跑把已成功项误报失败）→ 修复批（六路径主线程跳回 + @Volatile + 组页双单飞 + 双层重跑幂等 + 枚举中止提取纯函数 + possibleExistingSource 渲染 + 前置守卫前移 + 注释编号修正）→ delta 双 APPROVE。final 8 任务 1376 用例 0 失败 + distinct verifier 9/9（D 批 9 标识符零实现验证）。
+   - D：双评审 REQUEST-CHANGES（P2：残留 Unknown 子态无 UI 出口；P2：派发/核对跑未守卫异常缝→槽位泄漏+死端）→ 修复批（出口门放宽 importBatchExitAvailable + 两 run try/finally 槽位守卫 + 前置阶段类型化逐项 Skipped + 确认时间说明 + detail 空集门 + C 批组处置同模式预防 + submitImportDuplicateReview 守卫）→ delta 双 APPROVE。final 8 任务 174 XML / 1418 用例 0 失败 0 跳过（application 514/65 类、data 530/75 类、app-ui 310/19 类、desktop 47/12 类、android 17/3 类；单一连续串行流 68.8 分钟，2026-09-15 09:29–10:38 窗口）+ distinct verifier 9/9 PASS（零残留旧证据、零 schema、锚点零触碰且 184 项锚点用例全绿、E 批零实现、候选身份前后一致）。
+   - 质量评审 A/B 后端轮发现的 P1（SAX 可移植性）经 AOSP libcore 官方源取证成立并修复；修复后 Android 生效链（lexical-handler property 可用、DOCTYPE 回调接线、异常传播）经 AOSP 源码级证据全链闭合——登记为设计侧证据，实机终证仍归 D01 外部门。
+
+3. **实施批义务逐项闭合**：
+   - 义务①（P704SPEC-12 分组键落法 + D03 组边界测试 + 整组确认页逐项枚举呈现比较快照）：**闭合于 C 批**——组键三分量 `isImportDuplicateBatchGroupMember`；D03 族测试（同句柄入组/异句柄/异 kind/非 DEFERRED 全值域出组）；整组确认页为 `ImportReviewView.groupDisposition` reducer 子态，逐项枚举 `comparisonSnapshot` 原样呈现。
+   - 义务②（duplicateMatchCountForIntake 与 selectDuplicateMatches 的 D05 族等价回归）：**闭合于 A/B 后端**——`DuplicateMatchCountEquivalenceDataTest`（0/1/多匹配 + statusToken-null 变体逐点相等 + store 级记录型 allocateIds 需求量断言 0/1/2/3）。
+   - 义务③（AbandonImportBatch 不引入隐藏中间 UI 态）：**闭合于 D 批**——单步解散转换 + 测试逐句对应 PRODUCT_REQUIREMENTS 权威措辞 + 桌面重开持久侧测试。
+   - 义务④（R-14 接治耗时实测量化披露）：**未闭合——归 D01 Android 运行证据门（外部阻塞待办）**，本登记如实保留。
+
+4. **契约面扩张登记（规格 §6.1 拟议清单之外的实施批新增，均经评审裁决为忠实操作化）**：
+   - C 批 3 个组处置机制事件：`StartImportDuplicateGroupDisposition`/`ImportDuplicateGroupDispositionResult`/`CloseImportDuplicateGroupDisposition` + `ImportReviewView.groupDisposition` 子态页（规格 21 事件清单无承载义务①整组确认页的机制；穷尽读法使规格自相矛盾；冻结的是纪律与语义，事件枚举为拟议）。
+   - D 批事件载荷细化：`AuthorizeImportBatch(confirmedAt, requestIds)`（reducer 无 IO/随机纪律，宿主铸造）；`ImportUnknownItemCheckResult(item, outcome)`（多次 Unknown 跨暂停累积需指名目标）；`ImportDuplicateReviewResult(review?, refresh?, uiFailureCode? = null)`（UI 基础设施失败不伪造 core 结果；新码 `IMPORT_REVIEW_SUBMIT_UNAVAILABLE`）。
+   - D 批 `RequestImportBatchConfirm` detail 空集 absorbed 门（P704D-SPEC-04 登记）：冻结表 6.2a detail 列字面为无条件 effect，实施收窄为与 OverviewEmpty 列对齐的空集 absorbed——产品 UI 行为零变化（详情入口本就要求非空勾选）、方向保守、非空设计路径原样（delta 双评审裁决不阻断，作为可观测 reducer 契约收窄登记）。
+   - UI 自有守卫码命名空间：`IMPORT_REVIEW_IDS_UNAVAILABLE`/`IMPORT_BATCH_ITEM_NOT_CONFIRMABLE`/`IMPORT_BATCH_DECISION_INCOMPLETE`/`IMPORT_BATCH_CONFIRM_UNWIRED`/`IMPORT_BATCH_REVALIDATION_UNAVAILABLE`/`IMPORT_BATCH_DISPATCH_UNAVAILABLE`——均不借用 core `SPINE_` 诊断族（§4.6 spine 族原样纪律）。
+
+5. **操作化读法登记（规格文本沉默处的实施批裁决，均经评审 SUPPORTED）**：
+   - §4.2.3(g) fold 空集分支补决：零记录 → `Accepted(records=空, newCandidateIds=空)`（非 vacuous `NoChangeAll`）；`Accepted` 类级/折叠级 KDoc 三方一致。
+   - §4.4 T-26 需求量传递断言：application 侧 observedDemands + data 侧真实 store 记录型 allocateIds 双层落地。
+   - Appendix A 第 4 查询（importCandidateDetailByCandidate）由 adapter 组装（复用 importReviewRowsForLedger + selectImportCandidateLatestSequence；O(ledger 全候选) 性能代价登记，C 批如现压力再补单候选查询）。
+   - Xerces 路径映射实测更正：`SAXParseException` 原样传播 → INPUT_DECODE_FAILED（无 BoundedXlsxReadException 包装层）。
+   - 降级路径测试经 internal seam（hardenSaxFactory/parseXmlWith/FailClosedHandler）+ Android 形态匿名 SAXParserFactory 替身。
+   - 线程纪律冻结：重活 `Dispatchers.Default` + 结果嵌套 `scope.launch` 跳回组合主派发器派发 + coordinator 单飞标志 `@Volatile`（组合 scope 即唯一串行上下文）。
+   - 组处置重跑幂等：循环层跳过已 Reviewed + reducer 合并层 Reviewed 不可覆写（双层）。
+   - 单项审核失败保守不重读三面（claim 回滚零写入）。
+   - per-run catalog 新构（构造期目录过时规避，措辞 per dispatch run）。
+   - `RejectImportCandidate` 不接线（规格无清单/详情拒绝入口）。
+   - 会话摘要渲染上限 200 条 + 披露行（纯展示截断）。
+   - desktop launch 含模态对话框（端口 KDoc 披露；SAF 异步不受影响）。
+   - presentation 折叠 REJECTED 重复状态归 PENDING_USER_DECISION；分类组显示顺序为登记呈现选择。
+
+6. **证据分级与 D01 Android 门 checklist 增补（AB-BE-SPEC-05 裁决落实）**：`BoundedXlsxReader` KDoc 四条 AOSP 行为断言（ExpatReader 双实体 feature 默认关、Harmony setFeature 拒非标准名、双端支持 lexical-handler property、libcore 不覆写 setXIncludeAware）标注为**源码级推论待设备验证**；D01 门 checklist 显式增补三向量：机上 DOCTYPE 注入 XLSX 拒收、lexical-handler 注册成败、billion-laughs 型内部实体输入。
+
+7. **其它登记项**：
+   - admission 纯函数编程错误抛出的残留姿态（P704D-Delta-01 信息级）：槽位经 finally 必释、无泄漏，但桌面端会话内可能停留于 Submitting 直至重启（Android 崩溃重启即恢复）——属全仓宿主 fail-loud 编程错误类别，非基础设施姿态违例；未来如闭合可在 loop.run 外再加 catch→逐项 typed skip。
+   - `docs/ARCHITECTURE.md` CSV/XLSX 技术状态行「评审中/proposal/拟改」陈旧措辞随本登记更正为已批准已实施（设计门提交 77214f9 遗留，P704C-SPEC-03 转登记）。
+   - R-6 措辞修正：L0 有界读取瞬时峰值约为最终尺寸 2×（翻倍 copyOf 旧新并存 + 末尾右裁剪，16 MiB 文件瞬时 ≈32 MiB）——AB-CLI-QUAL-04。
+   - D01 观察项：SAF 元数据查询在主线程回调内同步执行（AB-CLI-SPEC-02）；SAF metadata fallback 分支无 JVM 单测（无 Robolectric 取舍，AB-CLI-QUAL-03）；D04 登记面：E2E 的「确认前零正式交易」为隐式断言 + android 接线沿两端对称先例（P704D-QUAL-04）；自由文本 TransactionId 输入（core 类型化拒绝兜底，AB-CLI-QUAL-05b）；组循环/管道宿主逻辑提取余项。
+   - C 批注释 finding 编号交叉引用曾错乱（P704C-SPEC-09），已修正——本登记以评审人原始编号为准。
+
+8. **未闭合（外部，如实保留）**：①Android 人工门（D01 运行证据门：四格式合成样本目标 Android 解析、取消/权限撤回/GB18030/损坏 XLS/XLSX/超限/partial 行错误全向量；义务④ R-14 耗时实测量化；SAF 实机交互；建行 XLS Android 列翻转待门后）——ALas 停止 + 设备条件；②push + 同提交 CI 聚合门（完整 check/Android KMP 编译/APK/Desktop build/Python 全套）——待用户显式授权；③`verify-project -Scope trace` 于 clean 任务分支（推送前）。**CI 成功不替代 Android 人工运行证据。**

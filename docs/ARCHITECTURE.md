@@ -167,7 +167,7 @@ Python 只用于旧账迁移、规则原型、来源解析实验和黄金结果�
 | 依赖注入方案 | 暂缓决定 | 模块构造关系和测试替身需求稳定后选择 |
 | RG-01 Golden JSON decoding | 已确定 | `ledger-application/commonMain` 使用 `kotlinx-serialization-json 1.11.0` runtime-only；不启用 serialization compiler plugin，不引入 Ktor；严格 duplicate/unknown/type/resource guard 位于 adapter 边界 |
 | 产品运行时 ID 算法 | 已确定 | UUIDv7（RFC 9562），在持久化首请求 callback 内惰性物化，P5-02 实装；当前无产品存量 ID 数据、无需迁移；Golden v2 UUID 命名空间与名字布局仍不是产品默认（D-117） |
-| CSV/XLSX 解析技术 | 四来源已定案（D-099 微信、D-101 支付宝、D-116 招行/建行）；微信生产读取修订评审中（D-146 proposal） | 微信账单 XLSX 采用 Apache POI 5.5.x（ledger-application jvm 作用域；D-146 proposal：生产读取拟改有界最小 XLSX 读取器，POI XSSF 收缩为测试造数、`poi-ooxml` 收敛至 jvmTest）；支付宝 CSV 自研解析器（D-101）；招行 CSV 自研 + 建行 XLS 采用 POI HSSF（D-116，`poi` 留 jvmMain）；银行 PDF 继续待决，届时单独评估具体库或自研实现 |
+| CSV/XLSX 解析技术 | 四来源已定案（D-099 微信、D-101 支付宝、D-116 招行/建行）；微信生产读取已按 D-146 修订并实装（有界最小 XLSX 读取器） | 微信账单 XLSX 生产读取采用有界最小 XLSX 读取器（`java.util.zip` + `javax.xml.parsers` SAX，jvmMain；D-146 修订 D-099 第 2 条的生产读取技术路径，格式契约不变）；Apache POI XSSF 仅保留 jvmTest 造数、`poi-ooxml` 收敛至 jvmTest，`poi`（HSSF）留 jvmMain；支付宝 CSV 自研解析器（D-101）；招行 CSV 自研 + 建行 XLS 采用 POI HSSF（D-116）；银行 PDF 继续待决，届时单独评估具体库或自研实现 |
 | 网络库 | 暂缓决定 | 第一个可选网络边界及其安全、离线和替换要求确认后选择 |
 | 同步实现 | 暂缓决定 | 本地闭环、版本语义、冲突策略、加密和恢复要求通过验收后选择 |
 
