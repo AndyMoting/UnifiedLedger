@@ -2786,3 +2786,12 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - C 批注释 finding 编号交叉引用曾错乱（P704C-SPEC-09），已修正——本登记以评审人原始编号为准。
 
 8. **未闭合（外部，如实保留）**：①Android 人工门（D01 运行证据门：四格式合成样本目标 Android 解析、取消/权限撤回/GB18030/损坏 XLS/XLSX/超限/partial 行错误全向量；义务④ R-14 耗时实测量化；SAF 实机交互；建行 XLS Android 列翻转待门后）——ALas 停止 + 设备条件；②push + 同提交 CI 聚合门（完整 check/Android KMP 编译/APK/Desktop build/Python 全套）——待用户显式授权；③`verify-project -Scope trace` 于 clean 任务分支（推送前）。**CI 成功不替代 Android 人工运行证据。**
+
+9. **闭合登记（2026-09-15）：** 第 8 项后续——②push + 同提交 CI 聚合门：**已闭合**（push `a710c6c..12e3057` 至 `origin/main`；head SHA `12e3057` 同提交 CI run `34924060988` 三 job 全绿——Python tests、Kotlin tests、Android compile——并上传 `android-debug-apk-<sha>` 工件）；③clean 任务分支 `verify-project -Scope trace`（推送前）：**已闭合**；①D01 Android 运行证据门（含义务④ R-14 接治耗时实测与 SAF 实机观察）：**仍开放**，待 ALas 停止 + 设备条件，CI 成功不替代该门。另登记：D-145 N3（触发集注释滞后）与 C01/C04/D06 残余要求缺口由独立「残余闭合批」另行承接闭合，结果以该批实施登记为准。
+
+10. **残余闭合批实施登记（2026-09-15）：** 第 9 项所列残余缺口已由独立残余闭合批交付（实施分支 `UL-p7-fix1`，单 bounded writer + 独立规格/质量评审 APPROVE（无阻断发现）+ distinct verifier + 主代理全套复跑）：
+   - C01 统计时间修正向量：数据层 `SqlDelightLedgerEntryReadAdapterTest`（追加修正版本后仅新 `statistics_at` 投影、单当前行）+ 应用层 `QueryMonthlyActivityTest`（修正仅入新月恰一次、旧月零计、Σ月=全期核对锚）；
+   - C04 无障碍：`P503LedgerViewPresentation` 新增七个纯 label builder（精确带符号金额+币种、空月「该月无交易」与失败文案区分、饼图精确数值表伴随），月卡/流水行/分类行/下钻/趋势/详情腿/对账腿经 `Modifier.semantics`/`onClickLabel` 接线，保留失败横幅 `liveRegion`；纯函数单测覆盖；
+   - D06 脱敏缺失断言：`ImportFilePickBoundedReadTest`、`P503ImportReviewPresentationTest`、`JvmImportFileIntakeJvmTest` 注入合成敏感值（文件名/URI/原始行/异常文本）并断言失败与诊断文案零泄露（会话 displayName 豁免行保持 spec 授权语义）；
+   - D-145 N3：`P503UiEvent.kt`/`P503HostCoordinator.kt` 触发集注释修正为 P703SPEC-04 冻结语义（纯注释零行为变更）。
+   验证：app-ui 全套 19 类、ledger-application 全套 65 类、ledger-data 全套 75 类 531 用例、desktop 全套 12 类 47 用例全部 0 失败；`:android-app:compileDebugKotlin` 通过；app-ui/ledger-application/ledger-data `ktlintCheck` 全绿；distinct verifier 聚焦复跑 6 类 101 用例 0 失败并核实 12 文件 diff 精确、零 `.sqm`/schema 维持 v29（生成代码 version=29 确认）、三个冻结锚点测试未改动。零 DDL、零 schema/迁移变更、零构建文件变更、零 reducer 语义变更。
