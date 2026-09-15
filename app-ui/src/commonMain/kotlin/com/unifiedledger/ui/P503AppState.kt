@@ -34,6 +34,11 @@ import kotlin.time.Instant
  * [ImportCandidateDetail] state (reached only from an IMPORT list row). The import events are
  * absorbed in every state outside their designed effects and never throw; every pre-existing
  * unlisted combination — including `Exit` (spec section 6.3, P7-02 §6.2b) — stays unlisted.
+ *
+ * P7-04.D (D-146) adds the batch confirmation states: [ImportBatchConfirm] (the authorization
+ * snapshot confirm page) and [ImportBatchSubmitting] (the per-item dispatch state, back
+ * intercepted 沿 Submitting 语义). Their events follow the same table 6.2a discipline: effect in
+ * the designed state, absorbed elsewhere, never an ISE; `Exit` stays unlisted on them too.
  */
 sealed interface P503AppState {
     data object Ready : P503AppState
@@ -205,8 +210,7 @@ sealed interface P503AppState {
      * selection set and — written back on close — the same candidate's decision draft, spec
      * section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail and
      * duplicate-comparison payloads, the pure decision-form draft, the in-flight duplicate-review
-     * marker (期间禁重复提交) and the typed notice banner. The D-batch confirm affordances are
-     * deliberately absent from this state.
+     * marker (期间禁重复提交) and the typed notice banner.
      */
     data class ImportCandidateDetail(
         val overview: OverviewEmpty,
@@ -217,6 +221,36 @@ sealed interface P503AppState {
         /** True while the host's duplicate-review use case call is in flight (duplicate submits absorbed). */
         val reviewPending: Boolean = false,
         val notice: ImportReviewNotice? = null,
+    ) : P503AppState
+
+    /**
+     * P7-04.D (D-146; spec sections 3.2.3/6.1): the 授权快照确认页. Reached from the IMPORT
+     * overview (a non-empty selection) or from the candidate detail (携详情决策—— the detail's
+     * decision draft is written back into the carried overview on entry, SPEC:283). Pure
+     * presentation of the carried overview's checked items, their decision-field summaries and
+     * the R-10 per-item submission semantics; the authorization action carries the host-sampled
+     * LedgerClock instant and the per-item requestIds into [ImportBatchSubmitting]. Cancel/Back
+     * return to the exact preserved overview (保留勾选集与清单).
+     */
+    data class ImportBatchConfirm(
+        val overview: OverviewEmpty,
+    ) : P503AppState
+
+    /**
+     * P7-04.D (D-146; spec sections 3.2.3/3.3.2/6.1): the per-item dispatch state. Carries the
+     * authorization snapshot — [confirmedAt] is the ONE LedgerClock sample of the authorization
+     * action (Q09.4; reused by every item through `explicitConfirmedAt`, by the resume
+     * continuation and by the unknown-item replay) and [items] the per-item requestIds minted
+     * once for this intent (不换 ID). An Unknown item outcome sets [dispatchPaused]; the only
+     * exits are the explicit Resume/Abandon affordances (and the automatic leave once every
+     * item is terminal — system back is intercepted, 沿既有 Submitting 语义).
+     */
+    data class ImportBatchSubmitting(
+        val overview: OverviewEmpty,
+        val confirmedAt: String,
+        val items: List<ImportBatchSubmittingItem>,
+        /** True once an Unknown outcome paused the loop (派发暂停； Resume clears it, Abandon leaves). */
+        val dispatchPaused: Boolean = false,
     ) : P503AppState
 
     /**

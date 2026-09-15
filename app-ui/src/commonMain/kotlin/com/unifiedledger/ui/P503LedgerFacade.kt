@@ -137,6 +137,18 @@ class P503LedgerFacade(
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
     val importPickResultChannel: ImportFilePickResultChannel? = null,
+    // P7-04.D (D-146; spec sections 3.2.3/3.3.2/6.1): the batch confirmation surface. The
+    // composition root owns the per-kind ConfirmImportCandidate wiring (commitPort = the spine
+    // store, an ImportCommitIds mint with the kind's frozen posting count, the existing
+    // per-kind formal factories, the catalog) and hands it over as a FACTORY so every dispatch
+    // run constructs its set from the CURRENT catalog (the manual-flow V-2 admission precedent:
+    // fresh admission data per dispatch run, within the frozen use-case's construction-time
+    // catalog parameter). The per-item requestId mint is a plain nullable function (a fresh
+    // UUIDv7 per item, minted once per authorization intent by the host; claim-gated, replay
+    // paths never consume). Plain nullable defaults keep legacy constructions (startup tests)
+    // compiling.
+    val importConfirmUseCases: () -> ImportConfirmUseCaseSet? = { null },
+    val importConfirmRequestIdSource: (() -> String)? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider

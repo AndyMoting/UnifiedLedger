@@ -183,7 +183,7 @@ class P503ImportReviewReducerTest {
                 ),
         )
 
-    /** Every state of the machine (both new import states included), for the absorbed columns. */
+    /** Every state of the machine (the P7-04.C import states and the P7-04.D batch states included), for the absorbed columns. */
     private fun allStates(): List<P503AppState> {
         val draft = ManualExpenseDraft(AccountId("asset-payment-local"), null, "35.80", occurredAt)
         val requestId = RequestId("request-1")
@@ -192,6 +192,16 @@ class P503ImportReviewReducerTest {
             overview(),
             P503AppState.TransactionDetail(overview(), P503Tab.HOME, TransactionId("tx-1"), TransactionDetailResult.NotFound),
             detail(),
+            P503AppState.ImportBatchConfirm(overview()),
+            P503AppState.ImportBatchSubmitting(
+                overview(),
+                "2026-09-14T08:00:00Z",
+                listOf(
+                    ImportBatchSubmittingItem(
+                        ImportBatchItem(ImportCandidateId("candidate-pending"), ImportRequestId("request-batch-1")),
+                    ),
+                ),
+            ),
             P503AppState.Editing(draft, requestId),
             P503AppState.AwaitingConfirmation(draft, requestId),
             P503AppState.Submitting(draft, requestId),
@@ -371,6 +381,35 @@ class P503ImportReviewReducerTest {
                 reducer.reduce(state, P503UiEvent.ImportDuplicateReviewResult(ImportDuplicateReviewResult.Rejected(importReviewDiagnostic("SPINE_DUPLICATE_STALE_FINGERPRINT")), ImportDuplicateReviewRefresh(ImportReviewRowsResult.Rows(refreshedRows)))),
             )
         assertIs<ImportReviewNotice.ReviewRejected>(rejected.importReview?.notice)
+    }
+
+    // ---- P704D-SPEC-02: the UI-owned review-submit infrastructure failure ----
+
+    @Test
+    fun aUiOwnedReviewSubmitFailureClearsPendingSurfacesTheTypedBannerAndKeepsPayloads() {
+        val state = detail(reviewPending = true)
+        val failure = P503UiEvent.ImportDuplicateReviewResult(review = null, refresh = null, uiFailureCode = IMPORT_REVIEW_SUBMIT_UNAVAILABLE)
+        val updated = assertIs<P503AppState.ImportCandidateDetail>(reducer.reduce(state, failure))
+        // reviewPending clears (期间禁重复提交 is over — the action is retryable), the typed
+        // banner lands, and the previous payloads all stay (F1 保留旧载荷； the core never
+        // returned a verdict and the store's claim transaction rolled back — zero writes).
+        assertFalse(updated.reviewPending)
+        val notice = assertIs<ImportReviewNotice.ReviewSubmitFailed>(updated.notice)
+        assertEquals(IMPORT_REVIEW_SUBMIT_UNAVAILABLE, notice.code)
+        assertSame(state.detail, updated.detail)
+        assertSame(state.duplicates, updated.duplicates)
+        assertSame(state.overview.importReview?.rows, updated.overview.importReview?.rows)
+
+        // The overview takes the same typed banner with the rows kept.
+        val overviewSource = overview()
+        val overviewFailure = reducer.reduce(overviewSource, failure)
+        val overviewUpdated = assertIs<P503AppState.OverviewEmpty>(overviewFailure)
+        assertIs<ImportReviewNotice.ReviewSubmitFailed>(overviewUpdated.importReview?.notice)
+        assertSame(overviewSource.importReview?.rows, overviewUpdated.importReview?.rows)
+
+        // Host contract: a verdict-less, failure-less event is a defensive no-op.
+        val bare = P503UiEvent.ImportDuplicateReviewResult(review = null, refresh = null)
+        assertSame(state, reducer.reduce(state, bare))
     }
 
     // ---- ImportFileIntakeResult / ImportReviewResult (F1: 失败条 + 保留上一清单) ----

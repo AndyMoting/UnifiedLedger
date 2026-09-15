@@ -100,6 +100,15 @@ sealed interface ImportReviewNotice {
     data class ReviewRejected(
         val code: String,
     ) : ImportReviewNotice
+
+    /**
+     * P704D-SPEC-02 (final delta): the duplicate-review submission failed at the infrastructure
+     * level — the execution threw, the core never returned a verdict and the store's claim
+     * transaction rolled back (zero writes, retryable after the in-flight marker clears).
+     */
+    data class ReviewSubmitFailed(
+        val code: String,
+    ) : ImportReviewNotice
 }
 
 /** One enumerated item of the batch duplicate disposition (P704SPEC-12; spec section 3.3.1). */
@@ -166,6 +175,13 @@ data class ImportReviewView(
     val lastIntakeSession: ImportIntakeSessionSummary? = null,
     val notice: ImportReviewNotice? = null,
     val groupDisposition: ImportDuplicateGroupDispositionPage? = null,
+    /**
+     * P7-04.D (D-146; spec sections 6.1/6.2): the most recent batch's per-item result summary
+     * (批量结果不设独立顶层态——逐项结果内联于 importReview; D04 半提交不误报 — the summary is
+     * per-item, never a whole-batch 成功/失败 verdict). An Unknown item keeps its check entry
+     * here (table 6.2a: 核对入口在 IMPORT 结果摘要内).
+     */
+    val batchResult: ImportBatchResultSummary? = null,
 )
 
 /** The host's post-review re-read payload of [P503UiEvent.ImportDuplicateReviewResult]. */
@@ -309,6 +325,14 @@ internal const val IMPORT_DUPLICATE_REVIEWER_REFERENCE = "p704-import-review-ui"
 internal const val IMPORT_DUPLICATE_REVIEW_REASON_TOKEN = "user-reviewed"
 
 /**
+ * P704D-SPEC-02 (final delta): the UI-owned infrastructure-failure code of a duplicate-review
+ * submission whose execution threw (the core never returned a verdict; the store's claim
+ * transaction rolled back — zero writes). Never a fabricated `SPINE_` diagnostic
+ * (the P704C-SPEC-07 namespace discipline).
+ */
+internal const val IMPORT_REVIEW_SUBMIT_UNAVAILABLE = "IMPORT_REVIEW_SUBMIT_UNAVAILABLE"
+
+/**
  * The IMPORT tab content (spec sections 6.1/6.4): format entries from the capability matrix (a
  * pending-device-verification entry is shown but never labeled 可用 — CCB XLS on Android),
  * the most recent session summary, the candidate list grouped by the section 3.3.1 classification
@@ -326,6 +350,8 @@ internal fun P503ImportScreen(
     onGroupDisposition: () -> Unit,
     onGroupConfirm: () -> Unit,
     onGroupClose: () -> Unit,
+    onRequestBatchConfirm: () -> Unit,
+    onCheckUnknownItem: (ImportCandidateId) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -424,6 +450,38 @@ internal fun P503ImportScreen(
                     onClose = onGroupClose,
                 )
             }
+            // P7-04.D: the batch confirmation entry (勾选集非空才可达； the reducer holds the
+            // non-empty gate as well).
+            if (loaded.selectedCandidateIds.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onRequestBatchConfirm,
+                    modifier = Modifier.semantics { contentDescription = "进入批量确认" },
+                ) {
+                    Text("进入批量确认（${loaded.selectedCandidateIds.size} 项）")
+                }
+            }
+            // P7-04.D: the most recent batch's per-item result summary (批量结果不设独立顶层态；
+            // Unknown items keep their 核对入口 here, table 6.2a).
+            loaded.batchResult?.let { summary ->
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text("批量结果", style = MaterialTheme.typography.titleMedium)
+                importBatchResultLines(summary).forEach { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall)
+                }
+                summary.items
+                    .filter { it.outcome is ImportBatchItemOutcome.Unknown }
+                    .forEach { entry ->
+                        Button(
+                            onClick = { onCheckUnknownItem(entry.item.candidateId) },
+                            modifier = Modifier.semantics { contentDescription = "核对未知项" },
+                        ) {
+                            Text("核对候选 ${entry.item.candidateId.value}")
+                        }
+                    }
+            }
         }
     }
 }
@@ -519,8 +577,8 @@ private fun ImportDuplicateGroupDispositionCard(
  * source facts, the decision form derived from the candidate kind (the six
  * `ImportConfirmDecisionFields` variants, D-143 same-source catalog options), the duplicate
  * comparison set with the three-value review actions (审核期间禁重复提交), and the same
- * selection gate as the list. The form is a pure reducer draft; no confirm-batch affordance in
- * this batch (D batch).
+ * selection gate as the list. The form is a pure reducer draft; P7-04.D adds the 批量确认 entry
+ * (table 6.2a: 携详情决策进入确认页).
  */
 @Composable
 internal fun P503ImportCandidateDetailScreen(
@@ -532,6 +590,7 @@ internal fun P503ImportCandidateDetailScreen(
     onUpdateDecisionField: (ImportDecisionFieldUpdate) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
     onSubmitDuplicateReview: (ImportDuplicateReviewUiDecision) -> Unit,
+    onRequestBatchConfirm: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -606,6 +665,22 @@ internal fun P503ImportCandidateDetailScreen(
                     state = state,
                     onSubmitDuplicateReview = onSubmitDuplicateReview,
                 )
+                // P7-04.D (table 6.2a: ImportCandidateDetail effect 携详情决策进入确认页)： the
+                // entry is afforded only for a non-empty selection (the reducer effect itself is
+                // unconditional — the SelectTransaction precedent).
+                if (
+                    state.overview.importReview
+                        ?.selectedCandidateIds
+                        ?.isNotEmpty() == true
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onRequestBatchConfirm,
+                        modifier = Modifier.semantics { contentDescription = "进入批量确认" },
+                    ) {
+                        Text("进入批量确认")
+                    }
+                }
             }
         }
     }

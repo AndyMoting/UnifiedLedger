@@ -21,6 +21,7 @@ import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
 import com.unifiedledger.application.CommitOnceInvocationTrackerLending
 import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
+import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
 import com.unifiedledger.application.ConfirmedLendingTransactionFactory
@@ -28,6 +29,7 @@ import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
 import com.unifiedledger.application.ConfirmedTransferTransactionFactory
 import com.unifiedledger.application.CounterpartyCommands
+import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
@@ -58,6 +60,8 @@ import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
+import com.unifiedledger.application.MixedPaymentFlowFormalFactory
+import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
@@ -69,6 +73,7 @@ import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
+import com.unifiedledger.application.TransferFlowFormalFactory
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
@@ -106,12 +111,15 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
+import com.unifiedledger.ui.UuidV7ImportCommitIdSource
+import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
@@ -516,6 +524,40 @@ internal fun buildLedgerGraph(
     val importReviewReadAdapter = SqlDelightImportReviewReadAdapter(database)
     val importReviewIdGenerator = UuidV7Generator(::secureRandomBytes)
     val importDuplicateReview = ReviewImportDuplicateCandidate(commitPort = importSpineStore)
+    // P7-04.D (D-146; spec section 9 P7-04.D row): the per-kind ConfirmImportCandidate wiring
+    // over the same spine store — commitPort = the spine store, an ImportCommitIds mint with the
+    // kind's frozen posting count (the shape-gated 3/2 split), the existing per-kind formal
+    // factories and the catalog. The set is built FRESH on every dispatch run (the facade calls
+    // this factory per run) so the frozen use case's construction-time catalog parameter is
+    // always the CURRENT catalog — the manual-flow V-2 admission precedent (fresh admission
+    // data per write attempt). The credit kinds share one CreditFlowFormalFactory (the
+    // direct/refund/repayment variants dispatch on the decision-fields type, exactly like the
+    // core's confirm kind gate); its refund original-expense reader resolves through the P7-03
+    // read model. The transfer direction gate observes the ledger's seed real asset account
+    // (the demo composition's single payment account; the wallet/bank factory variants share
+    // the identical predicate and differ only in the observed account identity).
+    val importCommitIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importConfirmRequestIdGenerator = UuidV7Generator(::secureRandomBytes)
+    val importConfirmUseCasesFactory: () -> ImportConfirmUseCaseSet = {
+        val currentCatalog = store.loadCurrent(ledgerId) ?: authority.catalog
+        val creditFormalFactory =
+            CreditFlowFormalFactory(currentCatalog, importCreditRefundOriginalExpenseProvider(session.queryTransactionDetail))
+        val twoPostingIds = UuidV7ImportCommitIdSource(importCommitIdGenerator, postingCount = 2)
+        val threePostingIds = UuidV7ImportCommitIdSource(importCommitIdGenerator, postingCount = 3)
+        ImportConfirmUseCaseSet(
+            ordinaryFlow = ConfirmImportCandidate(importSpineStore, twoPostingIds, OrdinaryFlowFormalFactory(currentCatalog), currentCatalog),
+            transferFlow =
+                ConfirmImportCandidate(
+                    importSpineStore,
+                    twoPostingIds,
+                    TransferFlowFormalFactory(currentCatalog, AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)),
+                    currentCatalog,
+                ),
+            creditExpense = ConfirmImportCandidate(importSpineStore, twoPostingIds, creditFormalFactory, currentCatalog),
+            creditRepayment = ConfirmImportCandidate(importSpineStore, twoPostingIds, creditFormalFactory, currentCatalog),
+            mixedPayment = ConfirmImportCandidate(importSpineStore, threePostingIds, MixedPaymentFlowFormalFactory(currentCatalog), currentCatalog),
+        )
+    }
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -577,6 +619,11 @@ internal fun buildLedgerGraph(
                 )
             },
             importPickResultChannel = importPickChannel,
+            // P7-04.D: the batch confirmation surface — the per-kind confirm use case factory
+            // (fresh catalog per dispatch run) and the per-item requestId mint (a fresh UUIDv7
+            // per item, minted once per authorization intent by the host).
+            importConfirmUseCases = importConfirmUseCasesFactory,
+            importConfirmRequestIdSource = { importConfirmRequestIdGenerator.next() },
         )
 
     return DesktopLedgerGraph(

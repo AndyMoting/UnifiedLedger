@@ -858,6 +858,10 @@ fun P503App(
      * LedgerClock (Q09.4 — a review is a processing/audit time, never a source time), and a fresh
      * requestId/reviewId/historyId UUIDv7 triple per intent (claim-gated; replay/conflict paths
      * never consume ids). The result returns with the refreshed list/detail/duplicates.
+     * P704D-SPEC-02 (final delta): a guarded run body — an execution throw becomes the typed
+     * UI-owned failure event (review/refresh null + `IMPORT_REVIEW_SUBMIT_UNAVAILABLE`), the
+     * store's claim transaction having rolled back (zero writes, retryable); the single-flight
+     * slot always releases.
      */
     fun submitImportDuplicateReview(decision: ImportDuplicateReviewUiDecision) {
         val detailState = latestState.value as? P503AppState.ImportCandidateDetail ?: return
@@ -882,14 +886,35 @@ fun P503App(
         // events; the coordinator guard blocks a duplicate host submission.
         coordinator.submitImportDuplicateReviewOnce {
             scope.launch(Dispatchers.Default) {
-                val review = reviewUseCase.execute(request)
-                val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
-                val detail = facade.queryImportCandidateDetail?.query(facade.ledgerId, detailState.candidateId)
-                val duplicates = facade.queryImportDuplicateReviews?.query(facade.ledgerId, detailState.candidateId)
-                // Back on the main dispatcher: release the slot and dispatch serially (P704C-SPEC-01/QUAL-02).
-                scope.launch {
-                    coordinator.importDuplicateReviewCompleted()
-                    dispatch(P503UiEvent.ImportDuplicateReviewResult(review, ImportDuplicateReviewRefresh(rows, detail, duplicates)))
+                // P704D-SPEC-02 (final delta, the same-pattern prevention as the batch runs): the
+                // guarded body keeps the review's single-flight slot always releasable — both
+                // paths release it in their main-dispatcher hop. An execution throw becomes the
+                // typed UI-owned failure event (the core never returned a verdict; the store's
+                // claim transaction rolled back — zero writes), never a stranded reviewPending
+                // marker or a leaked slot. The failure path passes no refresh payload (保留旧载荷, F1): the failed submission changed nothing, so a re-read adds nothing —
+                // the banner explains and a retried success re-reads on its own (registered
+                // choice: 保守不重读).
+                try {
+                    val review = reviewUseCase.execute(request)
+                    val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                    val detail = facade.queryImportCandidateDetail?.query(facade.ledgerId, detailState.candidateId)
+                    val duplicates = facade.queryImportDuplicateReviews?.query(facade.ledgerId, detailState.candidateId)
+                    // Back on the main dispatcher: release the slot and dispatch serially (P704C-SPEC-01/QUAL-02).
+                    scope.launch {
+                        coordinator.importDuplicateReviewCompleted()
+                        dispatch(P503UiEvent.ImportDuplicateReviewResult(review, ImportDuplicateReviewRefresh(rows, detail, duplicates)))
+                    }
+                } catch (failure: Exception) {
+                    scope.launch {
+                        coordinator.importDuplicateReviewCompleted()
+                        dispatch(
+                            P503UiEvent.ImportDuplicateReviewResult(
+                                review = null,
+                                refresh = null,
+                                uiFailureCode = IMPORT_REVIEW_SUBMIT_UNAVAILABLE,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -913,25 +938,39 @@ fun P503App(
         // interleave two enumerations (two Start events would race the page state).
         coordinator.startImportDuplicateGroupDispositionOnce {
             scope.launch(Dispatchers.Default) {
-                // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision — any
-                // typed duplicate-review read failure aborts wholesale (never a silent partial
-                // group) and the typed list-failure banner is surfaced instead.
-                val enumeration =
-                    enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                        reviewQuery.query(facade.ledgerId, candidateId)
-                    }
-                // Back on the main dispatcher: release the slot and dispatch serially.
-                scope.launch {
-                    coordinator.importGroupEnumerationCompleted()
-                    when (enumeration) {
-                        ImportDuplicateGroupEnumeration.ReadFailed ->
-                            dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
-                        is ImportDuplicateGroupEnumeration.Ready ->
-                            // An empty Ready is the defensive no-op path (the affordance only
-                            // appears for a non-empty row-level group).
-                            if (enumeration.items.isNotEmpty()) {
-                                dispatch(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, enumeration.items))
+                // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
+                // enumeration's single-flight slot always releasable — the finally hop releases
+                // it and dispatches the typed outcome on the main dispatcher regardless of how
+                // the run ended. An unexpected throw in the enumeration phase maps to the same
+                // typed list-failure path as a duplicate-review read failure (never a silently
+                // partial group, never a stranded slot).
+                var enumeration: ImportDuplicateGroupEnumeration = ImportDuplicateGroupEnumeration.ReadFailed
+                try {
+                    // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision —
+                    // any typed duplicate-review read failure aborts wholesale (never a silent
+                    // partial group) and the typed list-failure banner is surfaced instead.
+                    enumeration =
+                        try {
+                            enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                reviewQuery.query(facade.ledgerId, candidateId)
                             }
+                        } catch (failure: Exception) {
+                            ImportDuplicateGroupEnumeration.ReadFailed
+                        }
+                } finally {
+                    // Back on the main dispatcher: release the slot and dispatch serially.
+                    scope.launch {
+                        coordinator.importGroupEnumerationCompleted()
+                        when (enumeration) {
+                            ImportDuplicateGroupEnumeration.ReadFailed ->
+                                dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
+                            is ImportDuplicateGroupEnumeration.Ready ->
+                                // An empty Ready is the defensive no-op path (the affordance only
+                                // appears for a non-empty row-level group).
+                                if (enumeration.items.isNotEmpty()) {
+                                    dispatch(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, enumeration.items))
+                                }
+                        }
                     }
                 }
             }
@@ -958,59 +997,284 @@ fun P503App(
         val reviewUseCase = facade.importDuplicateReview ?: return
         coordinator.confirmImportDuplicateGroupDispositionOnce {
             scope.launch(Dispatchers.Default) {
-                val outcomes =
+                // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
+                // disposition loop's single-flight slot always releasable — the finally hop
+                // dispatches the outcomes collected so far and releases the slot regardless of
+                // how the run ended. An unexpected mid-loop throw therefore still lands the
+                // already-disposed items' visible partial success (可见部分成功， the loop's own
+                // semantics) instead of leaking the slot and dropping every outcome.
+                val outcomes = mutableListOf<ImportDuplicateGroupItemOutcome>()
+                try {
                     page.items
                         // 已成功项幂等不重复处置：never re-submit a Reviewed item on a re-run.
                         .filter { it.outcome !is ImportDuplicateGroupItemResult.Reviewed }
-                        .map { itemState ->
+                        // P704D-SPEC-03: forEach + immediate append — a mid-loop throw keeps the
+                        // already-disposed items' outcomes in `outcomes` (the finally then lands
+                        // the visible partial success); a map-then-addAll would drop them.
+                        .forEach { itemState ->
                             val item = itemState.item
                             val ids = facade.importDuplicateReviewIds()
-                            if (ids == null) {
-                                ImportDuplicateGroupItemOutcome(
-                                    item.duplicateCandidateId,
-                                    // P704C-SPEC-07: a UI-owned guard code never borrows the core
-                                    // SPINE_ diagnostic namespace (the spine family must stay 原样).
-                                    ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"),
-                                )
-                            } else {
-                                val now = facade.ledgerClock.now().toString()
-                                val request =
-                                    ImportDuplicateReviewRequest(
-                                        identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
-                                        candidateId = item.duplicateCandidateId,
-                                        expectedComparisonFingerprint = item.expectedComparisonFingerprint,
-                                        decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
-                                        reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
-                                        reviewedAt = now,
-                                        reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
-                                        generatedAt = now,
-                                        reviewId = ids.reviewId,
-                                        historyId = ids.historyId,
+                            outcomes +=
+                                if (ids == null) {
+                                    ImportDuplicateGroupItemOutcome(
+                                        item.duplicateCandidateId,
+                                        // P704C-SPEC-07: a UI-owned guard code never borrows the core
+                                        // SPINE_ diagnostic namespace (the spine family must stay 原样).
+                                        ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"),
                                     )
-                                when (val result = reviewUseCase.execute(request)) {
-                                    is com.unifiedledger.application.ImportDuplicateReviewResult.Accepted ->
-                                        ImportDuplicateGroupItemOutcome(
-                                            item.duplicateCandidateId,
-                                            ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                } else {
+                                    val now = facade.ledgerClock.now().toString()
+                                    val request =
+                                        ImportDuplicateReviewRequest(
+                                            identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
+                                            candidateId = item.duplicateCandidateId,
+                                            expectedComparisonFingerprint = item.expectedComparisonFingerprint,
+                                            decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                                            reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
+                                            reviewedAt = now,
+                                            reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
+                                            generatedAt = now,
+                                            reviewId = ids.reviewId,
+                                            historyId = ids.historyId,
                                         )
-                                    is com.unifiedledger.application.ImportDuplicateReviewResult.NoChange ->
-                                        ImportDuplicateGroupItemOutcome(
-                                            item.duplicateCandidateId,
-                                            ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
-                                        )
-                                    is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
-                                        ImportDuplicateGroupItemOutcome(
-                                            item.duplicateCandidateId,
-                                            ImportDuplicateGroupItemResult.Rejected(result.diagnostic.code),
-                                        )
+                                    when (val result = reviewUseCase.execute(request)) {
+                                        is com.unifiedledger.application.ImportDuplicateReviewResult.Accepted ->
+                                            ImportDuplicateGroupItemOutcome(
+                                                item.duplicateCandidateId,
+                                                ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                            )
+                                        is com.unifiedledger.application.ImportDuplicateReviewResult.NoChange ->
+                                            ImportDuplicateGroupItemOutcome(
+                                                item.duplicateCandidateId,
+                                                ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                            )
+                                        is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                                            ImportDuplicateGroupItemOutcome(
+                                                item.duplicateCandidateId,
+                                                ImportDuplicateGroupItemResult.Rejected(result.diagnostic.code),
+                                            )
+                                    }
                                 }
-                            }
                         }
-                val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
-                // Back on the main dispatcher: release the slot and dispatch serially.
-                scope.launch {
-                    coordinator.importGroupDispositionCompleted()
-                    dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes, rows))
+                } finally {
+                    val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                    // Back on the main dispatcher: release the slot and dispatch serially.
+                    scope.launch {
+                        coordinator.importGroupDispositionCompleted()
+                        dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes.toList(), rows))
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- P7-04.D batch confirmation host surface
+
+    /** P7-04.D: re-reads the review list off the UI thread and dispatches the typed result. */
+    fun requestImportReviewRowsRead() {
+        val query = facade.queryImportReviewRows ?: return
+        scope.launch(Dispatchers.Default) {
+            val rows = query.query(facade.ledgerId)
+            scope.launch { dispatch(P503UiEvent.ImportReviewResult(rows)) }
+        }
+    }
+
+    /** P7-04.D: opens the 授权快照确认页 (the reducer effect owns the transition; no host IO). */
+    fun requestImportBatchConfirm() {
+        dispatch(P503UiEvent.RequestImportBatchConfirm)
+    }
+
+    /**
+     * P7-04.D: the sequential per-item dispatch loop (P704C-SPEC-01/QUAL-02 threading): the
+     * latest-rows re-read and every spine confirm run OFF the UI thread (`Dispatchers.Default`),
+     * each per-item result hops back ON the composition's main dispatcher (the nested
+     * `scope.launch` hop — `dispatch` is a non-atomic read-modify-write, so every dispatch stays
+     * serial on the main dispatcher), and the loop's single-flight slot releases in the final
+     * hop AFTER the last per-item result hop (a paused or abandoned run always leaves the slot
+     * free before the user can act again). A Completed run re-reads the list so confirmed items
+     * read `confirmed` immediately (清单读即权威， D04). P704D-QUAL-01/SPEC-02: the guarded
+     * pre-phase and the try/finally body guarantee the slot release and turn a pre-phase
+     * failure into typed per-item results (never a stranded run).
+     */
+    fun runImportBatchDispatch() {
+        val submitting = latestState.value as? P503AppState.ImportBatchSubmitting ?: return
+        // Captured on the main thread before the background run: the undispatched items and the
+        // session decision drafts (ImportBatchSubmitting absorbs every draft-changing event, so
+        // these are the authorization-time values).
+        val undispatched = submitting.items.filter { it.outcome == null }.map { it.item }
+        val drafts = submitting.overview.importReview?.decisionDrafts ?: emptyMap()
+        val confirmedAt = submitting.confirmedAt
+        coordinator.startImportBatchDispatchOnce {
+            scope.launch(Dispatchers.Default) {
+                // P704D-QUAL-01/SPEC-02: the whole run body is guarded so the single-flight slot
+                // ALWAYS releases — the finally hop is queued after the last per-item result hop
+                // (main-dispatcher FIFO), whether the run completed, paused, or failed in the
+                // pre-phase. A pre-phase failure becomes typed visible per-item results instead
+                // of a stranded run (基础设施失败成为类型化/可见结果而非搁浅流程).
+                var completed = false
+                try {
+                    val prePhase =
+                        importBatchDispatchPrePhase(
+                            loadRows = { facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                            loadUseCases = { facade.importConfirmUseCases() },
+                        )
+                    when (prePhase) {
+                        is ImportBatchDispatchPrePhase.Failed -> {
+                            // The run-level typed skips land per still-undispatched item; every
+                            // item is then terminal, so the reducer auto-leaves to the overview
+                            // with the typed summary — no dead end, the candidates stay pending.
+                            importBatchRunLevelFailureResults(undispatched, prePhase.code).forEach { result ->
+                                scope.launch { dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome)) }
+                            }
+                            completed = true
+                        }
+                        is ImportBatchDispatchPrePhase.Ready -> {
+                            val loop =
+                                ImportBatchDispatchLoop(
+                                    items = undispatched,
+                                    rows = prePhase.rows,
+                                    drafts = drafts,
+                                    confirmedAt = confirmedAt,
+                                    useCases = prePhase.useCases,
+                                    ledgerId = facade.ledgerId,
+                                    parseAmount = facade.parseAmount,
+                                    defaultCurrency = facade.currency,
+                                )
+                            val run =
+                                loop.run(
+                                    dispatch = { result ->
+                                        scope.launch { dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome)) }
+                                    },
+                                    execute = { useCase, request -> useCase.execute(request) },
+                                )
+                            completed = run is ImportBatchDispatchRun.Completed
+                        }
+                    }
+                } finally {
+                    // Back on the main dispatcher: release the slot (queued after every per-item
+                    // result hop) and, on a completed run, re-read the list so the rows reflect
+                    // the confirmed items.
+                    scope.launch {
+                        coordinator.importBatchDispatchCompleted()
+                        if (completed) {
+                            requestImportReviewRowsRead()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * P7-04.D: the authorization action (Q09.3/Q09.4). The wiring guard runs BEFORE the dispatch
+     * (the P704C-QUAL-04 call-site precedent: an unwired surface must never strand the page in a
+     * state it cannot leave) — the LedgerClock is sampled exactly ONCE for the whole
+     * authorization and one fresh requestId is minted per selected candidate (P7-02 每个新意图
+     * 分配新 requestId； a resumed run and the unknown-item replay reuse these ids verbatim — 不换
+     * ID). The reducer then enters the dispatch state and the sequential loop starts.
+     */
+    fun authorizeImportBatch() {
+        val confirmState = latestState.value as? P503AppState.ImportBatchConfirm ?: return
+        val selected = confirmState.overview.importReview?.selectedCandidateIds ?: emptySet()
+        if (selected.isEmpty()) return
+        val requestIdSource = facade.importConfirmRequestIdSource ?: return
+        if (facade.importConfirmUseCases() == null) return
+        // Q09.4: 授权时刻 LedgerClock 取样一次，经 explicitConfirmedAt 全项复用（mixed 必填）。
+        val confirmedAt = facade.ledgerClock.now().toString()
+        val requestIds =
+            selected.associateWith { candidateId ->
+                com.unifiedledger.application.ImportRequestId(requestIdSource())
+            }
+        dispatch(P503UiEvent.AuthorizeImportBatch(confirmedAt, requestIds))
+        runImportBatchDispatch()
+    }
+
+    /**
+     * P7-04.D: the paused batch's explicit continue. The reducer decides stay-or-leave; with the
+     * state still dispatching, the continuation loop starts (同授权快照内， 复用同次 LedgerClock 取样
+     * 与既有 requestId — the state's snapshot is the single source); with the state having left to
+     * the overview, the list re-read shows the confirmed items.
+     */
+    fun resumeImportBatchDispatch() {
+        dispatch(P503UiEvent.ResumeImportBatchDispatch)
+        if (latestState.value is P503AppState.ImportBatchSubmitting) {
+            runImportBatchDispatch()
+        } else {
+            requestImportReviewRowsRead()
+        }
+    }
+
+    /**
+     * P7-04.D: the explicit abandon (义务③). The reducer dissolves the authorization snapshot in
+     * one transition (the completed items keep their summary, the undispatched items are
+     * ordinary pending rows again); the host then re-reads the list so the persisted
+     * `pending_confirmation` state of the never-dispatched items reads as the ordinary 待确认
+     * list (未派发项持久状态保持 pending_confirmation).
+     */
+    fun abandonImportBatch() {
+        dispatch(P503UiEvent.AbandonImportBatch)
+        requestImportReviewRowsRead()
+    }
+
+    /**
+     * P7-04.D: one Unknown item's 核对 (Q10.2) — the equivalent replay with the SAME requestId and
+     * the SAME authorization clock sample over the latest rows (sources are immutable, so the
+     * rebuilt request is equivalent to the dispatched one). The spine's claim-gated
+     * `resolveConfirm` returns the original receipt (判成功) or types the equivalence break (判冲
+     * 突)； an unreadable replay stays Unknown (仍未知 — the entry stays, 不自动重试). A Confirmed
+     * verdict also re-reads the list so the item reads `confirmed`. P704D-QUAL-01/SPEC-02: the
+     * guarded body and the finally hop keep the check's single-flight slot always releasable; a
+     * pre-phase failure is the StillUnknown verdict (retryable), never a stranded run.
+     */
+    fun checkImportUnknownItem(candidateId: ImportCandidateId) {
+        dispatch(P503UiEvent.ImportUnknownItemCheck(candidateId))
+        val target = resolveImportUnknownCheckTarget(latestState.value, candidateId) ?: return
+        val (item, confirmedAt) = target
+        // Captured on the main thread before the background run (the batch states absorb every
+        // draft-changing event, so these are the authorization-time values).
+        val drafts =
+            when (val current = latestState.value) {
+                is P503AppState.ImportBatchSubmitting -> current.overview.importReview?.decisionDrafts ?: emptyMap()
+                is P503AppState.OverviewEmpty -> current.importReview?.decisionDrafts ?: emptyMap()
+                else -> emptyMap()
+            }
+        coordinator.submitImportUnknownCheckOnce {
+            scope.launch(Dispatchers.Default) {
+                // P704D-QUAL-01/SPEC-02: the guarded body keeps the check's single-flight slot
+                // always releasable — the finally hop releases and dispatches the verdict after
+                // any earlier hops (main-dispatcher FIFO). A pre-phase failure (the list re-read
+                // or the use-case factory threw) maps to the SAME null-context path as an
+                // unreadable replay: the verdict is StillUnknown (仍未知 — the item keeps its
+                // check entry, the user can retry; never a stranded run).
+                var outcome: ImportUnknownCheckOutcome = ImportUnknownCheckOutcome.StillUnknown
+                try {
+                    val prePhase =
+                        importBatchDispatchPrePhase(
+                            loadRows = { facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                            loadUseCases = { facade.importConfirmUseCases() },
+                        )
+                    if (prePhase is ImportBatchDispatchPrePhase.Ready) {
+                        val context =
+                            importUnknownCheckContext(
+                                item,
+                                prePhase.rows,
+                                drafts,
+                                confirmedAt,
+                                prePhase.useCases,
+                                facade.ledgerId,
+                                facade.parseAmount,
+                                facade.currency,
+                            )
+                        outcome = runImportUnknownItemCheck(context) { useCase, request -> useCase.execute(request) }
+                    }
+                } finally {
+                    scope.launch {
+                        coordinator.importUnknownCheckCompleted()
+                        dispatch(P503UiEvent.ImportUnknownItemCheckResult(item, outcome))
+                        if (outcome is ImportUnknownCheckOutcome.Confirmed) {
+                            requestImportReviewRowsRead()
+                        }
+                    }
                 }
             }
         }
@@ -1264,6 +1528,8 @@ fun P503App(
                             )
                         // P7-04.C: the IMPORT tab content — the review projection, the matrix
                         // format entries, the session summary and the group disposition surface.
+                        // P7-04.D: the batch confirmation entry and the retained result summary
+                        // (with the Unknown items' check entries) render on the same projection.
                         P503Tab.IMPORT ->
                             P503ImportScreen(
                                 view = current.importReview,
@@ -1277,6 +1543,8 @@ fun P503App(
                                 onGroupDisposition = ::startImportDuplicateGroupDisposition,
                                 onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
                                 onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
+                                onRequestBatchConfirm = ::requestImportBatchConfirm,
+                                onCheckUnknownItem = ::checkImportUnknownItem,
                             )
                     }
                 }
@@ -1320,8 +1588,34 @@ fun P503App(
                             }
                         }
                     },
+                    // P7-04.D: the detail's 批量确认 entry (afforded only for a non-empty
+                    // selection; the reducer effect carries the detail's draft into the page).
+                    onRequestBatchConfirm = ::requestImportBatchConfirm,
                     // Back = close semantics (SPEC:281: 返回 OverviewEmpty(IMPORT) 保留清单/勾选集).
                     onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            // P7-04.D: the 授权快照确认页. The wiring guard runs inside the authorize action, so
+            // an unwired surface never strands the page in a dispatch state it cannot leave.
+            is P503AppState.ImportBatchConfirm ->
+                P503ImportBatchConfirmScreen(
+                    state = current,
+                    parseAmount = facade.parseAmount,
+                    defaultCurrency = facade.currency,
+                    onAuthorize = ::authorizeImportBatch,
+                    // Back = cancel semantics (→ 原 OverviewEmpty， 保留勾选集与清单).
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            // P7-04.D: the per-item dispatch state. System back is intercepted and swallowed
+            // (沿 Submitting 语义)； the only exits are the explicit Resume/Abandon affordances
+            // (rendered in the paused sub-state AND the residual stopped sub-state — a cleanly
+            // finished resumed run with an Unknown item remaining, [importBatchExitAvailable],
+            // P704D-SPEC-01), plus the Unknown items' check actions.
+            is P503AppState.ImportBatchSubmitting ->
+                P503ImportBatchSubmittingScreen(
+                    state = current,
+                    onResume = ::resumeImportBatchDispatch,
+                    onAbandon = ::abandonImportBatch,
+                    onCheckUnknownItem = ::checkImportUnknownItem,
                 )
             is P503AppState.Editing ->
                 P503EditScreen(
@@ -1571,6 +1865,13 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // P7-04.C (SPEC:281): the import candidate detail returns to the preserved IMPORT
         // overview (清单/勾选集保留； the draft is written back by the reducer on close).
         is P503AppState.ImportCandidateDetail -> true
+        // P7-04.D (SPEC 6.2 back bullet): the confirm page returns to the preserved overview
+        // (保留勾选集与清单).
+        is P503AppState.ImportBatchConfirm -> true
+        // P7-04.D: the dispatch state intercepts the back channel so the system gesture never
+        // exits mid-batch — the enabled handler swallows it (沿既有 Submitting 语义) while
+        // [isBackDispatchSafe] keeps `Back` from ever reaching the reducer here.
+        is P503AppState.ImportBatchSubmitting -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -1584,8 +1885,10 @@ private fun isBackEnabled(state: P503AppState): Boolean =
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the
  * back and every other state (including the HOME overview root) must not dispatch one.
+ * P7-04.D: the import batch dispatch state joins Submitting in swallowing the back — the only
+ * exits are the explicit Resume/Abandon affordances (显式退出只经 AbandonImportBatch).
  */
-private fun isBackDispatchSafe(state: P503AppState): Boolean = isBackEnabled(state) && state !is P503AppState.Submitting
+private fun isBackDispatchSafe(state: P503AppState): Boolean = isBackEnabled(state) && state !is P503AppState.Submitting && state !is P503AppState.ImportBatchSubmitting
 
 /** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
 private fun currentOriginTab(state: P503AppState): P503Tab =

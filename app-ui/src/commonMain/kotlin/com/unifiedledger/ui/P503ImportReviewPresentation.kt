@@ -272,6 +272,10 @@ internal fun importReviewNoticeText(notice: ImportReviewNotice): String =
             }
         is ImportReviewNotice.ReviewRejected ->
             "重复审核未通过（诊断码 ${notice.code}），未写入任何记录。"
+        // P704D-SPEC-02: an infrastructure failure is NOT a verdict — the copy never claims
+        // 审核未通过； the core never returned, zero writes happened and the action is retryable.
+        is ImportReviewNotice.ReviewSubmitFailed ->
+            "重复审核提交失败（原因码 ${notice.code}），未写入任何记录；可重新提交。"
     }
 
 private fun importIntakeDispositionCounts(records: List<ImportIntakeRecordSummary>): Map<ImportIntakeRecordDisposition, Int> = records.groupingBy { it.disposition }.eachCount()

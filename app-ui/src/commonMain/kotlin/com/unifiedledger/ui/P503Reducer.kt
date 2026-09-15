@@ -77,6 +77,8 @@ class P503ReducerImpl(
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
             is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
+            is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
+            is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -146,6 +148,16 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed before the overview exists
+            // (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -382,6 +394,26 @@ class P503ReducerImpl(
                 state.importReview?.let { view ->
                     state.copy(importReview = view.copy(groupDisposition = null))
                 } ?: state
+            // ---- P7-04.D batch confirmation transitions (table 6.2a) ----
+            // The confirm page opens only for a non-empty selection (空集 absorbed； the entry
+            // affordance also restricts, but the reducer holds the gate).
+            P503UiEvent.RequestImportBatchConfirm ->
+                state.importReview
+                    ?.takeIf { it.selectedCandidateIds.isNotEmpty() }
+                    ?.let { P503AppState.ImportBatchConfirm(overview = state) }
+                    ?: state
+            // The authorize action, per-item results, the resume/abandon exits and the check
+            // events all live in their own states; on the overview the check intent keeps the
+            // state (不切态， the host action owns the replay; the coordinator test pins it) and a
+            // late check result updates the retained summary below.
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            -> state
+            is P503UiEvent.ImportUnknownItemCheckResult -> reduceImportUnknownCheckResultOnOverview(state, event)
             // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
@@ -471,6 +503,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             else -> unhandled(state, event)
         }
@@ -603,17 +644,26 @@ class P503ReducerImpl(
         event: P503UiEvent.ImportDuplicateReviewResult,
     ): P503AppState.OverviewEmpty {
         val view = state.importReview ?: return state
+        // P704D-SPEC-02: the UI-owned infrastructure failure — the core never returned a
+        // verdict, so only the typed banner lands; the previous rows stay (F1 保留旧载荷).
+        if (event.uiFailureCode != null) {
+            return state.copy(importReview = view.copy(notice = ImportReviewNotice.ReviewSubmitFailed(event.uiFailureCode)))
+        }
+        // Host contract: a core-verdict event always carries both payloads; anything else
+        // changes nothing (defensive absorb).
+        val review = event.review ?: return state
+        val refresh = event.refresh ?: return state
         val nextRows =
-            if (event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
-                event.refresh.rows.rows
+            if (refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
+                refresh.rows.rows
             } else {
                 view.rows
             }
         val notice =
             when {
-                event.review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
-                    ImportReviewNotice.ReviewRejected(event.review.diagnostic.code)
-                event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                    ImportReviewNotice.ReviewRejected(review.diagnostic.code)
+                refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
                     ImportReviewNotice.ReviewReadFailed
                 else -> null
             }
@@ -708,21 +758,31 @@ class P503ReducerImpl(
                     else -> state
                 }
             is P503UiEvent.ImportDuplicateReviewResult -> {
-                val refreshedOverview =
-                    reduceImportDuplicateReviewResultOnOverview(
-                        state.overview,
-                        P503UiEvent.ImportDuplicateReviewResult(event.review, event.refresh),
+                val refreshedOverview = reduceImportDuplicateReviewResultOnOverview(state.overview, event)
+                // P704D-SPEC-02: the UI-owned infrastructure failure — the core never returned a
+                // verdict. Clear the in-flight marker (期间禁重复提交 is over; the action is
+                // retryable), surface the typed banner and keep the previous payloads (F1).
+                if (event.uiFailureCode != null) {
+                    return state.copy(
+                        overview = refreshedOverview,
+                        reviewPending = false,
+                        notice = ImportReviewNotice.ReviewSubmitFailed(event.uiFailureCode),
                     )
-                val detail = event.refresh.detail
-                val duplicates = event.refresh.duplicates
+                }
+                // Host contract: a core-verdict event always carries both payloads; anything
+                // else changes nothing (defensive absorb).
+                val review = event.review ?: return state
+                val refresh = event.refresh ?: return state
+                val detail = refresh.detail
+                val duplicates = refresh.duplicates
                 // Success clears any previous rejection banner (成功刷新详情重复状态); a typed
                 // rejection surfaces its code (拒绝类型化呈现); a re-read failure keeps the
                 // previous payloads and surfaces the typed read-failure banner (F1).
                 val notice =
                     when {
-                        event.review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
-                            ImportReviewNotice.ReviewRejected(event.review.diagnostic.code)
-                        event.refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                        review is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                            ImportReviewNotice.ReviewRejected(review.diagnostic.code)
+                        refresh.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
                             ImportReviewNotice.ReviewReadFailed
                         else -> null
                     }
@@ -734,6 +794,16 @@ class P503ReducerImpl(
                     notice = notice,
                 )
             }
+            // P7-04.D (table 6.2a): 携详情决策进入确认页 — the detail's decision draft is written
+            // back into the carried overview (the same close semantics, SPEC:283) and the confirm
+            // page opens over that overview. P704D-SPEC-03: the empty-selection gate aligns this
+            // column with the OverviewEmpty column (空集 absorbed); the UI affordance restricts
+            // to a non-empty selection too (the SelectTransaction precedent).
+            P503UiEvent.RequestImportBatchConfirm ->
+                state.overview.importReview
+                    ?.takeIf { it.selectedCandidateIds.isNotEmpty() }
+                    ?.let { P503AppState.ImportBatchConfirm(overview = closeImportCandidateDetail(state)) }
+                    ?: state
             // The host-channel pick events, the pick pipeline result and the list refresh events
             // are absorbed here (table 6.2a; 清单经详情关闭后刷新).
             is P503UiEvent.StartImportFilePick,
@@ -746,6 +816,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the remaining batch events are absorbed inside the detail (table 6.2a; the
+            // batch states own their effects).
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             // A second SelectImportCandidate while a detail is open stays on the open detail
             // (the UI affords no nested navigation).
             is P503UiEvent.SelectImportCandidate,
@@ -832,11 +911,386 @@ class P503ReducerImpl(
      * carried projection so re-entering the same candidate keeps it within the session (进程重启
      * 丢失可接受 — the drafts are session memory, never persisted).
      */
-    private fun closeImportCandidateDetail(state: P503AppState.ImportCandidateDetail): P503AppState {
+    private fun closeImportCandidateDetail(state: P503AppState.ImportCandidateDetail): P503AppState.OverviewEmpty {
         val view = state.overview.importReview ?: return state.overview
         return state.overview.copy(
             importReview = view.copy(decisionDrafts = view.decisionDrafts + (state.candidateId to state.form)),
         )
+    }
+
+    // ---- P7-04.D batch confirmation transitions (D-146; spec sections 3.2.3/3.3.2/6.2 table 6.2a) ----
+
+    /**
+     * P7-04.D: the 授权快照确认页. Cancel/Back return to the exact preserved overview (保留勾选集
+     * 与清单)； the authorize action builds the authorization snapshot — the deterministic selection
+     * ordering (rows order, then selected-but-absent ids by value) paired with the host-minted
+     * per-item requestIds — and enters the dispatch state with the ONE host-sampled clock instant
+     * (Q09.4; the reducer itself performs no IO and no randomness). A selected id without a
+     * minted requestId absorbs defensively (the wired host always mints one per selected
+     * candidate). Every pre-existing event is absorbed (新态不发起编辑/管理/月度流) except `Exit`,
+     * which stays unlisted (ISE, spec section 6.3 / P7-02 §6.2b).
+     */
+    private fun reduceImportBatchConfirm(
+        state: P503AppState.ImportBatchConfirm,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CancelImportBatchConfirm -> state.overview
+            // SPEC:281: system back = cancel semantics (→ 原 OverviewEmpty， 保留勾选集与清单).
+            P503UiEvent.Back -> state.overview
+            is P503UiEvent.AuthorizeImportBatch ->
+                state.overview.importReview?.let { view ->
+                    val candidateIds = importBatchSnapshotCandidateIds(view)
+                    if (candidateIds.any { it !in event.requestIds }) {
+                        // Defensive: an unminted selected id never enters a half-snapshot state.
+                        state
+                    } else {
+                        P503AppState.ImportBatchSubmitting(
+                            overview = state.overview,
+                            confirmedAt = event.confirmedAt,
+                            items =
+                                candidateIds.map { candidateId ->
+                                    ImportBatchSubmittingItem(
+                                        ImportBatchItem(candidateId, event.requestIds.getValue(candidateId)),
+                                    )
+                                },
+                        )
+                    }
+                } ?: state
+            is P503UiEvent.RequestImportBatchConfirm,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
+            // The host-channel pick events and the P7-04.C review surface are absorbed (the
+            // confirm page owns no list affordances).
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-02: the entry-foundation events are absorbed (§6.2a).
+            is P503UiEvent.SelectEntryType,
+            is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateReceivingAccount,
+            is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
+            // P7-01.D: the catalog management events are absorbed (新增入口仅存在于 overview).
+            is P503UiEvent.OpenAccountCreateDialog,
+            is P503UiEvent.OpenAccountRenameDialog,
+            is P503UiEvent.OpenCategoryGroupDialog,
+            is P503UiEvent.OpenCategoryAppendChildDialog,
+            is P503UiEvent.OpenCategoryRenameDialog,
+            is P503UiEvent.OpenCategoryDeleteDialog,
+            is P503UiEvent.ManageAccountActive,
+            is P503UiEvent.ManageCategoryActive,
+            is P503UiEvent.EnableCategoryGroup,
+            is P503UiEvent.UpdateCatalogFormText,
+            is P503UiEvent.UpdateCatalogFormSecondaryText,
+            is P503UiEvent.UpdateCatalogFormKind,
+            P503UiEvent.DismissCatalogDialog,
+            P503UiEvent.DismissCatalogNotice,
+            is P503UiEvent.CatalogCommandCompleted,
+            is P503UiEvent.CatalogSnapshotRefreshed,
+            // P7-03.C/D: the read-only ledger-view events are absorbed (§6.2a).
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
+            // The remaining pre-existing events are absorbed too (既有事件在新态全部 absorbed，
+            // spec section 6.2).
+            is P503UiEvent.SelectTab,
+            P503UiEvent.StartNewExpense,
+            is P503UiEvent.UpdateAmount,
+            is P503UiEvent.UpdatePaymentAccount,
+            is P503UiEvent.UpdateCategory,
+            is P503UiEvent.UpdateOccurredAt,
+            is P503UiEvent.Continue,
+            P503UiEvent.Cancel,
+            P503UiEvent.Confirm,
+            P503UiEvent.RetrySubmission,
+            P503UiEvent.RetryRefresh,
+            P503UiEvent.RetryCommitStatusCheck,
+            P503UiEvent.AbandonConflict,
+            is P503UiEvent.SubmissionResult,
+            is P503UiEvent.CommitStatusResolved,
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P7-04.D: the per-item dispatch state (spec section 3.3.2). Per-item results record their
+     * outcomes (a resolved item is never overwritten — 已成功不重复标注); an Unknown outcome pauses
+     * the loop and keeps the item's check entry; the state leaves to OverviewEmpty(IMPORT) with
+     * the retained result summary once EVERY item is terminal (全部项终态——an Unknown item is not
+     * terminal: 会话内未知 keeps the batch open until a check resolves it or an explicit
+     * Resume/Abandon exits). Resume clears the pause for the host's continuation run — and with
+     * no undispatched item left it leaves instead, carrying the still-Unknown items into the
+     * summary (their check entries live in the 结果摘要， table 6.2a). Abandon dissolves the
+     * authorization snapshot straight back to the overview — the completed items' results stay
+     * and the undispatched items are ordinary pending list rows again (义务③： 无隐藏中间 UI 态；
+     * 未派发项持久状态保持 pending_confirmation). System back is not listed: the dispatch guards
+     * intercept and swallow it (沿既有 Submitting 语义， G-B keeps the unlisted combination an ISE).
+     */
+    private fun reduceImportBatchSubmitting(
+        state: P503AppState.ImportBatchSubmitting,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.ImportItemResult -> applyImportItemOutcome(state, event)
+            is P503UiEvent.ImportUnknownItemCheckResult -> applyImportUnknownCheckResult(state, event)
+            P503UiEvent.ResumeImportBatchDispatch ->
+                if (importBatchHasUndispatchedItems(state)) {
+                    // 同授权快照内继续派发未派发项 (复用同次 LedgerClock 取样与既有 requestId).
+                    state.copy(dispatchPaused = false)
+                } else {
+                    // Nothing left to dispatch: the batch leaves with the per-item summary; any
+                    // still-Unknown item keeps its check entry inside the summary.
+                    leaveImportBatchSubmitting(state, includeUnknowns = true)
+                }
+            P503UiEvent.AbandonImportBatch ->
+                // 义务③: the snapshot dissolves in ONE transition — the completed items keep
+                // their results, the undispatched items are ordinary pending rows again.
+                leaveImportBatchSubmitting(state, includeUnknowns = true)
+            is P503UiEvent.AuthorizeImportBatch,
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            is P503UiEvent.SelectEntryType,
+            is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateReceivingAccount,
+            is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
+            is P503UiEvent.OpenAccountCreateDialog,
+            is P503UiEvent.OpenAccountRenameDialog,
+            is P503UiEvent.OpenCategoryGroupDialog,
+            is P503UiEvent.OpenCategoryAppendChildDialog,
+            is P503UiEvent.OpenCategoryRenameDialog,
+            is P503UiEvent.OpenCategoryDeleteDialog,
+            is P503UiEvent.ManageAccountActive,
+            is P503UiEvent.ManageCategoryActive,
+            is P503UiEvent.EnableCategoryGroup,
+            is P503UiEvent.UpdateCatalogFormText,
+            is P503UiEvent.UpdateCatalogFormSecondaryText,
+            is P503UiEvent.UpdateCatalogFormKind,
+            P503UiEvent.DismissCatalogDialog,
+            P503UiEvent.DismissCatalogNotice,
+            is P503UiEvent.CatalogCommandCompleted,
+            is P503UiEvent.CatalogSnapshotRefreshed,
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
+            is P503UiEvent.SelectTab,
+            P503UiEvent.StartNewExpense,
+            is P503UiEvent.UpdateAmount,
+            is P503UiEvent.UpdatePaymentAccount,
+            is P503UiEvent.UpdateCategory,
+            is P503UiEvent.UpdateOccurredAt,
+            is P503UiEvent.Continue,
+            P503UiEvent.Cancel,
+            P503UiEvent.Confirm,
+            P503UiEvent.RetrySubmission,
+            P503UiEvent.RetryRefresh,
+            P503UiEvent.RetryCommitStatusCheck,
+            P503UiEvent.AbandonConflict,
+            is P503UiEvent.SubmissionResult,
+            is P503UiEvent.CommitStatusResolved,
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P7-04.D: one per-item dispatch result lands on the dispatch state (table 6.2a). The item's
+     * outcome records once (a resolved item is never overwritten — the host loop never
+     * re-dispatches a resolved item and this guard keeps a spurious late duplicate from
+     * relabeling it); an Unknown sets the pause flag; the state leaves once every item is
+     * terminal.
+     */
+    private fun applyImportItemOutcome(
+        state: P503AppState.ImportBatchSubmitting,
+        event: P503UiEvent.ImportItemResult,
+    ): P503AppState {
+        if (state.items.none { it.item.candidateId == event.item.candidateId && it.outcome == null }) return state
+        val items =
+            state.items.map { itemState ->
+                if (itemState.item.candidateId == event.item.candidateId && itemState.outcome == null) {
+                    itemState.copy(outcome = event.outcome)
+                } else {
+                    itemState
+                }
+            }
+        val paused = state.dispatchPaused || event.outcome is ImportBatchItemOutcome.Unknown
+        val updated = state.copy(items = items, dispatchPaused = paused)
+        return if (items.all { isImportBatchOutcomeTerminal(it.outcome) }) leaveImportBatchSubmitting(updated, includeUnknowns = false) else updated
+    }
+
+    /**
+     * P7-04.D: one Unknown item's replay verdict lands on the dispatch state. Confirmed/conflict
+     * outcomes replace the Unknown (the item becomes terminal); StillUnknown keeps the Unknown
+     * (仍未知 — the check entry stays). 仅全部项终态后可离开 (table 6.2a): the leave test runs after
+     * the update.
+     */
+    private fun applyImportUnknownCheckResult(
+        state: P503AppState.ImportBatchSubmitting,
+        event: P503UiEvent.ImportUnknownItemCheckResult,
+    ): P503AppState {
+        val items =
+            state.items.map { itemState ->
+                if (itemState.item.candidateId == event.item.candidateId && itemState.outcome is ImportBatchItemOutcome.Unknown) {
+                    when (val outcome = event.outcome) {
+                        is ImportUnknownCheckOutcome.Confirmed -> itemState.copy(outcome = ImportBatchItemOutcome.Confirmed(outcome.receipt))
+                        is ImportUnknownCheckOutcome.Conflict -> itemState.copy(outcome = ImportBatchItemOutcome.CheckConflict(outcome.code))
+                        ImportUnknownCheckOutcome.StillUnknown -> itemState
+                    }
+                } else {
+                    itemState
+                }
+            }
+        // No Unknown item matched: nothing changes (StillUnknown on the one item keeps it too).
+        if (items == state.items) return state
+        val updated = state.copy(items = items)
+        return if (items.all { isImportBatchOutcomeTerminal(it.outcome) }) leaveImportBatchSubmitting(updated, includeUnknowns = false) else updated
+    }
+
+    /**
+     * P7-04.D: the leave transition to OverviewEmpty(IMPORT) with the retained per-item result
+     * summary (保留结果摘要). [includeUnknowns] follows the leaving path's semantics: the terminal
+     * leave (last item terminal / check resolved) always has no Unknowns left; the explicit
+     * Resume-with-nothing-remaining and Abandon leaves carry the still-Unknown items into the
+     * summary so their check entries live in the 结果摘要 (table 6.2a). On Abandon the undispatched
+     * items (null outcome) never enter the summary — they are ordinary pending list rows again
+     * (义务③)； the carried overview keeps its selection set and drafts unchanged, so nothing
+     * hidden survives the dissolution.
+     */
+    private fun leaveImportBatchSubmitting(
+        state: P503AppState.ImportBatchSubmitting,
+        includeUnknowns: Boolean,
+    ): P503AppState {
+        val completed =
+            state.items.filter { itemState ->
+                when {
+                    itemState.outcome == null -> false
+                    itemState.outcome is ImportBatchItemOutcome.Unknown -> includeUnknowns
+                    else -> true
+                }
+            }
+        val summary =
+            ImportBatchResultSummary(
+                confirmedAt = state.confirmedAt,
+                items = completed.map { ImportBatchResultItem(it.item, it.outcome!!) },
+            )
+        val view = state.overview.importReview ?: ImportReviewView()
+        return state.overview.copy(importReview = view.copy(batchResult = summary))
+    }
+
+    /**
+     * P7-04.D: one Unknown item's replay verdict lands on the overview (the batch already left
+     * with the summary retained; the check entry lives inside the 结果摘要). Confirmed/conflict
+     * outcomes update the summary item in place; StillUnknown keeps it Unknown.
+     */
+    private fun reduceImportUnknownCheckResultOnOverview(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ImportUnknownItemCheckResult,
+    ): P503AppState {
+        val view = state.importReview ?: return state
+        val summary = view.batchResult ?: return state
+        val items =
+            summary.items.map { entry ->
+                if (entry.item.candidateId == event.item.candidateId && entry.outcome is ImportBatchItemOutcome.Unknown) {
+                    when (val outcome = event.outcome) {
+                        is ImportUnknownCheckOutcome.Confirmed -> entry.copy(outcome = ImportBatchItemOutcome.Confirmed(outcome.receipt))
+                        is ImportUnknownCheckOutcome.Conflict -> entry.copy(outcome = ImportBatchItemOutcome.CheckConflict(outcome.code))
+                        ImportUnknownCheckOutcome.StillUnknown -> entry
+                    }
+                } else {
+                    entry
+                }
+            }
+        // No Unknown summary item matched (or the verdict was StillUnknown): the state instance
+        // stays untouched (absorbed).
+        if (items == summary.items) return state
+        return state.copy(importReview = view.copy(batchResult = summary.copy(items = items)))
     }
 
     private fun reduceEditing(
@@ -956,6 +1410,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
@@ -1044,6 +1507,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -1119,6 +1591,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             else -> unhandled(state, event)
         }
@@ -1403,6 +1884,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed in every transient state (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> current
             else -> unhandled(current, event)
         }
@@ -1490,6 +1980,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -1582,6 +2081,15 @@ class P503ReducerImpl(
             is P503UiEvent.StartImportDuplicateGroupDisposition,
             is P503UiEvent.ImportDuplicateGroupDispositionResult,
             P503UiEvent.CloseImportDuplicateGroupDisposition,
+            // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             P503UiEvent.Back ->
                 P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
@@ -1651,6 +2159,15 @@ class P503ReducerImpl(
                     is P503UiEvent.StartImportDuplicateGroupDisposition,
                     is P503UiEvent.ImportDuplicateGroupDispositionResult,
                     P503UiEvent.CloseImportDuplicateGroupDisposition,
+                    // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+                    P503UiEvent.RequestImportBatchConfirm,
+                    P503UiEvent.CancelImportBatchConfirm,
+                    is P503UiEvent.AuthorizeImportBatch,
+                    is P503UiEvent.ImportItemResult,
+                    P503UiEvent.ResumeImportBatchDispatch,
+                    P503UiEvent.AbandonImportBatch,
+                    is P503UiEvent.ImportUnknownItemCheck,
+                    is P503UiEvent.ImportUnknownItemCheckResult,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -1729,6 +2246,15 @@ class P503ReducerImpl(
                     is P503UiEvent.StartImportDuplicateGroupDisposition,
                     is P503UiEvent.ImportDuplicateGroupDispositionResult,
                     P503UiEvent.CloseImportDuplicateGroupDisposition,
+                    // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
+                    P503UiEvent.RequestImportBatchConfirm,
+                    P503UiEvent.CancelImportBatchConfirm,
+                    is P503UiEvent.AuthorizeImportBatch,
+                    is P503UiEvent.ImportItemResult,
+                    P503UiEvent.ResumeImportBatchDispatch,
+                    P503UiEvent.AbandonImportBatch,
+                    is P503UiEvent.ImportUnknownItemCheck,
+                    is P503UiEvent.ImportUnknownItemCheckResult,
                     -> state
                     else -> unhandled(state, event)
                 }

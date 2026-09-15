@@ -360,6 +360,52 @@ internal class P503HostCoordinator(
     internal fun importGroupDispositionCompleted() {
         importGroupDispositionInFlight = false
     }
+
+    // ---- P7-04.D batch host decisions (D-146; spec sections 3.2.3/3.3.2/6.2) ----
+
+    /** P7-04.D: the sequential per-item dispatch loop is currently running (single flight). */
+    @Volatile
+    private var importBatchDispatchInFlight = false
+
+    /** P7-04.D: one Unknown item's replay check is currently running (single flight). */
+    @Volatile
+    private var importUnknownCheckInFlight = false
+
+    /**
+     * P7-04.D: the per-item dispatch loop single flight — at most one sequential confirm loop may
+     * run at a time; a duplicate start is dropped until [importBatchDispatchCompleted] clears the
+     * marker (the marker releases in the loop's final main-dispatcher hop, after the last
+     * per-item result hop, so a paused/abandoned batch always leaves the slot free before the
+     * user can act). Returns whether this evaluation started the loop.
+     */
+    internal fun startImportBatchDispatchOnce(action: () -> Unit): Boolean {
+        if (importBatchDispatchInFlight) return false
+        importBatchDispatchInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the dispatch-loop single-flight marker once its run's dispatches have landed. */
+    internal fun importBatchDispatchCompleted() {
+        importBatchDispatchInFlight = false
+    }
+
+    /**
+     * P7-04.D: the Unknown item replay check single flight — one claim-gated replay may be in
+     * flight; duplicate evaluations are dropped until [importUnknownCheckCompleted] clears the
+     * marker (不自动重试： the check is always an explicit user action).
+     */
+    internal fun submitImportUnknownCheckOnce(action: () -> Unit): Boolean {
+        if (importUnknownCheckInFlight) return false
+        importUnknownCheckInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the replay-check single-flight marker once the check result has been dispatched. */
+    internal fun importUnknownCheckCompleted() {
+        importUnknownCheckInFlight = false
+    }
 }
 
 /**

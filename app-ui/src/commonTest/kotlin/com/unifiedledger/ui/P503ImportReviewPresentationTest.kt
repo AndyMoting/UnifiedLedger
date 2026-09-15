@@ -510,6 +510,12 @@ class P503ImportReviewPresentationTest {
         assertTrue(readFailed.any { it.contains("读取失败") })
         assertTrue(importReviewNoticeText(ImportReviewNotice.ReviewReadFailed).contains("保留上一次成功加载的清单"))
         assertTrue(importReviewNoticeText(ImportReviewNotice.ReviewRejected("SPINE_DUPLICATE_NOT_PENDING")).contains("SPINE_DUPLICATE_NOT_PENDING"))
+        // P704D-SPEC-02: the UI-owned infrastructure-failure banner carries the code and zero
+        // writes, and never claims 审核未通过 (the core never returned a verdict).
+        val submitFailed = importReviewNoticeText(ImportReviewNotice.ReviewSubmitFailed(IMPORT_REVIEW_SUBMIT_UNAVAILABLE))
+        assertTrue(submitFailed.contains(IMPORT_REVIEW_SUBMIT_UNAVAILABLE))
+        assertTrue(submitFailed.contains("未写入任何记录"))
+        assertFalse(submitFailed.contains("审核未通过"))
     }
 
     // ---- decision form face (spec section 4.5.3; ImportConfirmDecisionFields mapping) ----
