@@ -39,6 +39,8 @@ import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionResult
+import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFileIntakeInput
 import com.unifiedledger.application.ImportFormatCapabilities
@@ -931,15 +933,26 @@ fun P503App(
      * carrying its privacy-safe comparison snapshot, and any typed read failure aborts the
      * enumeration with the typed list-failure banner (never a silently partial group). The
      * enumeration is single-flight; the outcome is dispatched back on the main dispatcher.
+     *
+     * P7-05 enumeration performance batch: when the composition provides the session-level
+     * batch query ([P503LedgerFacade.queryImportDuplicateReviewsForSession]) the whole group
+     * reads in ONE query (the new v30 covering index), the result is folded per candidate
+     * client-side, and the folded map feeds the unchanged pure function — the N+1
+     * per-candidate read loop (plus its full-list existence probe) is gone while the pure
+     * function's signature and its JVM pins stay untouched. Legacy compositions without the
+     * batch query keep the per-candidate path. The in-flight window renders the explicit
+     * 正在整理重复组…… progress line (Started/Completed events around the single-flight run).
      */
     fun startImportDuplicateGroupDisposition() {
         val overviewState = latestState.value as? P503AppState.OverviewEmpty ?: return
         val view = overviewState.importReview ?: return
         val sessionInputRef = view.lastIntakeSession?.inputRef ?: return
-        val reviewQuery = facade.queryImportDuplicateReviews ?: return
         // P704C-SPEC-01/QUAL-02: the enumeration is single-flight — a double tap must not
         // interleave two enumerations (two Start events would race the page state).
         coordinator.startImportDuplicateGroupDispositionOnce {
+            // P7-05: the progress marker lands on the main dispatcher before the enumeration
+            // runs (the dispatch discipline of every other host event).
+            dispatch(P503UiEvent.ImportGroupEnumerationStarted)
             scope.launch(Dispatchers.Default) {
                 // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
                 // enumeration's single-flight slot always releasable — the finally hop releases
@@ -954,8 +967,40 @@ fun P503App(
                     // partial group) and the typed list-failure banner is surfaced instead.
                     enumeration =
                         try {
-                            enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                reviewQuery.query(facade.ledgerId, candidateId)
+                            val sessionQuery = facade.queryImportDuplicateReviewsForSession
+                            if (sessionQuery != null) {
+                                // P7-05 batch path: one session-level query replaces the
+                                // per-candidate loop. Each row carries its subject candidate, so
+                                // the batch folds per subject client-side and feeds the
+                                // unchanged pure function through its load callback (Reviews for
+                                // a folded member, an empty Reviews for a session candidate the
+                                // batch did not return — the batch join only yields rows whose
+                                // subject has a duplicate candidate).
+                                val sessionResult = sessionQuery.query(facade.ledgerId, sessionInputRef)
+                                val sessionRows =
+                                    (sessionResult as? ImportDuplicateReviewsForSessionResult.Reviews)?.reviews
+                                val reviewsByCandidate =
+                                    sessionRows.orEmpty().groupBy({ it.subjectCandidateId }) { it.review }
+                                enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                    when {
+                                        // A session-level read failure is the same wholesale
+                                        // abort as a per-candidate one (the pure function turns
+                                        // it into ReadFailed; never a partial group).
+                                        sessionResult is ImportDuplicateReviewsForSessionResult.Unavailable ->
+                                            ImportDuplicateReviewsResult.Unavailable
+                                        else ->
+                                            ImportDuplicateReviewsResult.Reviews(
+                                                reviewsByCandidate[candidateId] ?: emptyList(),
+                                            )
+                                    }
+                                }
+                            } else {
+                                val reviewQuery =
+                                    facade.queryImportDuplicateReviews
+                                        ?: return@launch
+                                enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                    reviewQuery.query(facade.ledgerId, candidateId)
+                                }
                             }
                         } catch (failure: Exception) {
                             ImportDuplicateGroupEnumeration.ReadFailed
@@ -964,6 +1009,7 @@ fun P503App(
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
                         coordinator.importGroupEnumerationCompleted()
+                        dispatch(P503UiEvent.ImportGroupEnumerationCompleted)
                         when (enumeration) {
                             ImportDuplicateGroupEnumeration.ReadFailed ->
                                 dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))

@@ -7882,6 +7882,7 @@ CREATE TABLE import_duplicate_candidate (
 );
 CREATE UNIQUE INDEX import_duplicate_exact_unique ON import_duplicate_candidate(ledger_id, subject_source_id, possible_existing_source_id, kind, comparison_fingerprint) WHERE kind = 'EXACT_BUSINESS_TUPLE';
 CREATE UNIQUE INDEX import_duplicate_no_funds_unique ON import_duplicate_candidate(ledger_id, subject_source_id, kind) WHERE kind = 'CLOSED_OR_FAILED_NO_FUNDS';
+CREATE INDEX import_duplicate_candidate_subject_idx ON import_duplicate_candidate(ledger_id, subject_source_id);
 CREATE TABLE import_duplicate_status_history (
   ledger_id TEXT NOT NULL, candidate_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence >= 1), history_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('DEFERRED', 'CONFIRMED_DUPLICATE', 'CONFIRMED_DISTINCT', 'DISMISSED_LOOKALIKE', 'REJECTED')),
@@ -8943,6 +8944,58 @@ LEFT JOIN import_duplicate_review_snapshot AS review
 LEFT JOIN import_source_record AS existing
   ON existing.ledger_id = duplicate.ledger_id AND existing.source_id = duplicate.possible_existing_source_id
 WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?
+ORDER BY duplicate.candidate_id;
+
+importDuplicateReviewsForSession:
+-- Duplicate candidates of every candidate of one pick session, batched (spec 4.5, Appendix A;
+-- the session variant of importDuplicateReviewsForSource above). The subject join is the
+-- subject source's input_ref (the pick session handle, R-Q09-1) instead of a single
+-- candidate_id, so one query covers the whole P704SPEC-12 group. The duplicate -> candidate ->
+-- receipt/snapshot joins, the exact latest-review semantics and the ORDER BY are byte-identical
+-- to importDuplicateReviewsForSource (:8903); the column set adds ONE leading column,
+-- candidate.candidate_id AS subject_candidate_id (the subject candidate the row folds back
+-- to, absent from the per-candidate query only because its parameter implies it). A session
+-- handle with no candidate row yields zero rows (no existence probe needed, unlike the
+-- per-candidate read).
+SELECT
+  candidate.candidate_id AS subject_candidate_id,
+  duplicate.candidate_id,
+  duplicate.kind,
+  duplicate.comparison_fingerprint,
+  duplicate.comparison_snapshot,
+  latest_status.status AS latest_status,
+  review.decision AS review_decision,
+  review.reason_token AS review_reason_token,
+  review.reviewed_at AS reviewed_at,
+  existing.source_id AS existing_source_id,
+  existing.amount_minor AS existing_amount_minor,
+  existing.currency_code AS existing_currency_code,
+  existing.currency_precision AS existing_currency_precision,
+  existing.occurred_at AS existing_occurred_at,
+  existing.direction_token AS existing_direction_token,
+  existing.status_token AS existing_status_token
+FROM import_candidate AS candidate
+JOIN import_source_record AS subject
+  ON subject.ledger_id = candidate.ledger_id AND subject.source_id = candidate.source_id
+JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS latest_status
+  ON latest_status.ledger_id = duplicate.ledger_id
+ AND latest_status.candidate_id = duplicate.candidate_id
+ AND latest_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+LEFT JOIN import_duplicate_review_receipt AS receipt
+  ON receipt.ledger_id = duplicate.ledger_id
+ AND receipt.candidate_id = duplicate.candidate_id
+ AND receipt.history_id = (SELECT status.history_id FROM import_duplicate_status_history AS status
+       WHERE status.ledger_id = duplicate.ledger_id AND status.candidate_id = duplicate.candidate_id
+       ORDER BY status.sequence DESC LIMIT 1)
+LEFT JOIN import_duplicate_review_snapshot AS review
+  ON review.ledger_id = receipt.ledger_id AND review.review_id = receipt.review_id
+LEFT JOIN import_source_record AS existing
+  ON existing.ledger_id = duplicate.ledger_id AND existing.source_id = duplicate.possible_existing_source_id
+WHERE duplicate.ledger_id = ? AND subject.input_ref = ?
 ORDER BY duplicate.candidate_id;
 
 -- Not added here: candidate detail reuses importReviewRowsForLedger plus the existing

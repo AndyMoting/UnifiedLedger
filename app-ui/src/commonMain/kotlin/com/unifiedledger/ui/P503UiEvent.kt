@@ -530,6 +530,24 @@ sealed interface P503UiEvent {
     /** Closes the group disposition page (already-disposed items stay disposed core-side). */
     data object CloseImportDuplicateGroupDisposition : P503UiEvent
 
+    // ---- P7-05 enumeration performance events (session-level batch read + progress surface) ----
+
+    /**
+     * P7-05: the host's session-level enumeration behind the 整组确认页 started. Effect only on
+     * OverviewEmpty (sets [ImportReviewView.groupEnumerationInProgress] so the overview renders
+     * the explicit progress line); absorbed everywhere else. The host dispatches it right
+     * before running the single-flight enumeration and always follows it by
+     * [ImportGroupEnumerationCompleted].
+     */
+    data object ImportGroupEnumerationStarted : P503UiEvent
+
+    /**
+     * P7-05: the session-level enumeration finished (Ready or ReadFailed, whatever the
+     * outcome). Effect only on OverviewEmpty (clears the in-progress marker); absorbed
+     * everywhere else. The host dispatches it in the enumeration's final main-dispatcher hop.
+     */
+    data object ImportGroupEnumerationCompleted : P503UiEvent
+
     // ---- P7-04.D batch confirmation events (D-146; spec sections 3.2.3/3.3.2/6.2 table 6.2a) ----
     // Discipline: every event is absorbed in every state outside its designed effect and never
     // throws anywhere (table 6.2a); every pre-existing unlisted combination stays ISE (G-B).

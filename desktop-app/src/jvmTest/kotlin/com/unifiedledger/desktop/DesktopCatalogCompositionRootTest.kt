@@ -64,7 +64,7 @@ class DesktopCatalogCompositionRootTest {
                 LedgerDatabase.Schema.create(driver)
                 // A real current-version file is stamped by the production open path; stamp it
                 // here so the probe opens directly instead of re-running Schema.create.
-                driver.execute(null, "PRAGMA user_version = 29", 0)
+                driver.execute(null, "PRAGMA user_version = 30", 0)
                 driver.execute(
                     null,
                     "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('tx-x','ledger-local-test','EXPENSE',NULL)",

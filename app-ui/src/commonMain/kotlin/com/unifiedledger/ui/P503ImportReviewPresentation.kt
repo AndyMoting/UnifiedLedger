@@ -741,6 +741,17 @@ internal sealed interface ImportReviewRenderItem {
     }
 
     /**
+     * P7-05 enumeration performance batch: the explicit 正在整理重复组…… progress line, rendered
+     * only while the session-level enumeration behind the 整组确认页 is in flight and no card is
+     * open yet (the open card's own header/items/footer supersede the progress line). A
+     * presentation choice of this batch, registered for review — not a frozen spec surface.
+     */
+    data object GroupEnumerationInProgress : ImportReviewRenderItem {
+        override val stableKey: String = "group-enumeration-in-progress"
+        override val contentType: String = "groupEnumerationProgress"
+    }
+
+    /**
      * The header of the open 整组确认页 card (Option A windowing): the group's session handle and
      * its item count. The open card expands flat as one header + one [GroupDispositionItem] per
      * group member + one [GroupDispositionCardFooter], so the LazyColumn windows the card's items
@@ -879,6 +890,12 @@ internal fun importReviewRenderItems(
         val sessionInputRef = view.lastIntakeSession?.inputRef
         if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
             items += ImportReviewRenderItem.GroupDispositionButton
+        }
+        // P7-05: the enumeration progress line sits right after the affordance while the
+        // session-level enumeration is in flight and the card has not opened yet (the card's
+        // own header supersedes it once the enumeration lands).
+        if (view.groupEnumerationInProgress && view.groupDisposition == null) {
+            items += ImportReviewRenderItem.GroupEnumerationInProgress
         }
         // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
         // group member + one footer, so the LazyColumn windows the card's per-item rows exactly

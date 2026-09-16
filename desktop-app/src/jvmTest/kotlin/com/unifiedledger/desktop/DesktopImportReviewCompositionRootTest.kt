@@ -6,6 +6,7 @@ import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionResult
 import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFileIntakeInput
@@ -45,6 +46,8 @@ class DesktopImportReviewCompositionRootTest {
             assertTrue(graph.facade.queryImportReviewRows != null)
             assertTrue(graph.facade.queryImportCandidateDetail != null)
             assertTrue(graph.facade.queryImportDuplicateReviews != null)
+            // P7-05: the session-level batch read behind the 整组确认页 enumeration is wired too.
+            assertTrue(graph.facade.queryImportDuplicateReviewsForSession != null)
             assertTrue(graph.facade.importDuplicateReview != null)
             assertTrue(graph.facade.importPickResultChannel != null)
             assertTrue(graph.facade.importFilePickPort != null)
@@ -120,6 +123,36 @@ class DesktopImportReviewCompositionRootTest {
             assertEquals(
                 ImportDuplicateReviewsResult.Absent,
                 graph.facade.queryImportDuplicateReviews!!.query(graph.ledgerId, unknown),
+            )
+        }
+    }
+
+    /**
+     * P7-05: the session-level batch read through the wired graph. A synthetic intake's session
+     * whose candidates have no duplicate reads NoDuplicates (the present-session verdict); a
+     * handle no candidate carries reads Absent (the absent-session verdict, G6).
+     */
+    @Test
+    fun sessionBatchReadResolvesThePresentAndAbsentSessionVerdictsTyped() {
+        withGraph { graph ->
+            val session = graph.facade.importIntakeSessionFactory()!!
+            val intake =
+                graph.facade.importFileIntake!!.intake(
+                    ImportFileIntakeInput(
+                        format = ImportFormatCapabilities.CMB_CSV.identifier,
+                        platform = ImportPlatformKind.DESKTOP,
+                        session = session,
+                        bytes = syntheticCmbBill(),
+                    ),
+                )
+            assertIs<ImportFileIntakeOutcome.Accepted>(intake)
+            assertEquals(
+                ImportDuplicateReviewsForSessionResult.NoDuplicates,
+                graph.facade.queryImportDuplicateReviewsForSession!!.query(graph.ledgerId, session.inputRef),
+            )
+            assertEquals(
+                ImportDuplicateReviewsForSessionResult.Absent,
+                graph.facade.queryImportDuplicateReviewsForSession!!.query(graph.ledgerId, "pick-handle-no-such-session"),
             )
         }
     }

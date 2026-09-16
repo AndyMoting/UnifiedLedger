@@ -184,6 +184,14 @@ data class ImportReviewView(
      * here (table 6.2a: 核对入口在 IMPORT 结果摘要内).
      */
     val batchResult: ImportBatchResultSummary? = null,
+    /**
+     * P7-05 enumeration performance batch: true while the host's session-level enumeration
+     * behind the 整组确认页 is in flight (the single-flight read the coordinator guards). The
+     * overview then renders the explicit 正在整理重复组…… progress line — a progress
+     * presentation choice of this batch (registered for review), not a frozen spec surface.
+     * Default `false` keeps every pre-P7-05 constructor site compiling.
+     */
+    val groupEnumerationInProgress: Boolean = false,
 )
 
 /** The host's post-review re-read payload of [P503UiEvent.ImportDuplicateReviewResult]. */
@@ -490,6 +498,8 @@ private fun ImportReviewOverviewItem(
                 Text("整组标记为重复")
             }
         }
+        ImportReviewRenderItem.GroupEnumerationInProgress ->
+            Text("正在整理重复组……", style = MaterialTheme.typography.bodySmall)
         is ImportReviewRenderItem.GroupDispositionCardHeader -> {
             Spacer(Modifier.height(8.dp))
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {

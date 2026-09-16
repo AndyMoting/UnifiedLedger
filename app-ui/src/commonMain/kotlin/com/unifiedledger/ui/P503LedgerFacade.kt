@@ -28,6 +28,7 @@ import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
@@ -134,6 +135,11 @@ class P503LedgerFacade(
     baseQueryImportReviewRows: QueryImportReviewRows? = null,
     baseQueryImportCandidateDetail: QueryImportCandidateDetail? = null,
     baseQueryImportDuplicateReviews: QueryImportDuplicateReviews? = null,
+    // P7-05 enumeration performance batch: the session-level duplicate-review batch query (the
+    // 整组确认页 enumeration's one-read replacement of the per-candidate N+1 loop). Plain
+    // nullable with a default so legacy constructions (startup tests) keep compiling; like the
+    // rest of the import surface there is no catalog-session following.
+    baseQueryImportDuplicateReviewsForSession: QueryImportDuplicateReviewsForSession? = null,
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
     val importPickResultChannel: ImportFilePickResultChannel? = null,
@@ -160,6 +166,7 @@ class P503LedgerFacade(
     private val fallbackQueryImportReviewRows = baseQueryImportReviewRows
     private val fallbackQueryImportCandidateDetail = baseQueryImportCandidateDetail
     private val fallbackQueryImportDuplicateReviews = baseQueryImportDuplicateReviews
+    private val fallbackQueryImportDuplicateReviewsForSession = baseQueryImportDuplicateReviewsForSession
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
     private val fallbackTransferOptionsProvider =
@@ -218,4 +225,12 @@ class P503LedgerFacade(
     /** P7-04.C: the candidate's duplicate comparison projection (plain nullable, no session following). */
     val queryImportDuplicateReviews: QueryImportDuplicateReviews?
         get() = fallbackQueryImportDuplicateReviews
+
+    /**
+     * P7-05 enumeration performance batch: the session-level duplicate-review batch projection
+     * (plain nullable, no session following). Consumed by the 整组确认页 enumeration; null keeps
+     * legacy constructions on the per-candidate read path.
+     */
+    val queryImportDuplicateReviewsForSession: QueryImportDuplicateReviewsForSession?
+        get() = fallbackQueryImportDuplicateReviewsForSession
 }
