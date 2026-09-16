@@ -2806,3 +2806,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    **裁决（用户于 2026-09-16 批准）**：按短程补钉登记（推荐）——在 `P503CatalogManagementScreen`（账户与分类管理屏）顶部加「切换账本」触发点 + 原本账本列表 picker（仅 >=2 账本时启用）+ 显现当前 LedgerId.value（避免再误认且让装置真实指认）；Ledger selector 此 batch **不再展开**，完整多账本 selector 批次（picker port/usecase/lastActiveLedgerId 持久化）为 P7-05+未来批范畴。本登记只裁决该缺口的**批准形态**与**当前本批不动代码的事实**；B 批可待 A 批（处置卡窗口化）后或独立批外进行，独立评审双闭环。
    **证言更正**：`local/artifacts/d01-p704/d01-gate-verdict-2026-09-15.md` §4 补记已按 B 侦察 ground truth 更正（selector 实为 catalog newCatalogDialog 误认、20k = fresh intake 语义正确的 intake-replay 副作用），已落笔。
    **显性冻结注记**（防未来悖论）：Phase 7 不做多账本 selector UI（D-025 为领域权能非 UI 落点；而 D-144/D-145 显性按此冻结）——未来评审若再发现「D-025 已确认但 UI 未落地」悖论，以本条注记为准，无需提权。
+
+## D-147 开卡枚举性能批（v29→v30 加性迁移 + 组级批量查询 + 进度面）
+
+**状态：** 已批准（用户 2026-09-17 /goal 授权「批准1~4和push」；实施登记随本批闭合补登）。
+
+**授权依据：** 用户 2026-09-17 /goal 显式批准 PROJECT_STATE 待办 1~4 与 push。背景取证：2026-09-16 D01 族 cap 组开卡补测发现万级 DEFERRED 组开卡 38 分钟级后台作业 + 系统 ANR——ANR trace 定位根因 = `enumerateImportDuplicateGroupItems` 逐候选 `importDuplicateReviewsForSource` ×10k 的 N+1 查询，且 duplicate 表无 covering 索引（EXPLAIN 证表扫，实测 ~230ms/次），占住 SQLite 连接池致 Input dispatching timed out；判定非 OOM、非 A 批（FOUND-P704-D01-01 修复）引入，渲染层已尽责（PROGRESS_LOG 2026-09-16 条目 + 裁决文书二轮补记）。工作基线 = main `2edf7d8`（D-146 第 11/12 条），schema = v29。
+
+**决定（四部分，纯性能修复零账务语义变更）：**
+
+1. **组级批量查询替代 N+1**：新增 Ledger.sq 只读命名查询 `importDuplicateReviewsForSession`——`importDuplicateReviewsForSource` 的会话级变体，subject join 由单 candidate_id 换为 subject source 的 `input_ref`（本次接治会话句柄，R-Q09-1），一条查询覆盖整个 P704SPEC-12 组；join 链、latest-review 语义与 ORDER BY 与既有查询逐字节一致，仅增一列 leading subject_candidate_id。application 侧新端口 `loadImportDuplicateReviewsForSession` + 结果族 `ImportDuplicateReviewsForSessionResult`（四值：Reviews/Unavailable/既有 null=absent 语义——空列表 = 会话有候选但零重复，null = 会话无候选行；absent 判定经整会话一次候选存在性探针，绝不逐候选探查）+ 新用例；desktop/android 组合根各接线。adapter 客户端按 subject 折叠后喂**零改动纯函数**（legacy 逐候选回退路径保留）。
+2. **v29→v30 覆盖索引（本条为 D-146:2723「schema 停留 v29」承诺的显式打破）**：新增 `29.sqm`——纯加性单条迁移，唯一 DDL = `CREATE INDEX import_duplicate_candidate_subject_idx ON import_duplicate_candidate(ledger_id, subject_source_id)`（普通非 partial 索引，与 Ledger.sq :7885 fresh 定义逐字节一致），零数据回填、零 DML；沿 26.sqm 纪律由 caller 包外层事务，guard 失败整体回滚且 28.sqm 不受影响。打破理由：D-146 承诺冻结的是 P7-04 批次范围（当时确需新列/新表/新索引须显式登记并给出影响评估——本条即该登记）；本批性能缺陷的修复必需 covering 索引（查询无索引则组级 join 仍走表扫，批量查询收益被吞没），影响评估 = 纯加性索引 + 全量迁移门 + fresh=migrated 等价测试 + 混存/单链迁移测试全绿（`EnumerationPerfV29ToV30MigrationTest` 5/5 + 既有 13 个迁移测试文件全过）。既有 1.sqm~28.sqm 逐字节不改（沿 D-088 纪律：已发布迁移一字不改，schema 变更只新增边）。
+3. **进度面**：`ImportReviewView` 枚举进行中状态位 + `ImportGroupEnumerationStarted`/`ImportGroupEnumerationCompleted` 事件对 + reducer 13 处其余态 absorb（沿 P7-03 表 6.2a ISE 纪律）+ 概览显式进度行「正在整理重复组……」（单飞 run 前后派发）。
+4. **批标签消歧**：候选代码注释以「P7-05 enumeration performance batch」标注本批；`docs/PHASE7_IMPLEMENTATION_PLAN.local.md` 的批次编号 P7-05 保留给「修错与回收站」（计划第 14 行）。**代码注释中的 P7-05 为编写时对下一批次号的预期占用，非计划编号变更**——本决议以「开卡枚举性能批」为正式批名，阶段计划的 P7-05～09 编号与范围不变；已冻结双评审通过的候选注释不改（注释标签不构成编号权威，计划文档为准）。
+
+**范围冻结：** 入：Ledger.sq 一查询 + 一索引 + 29.sqm；application 端口/用例/结果族；adapter 组级实现 + 折叠；P503App 折叠喂原纯函数 + legacy 回退；进度面（状态位 + 事件对 + absorb + render 行）；desktop/android 装配各 3 行；desktop 两迁移测试文件机械适配（版本区间上界 29→30）。出：零账务语义、零 reducer 既有语义、零 rgXX_/golden 竖井、零构建文件/依赖、零既有迁移文件改动；纯函数与其 3 个测试零改动。
+
+**评审拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree `ul-p7-enum-perf-worktree`，零 Git 写）→ 冻结候选 33 文件（30 M + 3 新增：29.sqm、`EnumerationPerfV29ToV30MigrationTest.kt`、`ImportDuplicateReviewsForSessionJvmTest.kt`）→ 独立规格评审 **APPROVE**（S1–S7 全 PASS：组键对齐/迁移忠实/四值语义/纯函数零改动/进度面/契约纪律/越界复核；EPSEC-01~04 信息级，其中 EPSEC-03 = 本 v30 决议登记义务，随本条闭合）→ 独立质量评审 **APPROVE**（Q1–Q5 全 PASS；EPQUAL-03 组合销毁时 Completed 不派发经主代理裁定按 Compose 生命周期惯例接受）→ distinct verifier **V1/V9 全 PASS**（候选同一性 33 文件/+573−72、版本钉 29 零残留（唯一 `\b29\b` 命中为 28.sqm:141 历史注释）、mojibake 三文件零命中、29.sqm:11 与 Ledger.sq:7885 CREATE INDEX 哈希一致 e9bb12b6…、git diff --check 零输出）→ 主代理亲跑全套（单 Gradle 串行、每模块 --stop、--rerun-tasks）：迁移门 exit 0（1m21s）+ 四模块 jvmTest **536/521/343/48 全零失败**（data 536 含迁移测试 5/5；application 521 含新 JvmTest；app-ui 343 含 cap 20,017 钉（RenderItemsTest :540/:540-565）与 reducer absorb 例；desktop 48）+ 四模块 ktlintCheck + project_docs exit 0 + git diff --check 干净。2026-09-17 会话前段事故登记（不隐瞒）：首派 distinct verifier 与主代理亲跑在同一 worktree 并行起 Gradle 致双 Gradle 锁竞争双败（单机串行纪律被调度失误破坏），cleanup 后由主代理串行亲跑全套替代 V2~V8（性能/呈现类变更风险分层低于账务核心，双评审已过，亲跑即复证——PROJECT_STATE 纪律提醒）。
+
+**实施登记：** 实施候选 = 分支 `UL-p7-enum-perf` 提交 `ae29afb`（33 文件 +911/−72 含新文件全量，2026-09-17）；随本决议合并本地 main（merge --no-ff）。设备复测（万级组开卡毫秒级上屏 + 进度行 + 零 ANR + ASPEC-04 间距目检）与 push + 同提交 CI 按 PROJECT_STATE 待办 4/6 执行，结果以 PROGRESS_LOG/WORK_PLAN 登记为准。
+
+**关联决定：** D-146（本批打破其 schema 停留 v29 承诺，理由与影响评估见本条第 2 部分；P704SPEC-12 组键与本批会话级查询的接合部）、D-145（G6 fail-loud 默认端口先例）、D-088（已发布迁移一字不改纪律）、D-113（26.sqm 加性迁移与外层事务纪律先例）、D-144（批次范围冻结先例）。
