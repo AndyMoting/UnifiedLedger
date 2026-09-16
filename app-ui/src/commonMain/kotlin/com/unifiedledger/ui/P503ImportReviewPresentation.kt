@@ -1,9 +1,11 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateKind
 import com.unifiedledger.application.ImportDuplicateReviewRow
 import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
+import com.unifiedledger.application.ImportFileIntakeOutcome
 import com.unifiedledger.application.ImportFormatAvailability
 import com.unifiedledger.application.ImportFormatCapabilities
 import com.unifiedledger.application.ImportFormatDescriptor
@@ -576,4 +578,269 @@ internal class P503ImportDecisionValidation(
                 is ParseManualExpenseAmount.Result.Invalid -> parsed.error
             }
         }
+}
+
+// ------------------------------------------------------------------ overview render model (FOUND-P704-D01-01)
+
+/**
+ * The flat, ordered render model of the IMPORT overview (spec sections 6.1/6.4), consumed by the
+ * LazyColumn in P503ImportScreen. FOUND-P704-D01-01 showed that eagerly composing every candidate
+ * row inside a scrolling Column exhausts memory fatally at the registered intake cap (10,000
+ * candidates, four device reproductions), so the overview renders a lazy window over this list
+ * instead. Every flattened section — the title bar, the notice banner, the dividers, the format
+ * entries, the session summary (header lines + the disclosed 200-record per-record lines), the
+ * 待确认 header with its two empty states, the group headers, the candidate rows, the disposition
+ * affordances, the batch-confirm entry and the per-item batch result expansion — is one item
+ * carrying a unique [stableKey] and a [contentType] reuse token. Pure projection only: no Compose
+ * API and no callbacks (the composable wires the typed intents). No new display limit is
+ * introduced: the candidate list itself is never truncated; the 200-record session披露 cap stays
+ * exactly the registered display choice of [importIntakeRecordLines], reused verbatim.
+ */
+internal sealed interface ImportReviewRenderItem {
+    /** The LazyColumn item key: deterministic for the same input, unique across the whole list. */
+    val stableKey: String
+
+    /** The LazyColumn contentType reuse token: one per rendered shape. */
+    val contentType: String
+
+    /** 标题栏（「导入」+ 刷新清单）。 */
+    data object TitleBar : ImportReviewRenderItem {
+        override val stableKey: String = "title-bar"
+        override val contentType: String = "titleBar"
+    }
+
+    /** The typed failure banner (notice 有/无; spec 6.2 读失败不篡改). */
+    data class NoticeBanner(
+        val notice: ImportReviewNotice,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "notice-banner"
+        override val contentType: String = "notice"
+    }
+
+    /** One visual divider band (HorizontalDivider with its surrounding spacing). */
+    data class SectionDivider(
+        val slot: ImportReviewDividerSlot,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "divider:${slot.name}"
+        override val contentType: String = "divider"
+    }
+
+    /** 「选择账单文件」 section header. */
+    data object FormatSectionHeader : ImportReviewRenderItem {
+        override val stableKey: String = "format-header"
+        override val contentType: String = "sectionHeader"
+    }
+
+    /** One capability-matrix format entry (name, honest availability, pick button). */
+    data class FormatEntry(
+        val entry: ImportFormatEntry,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "format:${entry.descriptor.identifier.value}"
+        override val contentType: String = "formatEntry"
+    }
+
+    /** 「最近导入」 section header (spec section 6.1). */
+    data object IntakeSessionHeader : ImportReviewRenderItem {
+        override val stableKey: String = "intake-header"
+        override val contentType: String = "sectionHeader"
+    }
+
+    /** One session-summary copy line ([importIntakeSessionLines], verbatim). */
+    data class IntakeSessionLine(
+        val ordinal: Int,
+        val line: String,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "intake-summary:$ordinal"
+        override val contentType: String = "intakeSessionLine"
+    }
+
+    /**
+     * One per-record intake line ([importIntakeRecordLines], verbatim — including the trailing
+     * 「其余 $remaining 条见上方计数。」 disclosure line of the registered 200-record display cap).
+     */
+    data class IntakeRecordLine(
+        val ordinal: Int,
+        val line: String,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "intake-record:$ordinal"
+        override val contentType: String = "intakeRecordLine"
+    }
+
+    /** 「待确认草稿」 section header. */
+    data object PendingSectionHeader : ImportReviewRenderItem {
+        override val stableKey: String = "pending-header"
+        override val contentType: String = "sectionHeader"
+    }
+
+    /** 导入清单尚未加载。 (projection not loaded yet). */
+    data object UnloadedEmptyState : ImportReviewRenderItem {
+        override val stableKey: String = "empty-unloaded"
+        override val contentType: String = "emptyState"
+    }
+
+    /** 暂无导入候选。 (loaded, no active notice, zero rows). */
+    data object NoCandidatesEmptyState : ImportReviewRenderItem {
+        override val stableKey: String = "empty-no-candidates"
+        override val contentType: String = "emptyState"
+    }
+
+    /** The 「标签（N）」 header of one classification group (frozen order, empty groups omitted). */
+    data class GroupHeader(
+        val classToken: ImportCandidateClass,
+        val rowCount: Int,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "group:${classToken.name}"
+        override val contentType: String = "groupHeader"
+    }
+
+    /** One candidate row with its selection state (selected = 勾选集 membership). */
+    data class CandidateItem(
+        val row: ImportReviewRow,
+        val selected: Boolean,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "candidate:${row.candidateId.value}"
+        override val contentType: String = "candidate"
+    }
+
+    /** 「整组标记为重复」 affordance (only while the current pick session has a P704SPEC-12 group). */
+    data object GroupDispositionButton : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-button"
+        override val contentType: String = "groupDispositionButton"
+    }
+
+    /** The open 整组确认页 card (逐条提交审核 per item). */
+    data class GroupDispositionCard(
+        val page: ImportDuplicateGroupDispositionPage,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-card"
+        override val contentType: String = "groupDispositionCard"
+    }
+
+    /** 「进入批量确认（N 项）」 entry (P7-04.D; only for a non-empty selection). */
+    data class BatchConfirmButton(
+        val selectionCount: Int,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "batch-confirm-button"
+        override val contentType: String = "batchConfirmButton"
+    }
+
+    /** 「批量结果」 header of the retained per-item summary (批量结果不设独立顶层态). */
+    data object BatchResultHeader : ImportReviewRenderItem {
+        override val stableKey: String = "batch-result-header"
+        override val contentType: String = "sectionHeader"
+    }
+
+    /** One per-item copy line of the retained batch summary ([importBatchResultLines], verbatim). */
+    data class BatchResultLine(
+        val ordinal: Int,
+        val line: String,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "batch-line:$ordinal"
+        override val contentType: String = "batchResultLine"
+    }
+
+    /** The 核对 entry of one Unknown batch item (table 6.2a: 核对入口在 IMPORT 结果摘要内). */
+    data class UnknownCheckItem(
+        val candidateId: ImportCandidateId,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "batch-unknown:${candidateId.value}"
+        override val contentType: String = "unknownCheckButton"
+    }
+}
+
+/** The placement slot of one [ImportReviewRenderItem.SectionDivider]. */
+internal enum class ImportReviewDividerSlot {
+    /** Between the title/notice block and the format matrix (divider then trailing spacing). */
+    FORMATS,
+
+    /** Between the format/session block and the 待确认草稿 section (spacing around the divider). */
+    PENDING,
+
+    /** Inside the batch result block, before the 批量结果 header (spacing around the divider). */
+    BATCH_RESULT,
+}
+
+/**
+ * Projects the IMPORT overview projection into the flat render model, preserving the frozen
+ * presentation semantics exactly (C1–C6): the banner iff a notice is active and immediately after
+ * the title bar; the 待确认 shell with the unloaded vs 暂无导入候选 empty states (an active notice
+ * suppresses the no-candidates state); the six-class frozen group order with empty groups omitted
+ * and counting headers; the candidate rows with their selection state; the current-session
+ * batch-disposition entry (P704SPEC-12), the open disposition card, the non-empty-selection batch
+ * confirmation entry (P7-04.D) and the retained batch result as one divider band + header, every
+ * summary line as its own item and one check entry per Unknown item (table 6.2a).
+ */
+internal fun importReviewRenderItems(
+    view: ImportReviewView?,
+    platform: ImportPlatformKind?,
+): List<ImportReviewRenderItem> {
+    val items = mutableListOf<ImportReviewRenderItem>()
+    items += ImportReviewRenderItem.TitleBar
+    view?.notice?.let { items += ImportReviewRenderItem.NoticeBanner(it) }
+    items += ImportReviewRenderItem.SectionDivider(ImportReviewDividerSlot.FORMATS)
+    items += ImportReviewRenderItem.FormatSectionHeader
+    (platform?.let { importFormatEntries(it) } ?: emptyList()).forEach { entry ->
+        items += ImportReviewRenderItem.FormatEntry(entry)
+    }
+    view?.lastIntakeSession?.let { session ->
+        items += ImportReviewRenderItem.IntakeSessionHeader
+        importIntakeSessionLines(session).forEachIndexed { ordinal, line ->
+            items += ImportReviewRenderItem.IntakeSessionLine(ordinal, line)
+        }
+        val intakeRecords =
+            (session.outcome as? ImportIntakePipelineOutcome.Intaken)
+                ?.let { outcome ->
+                    when (val intaken = outcome.outcome) {
+                        is ImportFileIntakeOutcome.Accepted -> intaken.records
+                        is ImportFileIntakeOutcome.NoChangeAll -> intaken.records
+                        is ImportFileIntakeOutcome.Rejected -> null
+                    }
+                }
+        intakeRecords?.let { records ->
+            importIntakeRecordLines(records).forEachIndexed { ordinal, line ->
+                items += ImportReviewRenderItem.IntakeRecordLine(ordinal, line)
+            }
+        }
+    }
+    items += ImportReviewRenderItem.SectionDivider(ImportReviewDividerSlot.PENDING)
+    items += ImportReviewRenderItem.PendingSectionHeader
+    if (view == null) {
+        items += ImportReviewRenderItem.UnloadedEmptyState
+    } else if (view.notice == null && view.rows.isEmpty()) {
+        items += ImportReviewRenderItem.NoCandidatesEmptyState
+    }
+    if (view != null) {
+        importCandidateClassGroups(view.rows).forEach { group ->
+            items += ImportReviewRenderItem.GroupHeader(group.classToken, group.rows.size)
+            group.rows.forEach { row ->
+                items += ImportReviewRenderItem.CandidateItem(row, selected = row.candidateId in view.selectedCandidateIds)
+            }
+        }
+        // P704SPEC-12: the affordance covers only the current pick session's suspected-duplicate
+        // group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the folded row projection).
+        val sessionInputRef = view.lastIntakeSession?.inputRef
+        if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
+            items += ImportReviewRenderItem.GroupDispositionButton
+        }
+        view.groupDisposition?.let { items += ImportReviewRenderItem.GroupDispositionCard(it) }
+        // P7-04.D: the batch confirmation entry is reached only with a non-empty selection.
+        if (view.selectedCandidateIds.isNotEmpty()) {
+            items += ImportReviewRenderItem.BatchConfirmButton(view.selectedCandidateIds.size)
+        }
+        // P7-04.D: the retained per-item summary expands line by line (批量结果不设独立顶层态; the
+        // Unknown items keep their 核对入口 after the lines, table 6.2a).
+        view.batchResult?.let { summary ->
+            items += ImportReviewRenderItem.SectionDivider(ImportReviewDividerSlot.BATCH_RESULT)
+            items += ImportReviewRenderItem.BatchResultHeader
+            importBatchResultLines(summary).forEachIndexed { ordinal, line ->
+                items += ImportReviewRenderItem.BatchResultLine(ordinal, line)
+            }
+            summary.items
+                .filter { it.outcome is ImportBatchItemOutcome.Unknown }
+                .forEach { entry ->
+                    items += ImportReviewRenderItem.UnknownCheckItem(entry.item.candidateId)
+                }
+        }
+    }
+    return items
 }

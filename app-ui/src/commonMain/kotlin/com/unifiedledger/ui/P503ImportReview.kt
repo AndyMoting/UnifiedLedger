@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -338,6 +340,12 @@ internal const val IMPORT_REVIEW_SUBMIT_UNAVAILABLE = "IMPORT_REVIEW_SUBMIT_UNAV
  * the most recent session summary, the candidate list grouped by the section 3.3.1 classification
  * matrix with the selection checkboxes (先审后勾门: non-selectable classes render no live
  * checkbox), and the batch duplicate disposition affordance of the current pick session.
+ *
+ * FOUND-P704-D01-01: the overview is a LazyColumn over the pure [importReviewRenderItems] model so
+ * the cap-scale candidate list (the registered 10,000 intake cap) composes only the visible window;
+ * the previous eager `Column + verticalScroll` composed every row and OOM'd on device. The section
+ * copy, order, conditionals and semantics are unchanged — they are projected exactly by the model
+ * ([P503ImportReviewRenderItemsTest] pins the mapping, the key contract and the cap-scale shape).
  */
 @Composable
 internal fun P503ImportScreen(
@@ -353,33 +361,86 @@ internal fun P503ImportScreen(
     onRequestBatchConfirm: () -> Unit,
     onCheckUnknownItem: (ImportCandidateId) -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("导入", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = onRefresh) { Text("刷新清单") }
+        items(
+            items = importReviewRenderItems(view, platform),
+            key = { it.stableKey },
+            contentType = { it.contentType },
+        ) { item ->
+            ImportReviewOverviewItem(
+                item = item,
+                onRefresh = onRefresh,
+                onStartFilePick = onStartFilePick,
+                onSelectCandidate = onSelectCandidate,
+                onToggleSelection = onToggleSelection,
+                onGroupDisposition = onGroupDisposition,
+                onGroupConfirm = onGroupConfirm,
+                onGroupClose = onGroupClose,
+                onRequestBatchConfirm = onRequestBatchConfirm,
+                onCheckUnknownItem = onCheckUnknownItem,
+            )
         }
-        view?.notice?.let { notice ->
+    }
+}
+
+/**
+ * Renders one flattened [ImportReviewRenderItem] of the IMPORT overview. Every branch keeps the
+ * exact copy, order, semantics labels and accessibility descriptions the pre-lazy screen had (the
+ * conditional inclusion itself already happened inside [importReviewRenderItems]).
+ */
+@Composable
+private fun ImportReviewOverviewItem(
+    item: ImportReviewRenderItem,
+    onRefresh: () -> Unit,
+    onStartFilePick: (ImportFormatId) -> Unit,
+    onSelectCandidate: (ImportCandidateId) -> Unit,
+    onToggleSelection: (ImportCandidateId) -> Unit,
+    onGroupDisposition: () -> Unit,
+    onGroupConfirm: () -> Unit,
+    onGroupClose: () -> Unit,
+    onRequestBatchConfirm: () -> Unit,
+    onCheckUnknownItem: (ImportCandidateId) -> Unit,
+) {
+    when (item) {
+        ImportReviewRenderItem.TitleBar ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("导入", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = onRefresh) { Text("刷新清单") }
+            }
+        is ImportReviewRenderItem.NoticeBanner -> {
             Text(
-                importReviewNoticeText(notice),
+                importReviewNoticeText(item.notice),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )
             Spacer(Modifier.height(8.dp))
         }
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-        Text("选择账单文件", style = MaterialTheme.typography.titleMedium)
-        val entries = platform?.let { importFormatEntries(it) } ?: emptyList()
-        entries.forEach { entry ->
+        is ImportReviewRenderItem.SectionDivider ->
+            when (item.slot) {
+                ImportReviewDividerSlot.FORMATS -> {
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                }
+                ImportReviewDividerSlot.PENDING,
+                ImportReviewDividerSlot.BATCH_RESULT,
+                -> {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        ImportReviewRenderItem.FormatSectionHeader ->
+            Text("选择账单文件", style = MaterialTheme.typography.titleMedium)
+        is ImportReviewRenderItem.FormatEntry ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(entry.descriptor.displayName, style = MaterialTheme.typography.bodyMedium)
-                    if (entry.availability != com.unifiedledger.application.ImportFormatAvailability.AVAILABLE) {
+                    Text(item.entry.descriptor.displayName, style = MaterialTheme.typography.bodyMedium)
+                    if (item.entry.availability != com.unifiedledger.application.ImportFormatAvailability.AVAILABLE) {
                         // R-Q08-3: honest 待设备运行验证 — never presented as 可用, never silently omitted.
                         Text(
                             "待设备运行验证，暂不可用",
@@ -388,101 +449,72 @@ internal fun P503ImportScreen(
                         )
                     }
                 }
-                Button(onClick = { onStartFilePick(entry.descriptor.identifier) }) {
+                Button(onClick = { onStartFilePick(item.entry.descriptor.identifier) }) {
                     Text("选择文件")
                 }
             }
-        }
-        view?.lastIntakeSession?.let { session ->
+        ImportReviewRenderItem.IntakeSessionHeader -> {
             Spacer(Modifier.height(8.dp))
             Text("最近导入", style = MaterialTheme.typography.titleMedium)
-            importIntakeSessionLines(session).forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodyMedium)
-            }
-            (session.outcome as? ImportIntakePipelineOutcome.Intaken)
-                ?.let { outcome ->
-                    (outcome.outcome as? ImportFileIntakeOutcome.Accepted)
-                        ?.let { importIntakeRecordLines(it.records).forEach { line -> Text(line, style = MaterialTheme.typography.bodySmall) } }
-                    (outcome.outcome as? ImportFileIntakeOutcome.NoChangeAll)
-                        ?.let { importIntakeRecordLines(it.records).forEach { line -> Text(line, style = MaterialTheme.typography.bodySmall) } }
-                }
         }
-        Spacer(Modifier.height(8.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-        Text("待确认草稿", style = MaterialTheme.typography.titleMedium)
-        if (view == null) {
+        is ImportReviewRenderItem.IntakeSessionLine ->
+            Text(item.line, style = MaterialTheme.typography.bodyMedium)
+        is ImportReviewRenderItem.IntakeRecordLine ->
+            Text(item.line, style = MaterialTheme.typography.bodySmall)
+        ImportReviewRenderItem.PendingSectionHeader ->
+            Text("待确认草稿", style = MaterialTheme.typography.titleMedium)
+        ImportReviewRenderItem.UnloadedEmptyState ->
             Text("导入清单尚未加载。", style = MaterialTheme.typography.bodyMedium)
-        } else if (view.notice == null && view.rows.isEmpty()) {
+        ImportReviewRenderItem.NoCandidatesEmptyState ->
             Text("暂无导入候选。", style = MaterialTheme.typography.bodyMedium)
+        is ImportReviewRenderItem.GroupHeader -> {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "${importCandidateClassLabel(item.classToken)}（${item.rowCount}）",
+                style = MaterialTheme.typography.titleSmall,
+            )
         }
-        view?.let { loaded ->
-            importCandidateClassGroups(loaded.rows).forEach { group ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "${importCandidateClassLabel(group.classToken)}（${group.rows.size}）",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                group.rows.forEach { row ->
-                    ImportCandidateRow(
-                        row = row,
-                        selected = row.candidateId in loaded.selectedCandidateIds,
-                        onToggleSelection = onToggleSelection,
-                        onSelectCandidate = onSelectCandidate,
-                    )
-                }
-            }
-            // P704SPEC-12: the batch disposition affordance covers only the current pick session's
-            // suspected-duplicate group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the
-            // folded row projection and the branch invariants).
-            val sessionInputRef = loaded.lastIntakeSession?.inputRef
-            if (sessionInputRef != null && importDuplicateGroupRows(loaded.rows, sessionInputRef).isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = onGroupDisposition, modifier = Modifier.semantics { contentDescription = "整组标记为重复" }) {
-                    Text("整组标记为重复")
-                }
-            }
-            loaded.groupDisposition?.let { page ->
-                Spacer(Modifier.height(8.dp))
-                ImportDuplicateGroupDispositionCard(
-                    page = page,
-                    onConfirm = onGroupConfirm,
-                    onClose = onGroupClose,
-                )
-            }
-            // P7-04.D: the batch confirmation entry (勾选集非空才可达； the reducer holds the
-            // non-empty gate as well).
-            if (loaded.selectedCandidateIds.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onRequestBatchConfirm,
-                    modifier = Modifier.semantics { contentDescription = "进入批量确认" },
-                ) {
-                    Text("进入批量确认（${loaded.selectedCandidateIds.size} 项）")
-                }
-            }
-            // P7-04.D: the most recent batch's per-item result summary (批量结果不设独立顶层态；
-            // Unknown items keep their 核对入口 here, table 6.2a).
-            loaded.batchResult?.let { summary ->
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-                Text("批量结果", style = MaterialTheme.typography.titleMedium)
-                importBatchResultLines(summary).forEach { line ->
-                    Text(line, style = MaterialTheme.typography.bodySmall)
-                }
-                summary.items
-                    .filter { it.outcome is ImportBatchItemOutcome.Unknown }
-                    .forEach { entry ->
-                        Button(
-                            onClick = { onCheckUnknownItem(entry.item.candidateId) },
-                            modifier = Modifier.semantics { contentDescription = "核对未知项" },
-                        ) {
-                            Text("核对候选 ${entry.item.candidateId.value}")
-                        }
-                    }
+        is ImportReviewRenderItem.CandidateItem ->
+            ImportCandidateRow(
+                row = item.row,
+                selected = item.selected,
+                onToggleSelection = onToggleSelection,
+                onSelectCandidate = onSelectCandidate,
+            )
+        ImportReviewRenderItem.GroupDispositionButton -> {
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onGroupDisposition, modifier = Modifier.semantics { contentDescription = "整组标记为重复" }) {
+                Text("整组标记为重复")
             }
         }
+        is ImportReviewRenderItem.GroupDispositionCard -> {
+            Spacer(Modifier.height(8.dp))
+            ImportDuplicateGroupDispositionCard(
+                page = item.page,
+                onConfirm = onGroupConfirm,
+                onClose = onGroupClose,
+            )
+        }
+        is ImportReviewRenderItem.BatchConfirmButton -> {
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onRequestBatchConfirm,
+                modifier = Modifier.semantics { contentDescription = "进入批量确认" },
+            ) {
+                Text("进入批量确认（${item.selectionCount} 项）")
+            }
+        }
+        ImportReviewRenderItem.BatchResultHeader ->
+            Text("批量结果", style = MaterialTheme.typography.titleMedium)
+        is ImportReviewRenderItem.BatchResultLine ->
+            Text(item.line, style = MaterialTheme.typography.bodySmall)
+        is ImportReviewRenderItem.UnknownCheckItem ->
+            Button(
+                onClick = { onCheckUnknownItem(item.candidateId) },
+                modifier = Modifier.semantics { contentDescription = "核对未知项" },
+            ) {
+                Text("核对候选 ${item.candidateId.value}")
+            }
     }
 }
 
