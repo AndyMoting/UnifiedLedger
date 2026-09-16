@@ -88,6 +88,18 @@ data class ImportDuplicateReviewRow(
 )
 
 /**
+ * P7-05 enumeration performance batch: one duplicate-review row of the session-level batch
+ * read. The per-row shape of [ImportDuplicateReviewRow] plus the SUBJECT candidate the row
+ * folds back to — the per-candidate read implies the subject through its parameter, so the
+ * batch read must carry it per row for the caller's client-side fold.
+ */
+data class ImportDuplicateReviewsForSessionRow(
+    /** The import candidate whose subject source the duplicate belongs to (the fold key). */
+    val subjectCandidateId: ImportCandidateId,
+    val review: ImportDuplicateReviewRow,
+)
+
+/**
  * Import review read port. The port expresses lookups by candidateId; the duplicate-review
  * granularity is the subject source, and implementations resolve candidate -> source via
  * `import_candidate.source_id` (UNIQUE `(ledger_id, source_id)`, Appendix A join note).
@@ -123,6 +135,29 @@ interface ImportReviewReadPort {
             "loadImportDuplicateReviews is not implemented by this read port; a missing duplicate " +
                 "review read must surface as a typed read failure, never as an empty comparison " +
                 "(D-146, G6)",
+        )
+
+    /**
+     * The duplicate-review rows of EVERY candidate whose subject source belongs to one pick
+     * session ([sessionInputRef] = the session handle, R-Q09-1), read in one batch. The
+     * session-level counterpart of [loadImportDuplicateReviews]: `null` means the session has
+     * no candidate row on this ledger (the session-granularity form of the explicit absent
+     * verdict), a genuinely empty list means no subject source of the session has any
+     * duplicate candidate — a present-session read whose rows simply contain no duplicate.
+     *
+     * Each row carries its subject candidate ([ImportDuplicateReviewsForSessionRow.
+     * subjectCandidateId]) so the caller can fold the batch per subject candidate; a session
+     * with no candidate at all is behaviorally equivalent to every candidate yielding an
+     * empty comparison set.
+     */
+    fun loadImportDuplicateReviewsForSession(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): List<ImportDuplicateReviewsForSessionRow>? =
+        throw UnsupportedOperationException(
+            "loadImportDuplicateReviewsForSession is not implemented by this read port; a missing " +
+                "session duplicate-review read must surface as a typed read failure, never as an " +
+                "empty comparison set (D-146, G6)",
         )
 }
 
@@ -160,6 +195,28 @@ sealed interface ImportDuplicateReviewsResult {
     data object NoDuplicates : ImportDuplicateReviewsResult
 
     data object Unavailable : ImportDuplicateReviewsResult
+}
+
+/**
+ * Frozen result family of the session-level duplicate-review query (the batch counterpart of
+ * [ImportDuplicateReviewsResult]; the P7-05 enumeration performance batch). `Reviews` carries
+ * the whole pick session's duplicate-review rows, each with its subject candidate; `Absent`
+ * means the session has no candidate row on the ledger; `NoDuplicates` means a present
+ * session whose subjects genuinely have no duplicate candidate. `Unavailable` is the typed
+ * read failure (G6: never an empty verdict).
+ */
+sealed interface ImportDuplicateReviewsForSessionResult {
+    data class Reviews(
+        val reviews: List<ImportDuplicateReviewsForSessionRow>,
+    ) : ImportDuplicateReviewsForSessionResult
+
+    /** The session handle matches no candidate's subject source on this ledger. */
+    data object Absent : ImportDuplicateReviewsForSessionResult
+
+    /** A present session whose subject sources genuinely have no duplicate candidate. */
+    data object NoDuplicates : ImportDuplicateReviewsForSessionResult
+
+    data object Unavailable : ImportDuplicateReviewsForSessionResult
 }
 
 /**
@@ -218,5 +275,37 @@ class QueryImportDuplicateReviews(
             }
         } catch (failure: Exception) {
             ImportDuplicateReviewsResult.Unavailable
+        }
+}
+
+/**
+ * P7-05 enumeration performance batch: the session-level duplicate-review query use case,
+ * the batch counterpart of [QueryImportDuplicateReviews]. One read replaces the per-candidate
+ * read loop behind the 整组确认页 enumeration; read-port exceptions map to
+ * [ImportDuplicateReviewsForSessionResult.Unavailable] — never to an empty list (the same
+ * F1/G6 discipline, so a failing batch read can never present a silently partial group).
+ */
+class QueryImportDuplicateReviewsForSession(
+    private val readPort: ImportReviewReadPort,
+) {
+    /**
+     * The whole pick session's duplicate-review rows ([sessionInputRef] = the session handle).
+     * An absent session is [ImportDuplicateReviewsForSessionResult.Absent], a present session
+     * whose subjects have no duplicate candidate is
+     * [ImportDuplicateReviewsForSessionResult.NoDuplicates] (both explicit verdicts, distinct
+     * from a read failure).
+     */
+    fun query(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): ImportDuplicateReviewsForSessionResult =
+        try {
+            when (val reviews = readPort.loadImportDuplicateReviewsForSession(ledgerId, sessionInputRef)) {
+                null -> ImportDuplicateReviewsForSessionResult.Absent
+                emptyList<ImportDuplicateReviewsForSessionRow>() -> ImportDuplicateReviewsForSessionResult.NoDuplicates
+                else -> ImportDuplicateReviewsForSessionResult.Reviews(reviews)
+            }
+        } catch (failure: Exception) {
+            ImportDuplicateReviewsForSessionResult.Unavailable
         }
 }

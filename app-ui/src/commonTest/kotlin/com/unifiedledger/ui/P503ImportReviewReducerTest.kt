@@ -572,8 +572,42 @@ class P503ImportReviewReducerTest {
         val bare = P503AppState.OverviewEmpty(emptyState)
         assertSame(bare, reducer.reduce(bare, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", emptyList())))
         assertSame(bare, reducer.reduce(bare, P503UiEvent.CloseImportDuplicateGroupDisposition))
+        // P7-05: the enumeration progress events are absorbed without a projection (a bare
+        // overview must not materialize one for a progress marker).
+        assertSame(bare, reducer.reduce(bare, P503UiEvent.ImportGroupEnumerationStarted))
+        assertSame(bare, reducer.reduce(bare, P503UiEvent.ImportGroupEnumerationCompleted))
         val withoutPage = overview(session = acceptedSession())
         assertSame(withoutPage, reducer.reduce(withoutPage, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Unavailable)))
+    }
+
+    // ---- P7-05 enumeration progress events (session-level batch read in-flight marker) ----
+
+    @Test
+    fun enumerationProgressEventsSetAndClearTheInProgressMarkerOnTheOverview() {
+        val source = overview(session = acceptedSession())
+        assertEquals(false, source.importReview?.groupEnumerationInProgress)
+        val started =
+            assertIs<P503AppState.OverviewEmpty>(reducer.reduce(source, P503UiEvent.ImportGroupEnumerationStarted))
+        assertEquals(true, started.importReview?.groupEnumerationInProgress)
+        // The marker survives unrelated overview events while the enumeration runs.
+        val stillInProgress =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(started, P503UiEvent.RefreshImportReview),
+            )
+        assertEquals(true, stillInProgress.importReview?.groupEnumerationInProgress)
+        // Completed clears it (the host dispatches it on every outcome — Ready or ReadFailed).
+        val completed =
+            assertIs<P503AppState.OverviewEmpty>(reducer.reduce(stillInProgress, P503UiEvent.ImportGroupEnumerationCompleted))
+        assertEquals(false, completed.importReview?.groupEnumerationInProgress)
+    }
+
+    @Test
+    fun enumerationProgressEventsAreAbsorbedOutsideTheOverview() {
+        val states = everyStateExcept(overview())
+        states.forEach { state ->
+            assertSame(state, reducer.reduce(state, P503UiEvent.ImportGroupEnumerationStarted))
+            assertSame(state, reducer.reduce(state, P503UiEvent.ImportGroupEnumerationCompleted))
+        }
     }
 
     /**

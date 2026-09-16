@@ -73,6 +73,7 @@ import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
@@ -562,6 +563,8 @@ private fun buildLedgerGraph(
             baseQueryImportReviewRows = QueryImportReviewRows(importReviewReadAdapter),
             baseQueryImportCandidateDetail = QueryImportCandidateDetail(importReviewReadAdapter),
             baseQueryImportDuplicateReviews = QueryImportDuplicateReviews(importReviewReadAdapter),
+            // P7-05: the session-level batch read behind the 整组确认页 enumeration.
+            baseQueryImportDuplicateReviewsForSession = QueryImportDuplicateReviewsForSession(importReviewReadAdapter),
             importDuplicateReview = importDuplicateReview,
             importDuplicateReviewIds = {
                 ImportDuplicateReviewIds(

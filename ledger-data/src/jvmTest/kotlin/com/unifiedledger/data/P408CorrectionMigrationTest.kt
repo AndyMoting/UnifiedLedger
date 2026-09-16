@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 class P408CorrectionMigrationTest {
     @Test
     fun versionIsTwentySeven() {
-        assertEquals(29, LedgerDatabase.Schema.version)
+        assertEquals(30, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -216,7 +216,7 @@ class P408CorrectionMigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 29)
+                LedgerDatabase.Schema.migrate(driver, 1, 30)
             }
             JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)

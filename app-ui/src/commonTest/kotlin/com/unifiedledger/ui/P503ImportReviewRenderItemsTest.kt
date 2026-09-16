@@ -323,6 +323,35 @@ class P503ImportReviewRenderItemsTest {
         )
     }
 
+    // ---- P7-05 enumeration progress line (in-flight marker of the session-level batch read) ----
+
+    @Test
+    fun theEnumerationProgressLineRendersOnlyWhileInFlightAndNoCardIsOpen() {
+        val rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-1"))
+        val session = acceptedSession(recordCount = 1)
+        // Default (not in flight): the progress line is absent — the pre-P7-05 shape is unchanged.
+        assertTrue(
+            importReviewRenderItems(ImportReviewView(rows = rows, lastIntakeSession = session), ImportPlatformKind.ANDROID)
+                .none { it is ImportReviewRenderItem.GroupEnumerationInProgress },
+        )
+        // In flight without an open card: the progress line renders right after the affordance.
+        val inFlight =
+            importReviewRenderItems(
+                ImportReviewView(rows = rows, lastIntakeSession = session, groupEnumerationInProgress = true),
+                ImportPlatformKind.ANDROID,
+            )
+        val buttonIndex = inFlight.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val progressIndex = inFlight.indexOfFirst { it is ImportReviewRenderItem.GroupEnumerationInProgress }
+        assertTrue(buttonIndex >= 0 && progressIndex == buttonIndex + 1)
+        // An open card supersedes the progress line (the enumeration already landed).
+        assertTrue(
+            importReviewRenderItems(
+                ImportReviewView(rows = rows, lastIntakeSession = session, groupDisposition = groupDispositionPage(), groupEnumerationInProgress = true),
+                ImportPlatformKind.ANDROID,
+            ).none { it is ImportReviewRenderItem.GroupEnumerationInProgress },
+        )
+    }
+
     @Test
     fun theGroupDispositionCardExpandsAsHeaderItemsAndFooterOnlyWhileThePageIsOpen() {
         // Two review rows of the SAME subject candidate: the flat item key is the duplicate
@@ -426,6 +455,10 @@ class P503ImportReviewRenderItemsTest {
                 notice = ImportReviewNotice.ReviewReadFailed,
                 groupDisposition = groupDispositionPage(),
                 batchResult = batchResultSummary(),
+                // P7-05: the in-flight marker is on in this fixture so the progress-line key
+                // joins the uniqueness contract (a card is open, so the line itself is
+                // suppressed — the key is exercised below in the in-flight-only projection).
+                groupEnumerationInProgress = true,
             )
         val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
         val keys = items.map { it.stableKey }
@@ -439,6 +472,21 @@ class P503ImportReviewRenderItemsTest {
         assertEquals(groupDispositionKeys.size, groupDispositionKeys.toSet().size)
         assertTrue(items.all { it.contentType.isNotBlank() })
         assertIs<ImportReviewRenderItem.TitleBar>(items.first())
+        // P7-05 progress-line key: present with the exact stable key in the in-flight-only
+        // projection (no open card), and absent again once the marker clears.
+        val inFlightOnly =
+            ImportReviewView(
+                rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+                groupEnumerationInProgress = true,
+            )
+        val inFlightItems = importReviewRenderItems(inFlightOnly, ImportPlatformKind.ANDROID)
+        val progressKey = inFlightItems.filterIsInstance<ImportReviewRenderItem.GroupEnumerationInProgress>().single().stableKey
+        assertEquals("group-enumeration-in-progress", progressKey)
+        assertEquals("groupEnumerationProgress", inFlightItems.filterIsInstance<ImportReviewRenderItem.GroupEnumerationInProgress>().single().contentType)
+        val inFlightKeys = inFlightItems.map { it.stableKey }
+        assertEquals(inFlightKeys.size, inFlightKeys.toSet().size)
+        assertTrue(inFlightKeys.contains(progressKey))
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicatePossibleExistingSourceFacts
 import com.unifiedledger.application.ImportDuplicateReviewRow
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionRow
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportReviewReadPort
@@ -18,9 +19,11 @@ import com.unifiedledger.domain.LedgerId
  * P7-04.B import review read adapter (D-146; implementation spec section 4.5, Appendix A).
  *
  * Implements [ImportReviewReadPort] against the single [LedgerDatabase] using the P7-04
- * read-only named queries (`importReviewRowsForLedger`, `importDuplicateReviewsForSource`)
- * plus the existing `selectImportCandidateLatestSequence`. Every query is ledger-filtered;
- * zero DDL, no index change, schema stays v29. The candidate list query returns one row per
+ * read-only named queries (`importReviewRowsForLedger`, `importDuplicateReviewsForSource`,
+ * plus the P7-05 session-level batch `importDuplicateReviewsForSession` behind the new
+ * v30 covering index) and the existing `selectImportCandidateLatestSequence`. Every query is
+ * ledger-filtered; the only DDL change of the batch is the additive v30 index (schema v30).
+ * The candidate list query returns one row per
  * (candidate, duplicate candidate) pair, so duplicate rows are folded here with the blocking
  * verdict first (spec section 4.5.2). Exceptions propagate to the use-case boundary, which
  * maps them to `Unavailable` (G6: a read failure never degrades to an empty verdict).
@@ -86,33 +89,40 @@ class SqlDelightImportReviewReadAdapter(
         return database.ledgerQueries
             .importDuplicateReviewsForSource(ledgerId.value, candidateId.value)
             .executeAsList()
-            .map { row ->
-                ImportDuplicateReviewRow(
-                    duplicateCandidateId = ImportDuplicateCandidateId(row.candidate_id),
-                    kind = row.kind,
-                    comparisonFingerprint = row.comparison_fingerprint,
-                    comparisonSnapshot = row.comparison_snapshot,
-                    latestStatus =
-                        ImportDuplicateStatus.valueOf(
-                            requireNotNull(row.latest_status) { "duplicate candidate has no status row" },
-                        ),
-                    reviewDecision = row.review_decision,
-                    reviewReasonToken = row.review_reason_token,
-                    reviewedAt = row.reviewed_at,
-                    possibleExistingSource =
-                        row.existing_source_id?.let { existingSourceId ->
-                            ImportDuplicatePossibleExistingSourceFacts(
-                                sourceId = ImportSourceId(existingSourceId),
-                                amountMinor = row.existing_amount_minor,
-                                currencyCode = row.existing_currency_code,
-                                currencyPrecision = row.existing_currency_precision?.toInt(),
-                                occurredAt = row.existing_occurred_at,
-                                directionToken = row.existing_direction_token,
-                                statusToken = row.existing_status_token,
-                            )
-                        },
-                )
-            }
+            .map { row -> row.toReviewRow() }
+    }
+
+    /**
+     * P7-05 enumeration performance batch: the session-level batch read behind the 整组确认页
+     * enumeration. One `importDuplicateReviewsForSession` query (Ledger.sq) replaces the
+     * per-candidate read loop plus its full-list existence probe: the subject join resolves
+     * the session handle directly, so a session with no candidate row yields an empty result
+     * without any per-candidate probe (`null`/empty carry the port's absent/no-duplicates
+     * semantics; the absent-vs-no-duplicates probe reuses the candidate list query once for
+     * the whole session). Each row maps to an [ImportDuplicateReviewsForSessionRow] carrying
+     * its subject candidate for the caller's client-side fold.
+     */
+    override fun loadImportDuplicateReviewsForSession(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): List<ImportDuplicateReviewsForSessionRow>? {
+        val rows =
+            database.ledgerQueries
+                .importDuplicateReviewsForSession(ledgerId.value, sessionInputRef)
+                .executeAsList()
+        if (rows.isEmpty()) {
+            // Absent (no candidate of this session) vs NoDuplicates (candidates exist but none
+            // has a duplicate): the batch query cannot distinguish them alone, so a candidate
+            // existence probe decides the null-vs-empty verdict. The probe runs once for the
+            // whole session — never per candidate.
+            val sessionHasCandidate =
+                database.ledgerQueries
+                    .importReviewRowsForLedger(ledgerId.value)
+                    .executeAsList()
+                    .any { it.input_ref == sessionInputRef }
+            return if (sessionHasCandidate) emptyList() else null
+        }
+        return rows.map { row -> row.toSessionReviewRow() }
     }
 }
 
@@ -122,6 +132,69 @@ class SqlDelightImportReviewReadAdapter(
  * (spec section 4.5.2): any latest `CONFIRMED_DUPLICATE`, else any `DEFERRED`, else any
  * reviewed retain/dismiss verdict.
  */
+private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSource.toReviewRow(): ImportDuplicateReviewRow =
+    ImportDuplicateReviewRow(
+        duplicateCandidateId = ImportDuplicateCandidateId(candidate_id),
+        kind = kind,
+        comparisonFingerprint = comparison_fingerprint,
+        comparisonSnapshot = comparison_snapshot,
+        latestStatus =
+            ImportDuplicateStatus.valueOf(
+                requireNotNull(latest_status) { "duplicate candidate has no status row" },
+            ),
+        reviewDecision = review_decision,
+        reviewReasonToken = review_reason_token,
+        reviewedAt = reviewed_at,
+        possibleExistingSource =
+            existing_source_id?.let { existingSourceId ->
+                ImportDuplicatePossibleExistingSourceFacts(
+                    sourceId = ImportSourceId(existingSourceId),
+                    amountMinor = existing_amount_minor,
+                    currencyCode = existing_currency_code,
+                    currencyPrecision = existing_currency_precision?.toInt(),
+                    occurredAt = existing_occurred_at,
+                    directionToken = existing_direction_token,
+                    statusToken = existing_status_token,
+                )
+            },
+    )
+
+/**
+ * P7-05: maps one session-level batch row (the per-candidate row shape plus the leading
+ * subject-candidate column) into its application read-model form. The review fields map
+ * exactly like the per-candidate row; only the subject-candidate wrap is new.
+ */
+private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSession.toSessionReviewRow(): ImportDuplicateReviewsForSessionRow =
+    ImportDuplicateReviewsForSessionRow(
+        subjectCandidateId = ImportCandidateId(subject_candidate_id),
+        review =
+            ImportDuplicateReviewRow(
+                duplicateCandidateId = ImportDuplicateCandidateId(candidate_id),
+                kind = kind,
+                comparisonFingerprint = comparison_fingerprint,
+                comparisonSnapshot = comparison_snapshot,
+                latestStatus =
+                    ImportDuplicateStatus.valueOf(
+                        requireNotNull(latest_status) { "duplicate candidate has no status row" },
+                    ),
+                reviewDecision = review_decision,
+                reviewReasonToken = review_reason_token,
+                reviewedAt = reviewed_at,
+                possibleExistingSource =
+                    existing_source_id?.let { existingSourceId ->
+                        ImportDuplicatePossibleExistingSourceFacts(
+                            sourceId = ImportSourceId(existingSourceId),
+                            amountMinor = existing_amount_minor,
+                            currencyCode = existing_currency_code,
+                            currencyPrecision = existing_currency_precision?.toInt(),
+                            occurredAt = existing_occurred_at,
+                            directionToken = existing_direction_token,
+                            statusToken = existing_status_token,
+                        )
+                    },
+            ),
+    )
+
 private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toReviewRow(
     groupedRows: List<com.unifiedledger.data.db.ImportReviewRowsForLedger>,
 ): ImportReviewRow {

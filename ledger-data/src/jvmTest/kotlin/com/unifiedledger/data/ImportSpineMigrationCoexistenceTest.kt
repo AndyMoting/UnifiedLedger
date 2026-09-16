@@ -146,7 +146,7 @@ class ImportSpineMigrationCoexistenceTest {
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(29, LedgerDatabase.Schema.version)
+                assertEquals(30, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countRg04ImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportRequests().executeAsOne())
                 assertEquals(0L, database.ledgerQueries.countImportSourceRecords().executeAsOne())

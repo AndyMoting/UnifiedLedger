@@ -1,0 +1,11 @@
+-- P7-05 enumeration performance batch: v29 -> v30. Purely additive: one new plain (non-partial)
+-- covering index on import_duplicate_candidate(ledger_id, subject_source_id) so the session-level
+-- duplicate-review batch query (importDuplicateReviewsForSession, Ledger.sq) resolves the whole
+-- P704SPEC-12 group's subject sources through one index probe per candidate instead of a full
+-- table scan per read. Zero data backfill; the caller wraps Schema.migrate in one outer
+-- transaction (26.sqm discipline), so any guard failure rolls the whole migration back and the
+-- v29 file is left untouched. The CREATE statement below matches the fresh Ledger.sq terminal
+-- definition byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+CREATE INDEX import_duplicate_candidate_subject_idx ON import_duplicate_candidate(ledger_id, subject_source_id);
