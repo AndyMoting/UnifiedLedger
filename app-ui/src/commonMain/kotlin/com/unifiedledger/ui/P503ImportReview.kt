@@ -387,8 +387,11 @@ internal fun P503ImportScreen(
 
 /**
  * Renders one flattened [ImportReviewRenderItem] of the IMPORT overview. Every branch keeps the
- * exact copy, order, semantics labels and accessibility descriptions the pre-lazy screen had (the
- * conditional inclusion itself already happened inside [importReviewRenderItems]).
+ * copy, order, semantics labels and accessibility descriptions the pre-lazy screen had (the
+ * conditional inclusion itself already happened inside [importReviewRenderItems]), with two
+ * main-agent-approved intentional deltas on the open disposition card header: the disclosure
+ * copy gains the「共 N 条。」item-count suffix, and a new「本次会话：<inputRef>」line surfaces the
+ * opaque pick session handle (the P704SPEC-12/R-Q09-1 sanctioned surface).
  */
 @Composable
 private fun ImportReviewOverviewItem(
@@ -487,13 +490,43 @@ private fun ImportReviewOverviewItem(
                 Text("整组标记为重复")
             }
         }
-        is ImportReviewRenderItem.GroupDispositionCard -> {
+        is ImportReviewRenderItem.GroupDispositionCardHeader -> {
             Spacer(Modifier.height(8.dp))
-            ImportDuplicateGroupDispositionCard(
-                page = item.page,
-                onConfirm = onGroupConfirm,
-                onClose = onGroupClose,
-            )
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Text(groupDispositionCardHeaderTitle(), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    groupDispositionCardHeaderDisclosure(item.itemCount),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    groupDispositionCardHeaderSessionText(item.inputRef),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        is ImportReviewRenderItem.GroupDispositionItem -> {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(
+                    groupDispositionItemCandidateText(item.state),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    groupDispositionItemComparisonText(item.state),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    groupDispositionItemOutcomeText(item.state),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        is ImportReviewRenderItem.GroupDispositionCardFooter -> {
+            Spacer(Modifier.height(4.dp))
+            Row {
+                Button(onClick = onGroupConfirm) { Text(groupDispositionCardFooterConfirmText()) }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onGroupClose) { Text(groupDispositionCardFooterCloseText()) }
+            }
         }
         is ImportReviewRenderItem.BatchConfirmButton -> {
             Spacer(Modifier.height(8.dp))
@@ -561,45 +594,6 @@ private fun ImportCandidateRow(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ImportDuplicateGroupDispositionCard(
-    page: ImportDuplicateGroupDispositionPage,
-    onConfirm: () -> Unit,
-    onClose: () -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text("整组标记为重复（逐条核对）", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Spacer(Modifier.height(4.dp))
-        page.items.forEach { itemState ->
-            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text("候选 ${itemState.item.candidateId.value}", style = MaterialTheme.typography.bodySmall)
-                Text(
-                    "比较信息：${itemState.item.comparisonSnapshot}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    when (val outcome = itemState.outcome) {
-                        null -> "待处置"
-                        is ImportDuplicateGroupItemResult.Reviewed -> "已标记：${outcome.outcome.name}"
-                        is ImportDuplicateGroupItemResult.Rejected -> "失败（${outcome.code}）"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Row {
-            Button(onClick = onConfirm) { Text("确认整组标记") }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = onClose) { Text("关闭") }
         }
     }
 }

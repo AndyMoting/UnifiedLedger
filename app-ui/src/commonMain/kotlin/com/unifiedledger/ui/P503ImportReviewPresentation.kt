@@ -580,6 +580,37 @@ internal class P503ImportDecisionValidation(
         }
 }
 
+// ------------------------------------------------------------------ flattened disposition-card copy (Option A)
+
+/** The title copy of the open 整组确认页 card header (frozen verbatim from the pre-windowing card). */
+internal fun groupDispositionCardHeaderTitle(): String = "整组标记为重复（逐条核对）"
+
+/** The disclosure copy of the open card header: the per-item manual-review semantics + the item count. */
+internal fun groupDispositionCardHeaderDisclosure(itemCount: Int): String = "将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 $itemCount 条。"
+
+/** The session-handle copy of the open card header (the opaque pick session handle, R-Q09-1). */
+internal fun groupDispositionCardHeaderSessionText(inputRef: String): String = "本次会话：$inputRef"
+
+/** The confirm-button copy of the open card footer (frozen verbatim from the pre-windowing card). */
+internal fun groupDispositionCardFooterConfirmText(): String = "确认整组标记"
+
+/** The close-button copy of the open card footer (frozen verbatim from the pre-windowing card). */
+internal fun groupDispositionCardFooterCloseText(): String = "关闭"
+
+/** The subject-candidate copy of one flattened card item. */
+internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemState): String = "候选 ${state.item.candidateId.value}"
+
+/** The privacy-safe comparison-snapshot copy of one flattened card item. */
+internal fun groupDispositionItemComparisonText(state: ImportDuplicateGroupItemState): String = "比较信息：${state.item.comparisonSnapshot}"
+
+/** The per-item outcome copy of one flattened card item (待处置 / 已标记 / 失败, frozen verbatim). */
+internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemState): String =
+    when (val outcome = state.outcome) {
+        null -> "待处置"
+        is ImportDuplicateGroupItemResult.Reviewed -> "已标记：${outcome.outcome.name}"
+        is ImportDuplicateGroupItemResult.Rejected -> "失败（${outcome.code}）"
+    }
+
 // ------------------------------------------------------------------ overview render model (FOUND-P704-D01-01)
 
 /**
@@ -590,7 +621,8 @@ internal class P503ImportDecisionValidation(
  * instead. Every flattened section — the title bar, the notice banner, the dividers, the format
  * entries, the session summary (header lines + the disclosed 200-record per-record lines), the
  * 待确认 header with its two empty states, the group headers, the candidate rows, the disposition
- * affordances, the batch-confirm entry and the per-item batch result expansion — is one item
+ * affordances, the open disposition card (expanded as one header + one item per group member + one
+ * footer), the batch-confirm entry and the per-item batch result expansion — is one item
  * carrying a unique [stableKey] and a [contentType] reuse token. Pure projection only: no Compose
  * API and no callbacks (the composable wires the typed intents). No new display limit is
  * introduced: the candidate list itself is never truncated; the 200-record session披露 cap stays
@@ -708,12 +740,38 @@ internal sealed interface ImportReviewRenderItem {
         override val contentType: String = "groupDispositionButton"
     }
 
-    /** The open 整组确认页 card (逐条提交审核 per item). */
-    data class GroupDispositionCard(
-        val page: ImportDuplicateGroupDispositionPage,
+    /**
+     * The header of the open 整组确认页 card (Option A windowing): the group's session handle and
+     * its item count. The open card expands flat as one header + one [GroupDispositionItem] per
+     * group member + one [GroupDispositionCardFooter], so the LazyColumn windows the card's items
+     * exactly like the candidate list (no eager per-item composition inside a single card item).
+     */
+    data class GroupDispositionCardHeader(
+        val inputRef: String,
+        val itemCount: Int,
     ) : ImportReviewRenderItem {
-        override val stableKey: String = "group-disposition-card"
-        override val contentType: String = "groupDispositionCard"
+        override val stableKey: String = "group-disposition-card:header"
+        override val contentType: String = "groupDispositionCardHeader"
+    }
+
+    /**
+     * One member of the open 整组确认页 card, carrying the whole [ImportDuplicateGroupItemState]
+     * (the frozen comparison snapshot + the per-item outcome). The key is the duplicate candidate
+     * id — the same subject candidate can contribute multiple review rows to the group.
+     */
+    data class GroupDispositionItem(
+        val state: ImportDuplicateGroupItemState,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-item:${state.item.duplicateCandidateId.value}"
+        override val contentType: String = "groupDispositionItem"
+    }
+
+    /** The footer of the open 整组确认页 card: the 确认整组标记 / 关闭 affordance row. */
+    data class GroupDispositionCardFooter(
+        val itemCount: Int,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-card:footer"
+        override val contentType: String = "groupDispositionCardFooter"
     }
 
     /** 「进入批量确认（N 项）」 entry (P7-04.D; only for a non-empty selection). */
@@ -822,7 +880,14 @@ internal fun importReviewRenderItems(
         if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
             items += ImportReviewRenderItem.GroupDispositionButton
         }
-        view.groupDisposition?.let { items += ImportReviewRenderItem.GroupDispositionCard(it) }
+        // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
+        // group member + one footer, so the LazyColumn windows the card's per-item rows exactly
+        // like the candidate list (no eager per-item composition inside a single card item).
+        view.groupDisposition?.let { page ->
+            items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.items.size)
+            page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+            items += ImportReviewRenderItem.GroupDispositionCardFooter(page.items.size)
+        }
         // P7-04.D: the batch confirmation entry is reached only with a non-empty selection.
         if (view.selectedCandidateIds.isNotEmpty()) {
             items += ImportReviewRenderItem.BatchConfirmButton(view.selectedCandidateIds.size)
