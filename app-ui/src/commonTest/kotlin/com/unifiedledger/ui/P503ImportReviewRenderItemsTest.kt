@@ -25,7 +25,9 @@ import kotlin.test.assertTrue
  * section mapping of the frozen presentation semantics (six-class order, empty-group omission,
  * 待确认 empty states, notice banner placement, session summary with its disclosed 200-record cap,
  * batch result per-item expansion with Unknown check entries), the selection propagation into
- * candidate items, and the stable/unique key contract (a duplicate LazyColumn key crashes at
+ * candidate items, the open disposition card's flat expansion as one header + one item per group
+ * member + one footer (Option A windowing; zero loss at the 10,000-item group cap), and the
+ * stable/unique key contract (a duplicate LazyColumn key crashes at
  * runtime with "Key was already used"). All fixtures are fully synthetic (D06).
  */
 class P503ImportReviewRenderItemsTest {
@@ -322,19 +324,66 @@ class P503ImportReviewRenderItemsTest {
     }
 
     @Test
-    fun theGroupDispositionCardRendersOnlyWhileThePageIsOpen() {
-        val page = groupDispositionPage()
+    fun theGroupDispositionCardExpandsAsHeaderItemsAndFooterOnlyWhileThePageIsOpen() {
+        // Two review rows of the SAME subject candidate: the flat item key is the duplicate
+        // candidate id, never the subject candidate id（同一 candidate 组内可多 review 行）.
+        val page =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    listOf(
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-1"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                        ),
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-2"),
+                                    comparisonSnapshot = "{\"amount_minor\":3581}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                        ),
+                    ),
+            )
         val withPage =
             importReviewRenderItems(
                 ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page),
                 ImportPlatformKind.ANDROID,
             )
-        val card = withPage.filterIsInstance<ImportReviewRenderItem.GroupDispositionCard>().single()
-        assertEquals(page, card.page)
-        assertTrue(
-            importReviewRenderItems(ImportReviewView(rows = listOf(row("pending-1"))), ImportPlatformKind.ANDROID)
-                .none { it is ImportReviewRenderItem.GroupDispositionCard },
+        // The open card expands flat: one header, then one item per group member in row order,
+        // then one footer — three subtypes, zero nesting (the flat window the LazyColumn consumes).
+        val header = withPage.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardHeader>().single()
+        assertEquals("pick-handle-1", header.inputRef)
+        assertEquals(2, header.itemCount)
+        val groupItems = withPage.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(page.items, groupItems.map { it.state })
+        assertEquals(
+            listOf("group-disposition-item:dup-1", "group-disposition-item:dup-2"),
+            groupItems.map { it.stableKey },
         )
+        val footer = withPage.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
+        assertEquals(2, footer.itemCount)
+        // Order: header first, then the two items, then the footer — consecutive, no interleaving.
+        val headerIndex = withPage.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
+        val firstItemIndex = withPage.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionItem }
+        val lastItemIndex = withPage.indexOfLast { it is ImportReviewRenderItem.GroupDispositionItem }
+        val footerIndex = withPage.indexOfLast { it is ImportReviewRenderItem.GroupDispositionCardFooter }
+        assertEquals(headerIndex + 1, firstItemIndex)
+        assertEquals(headerIndex + 2, lastItemIndex)
+        assertEquals(headerIndex + 3, footerIndex)
+        // Closed page: none of the three subtypes render at all.
+        val closed =
+            importReviewRenderItems(ImportReviewView(rows = listOf(row("pending-1"))), ImportPlatformKind.ANDROID)
+        assertTrue(closed.none { it is ImportReviewRenderItem.GroupDispositionCardHeader })
+        assertTrue(closed.none { it is ImportReviewRenderItem.GroupDispositionItem })
+        assertTrue(closed.none { it is ImportReviewRenderItem.GroupDispositionCardFooter })
     }
 
     // ---- batch confirmation entry gate (勾选集非空才可达) ----
@@ -381,6 +430,13 @@ class P503ImportReviewRenderItemsTest {
         val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
         val keys = items.map { it.stableKey }
         assertEquals(keys.size, keys.toSet().size, "duplicate stable keys: ${keys.groupingBy { it }.eachCount().filterValues { it > 1 }}")
+        // The flattened disposition-card subtypes share the `group-disposition-` key prefix with
+        // the affordance button but never collide: button/header/item/footer keys stay pairwise
+        // distinct across the whole list (the item key is the duplicate candidate id, never the
+        // subject candidate id).
+        val groupDispositionKeys = keys.filter { it.startsWith("group-disposition-") }
+        assertEquals(1 + 1 + view.groupDisposition!!.items.size + 1, groupDispositionKeys.size)
+        assertEquals(groupDispositionKeys.size, groupDispositionKeys.toSet().size)
         assertTrue(items.all { it.contentType.isNotBlank() })
         assertIs<ImportReviewRenderItem.TitleBar>(items.first())
     }
@@ -400,7 +456,68 @@ class P503ImportReviewRenderItemsTest {
         assertEquals(first.map { it.stableKey }, second.map { it.stableKey })
     }
 
-    // ---- cap-scale shape regression (FOUND-P704-D01-01: 10,000 candidates, zero loss) ----
+    /**
+     * Option A cap pin: a fully open 10,000-item disposition page expands flat as exactly one
+     * header + 10,000 items + one footer — no eager per-item composition inside a single card
+     * item, zero loss, zero new cap (the whole list reaches the LazyColumn window).
+     */
+    @Test
+    fun capScaleGroupDispositionTenThousandItemsWindowedAsFlatItems() {
+        val page =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    (0 until 10_000).map { index ->
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-" + index.toString().padStart(5, '0')),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                        )
+                    },
+            )
+        val view =
+            ImportReviewView(
+                rows = (0 until 10_000).map { row("candidate-" + it.toString().padStart(5, '0'), duplicateStatus = ImportDuplicateStatus.DEFERRED) },
+                lastIntakeSession = acceptedSession(recordCount = 1),
+                groupDisposition = page,
+            )
+        val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+        // Static sections (TitleBar + 2 dividers + format header + pending header + one group
+        // header) + the 4-entry Android format matrix + the session block (1 header + 2 summary
+        // lines + 1 record line) + the 10,000 candidate rows + 1 disposition affordance button +
+        // the card's 1 header + 10,000 flat items + 1 footer = 20,017 items — zero loss, zero new
+        // cap (C5: nothing is truncated).
+        val staticSections = 6
+        val sessionBlock = 1 + importIntakeSessionLines(view.lastIntakeSession!!).size + 1
+        val affordance = 1
+        assertEquals(
+            staticSections + importFormatEntries(ImportPlatformKind.ANDROID).size + sessionBlock + 10_000 + affordance + 1 + 10_000 + 1,
+            items.size,
+        )
+        assertEquals(20_017, items.size)
+        // Order: the card header sits right after the affordance button; the 10,000 flat items
+        // follow in page order; the footer is the last item of the whole list.
+        val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
+        assertEquals(buttonIndex + 1, headerIndex)
+        assertEquals(ImportReviewRenderItem.GroupDispositionCardHeader("pick-handle-1", 10_000), items[headerIndex])
+        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(10_000, groupItems.size)
+        assertEquals(page.items, groupItems.map { it.state })
+        assertEquals(
+            (0 until 10_000).map { "group-disposition-item:dup-" + it.toString().padStart(5, '0') },
+            groupItems.map { it.stableKey },
+        )
+        assertIs<ImportReviewRenderItem.GroupDispositionCardFooter>(items.last())
+        assertEquals(10_000, (items.last() as ImportReviewRenderItem.GroupDispositionCardFooter).itemCount)
+        // Every key stays pairwise distinct across the whole 20,017-item list.
+        val keys = items.map { it.stableKey }
+        assertEquals(keys.size, keys.toSet().size)
+    }
 
     @Test
     fun capScaleTenThousandCandidatesKeepEveryRowInFrozenOrder() {

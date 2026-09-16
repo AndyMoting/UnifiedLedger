@@ -365,6 +365,47 @@ class P503ImportReviewPresentationTest {
         assertEquals(emptyList(), ready.items)
     }
 
+    // ---- Option A flattened disposition-card copy (header/footer/item presentation functions) ----
+
+    @Test
+    fun theGroupDispositionCardHeaderAndFooterExposeInputRefAndItemCount() {
+        // The header copy pins the open card's title + the per-item manual-review disclosure with
+        // the exact item count; the footer copy pins the confirm/close affordance row.
+        assertEquals(
+            "整组标记为重复（逐条核对）",
+            groupDispositionCardHeaderTitle(),
+        )
+        assertEquals(
+            "将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 7 条。",
+            groupDispositionCardHeaderDisclosure(itemCount = 7),
+        )
+        assertEquals("本次会话：pick-handle-1", groupDispositionCardHeaderSessionText(inputRef = "pick-handle-1"))
+        assertEquals("确认整组标记", groupDispositionCardFooterConfirmText())
+        assertEquals("关闭", groupDispositionCardFooterCloseText())
+    }
+
+    @Test
+    fun theGroupDispositionItemCarriesStateSnapshotAndOutcome() {
+        val pending =
+            ImportDuplicateGroupItemState(
+                item =
+                    ImportDuplicateGroupDispositionItem(
+                        candidateId = ImportCandidateId("candidate-dup-1"),
+                        duplicateCandidateId = ImportDuplicateCandidateId("dup-1"),
+                        comparisonSnapshot = "{\"amount_minor\":3580}",
+                        expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                    ),
+            )
+        // 待处置 / 已标记 / 失败: the per-item copy mirrors the pre-lazy card's outcome lines.
+        assertEquals("候选 candidate-dup-1", groupDispositionItemCandidateText(pending))
+        assertEquals("比较信息：{\"amount_minor\":3580}", groupDispositionItemComparisonText(pending))
+        assertEquals("待处置", groupDispositionItemOutcomeText(pending))
+        val reviewed = pending.copy(outcome = ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        assertEquals("已标记：CONFIRMED_DUPLICATE", groupDispositionItemOutcomeText(reviewed))
+        val rejected = pending.copy(outcome = ImportDuplicateGroupItemResult.Rejected("SPINE_DUPLICATE_NOT_PENDING"))
+        assertEquals("失败（SPINE_DUPLICATE_NOT_PENDING）", groupDispositionItemOutcomeText(rejected))
+    }
+
     // ---- possibly-existing source facts copy (P704C-SPEC-04; spec section 4.5.4) ----
 
     @Test
