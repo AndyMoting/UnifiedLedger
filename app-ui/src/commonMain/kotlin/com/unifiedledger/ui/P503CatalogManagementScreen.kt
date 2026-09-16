@@ -40,6 +40,12 @@ import com.unifiedledger.domain.CategoryKind
  * interaction is forwarded as a [P503UiEvent], and form submission is delegated to [onSubmit] so
  * the host runs the command and the authoritative refresh. Hidden/system accounts never appear
  * (A-2, projection-guaranteed).
+ *
+ * Ledger-identity short patch (D-146 entry 12, DECISIONS.md:2805): the header discloses the
+ * active ledger read-only (same 账本： copy family as the home tab) and carries an honest
+ * disabled 切换账本 trigger — this batch has no ledger-list data source (no picker port / use
+ * case / lastActiveLedgerId persistence), so the trigger is never presented as usable and never
+ * faked as a live picker; the full multi-ledger selector stays a P7-05+ future batch.
  */
 @Composable
 fun P503CatalogManagementScreen(
@@ -58,6 +64,34 @@ fun P503CatalogManagementScreen(
         ) {
             Text("账户与分类管理", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             TextButton(onClick = onRefresh) { Text("刷新目录") }
+        }
+        // Ledger-identity short patch (D-146 entry 12): read-only active-ledger disclosure in the
+        // same 账本： copy family as the home tab, plus the honest disabled switch trigger — no
+        // ledger-list data source exists this batch, so it stays visibly not-enabled with its
+        // explanation instead of a fake picker or a dead unexplained button.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                catalogLedgerIdentityText(state.state.ledgerId),
+                style = MaterialTheme.typography.bodySmall,
+                modifier =
+                    Modifier.weight(1f).semantics {
+                        contentDescription = catalogLedgerIdentityContentDescription(state.state.ledgerId)
+                    },
+            )
+            TextButton(
+                onClick = {},
+                enabled = CATALOG_SWITCH_LEDGER_ENABLED,
+                modifier =
+                    Modifier.semantics {
+                        contentDescription = CATALOG_SWITCH_LEDGER_CONTENT_DESCRIPTION
+                    },
+            ) {
+                Text(CATALOG_SWITCH_LEDGER_BUTTON_TEXT)
+            }
+            Text(CATALOG_SWITCH_LEDGER_HONEST_SUFFIX_TEXT, style = MaterialTheme.typography.bodySmall)
         }
         state.catalogNotice?.let { notice ->
             CatalogNoticeBanner(notice) { onEvent(P503UiEvent.DismissCatalogNotice) }
@@ -445,3 +479,30 @@ internal fun accountKindText(kind: AccountKind): String =
         AccountKind.INCOME -> "收入"
         AccountKind.EXPENSE -> "支出"
     }
+
+// ------------------------------------------------- ledger-identity short patch copy (D-146 entry 12)
+// Pure presentation copy for the active-ledger disclosure and the honest disabled switch
+// trigger; pinned verbatim by P503CatalogManagementPresentationTest. The full multi-ledger
+// selector (picker port / use case / lastActiveLedgerId persistence) is a P7-05+ batch.
+
+/** The read-only current-ledger line; same 账本： copy family as the home tab (P503OverviewScreen). */
+internal fun catalogLedgerIdentityText(ledgerId: com.unifiedledger.domain.LedgerId): String = "账本：${ledgerId.value}"
+
+/** The accessibility label of the ledger-identity line (C04 style: one announced node). */
+internal fun catalogLedgerIdentityContentDescription(ledgerId: com.unifiedledger.domain.LedgerId): String = "当前账本：${ledgerId.value}"
+
+/** Whether the switch trigger is usable: `false` this batch — no ledger-list data source exists. */
+internal const val CATALOG_SWITCH_LEDGER_ENABLED: Boolean = false
+
+/** The switch trigger's visible label. */
+internal const val CATALOG_SWITCH_LEDGER_BUTTON_TEXT: String = "切换账本"
+
+/**
+ * The honest suffix next to the disabled trigger — same honesty class as the import format
+ * matrix's 待设备运行验证，暂不可用 line (R-Q08-3): never presented as usable, never a dead
+ * button without explanation.
+ */
+internal const val CATALOG_SWITCH_LEDGER_HONEST_SUFFIX_TEXT: String = "（多账本未启用）"
+
+/** The accessibility label of the disabled switch trigger: states it is not enabled. */
+internal const val CATALOG_SWITCH_LEDGER_CONTENT_DESCRIPTION: String = "切换账本（未启用）"
