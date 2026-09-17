@@ -21,12 +21,13 @@
 
 **D-D 裁决（已按基线证据裁决，替代 D-B/D-C 悬置分支）**：
 
-- **层0（新增，主修复）**：统计刷新机制——Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`；接治收尾（intake pipeline 完成事务后）后台再执行一次（数据 10× 增长触发点）。desktop 同链共享。零 DDL、零 schema 变更、零查询重写、零产品语义变更。PRAGMA 语句经现有驱动执行面（AndroidSqliteDriver / JDBC），不新增依赖。
+- **层0（新增，主修复）**：统计刷新机制——Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网）；接治收尾（intake pipeline 完成事务后）后台执行**显式 `ANALYZE;`（全 schema）**（返工 3，设备证据裁决，见下）。desktop 同链共享。零 DDL、零 schema 变更、零查询重写、零产品语义变更。PRAGMA/ANALYZE 语句经现有驱动执行面（AndroidSqliteDriver / JDBC），不新增依赖。
+- **返工 3 根因披露（2026-09-17 设备复测，AVD ul_p7_d01，API 36 系统 SQLite 3.44.3，20k 库）**：`PRAGMA optimize` 的重分析资格依赖「该表曾被 stat1 规划」——import 表首次启动时无统计、无规划历史，二者皆无，官方 10× 规则救不了首次；实测 bootstrap 触发后 `sqlite_stat1` 仅 catalog 表 4 行、import 表零统计，`PRAGMA optimize=0x10002` 重跑同样不分析 import 表（0x10000 全表位属较新版本行为），列表查询仍选错 autoindex 卡 300+s；手动 `ANALYZE` import 三表后列表 2.4s 落地。故接治收尾点改用强保证 `ANALYZE;`，且该 hook 在 `runImportIntakePipeline` 的 Default 线程、列表重读**之前**执行——统计永远先于读落地。**边界披露**：外部注入库（未来 P7-06 恢复路径）的统计新鲜度归该批处理，本批不静默扩大。**执行面披露（返工 3 实测，对返工 3 指示"统一 executeQuery 面"的偏离）**：按语句结果形态各归其消耗面，两个触发点测试分别钉死——`PRAGMA optimize` 有结果列，走 executeQuery 面（Android rawQuery 等价安全面；有结果列语句经 execute/executeForChangedRowCount 会被拒，busy_timeout 教训路径）；`ANALYZE;` 无结果行：JDBC 端实测 sqlite-jdbc executeQuery 拒绝无结果语句（"Query does not return results"，DesktopQueryStatisticsOptimizeTriggerTest 失败钉死）→ desktop 走 `driver.execute()`；Android 端 executeForChangedRowCount 的拒绝仅适用于**返回结果行**的语句，无结果行的 ANALYZE 预期可行（代码级推论，非设备实测）——**设备复测必须实测**：接治收尾后 `sqlite_stat1` 须出现 import 表统计行，否则本返工 FAIL。
 - **层0 实施坑与接口约束（反编译 android-driver 2.3.2 证实 + 实测钉死，实施必须遵守）**：
   1. `PRAGMA optimize` **不得进入 Ledger.sq 命名查询**——SQLDelight 将 PRAGMA 归类为 EXECUTE 语句走 `driver.execute()`，Android 链到 androidx `executeUpdateDelete`/`SQLiteSession.executeForChangedRowCount`，对返回结果列的语句抛 "Queries can be performed using SQLiteDatabase query or rawQuery methods only"（busy_timeout 教训同路径，`AndroidLedgerDatabaseHandle.kt:98-100` 注记）。
   2. Android 端执行面 = `driver.executeQuery(null, "PRAGMA optimize", mapper, 0, null)`（rawQuery 等价安全面；先例 = `AndroidLedgerDatabaseHandle.kt:25-32` SELECT 1 探针）。`AndroidSqliteDriver` 的 driver 字段是 handle 的 private 成员——**handle 新开一个受控执行入口**，由组合根在触发点调用。
   3. Desktop 落点 = `buildLedgerGraph` 内 `bootstrapAuthority`（`Main.kt:325` 调用点）之后执行一次（官方 open 时模式；JDBC `driver.execute` 对返回列 PRAGMA 不抛，busy_timeout 先例 `configureSqliteConnection` 即该面；但语义上不塞进 configureSqliteConnection，保持统计维护与连接配置分离）；接治收尾触发与 Android 共享 commonMain `runImportIntakePipeline`，desktop 侧 driver 执行入口同样经受控 handle/graph 方法暴露（`CloseableLedgerGraph` 现不暴露 driver，同接口缺口一并补）。
-  4. 触发点最小集推理留痕：整组处置/审核只写 `import_duplicate_status_history` 状态行、不新增 `import_duplicate_candidate` 行——接治收尾跑过一次 optimize 后，dup 表行数不变（官方 10× 规则）不再触发重分析，处置收尾**不需要第三个触发点**。`import_duplicate_status_history` 在整组处置中可新增 ~10k 行（10× 可达），但其读路径全走 PK `(ledger_id, candidate_id, sequence)` 索引、无统计敏感性，且接治收尾点已在处置前跑过 optimize——不为其加触发点，如实登记此边界。
+  4. 触发点最小集推理留痕：整组处置/审核只写 `import_duplicate_status_history` 状态行、不新增 `import_duplicate_candidate` 行——接治收尾跑过一次 ANALYZE 后，dup 表行数不变（官方 10× 规则）不再依赖新分析，处置收尾**不需要第三个触发点**。`import_duplicate_status_history` 在整组处置中可新增 ~10k 行（10× 可达），但其读路径全走 PK `(ledger_id, candidate_id, sequence)` 索引、无统计敏感性，且接治收尾点已在处置前跑过 optimize——不为其加触发点，如实登记此边界。
 - D-B 分支（轻量列表投影）**不启用**：基线证明统计修复后列表查询 0.24s（20k 库 host），无需投影裁剪。
 - D-C 分支（列表读零改动）确认：列表读本体保留整账本读。
 - 30k 铺库不必要：20k 已复现 ANR（同根因更劣规模），修复后复测以 20k 库为准（B6 组开卡、B2/B3 刷新、B5 详情）。
@@ -52,7 +53,7 @@
 
 ### 2.1 层0：统计刷新机制（主修复，零 DDL）
 
-- Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`；接治收尾（intake pipeline 完成事务后）后台再执行一次。desktop 同链共享（§0 实施坑 1-4 逐条适用）。
+- Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网，对有 stat1 规划历史的表有效）；接治收尾（intake pipeline 完成事务后）后台执行显式 `ANALYZE;`（强保证，§0 返工 3 根因披露）。desktop 同链共享（§0 实施坑 1-4 逐条适用）。
 - 触发点最小集 = 恰好两处（bootstrap 完成点 + 接治收尾点）；不加第三个触发点的推理边界见 §0 第 4 条。
 
 ### 2.2 层1：定向读（纯查询形态替换，零 DDL）
@@ -88,7 +89,7 @@
 ## 4. 决策点（全部已裁决）
 
 - D-A：层2 缓存形态（推荐并采纳：nullable State + single-flight 后台加载 + 主线程旧值保留直至新值就绪；null 空窗占位）。
-- D-D（主修复，已裁决）：统计刷新机制——bootstrap 完成点 + 接治收尾点后台 `PRAGMA optimize`（基线证据 255.98s→0.23s；官方语义 10× 行变化触发；零 DDL）。D-B 轻量投影不启用；D-C 列表读零改动确认（§0）。
+- D-D（主修复，已裁决；返工 3 细化）：统计刷新机制——bootstrap 完成点 `PRAGMA optimize`（安全网）+ 接治收尾点显式 `ANALYZE;`（强保证，§0 返工 3 根因披露）（基线证据 255.98s→0.23s；官方语义 10× 行变化触发；零 DDL）。D-B 轻量投影不启用；D-C 列表读零改动确认（§0）。
 
 ## 5. 测试与验收
 

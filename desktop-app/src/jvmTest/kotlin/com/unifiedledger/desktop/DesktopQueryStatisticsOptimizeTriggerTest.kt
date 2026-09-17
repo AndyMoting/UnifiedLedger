@@ -16,15 +16,18 @@ import kotlin.test.assertTrue
  * layer-0 statistics-refresh trigger points are wired exactly as the spec pins them, with the
  * minimal injection surface of this batch — a delegating [SqlDriver] wrapper that records every
  * `executeQuery` SQL (the recording-proxy precedent of ForeignKeysCallbackCorruptionTest; no
- * mock library). The `PRAGMA optimize` statements are observable through the wrapper, and the
- * real JdbcSqliteDriver keeps the semantics genuine:
+ * mock library). The statements are observable through the wrapper, and the real JdbcSqliteDriver
+ * keeps the semantics genuine:
  *
  * - the bootstrap-completion trigger: `buildLedgerGraph` runs `PRAGMA optimize` exactly once,
- *   right after `bootstrapAuthority` (the SQLite-recommended open-time pattern; zero DDL);
- * - the intake-completion trigger: the facade's shared `importIntakeStatisticsRefresh` hook
- *   (what the commonMain `runImportIntakePipeline` invokes off the UI thread after the intake
- *   transaction) reaches the same controlled entry — the desktop graph method the spec's
- *   CloseableLedgerGraph interface-gap clause adds.
+ *   right after `bootstrapAuthority` (the SQLite-recommended open-time safety net for tables
+ *   with a stat1 planning history; zero DDL);
+ * - the intake-completion trigger (rework 3, device evidence on API 36 system SQLite 3.44.3):
+ *   the facade's shared `importIntakeStatisticsRefresh` hook — what the commonMain
+ *   `runImportIntakePipeline` invokes off the UI thread BEFORE the list re-read — runs the
+ *   explicit full-schema `ANALYZE;` (the strong guarantee: `PRAGMA optimize` does not grant
+ *   first-time analysis to tables without a statistics history), through the same controlled
+ *   graph entry the CloseableLedgerGraph interface-gap clause added.
  */
 class DesktopQueryStatisticsOptimizeTriggerTest {
     /** Delegating driver recording every executeQuery SQL for the assertions. */
@@ -93,22 +96,29 @@ class DesktopQueryStatisticsOptimizeTriggerTest {
     }
 
     @Test
-    fun theSharedIntakeHookReachesTheControlledGraphEntry() {
+    fun theSharedIntakeHookRunsTheFullSchemaAnalyze() {
         val real = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             val driver = RecordingDriver(real)
             val graph = buildLedgerGraph(driver, createSchema = true)
 
-            // The intake-completion trigger: the commonMain host pipeline invokes the facade
-            // hook after the intake transaction; the hook and the graph member must both reach
-            // the same controlled driver entry.
+            // The intake-completion trigger (rework 3): the commonMain host pipeline invokes the
+            // facade hook after the intake transaction and BEFORE the list re-read; the hook
+            // and the graph member must both run the explicit full-schema ANALYZE — and never
+            // PRAGMA optimize (which does not grant first-time analysis to tables without a
+            // stat1 planning history). ANALYZE is a row-less statement, so it rides the
+            // driver.execute surface (the sqlite-jdbc executeQuery path rejects row-less
+            // statements — "Query does not return results" — the failure that pinned this).
             driver.executeQuerySql.clear()
+            driver.executeSql.clear()
             graph.facade.importIntakeStatisticsRefresh()
-            assertEquals(listOf("PRAGMA optimize"), driver.executeQuerySql.filter { it == "PRAGMA optimize" })
+            assertEquals(listOf("ANALYZE;"), driver.executeSql.filter { it == "ANALYZE;" })
+            assertTrue(driver.executeQuerySql.none { it == "PRAGMA optimize" }, "the intake trigger must run ANALYZE, not PRAGMA optimize")
+            assertTrue(driver.executeQuerySql.none { it == "ANALYZE;" }, "ANALYZE is row-less and must not ride executeQuery on this driver")
 
-            driver.executeQuerySql.clear()
-            graph.runQueryStatisticsOptimize()
-            assertEquals(listOf("PRAGMA optimize"), driver.executeQuerySql.filter { it == "PRAGMA optimize" })
+            driver.executeSql.clear()
+            graph.runFullAnalyze()
+            assertEquals(listOf("ANALYZE;"), driver.executeSql.filter { it == "ANALYZE;" })
         } finally {
             real.close()
         }

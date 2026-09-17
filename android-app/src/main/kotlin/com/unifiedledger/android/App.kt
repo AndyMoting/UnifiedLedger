@@ -268,7 +268,8 @@ internal class AndroidStartupController(
  * controlled statistics-refresh entry of the freshly built graph (the Android handle's method
  * over its private driver). The composition root runs it exactly once, off the UI thread, at
  * the bootstrap-completion trigger point below; tests may keep it unset (the default runs
- * nothing).
+ * nothing). [runFullAnalyze] (rework 3) is the intake-completion trigger's entry — the
+ * explicit full-schema ANALYZE behind the shared facade hook.
  */
 internal data class CloseableLedgerGraph(
     val facade: P503LedgerFacade,
@@ -276,6 +277,7 @@ internal data class CloseableLedgerGraph(
     val catalogSession: CatalogConsumerSession? = null,
     val catalogCommands: ExecuteCatalogCommand? = null,
     val runQueryStatisticsOptimize: () -> Unit = {},
+    val runFullAnalyze: () -> Unit = {},
 )
 
 private const val LOG_TAG = "UnifiedLedger"
@@ -590,7 +592,10 @@ private fun buildLedgerGraph(
             // intake-completion statistics refresh — the handle's controlled driver entry,
             // invoked by the shared P503App host pipeline off the UI thread right after the
             // intake transaction (the ~10x row-growth trigger point).
-            importIntakeStatisticsRefresh = handle::runQueryStatisticsOptimize,
+            // A-PERF rework 3: the intake-completion trigger runs the explicit full-schema
+            // ANALYZE (PRAGMA optimize does not grant first-time analysis to tables without a
+            // stat1 planning history — the device-evidenced stuck list).
+            importIntakeStatisticsRefresh = handle::runFullAnalyze,
         )
     // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is
     // built (catalog bootstrap done), so SQLite's official open-time pattern runs once here, in
@@ -607,6 +612,7 @@ private fun buildLedgerGraph(
         session,
         catalogCommands,
         handle::runQueryStatisticsOptimize,
+        handle::runFullAnalyze,
     )
 }
 

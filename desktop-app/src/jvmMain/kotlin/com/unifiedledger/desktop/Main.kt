@@ -102,6 +102,7 @@ import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
+import com.unifiedledger.data.runFullAnalyzeOn
 import com.unifiedledger.data.runQueryStatisticsOptimizeOn
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
@@ -290,6 +291,10 @@ internal data class CloseableLedgerGraph(
     // exposed no driver-facing member). The composition root fills it from the freshly built
     // [DesktopLedgerGraph]; tests may keep it unset (the default runs nothing).
     val runQueryStatisticsOptimize: () -> Unit = {},
+    // A-PERF rework 3: the intake-completion trigger's entry (explicit full-schema ANALYZE; the
+    // device-evidenced strong guarantee). Filled from the freshly built graph like the
+    // bootstrap entry above.
+    val runFullAnalyze: () -> Unit = {},
 )
 
 internal data class DesktopLedgerGraph(
@@ -308,6 +313,10 @@ internal data class DesktopLedgerGraph(
     // method keeps the driver private to this composition root while the shared P503App
     // intake-completion trigger can reach it through the facade wiring below.
     val runQueryStatisticsOptimize: () -> Unit,
+    // A-PERF rework 3: the intake-completion trigger's controlled entry — the explicit
+    // full-schema ANALYZE (the device-evidenced strong guarantee; PRAGMA optimize does not
+    // grant first-time analysis to tables without a stat1 planning history).
+    val runFullAnalyze: () -> Unit,
 )
 
 /**
@@ -649,7 +658,7 @@ internal fun buildLedgerGraph(
             // A-PERF: the shared intake-completion statistics refresh (spec section 2.1) — the
             // composition root hands the graph's controlled driver entry to the shared host
             // pipeline, which runs it off the UI thread right after the intake transaction.
-            importIntakeStatisticsRefresh = { runQueryStatisticsOptimizeOn(driver) },
+            importIntakeStatisticsRefresh = { runFullAnalyzeOn(driver) },
         )
 
     return DesktopLedgerGraph(
@@ -666,6 +675,8 @@ internal fun buildLedgerGraph(
         // driver-visibility gap the spec names); the bootstrap run above already happened, this
         // member serves the intake trigger and any future maintenance surface.
         runQueryStatisticsOptimize = { runQueryStatisticsOptimizeOn(driver) },
+        // A-PERF rework 3: the intake trigger's entry (full-schema ANALYZE).
+        runFullAnalyze = { runFullAnalyzeOn(driver) },
     )
 }
 
@@ -702,7 +713,7 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
     return try {
         migrateToCurrentSchema(driver)
         val graph = buildLedgerGraph(driver, createSchema = false)
-        CloseableLedgerGraph(graph.facade, { driver.close() }, graph.catalogSession, graph.catalogCommands, graph.runQueryStatisticsOptimize)
+        CloseableLedgerGraph(graph.facade, { driver.close() }, graph.catalogSession, graph.catalogCommands, graph.runQueryStatisticsOptimize, graph.runFullAnalyze)
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the
         // half-opened driver; the startup controller maps it to StartupError.

@@ -80,14 +80,33 @@ class AndroidLedgerDatabaseHandle internal constructor(
      * A-PERF (P7-04 read-governance batch, spec section 2.1): the controlled statistics-refresh
      * entry over the handle's private driver. The driver stays private (the handle is the only
      * controlled surface, the P7-04.A/B discipline), so the composition roots call THIS method at
-     * the two trigger points (bootstrap completion + intake completion) instead of reaching for
-     * the driver. The execution surface is `driver.executeQuery` (the rawQuery-equivalent safe
-     * path; the `SELECT 1` eager-open probe precedent at the top of this file) — never
-     * `driver.execute`, which on Android rejects statements that return result rows
-     * ([runQueryStatisticsOptimizeOn] carries the full constraint).
+     * the bootstrap-completion trigger point instead of reaching for the driver. The execution
+     * surface is `driver.executeQuery` (the rawQuery-equivalent safe path; the `SELECT 1`
+     * eager-open probe precedent at the top of this file) — never `driver.execute`, which on
+     * Android rejects statements that return result rows ([runQueryStatisticsOptimizeOn]
+     * carries the full constraint). The bootstrap point keeps `PRAGMA optimize` (the cheap
+     * open-time safety net for tables with a stat1 planning history).
      */
     fun runQueryStatisticsOptimize() {
         runQueryStatisticsOptimizeOn(driver)
+    }
+
+    /**
+     * A-PERF rework 3 (device evidence, API 36 system SQLite 3.44.3): the intake-completion
+     * trigger's controlled entry — the explicit full-schema `ANALYZE;`. `PRAGMA optimize` does
+     * not grant first-time analysis to tables with no statistics history (the import family at
+     * first start; the device-reproduced stuck list), so the intake hook (which runs on the
+     * Default thread BEFORE the list re-read) needs the strong guarantee. ANALYZE is a row-less
+     * statement and rides `driver.execute` (the changed-row-count surface): the androidx
+     * executeForChangedRowCount rejection that forced PRAGMA optimize onto executeQuery applies
+     * only to statements that RETURN result rows, so a row-less ANALYZE is expected to pass —
+     * a code-level expectation the device re-test must confirm (the intake hook must actually
+     * produce import-table statistics; the JDBC half of this two-sided reasoning is
+     * JVM-measured — executeQuery rejects result-less statements there). Full disclosure in
+     * [runFullAnalyzeOn].
+     */
+    fun runFullAnalyze() {
+        runFullAnalyzeOn(driver)
     }
 }
 
