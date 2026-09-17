@@ -502,6 +502,14 @@ class P503ReducerImpl(
             is P503UiEvent.SelectTransaction,
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the
+            // read-only detail keeps its preserved overview; a completed refresh lands when the
+            // user closes back to the overview.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
             // P7-04.C: the import review events are absorbed inside the read-only detail (table
             // 6.2a; the detail has no import affordances).
             is P503UiEvent.StartImportFilePick,
@@ -1416,6 +1424,15 @@ class P503ReducerImpl(
                 }
             // P7-02.D E-4: pin toggles belong to the overview lists; absorbed here (§6.2a).
             is P503UiEvent.TogglePin -> state
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the editor's
+            // draft, requestId and overview stay untouched; a completed refresh lands when the
+            // flow closes back to the overview.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
             // P7-03.C/D: the read-only ledger-view events are absorbed inside the editor (§6.2a).
             is P503UiEvent.SelectTransaction,
             P503UiEvent.CloseTransactionDetail,
@@ -1517,6 +1534,13 @@ class P503ReducerImpl(
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
             // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the state's
+            // own draft/flow stays untouched; a completed refresh lands on the overview states.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
             is P503UiEvent.SelectTransaction,
             P503UiEvent.CloseTransactionDetail,
             is P503UiEvent.SelectMonth,
@@ -1604,6 +1628,13 @@ class P503ReducerImpl(
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
             // P7-03.C/D: the read-only ledger-view events are absorbed here too (§6.2a).
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the state's
+            // own draft/flow stays untouched; a completed refresh lands on the overview states.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
             is P503UiEvent.SelectTransaction,
             P503UiEvent.CloseTransactionDetail,
             is P503UiEvent.SelectMonth,
@@ -1994,6 +2025,13 @@ class P503ReducerImpl(
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
             // P702SPEC-03: the counterparty form intents are absorbed here too.
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the
+            // conflict/rejection screen keeps its draft and exits unchanged.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
             P503UiEvent.OpenCounterpartyCreateDialog,
             is P503UiEvent.OpenCounterpartyRenameDialog,
             is P503UiEvent.UpdateCounterpartyFormText,
@@ -2098,6 +2136,13 @@ class P503ReducerImpl(
             is P503UiEvent.SaveAndRecordAgain,
             is P503UiEvent.TogglePin,
             // P702SPEC-03: the counterparty form intents are absorbed here too.
+            // A-PERF (APQUAL-01): the layer-2 background current-state read's completion events
+            // are absorbed here (the reduceImportCandidateDetail absorb precedent): the
+            // conflict/rejection screen keeps its draft and exits unchanged.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
             P503UiEvent.OpenCounterpartyCreateDialog,
             is P503UiEvent.OpenCounterpartyRenameDialog,
             is P503UiEvent.UpdateCounterpartyFormText,
@@ -2157,6 +2202,13 @@ class P503ReducerImpl(
                     P503UiEvent.Back ->
                         P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab)
                     // P7-02: entry-field intents are absorbed in SUBMISSION failure (§6.2a).
+                    // A-PERF (APQUAL-01): the layer-2 background current-state read's
+                    // completion events are absorbed here too (the reduceImportCandidateDetail
+                    // absorb precedent): the SUBMISSION failure keeps its retry/return exits.
+                    is P503UiEvent.InitialLoadResult,
+                    P503UiEvent.InitialLoadFailed,
+                    is P503UiEvent.RefreshResult,
+                    P503UiEvent.RefreshFailed,
                     is P503UiEvent.SelectEntryType,
                     is P503UiEvent.UpdateNote,
                     is P503UiEvent.UpdateReceivingAccount,

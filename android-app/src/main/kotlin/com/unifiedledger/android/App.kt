@@ -263,12 +263,21 @@ internal class AndroidStartupController(
  * consumes: run a management command through [catalogCommands], then
  * [CatalogConsumerSession.refresh] to reload the authoritative catalog and rebuild the
  * option/read/summary models without a restart.
+ *
+ * A-PERF (P7-04 read-governance batch, spec section 2.1): [runQueryStatisticsOptimize] is the
+ * controlled statistics-refresh entry of the freshly built graph (the Android handle's method
+ * over its private driver). The composition root runs it exactly once, off the UI thread, at
+ * the bootstrap-completion trigger point below; tests may keep it unset (the default runs
+ * nothing). [runFullAnalyze] (rework 3) is the intake-completion trigger's entry — the
+ * explicit full-schema ANALYZE behind the shared facade hook.
  */
 internal data class CloseableLedgerGraph(
     val facade: P503LedgerFacade,
     val close: () -> Unit,
     val catalogSession: CatalogConsumerSession? = null,
     val catalogCommands: ExecuteCatalogCommand? = null,
+    val runQueryStatisticsOptimize: () -> Unit = {},
+    val runFullAnalyze: () -> Unit = {},
 )
 
 private const val LOG_TAG = "UnifiedLedger"
@@ -579,8 +588,32 @@ private fun buildLedgerGraph(
             // per item, minted once per authorization intent by the host).
             importConfirmUseCases = importConfirmUseCasesFactory,
             importConfirmRequestIdSource = { importConfirmRequestIdGenerator.next() },
+            // A-PERF (P7-04 read-governance batch, spec section 2.1): the shared
+            // intake-completion statistics refresh — the handle's controlled driver entry,
+            // invoked by the shared P503App host pipeline off the UI thread right after the
+            // intake transaction (the ~10x row-growth trigger point).
+            // A-PERF rework 3: the intake-completion trigger runs the explicit full-schema
+            // ANALYZE (PRAGMA optimize does not grant first-time analysis to tables without a
+            // stat1 planning history — the device-evidenced stuck list).
+            importIntakeStatisticsRefresh = handle::runFullAnalyze,
         )
-    return CloseableLedgerGraph(facade, handle::close, session, catalogCommands)
+    // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is
+    // built (catalog bootstrap done), so SQLite's official open-time pattern runs once here, in
+    // the background (the graph build itself is on the UI thread inside the startup controller;
+    // PRAGMA optimize must not add its cost to first frame). A daemon one-shot thread is the
+    // minimal background surface at this composition-root layer; a refresh failure never
+    // surfaces to the user (statistics are a planner concern, zero product semantics).
+    kotlin.concurrent.thread(isDaemon = true, name = "ul-query-statistics-optimize") {
+        runCatching { handle.runQueryStatisticsOptimize() }
+    }
+    return CloseableLedgerGraph(
+        facade,
+        handle::close,
+        session,
+        catalogCommands,
+        handle::runQueryStatisticsOptimize,
+        handle::runFullAnalyze,
+    )
 }
 
 private val secureRandom = SecureRandom()

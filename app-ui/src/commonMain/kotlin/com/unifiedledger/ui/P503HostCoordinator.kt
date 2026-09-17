@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
@@ -412,6 +413,120 @@ internal class P503HostCoordinator(
         importUnknownCheckInFlight = false
     }
 }
+
+/**
+ * A-PERF (P7-04 read-governance batch, spec section 2.3, D-A ruling): the pure decision
+ * skeleton of the cached authoritative catalog snapshot's background loading. Non-`@Composable`
+ * and stateless of Compose so the single-flight admission and the stale-merge contract are
+ * JVM-testable exactly like [P503HostCoordinator] (counting-callback precedent).
+ *
+ * - [startLoadOnce] is the single-flight admission: concurrent requests merge into the running
+ *   load (P704C-SPEC-01/QUAL-02 discipline; only the first request starts the background read).
+ * - [loadCompleted] releases the slot AND decides the cache's next value (S2-3): a successful
+ *   load installs the fresh snapshot; a failed/absent load keeps the previously loaded value —
+ *   a late or failed load can never overwrite a newer cached state, and the first-ever failure
+ *   leaves the null loading window standing (the honest 载入中, never a faked empty catalog).
+ */
+internal class P503CatalogSnapshotLoadCoordinator {
+    /**
+     * Whether one background snapshot load is running. `@Volatile` for the same reason as the
+     * [P503HostCoordinator] single-flight markers: the completion hop writes it on the main
+     * dispatcher, and the annotation keeps the contract safe under any future access pattern.
+     */
+    @Volatile
+    private var loadInFlight = false
+
+    /** Single-flight admission. Returns whether THIS call started the load. */
+    fun startLoadOnce(start: () -> Unit): Boolean =
+        if (loadInFlight) {
+            false
+        } else {
+            loadInFlight = true
+            start()
+            true
+        }
+
+    /**
+     * Completion: releases the single-flight slot and returns the snapshot the cache should
+     * hold after this load ([current] = the cache value observed at completion time; [fresh] =
+     * the background read's outcome, null on failure/absence).
+     */
+    fun loadCompleted(
+        current: CatalogSnapshotView?,
+        fresh: CatalogSnapshotView?,
+    ): CatalogSnapshotView? {
+        loadInFlight = false
+        return fresh ?: current
+    }
+}
+
+/**
+ * A-PERF (P7-04 read-governance batch, spec section 2.3, rework path 1a): the pure decision
+ * skeleton of the authoritative current-state read's background loading — `refresh()` and the
+ * initial load previously ran `facade.queryCurrentState.query()` synchronously on the UI thread
+ * (the spec's frozen layer-2 refresh-chain scope, former :264-277/:689-698), the same
+ * main-thread wait the ANR trace captured while a background read held the single connection.
+ *
+ * - [startLoadOnce] is the single-flight admission with COALESCING (P704C-SPEC-01/QUAL-02
+ *   discipline): a request arriving while a load runs does NOT start a second read; it marks a
+ *   deferred re-run, so the running read's completion is followed by exactly one fresh load that
+ *   observes everything committed in between (a plain drop could land data captured before a
+ *   just-committed entry and leave it on screen).
+ * - [loadCompleted] releases the slot and returns whether the coalesced re-run must start.
+ *
+ * Serialization note (S2-3): the slot admits exactly one load at a time and the completion hop
+ * is the only dispatcher of results, so a late stale result can never interleave with — let
+ * alone overwrite — a newer state; the coalesced re-run starts only AFTER the previous result
+ * landed.
+ */
+internal class P503CurrentStateLoadCoordinator {
+    /**
+     * Whether one background current-state load is running. `@Volatile` for the same reason as
+     * the [P503HostCoordinator] single-flight markers.
+     */
+    @Volatile
+    private var loadInFlight = false
+
+    /** Whether at least one request coalesced into the running load awaits a re-run. */
+    @Volatile
+    private var deferredRequested = false
+
+    /** Single-flight admission with coalescing. Returns whether THIS call started the load. */
+    fun startLoadOnce(start: () -> Unit): Boolean =
+        if (loadInFlight) {
+            deferredRequested = true
+            false
+        } else {
+            loadInFlight = true
+            start()
+            true
+        }
+
+    /**
+     * Completion: releases the single-flight slot and returns whether a coalesced request must
+     * start one fresh load (exactly one re-run regardless of how many requests merged).
+     */
+    fun loadCompleted(): Boolean {
+        loadInFlight = false
+        val rerun = deferredRequested
+        deferredRequested = false
+        return rerun
+    }
+}
+
+/**
+ * A-PERF (APQUAL-02): the retained-intent consumption decision of the background refresh's
+ * main-dispatcher hop. The refresh captured [captured] at its admission point; the hop must
+ * consume ONLY that instance — a newer intent submitted while the read was in flight (the
+ * submit path writes a fresh one) must survive for its own refresh. Clearing the current value
+ * unconditionally would destroy the newer intent; a value-based comparison could consume the
+ * wrong (equal-valued) instance, so the decision is identity (`===`) like the rest of the
+ * retained-intent lifecycle (instance-matched consumption).
+ */
+internal fun consumeRetainedIntentAfterRefresh(
+    current: RetainedEntryIntent?,
+    captured: RetainedEntryIntent?,
+): RetainedEntryIntent? = if (current === captured) null else current
 
 /**
  * P7-04.C: the host decision for one platform pick result. [StartIntake] runs the bounded read +

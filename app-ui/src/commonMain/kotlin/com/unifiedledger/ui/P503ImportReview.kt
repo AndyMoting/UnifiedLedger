@@ -623,6 +623,11 @@ internal fun P503ImportCandidateDetailScreen(
     validation: P503ImportDecisionValidation,
     catalogAccounts: List<ManageableAccountView>,
     expenseCategories: List<ExpenseCategoryOption>,
+    // A-PERF (P7-04 read-governance batch, spec section 2.3): true while the cached authoritative
+    // catalog snapshot has not loaded yet (the honest 载入中 window). The decision form presents
+    // the explicit placeholder instead of an empty-but-authoritative-looking catalog (S2-2);
+    // the batch-confirmation entry stays disabled in the window (必填 null 不提交).
+    catalogLoading: Boolean,
     onUpdateDecisionField: (ImportDecisionFieldUpdate) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
     onSubmitDuplicateReview: (ImportDuplicateReviewUiDecision) -> Unit,
@@ -672,7 +677,18 @@ internal fun P503ImportCandidateDetailScreen(
                 Spacer(Modifier.height(8.dp))
                 val face = importDecisionFormFace(row)
                 if (face != null && rowClass.selectable) {
-                    ImportDecisionFormSection(
+                    // A-PERF (S2-2): the loading window's presentation decision is the pure,
+                    // JVM-tested [importDecisionCatalogPlaceholder] — the explicit 载入中
+                    // placeholder, never an empty option set presented as the authoritative
+                    // catalog. The form section renders once the loaded snapshot recomposes this
+                    // screen.
+                    importDecisionCatalogPlaceholder(catalogLoading)?.let { placeholder ->
+                        Text(
+                            placeholder,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    } ?: ImportDecisionFormSection(
                         form = state.form,
                         face = face,
                         catalogAccounts = catalogAccounts,

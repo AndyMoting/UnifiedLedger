@@ -143,6 +143,14 @@ class P503LedgerFacade(
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
     val importPickResultChannel: ImportFilePickResultChannel? = null,
+    // A-PERF (P7-04 read-governance batch, spec section 2.1): the shared statistics-refresh hook
+    // the host runs on the intake pipeline's background thread right after the intake transaction
+    // completes (the ~10x row-growth trigger point of SQLite's PRAGMA optimize semantics). The
+    // composition roots inject their platform's controlled execution entry (the Android handle's
+    // runQueryStatisticsOptimize / the desktop graph's driver-backed method); null keeps legacy
+    // constructions (startup tests) compiling with the hook simply absent — statistics refresh is
+    // a maintenance concern, never a product behavior input.
+    val importIntakeStatisticsRefresh: () -> Unit = {},
     // P7-04.D (D-146; spec sections 3.2.3/3.3.2/6.1): the batch confirmation surface. The
     // composition root owns the per-kind ConfirmImportCandidate wiring (commitPort = the spine
     // store, an ImportCommitIds mint with the kind's frozen posting count, the existing
