@@ -73,4 +73,4 @@
 - 单机 Gradle 串行（实施侧 Gradle 阶段与主代理设备计时窗口互斥；connectedDebugAndroidTest 由主代理排队执行）。
 - 期望文件与 fixture 副本均匿名合成（tracked fixture 派生），无个人数据。
 - 期望文件生成工具为一次性工具运行（jvmTest 内临时测试形态运行后删除，产物 tracked）。
-- 期望文件为 LF 行尾纯 JSON；`.gitattributes` 对该路径无 CRLF 强制模式，检出即 LF，两端逐字节/逐字段比对不受行尾影响。
+- 期望文件为 LF 行尾纯 JSON；`.gitattributes` 对该路径显式声明 `text eol=lf`（沿 golden JSON 先例），保证任何 `core.autocrlf` 配置下（含 fresh Windows clone 的 autocrlf=true）检出即 LF，两端逐字节/逐字段比对不受行尾影响。
