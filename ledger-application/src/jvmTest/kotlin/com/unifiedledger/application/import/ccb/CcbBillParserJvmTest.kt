@@ -21,6 +21,14 @@ import kotlin.test.assertTrue
  * P-31..P-49 per-row and whole-batch assertions, P-50..P-53 variant batches,
  * P-54 CCB ascending balance-chain vector, and P-55 privacy disjointness.
  *
+ * A-04.1 additions (spec
+ * docs/specs/2026-09-17-p7-04-ccb-android-parser-verification-design.md):
+ * the shared-expectation synchronization test (JVM parse == tracked expected
+ * file, the equivalence-chain anchor for the instrumented twin), the fixture
+ * byte anti-drift test (tests/fixtures vs androidTest assets copies), and the
+ * four in-memory synthetic rejection vectors shared verbatim with the
+ * instrumented twin.
+ *
  * Inputs are the anonymous synthetic fixture files under tests/fixtures/ generated
  * from the frozen spec tables; every value is pinned in the spec, no real data.
  * record_ordinal = 0-based data-row order (B1 -> 0 ... B14 -> 17).
@@ -484,4 +492,153 @@ class CcbBillParserJvmTest {
             workbook.close()
         }
     }
+
+    // ---- A-04.1: shared expected-file synchronization, fixture anti-drift, rejection vectors ----
+
+    /** Per-fixture inputRef: both sides (JVM and instrumented) parse with the same ref. */
+    private val sharedFixtureRefs: Map<String, String> =
+        mapOf(
+            "batch-bp01-ccb-a.xls" to "batch-bp01-ccb-a",
+            "batch-bp01-ccb-b1.xls" to "batch-bp01-ccb-b",
+            "batch-bp01-ccb-b2.xls" to "batch-bp01-ccb-b",
+            "batch-bp01-ccb-c.xls" to "batch-bp01-ccb-c",
+            "batch-bp01-ccb-d1.xls" to "batch-bp01-ccb-d",
+            "batch-bp01-ccb-d2.xls" to "batch-bp01-ccb-d",
+            "batch-bp01-ccb-e.xls" to "batch-bp01-ccb-e",
+        )
+
+    private fun sharedExpectedBytes(): ByteArray =
+        Files.readAllBytes(
+            repositoryRoot().resolve("android-app/src/androidTest/assets/fixtures/ccb/expected-batch-bp01-ccb.json"),
+        )
+
+    @Test // A-04.1 (equivalence-chain anchor)
+    fun jvmParseOfAllSevenFixturesMatchesTrackedExpectedFileByteForByte() {
+        val serialized = CcbBatchResultJson.serialize(sharedFixtureRefs, sharedFixtureRefs.keys.map { fixtureBytes(it) })
+        assertTrue(serialized.isNotEmpty(), "serializer output must not be empty")
+        assertEquals(
+            String(sharedExpectedBytes(), Charsets.UTF_8),
+            serialized,
+            "JVM parse of the 7 fixtures must serialize to exactly the tracked expected file",
+        )
+    }
+
+    @Test // A-04.1 (serializer guard: no facts field dropped by the shared serializer)
+    fun serializedExpectedOutputContainsAllNineFactFieldNamesForAcceptedRows() {
+        val serialized = CcbBatchResultJson.serialize(sharedFixtureRefs, sharedFixtureRefs.keys.map { fixtureBytes(it) })
+        val nineFactFields =
+            listOf(
+                "amountMinor",
+                "currencyCode",
+                "currencyPrecision",
+                "occurredAt",
+                "directionToken",
+                "statusToken",
+                "fundingState",
+                "fundingRuleId",
+                "fundingRuleVersion",
+            )
+        val acceptedRow = parseFixture(inputRef, "batch-bp01-ccb-a.xls").rows.first { it.recordOrdinal == 0 }
+        assertTrue(acceptedRow is CcbRowResult.Accepted, "fixture a row 0 must be accepted for the guard")
+        nineFactFields.forEach { field ->
+            assertTrue(
+                serialized.contains("\"$field\""),
+                "serializer must emit facts field \"$field\" (dropped field would silently weaken the equivalence chain)",
+            )
+        }
+    }
+
+    @Test // A-04.1 (fixture anti-drift: source fixtures vs androidTest assets copies)
+    fun androidTestAssetFixtureCopiesAreByteIdenticalToTestsFixtures() {
+        sharedFixtureRefs.keys.forEach { name ->
+            val source = repositoryRoot().resolve("tests/fixtures").resolve(name)
+            val copy = repositoryRoot().resolve("android-app/src/androidTest/assets/fixtures/ccb").resolve(name)
+            assertTrue(Files.isRegularFile(source), "missing source fixture: $name")
+            assertTrue(Files.isRegularFile(copy), "missing androidTest assets copy: $name")
+            assertEquals(
+                sha256(Files.readAllBytes(source)),
+                sha256(Files.readAllBytes(copy)),
+                "androidTest assets copy drifted from tests/fixtures source: $name",
+            )
+        }
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        java.security.MessageDigest
+            .getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString(separator = "") { byte -> "%02x".format(byte) }
+
+    @Test // A-04.1 V-empty
+    fun emptyInputIsTypedRejectedAsInputDecodeFailed() {
+        val result = CcbBillParser.parse("synthetic-ccb-empty", ByteArray(0))
+        assertEquals(CcbBatchOutcome.REJECTED, result.outcome)
+        assertEquals(0, result.rows.size)
+        assertDiagnostic(
+            assertIs(result.diagnostic),
+            "INPUT_DECODE_FAILED",
+            "fatal",
+            "input",
+            expectedInputRef = "synthetic-ccb-empty",
+        )
+    }
+
+    @Test // A-04.1 V-overlimit
+    fun overLimitInputIsBytePrecheckRejectedWithoutParsing() {
+        val bytes = ByteArray(CcbSourceTokens.MAX_INPUT_BYTES + 1) { 0x41 }
+        ole2Magic().copyInto(bytes)
+        assertEquals(CcbSourceTokens.MAX_INPUT_BYTES + 1, bytes.size)
+        val result = CcbBillParser.parse("synthetic-ccb-overlimit", bytes)
+        assertEquals(CcbBatchOutcome.REJECTED, result.outcome)
+        assertEquals(0, result.rows.size)
+        assertDiagnostic(
+            assertIs(result.diagnostic),
+            "INPUT_UNSAFE_OR_OVER_LIMIT",
+            "fatal",
+            "input",
+            expectedInputRef = "synthetic-ccb-overlimit",
+        )
+    }
+
+    @Test // A-04.1 V-corrupt
+    fun corruptOle2ContainerIsPoiDecodeRejectedWithZeroCandidates() {
+        val bytes = ByteArray(4_096) { index -> (index % 256).toByte() }
+        ole2Magic().copyInto(bytes)
+        val result = CcbBillParser.parse("synthetic-ccb-corrupt", bytes)
+        assertEquals(CcbBatchOutcome.REJECTED, result.outcome)
+        assertEquals(0, result.rows.size)
+        assertDiagnostic(
+            assertIs(result.diagnostic),
+            "INPUT_DECODE_FAILED",
+            "fatal",
+            "input",
+            expectedInputRef = "synthetic-ccb-corrupt",
+        )
+    }
+
+    @Test // A-04.1 V-badmagic
+    fun nonOle2MagicInputIsTypedRejectedAsInputDecodeFailed() {
+        val result = CcbBillParser.parse("synthetic-ccb-badmagic", ByteArray(4_096))
+        assertEquals(CcbBatchOutcome.REJECTED, result.outcome)
+        assertEquals(0, result.rows.size)
+        assertDiagnostic(
+            assertIs(result.diagnostic),
+            "INPUT_DECODE_FAILED",
+            "fatal",
+            "input",
+            expectedInputRef = "synthetic-ccb-badmagic",
+        )
+    }
+
+    private fun ole2Magic(): ByteArray =
+        byteArrayOf(
+            0xD0.toByte(),
+            0xCF.toByte(),
+            0x11.toByte(),
+            0xE0.toByte(),
+            0xA1.toByte(),
+            0xB1.toByte(),
+            0x1A.toByte(),
+            0xE1.toByte(),
+        )
 }
