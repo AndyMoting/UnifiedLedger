@@ -515,6 +515,20 @@ internal class P503CurrentStateLoadCoordinator {
 }
 
 /**
+ * A-PERF (APQUAL-02): the retained-intent consumption decision of the background refresh's
+ * main-dispatcher hop. The refresh captured [captured] at its admission point; the hop must
+ * consume ONLY that instance — a newer intent submitted while the read was in flight (the
+ * submit path writes a fresh one) must survive for its own refresh. Clearing the current value
+ * unconditionally would destroy the newer intent; a value-based comparison could consume the
+ * wrong (equal-valued) instance, so the decision is identity (`===`) like the rest of the
+ * retained-intent lifecycle (instance-matched consumption).
+ */
+internal fun consumeRetainedIntentAfterRefresh(
+    current: RetainedEntryIntent?,
+    captured: RetainedEntryIntent?,
+): RetainedEntryIntent? = if (current === captured) null else current
+
+/**
  * P7-04.C: the host decision for one platform pick result. [StartIntake] runs the bounded read +
  * intake pipeline (the injected callback), [AlreadyInFlight] drops a concurrent second pick, and
  * [NoPipeline] means the pick itself resolved (cancellation or typed platform failure) with zero

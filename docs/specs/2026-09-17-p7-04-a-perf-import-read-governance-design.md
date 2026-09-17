@@ -73,6 +73,7 @@
 
 - catalog 快照缓存化/后台加载：主线程组合期读缓存 State；数据未就绪（null）时**不得把空集呈现为权威目录**（S2-2）：options/catalogAccounts 未就绪呈现明确的载入中占位或禁用提交入口（先例：P503App 导入进度行/`P503ImportReviewPresentation` GroupEnumerationInProgress 进度行先例），就绪后重组刷新。账务安全不变（必填 null 不提交）。
 - **状态刷新链（refresh()/初始加载）的 queryCurrentState 读同样移出主线程**（实施批返工补正，路径 1a）：读在 `Dispatchers.Default` 执行、结果经主调度器 hop 后串行 dispatch；refresh() 与初始加载共享 single-flight 合并准入（一次在飞的读 + 合并请求的恰一次补读，晚到结果不覆盖新状态，S2-3）。reducer 的 Created/NoChange/Recovered 自动刷新链会密集触发 refresh，合并语义防重复读也防"读到提交前数据后留在屏上"。
+- **异步完成事件的 reducer 吸收适配**（实施批返工 2，评审 APQUAL-01）：refresh()/初始加载后台化后，`RefreshResult`/`RefreshFailed`/`InitialLoadResult`/`InitialLoadFailed` 可能落进编辑/确认/提交/冲突/拒绝/交易详情/SUBMISSION 失败等瞬态——这些状态的吸收表按 reduceImportCandidateDetail 既有先例吸收上述四事件（状态原样保留，已完成的刷新在流程回到 OverviewEmpty 时经下一次刷新落地），防止 `unhandled` 尾 ISE 崩溃。配套：retainedIntent 消费点以身份门控（只消费本读准入点捕获的实例，窗口内新提交的 intent 不被销毁，APQUAL-02）；读体 runCatching 守卫 + 槽位在主线程 hop 内必释（APQUAL-05）。
 - 后台加载沿用 single-flight + 主调度器 hop 先例（P704C-SPEC-01/QUAL-02，P503App.kt:798-810）：并发请求合并，结果回主线程串行 dispatch，晚到旧快照不得覆盖新状态（S2-3）。
 - desktop（Main.kt 组合根同链）由共享修复天然覆盖；desktop JDBC 有 busy_timeout 排队语义、无 ANR 证据，本批门槛验收绑定 AVD（Android）；desktop 专项验证不在本批（S3-2）。
 

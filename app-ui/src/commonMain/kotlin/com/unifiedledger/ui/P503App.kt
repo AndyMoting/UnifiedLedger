@@ -347,7 +347,12 @@ fun P503App(
         currentStateLoadCoordinator.startLoadOnce {
             val intent = retainedIntent
             scope.launch(Dispatchers.Default) {
-                val result = facade.queryCurrentState.query()
+                // APQUAL-05: the read is guarded like every other background read of this batch
+                // (runImportIntakeStatisticsRefresh/requestCatalogSnapshotLoad) — an unexpected
+                // throw maps to the typed RefreshFailed instead of crashing the coroutine scope,
+                // and the slot release below is guaranteed by running it in the main-dispatcher
+                // hop regardless of the outcome.
+                val result = runCatching { facade.queryCurrentState.query() }.getOrNull()
                 // Back on the main dispatcher: consume the retained intent and dispatch serially
                 // with every other main-thread event (the same consume-on-success semantics as
                 // the previous synchronous body — a failed read keeps the intent for the retry).
@@ -357,7 +362,11 @@ fun P503App(
                             // P7-02.A E-2: the intent is consumed only by a successful
                             // authoritative refresh; a failed read keeps it so the READ retry can
                             // still forward it (P3-3).
-                            retainedIntent = null
+                            // APQUAL-02: consume only the intent THIS load captured at its
+                            // admission point (the pure [consumeRetainedIntentAfterRefresh]
+                            // decision) — an intent submitted while the read was in flight
+                            // survives for its own refresh.
+                            retainedIntent = consumeRetainedIntentAfterRefresh(retainedIntent, intent)
                             // P7-02.D E-4: every refresh that builds a fresh overview carries the
                             // pin mirror so the persisted pins survive success-result and
                             // READ-retry constructions.
@@ -790,7 +799,9 @@ fun P503App(
     LaunchedEffect(Unit) {
         currentStateLoadCoordinator.startLoadOnce {
             scope.launch(Dispatchers.Default) {
-                val result = facade.queryCurrentState.query()
+                // APQUAL-05: the same guarded read as refresh() — an unexpected throw maps to
+                // the typed InitialLoadFailed and the slot release in the hop below is guaranteed.
+                val result = runCatching { facade.queryCurrentState.query() }.getOrNull()
                 // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
                 scope.launch {
                     when (result) {
@@ -1483,6 +1494,14 @@ fun P503App(
      * the spec's out-of-scope disclosure; only the snapshot's *consumer* copies stay cached).
      * The load also updates the cached snapshot so the composition reads stay cache-only; a
      * failed load keeps the previous cache (S2-3).
+     *
+     * APSPEC-01: the event payload applies the SAME pinned-first ordering the previous
+     * `pinnedCatalogSnapshot()` carried (EntryPinOrdering, the P7-02.D E-4 display order), so a
+     * command completion / refresh keeps the management lists visually identical to the
+     * SelectTab entry. The CACHE deliberately stores the raw authoritative order (the persisted
+     * sequence) and every cached read applies the ordering at read time
+     * ([pinnedCatalogSnapshot] / the detail screen), so a pin toggle cannot leak a
+     * pin-sorted copy into the cache.
      */
     fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
         if (shouldRefreshReadModelAfterCatalogCommand(result)) {
@@ -1497,9 +1516,15 @@ fun P503App(
                 ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
                 ?: return
         cachedCatalogSnapshot = fresh
+        val payload =
+            CatalogSnapshotView(
+                fresh.catalogVersion,
+                EntryPinOrdering.sortAccounts(fresh.manageableAccounts, pinnedTargets),
+                EntryPinOrdering.sortCategories(fresh.categories, pinnedTargets),
+            )
         // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
         // transition for management events; publish the outcome only while still on the overview.
-        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogCommandCompleted(result, fresh), ::dispatch)
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogCommandCompleted(result, payload), ::dispatch)
     }
 
     fun runCatalogToggle(event: P503UiEvent) {
@@ -1567,13 +1592,22 @@ fun P503App(
     // reads the freshly refreshed session synchronously (its own button press, the same
     // synchronous pair the command path owns) — the result also updates the cached snapshot so
     // every composition-time consumer stays cache-only.
+    // APSPEC-01: the event payload applies the same pinned-first ordering as every other
+    // catalog-snapshot entry point (EntryPinOrdering; the cache keeps the raw authoritative
+    // order, see [dispatchCatalogCommandResult]).
     fun refreshCatalogSnapshot() {
         facade.refreshCatalog()
         refresh()
         val fresh = runCatching { facade.catalogSnapshot() }.getOrNull() ?: return
         cachedCatalogSnapshot = fresh
+        val payload =
+            CatalogSnapshotView(
+                fresh.catalogVersion,
+                EntryPinOrdering.sortAccounts(fresh.manageableAccounts, pinnedTargets),
+                EntryPinOrdering.sortCategories(fresh.categories, pinnedTargets),
+            )
         // F1 (N-5): same overview-only guard as the command success path.
-        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
+        dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(payload), ::dispatch)
     }
 
     // P702SPEC-03: run one counterparty directory command from the editor dialog. A successful
