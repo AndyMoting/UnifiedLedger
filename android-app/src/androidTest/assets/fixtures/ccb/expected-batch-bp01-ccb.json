@@ -1,0 +1,466 @@
+{
+  "fixtures": [
+    {
+      "fixture": "batch-bp01-ccb-a.xls",
+      "inputRef": "batch-bp01-ccb-a",
+      "outcome": "PARTIAL",
+      "batchDiagnostic": null,
+      "rows": [
+        {
+          "kind": "accepted",
+          "recordOrdinal": 0,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 1280,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-25T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 1,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 3350,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-25T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 2,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 1000,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-25T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 3,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 100,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-26T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 4,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 750,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-26T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 5,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 101,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-27T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 6,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 1,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 7,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 0,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "+",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_INCOMPLETE",
+          "diagnostics": [{"code": "REQUIRED_FACT_UNRESOLVED", "severity": "incomplete", "scope": "field", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 7, "fieldRole": "direction"}]
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 8,
+          "diagnostics": [{"code": "SPINE_CCB_UNKNOWN_TOKEN", "severity": "unsupported", "scope": "record", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 8, "fieldRole": null}]
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 9,
+          "diagnostics": [{"code": "SPINE_CCB_REFUND_UNSUPPORTED", "severity": "unsupported", "scope": "record", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 9, "fieldRole": null}]
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 10,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 750,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": [{"code": "SPINE_BANK_BALANCE_CONTINUITY", "severity": "note", "scope": "record", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 10, "fieldRole": null}]
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 11,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 200,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 12,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 2000,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 13,
+          "recordKind": "TRANSFER_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 5,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 14,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 880,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 15,
+          "diagnostics": [{"code": "FIELD_AMOUNT_INVALID", "severity": "record_error", "scope": "field", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 15, "fieldRole": "amount"}]
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 16,
+          "diagnostics": [{"code": "FIELD_TIME_INVALID", "severity": "record_error", "scope": "field", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 16, "fieldRole": "occurred_at"}]
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 17,
+          "diagnostics": [{"code": "FIELD_AMOUNT_INVALID", "severity": "record_error", "scope": "field", "inputRef": "batch-bp01-ccb-a", "recordOrdinal": 17, "fieldRole": "amount"}]
+        }
+      ]
+    },
+    {
+      "fixture": "batch-bp01-ccb-b1.xls",
+      "inputRef": "batch-bp01-ccb-b",
+      "outcome": "REJECTED",
+      "batchDiagnostic": {"code": "STRUCTURE_MISMATCH", "severity": "fatal", "scope": "structure", "inputRef": "batch-bp01-ccb-b", "recordOrdinal": null, "fieldRole": null},
+      "rows": []
+    },
+    {
+      "fixture": "batch-bp01-ccb-b2.xls",
+      "inputRef": "batch-bp01-ccb-b",
+      "outcome": "REJECTED",
+      "batchDiagnostic": {"code": "STRUCTURE_MISMATCH", "severity": "fatal", "scope": "structure", "inputRef": "batch-bp01-ccb-b", "recordOrdinal": null, "fieldRole": null},
+      "rows": []
+    },
+    {
+      "fixture": "batch-bp01-ccb-c.xls",
+      "inputRef": "batch-bp01-ccb-c",
+      "outcome": "COMPLETE",
+      "batchDiagnostic": null,
+      "rows": [
+        {
+          "kind": "accepted",
+          "recordOrdinal": 0,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 100,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 1,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 100,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        }
+      ]
+    },
+    {
+      "fixture": "batch-bp01-ccb-d1.xls",
+      "inputRef": "batch-bp01-ccb-d",
+      "outcome": "COMPLETE",
+      "batchDiagnostic": null,
+      "rows": [
+        {
+          "kind": "accepted",
+          "recordOrdinal": 0,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 100,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 1,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 200,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 2,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 300,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        }
+      ]
+    },
+    {
+      "fixture": "batch-bp01-ccb-d2.xls",
+      "inputRef": "batch-bp01-ccb-d",
+      "outcome": "PARTIAL",
+      "batchDiagnostic": null,
+      "rows": [
+        {
+          "kind": "accepted",
+          "recordOrdinal": 0,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 100,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "rejected",
+          "recordOrdinal": 1,
+          "diagnostics": [{"code": "STRUCTURE_MISMATCH", "severity": "fatal", "scope": "record", "inputRef": "batch-bp01-ccb-d", "recordOrdinal": 1, "fieldRole": null}]
+        }
+      ]
+    },
+    {
+      "fixture": "batch-bp01-ccb-e.xls",
+      "inputRef": "batch-bp01-ccb-e",
+      "outcome": "COMPLETE",
+      "batchDiagnostic": null,
+      "rows": [
+        {
+          "kind": "accepted",
+          "recordOrdinal": 0,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 1280,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "out",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        },
+        {
+          "kind": "accepted",
+          "recordOrdinal": 1,
+          "recordKind": "ORDINARY_FLOW_SOURCE",
+          "facts": {
+            "amountMinor": 1000,
+            "currencyCode": "CNY",
+            "currencyPrecision": 2,
+            "occurredAt": "2026-08-28T00:00:00+08:00",
+            "directionToken": "in",
+            "statusToken": "settled",
+            "fundingState": "SETTLED",
+            "fundingRuleId": "legacy-settled-v1",
+            "fundingRuleVersion": 1
+          },
+          "completeness": "VALID_COMPLETE",
+          "diagnostics": []
+        }
+      ]
+    }
+  ]
+}
