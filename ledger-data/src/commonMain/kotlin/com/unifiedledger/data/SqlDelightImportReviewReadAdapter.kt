@@ -27,6 +27,15 @@ import com.unifiedledger.domain.LedgerId
  * (candidate, duplicate candidate) pair, so duplicate rows are folded here with the blocking
  * verdict first (spec section 4.5.2). Exceptions propagate to the use-case boundary, which
  * maps them to `Unavailable` (G6: a read failure never degrades to an empty verdict).
+ *
+ * A-PERF (P7-04 read-governance batch, spec section 2.2): the single-candidate paths no longer
+ * read the whole ledger. The detail projection uses the primary-key-targeted
+ * `importReviewRowForCandidate` (byte-identical JOIN shape and retained ORDER BY, so the folded
+ * row is equivalent to the previous whole-ledger read + filter); the two existence probes use
+ * the lightweight `importCandidateExistsByCandidateId` / `importCandidateExistsByInputRef`
+ * queries. The list read itself deliberately stays a whole-ledger read (the §0 D-D ruling:
+ * after the layer-0 statistics refresh the 20k-lib list query measured 0.24s, so no paging
+ * and no projection trimming).
  */
 class SqlDelightImportReviewReadAdapter(
     private val database: LedgerDatabase,
@@ -35,8 +44,9 @@ class SqlDelightImportReviewReadAdapter(
         database.ledgerQueries
             .importReviewRowsForLedger(ledgerId.value)
             .executeAsList()
+            .map { it.toColumns() }
             .groupBy { it.candidate_id }
-            .map { (_, groupedRows) -> groupedRows.first().toReviewRow(groupedRows) }
+            .map { (_, groupedRows) -> groupedRows.first().toImportReviewRow(groupedRows) }
 
     /**
      * Detail projection (spec section 4.5.4): the list row plus the candidate's status-history
@@ -54,11 +64,16 @@ class SqlDelightImportReviewReadAdapter(
         ledgerId: LedgerId,
         candidateId: ImportCandidateId,
     ): ImportCandidateDetailRow? {
+        // A-PERF (P7-04 read-governance batch): the primary-key-targeted projection replaces
+        // the whole-ledger list read + client filter. Same JOIN shape, same retained ORDER BY
+        // and the same folding input as the list read, so the row set (and therefore the folded
+        // detail row) is byte-equivalent to the previous filter; an absent candidate still reads
+        // as exactly zero rows -> null (the explicit absent verdict is unchanged).
         val rows =
             database.ledgerQueries
-                .importReviewRowsForLedger(ledgerId.value)
+                .importReviewRowForCandidate(ledgerId.value, candidateId.value)
                 .executeAsList()
-                .filter { it.candidate_id == candidateId.value }
+                .map { it.toColumns() }
         if (rows.isEmpty()) return null
         // Sequence high-water mark == row count under the contiguous 1-based premise above.
         val statusHistoryCount =
@@ -66,7 +81,7 @@ class SqlDelightImportReviewReadAdapter(
                 .selectImportCandidateLatestSequence(ledgerId.value, candidateId.value)
                 .executeAsOne()
         return ImportCandidateDetailRow(
-            row = rows.first().toReviewRow(rows),
+            row = rows.first().toImportReviewRow(rows),
             statusHistoryCount = statusHistoryCount,
         )
     }
@@ -80,11 +95,15 @@ class SqlDelightImportReviewReadAdapter(
         ledgerId: LedgerId,
         candidateId: ImportCandidateId,
     ): List<ImportDuplicateReviewRow>? {
+        // A-PERF: the existence probe reads the import_candidate primary key directly instead
+        // of executing the whole 4-JOIN list query to answer "does this candidate exist". The
+        // absent-vs-empty verdict is unchanged: no PK row -> null (explicit absent), a present
+        // candidate's duplicate set follows the per-source read below.
         val candidateExists =
             database.ledgerQueries
-                .importReviewRowsForLedger(ledgerId.value)
+                .importCandidateExistsByCandidateId(ledgerId.value, candidateId.value)
                 .executeAsList()
-                .any { it.candidate_id == candidateId.value }
+                .isNotEmpty()
         if (!candidateExists) return null
         return database.ledgerQueries
             .importDuplicateReviewsForSource(ledgerId.value, candidateId.value)
@@ -113,13 +132,16 @@ class SqlDelightImportReviewReadAdapter(
         if (rows.isEmpty()) {
             // Absent (no candidate of this session) vs NoDuplicates (candidates exist but none
             // has a duplicate): the batch query cannot distinguish them alone, so a candidate
-            // existence probe decides the null-vs-empty verdict. The probe runs once for the
-            // whole session — never per candidate.
+            // existence probe decides the null-vs-empty verdict. A-PERF: the probe is the
+            // lightweight input_ref-targeted existence query (one index probe through the
+            // source UNIQUE (ledger_id, input_ref, record_ordinal) and the candidate UNIQUE
+            // (ledger_id, source_id)) — never the whole 4-JOIN list query. The probe runs once
+            // for the whole session — never per candidate.
             val sessionHasCandidate =
                 database.ledgerQueries
-                    .importReviewRowsForLedger(ledgerId.value)
+                    .importCandidateExistsByInputRef(ledgerId.value, sessionInputRef)
                     .executeAsList()
-                    .any { it.input_ref == sessionInputRef }
+                    .isNotEmpty()
             return if (sessionHasCandidate) emptyList() else null
         }
         return rows.map { row -> row.toSessionReviewRow() }
@@ -195,8 +217,88 @@ private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSession.toSession
             ),
     )
 
-private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toReviewRow(
-    groupedRows: List<com.unifiedledger.data.db.ImportReviewRowsForLedger>,
+/**
+ * The structural column projection shared byte-for-byte by the generated row types of
+ * `importReviewRowsForLedger` and `importReviewRowForCandidate` (A-PERF: the targeted detail
+ * projection kept the list query's exact column list, so one fold serves both reads). The
+ * generated SQLDelight row classes are final and structurally unrelated at the Kotlin type
+ * level, so both read paths widen their rows through these constructors into this private
+ * holder — the widening is total (every column is listed), so any future column drift between
+ * the two queries breaks compilation here rather than the fold.
+ */
+private data class ImportReviewRowColumns(
+    val candidate_id: String,
+    val candidate_kind: String,
+    val confidence: String,
+    val input_ref: String,
+    val amount_minor: Long?,
+    val currency_code: String?,
+    val currency_precision: Long?,
+    val occurred_at: String?,
+    val direction_token: String?,
+    val status_token: String?,
+    val funding_state: String,
+    val completeness: String,
+    val content_hash: String,
+    val candidate_status: String?,
+    val requires_confirmation: Boolean,
+    val duplicate_candidate_id: String?,
+    val duplicate_latest_status: String?,
+    val payment_profile_variant: String?,
+    val payment_profile_asset_leg_kind_token: String?,
+    val payment_profile_credit_leg_kind_token: String?,
+)
+
+private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toColumns(): ImportReviewRowColumns =
+    ImportReviewRowColumns(
+        candidate_id,
+        candidate_kind,
+        confidence,
+        input_ref,
+        amount_minor,
+        currency_code,
+        currency_precision,
+        occurred_at,
+        direction_token,
+        status_token,
+        funding_state,
+        completeness,
+        content_hash,
+        candidate_status,
+        requires_confirmation,
+        duplicate_candidate_id,
+        duplicate_latest_status,
+        payment_profile_variant,
+        payment_profile_asset_leg_kind_token,
+        payment_profile_credit_leg_kind_token,
+    )
+
+private fun com.unifiedledger.data.db.ImportReviewRowForCandidate.toColumns(): ImportReviewRowColumns =
+    ImportReviewRowColumns(
+        candidate_id,
+        candidate_kind,
+        confidence,
+        input_ref,
+        amount_minor,
+        currency_code,
+        currency_precision,
+        occurred_at,
+        direction_token,
+        status_token,
+        funding_state,
+        completeness,
+        content_hash,
+        candidate_status,
+        requires_confirmation,
+        duplicate_candidate_id,
+        duplicate_latest_status,
+        payment_profile_variant,
+        payment_profile_asset_leg_kind_token,
+        payment_profile_credit_leg_kind_token,
+    )
+
+private fun ImportReviewRowColumns.toImportReviewRow(
+    groupedRows: List<ImportReviewRowColumns>,
 ): ImportReviewRow {
     val latestDuplicateStatuses =
         groupedRows

@@ -8901,6 +8901,78 @@ LEFT JOIN import_duplicate_status_history AS duplicate_status
 WHERE candidate.ledger_id = ?
 ORDER BY candidate.candidate_id, duplicate.candidate_id;
 
+-- A-PERF (P7-04 read-governance batch, spec section 2.2): the single-candidate projection of
+-- importReviewRowsForLedger above. Byte-identical JOIN/LEFT JOIN shape and column list, the
+-- same retained ORDER BY (the adapter's fold consumes the (candidate, duplicate) row set in
+-- blocking-first order), narrowed to one candidate by the import_candidate primary key —
+-- the detail/existence reads stop paying O(whole ledger) for one candidate. Zero DDL.
+importReviewRowForCandidate:
+SELECT
+  candidate.candidate_id,
+  candidate.candidate_kind,
+  candidate.confidence,
+  source.input_ref,
+  source.amount_minor,
+  source.currency_code,
+  source.currency_precision,
+  source.occurred_at,
+  source.direction_token,
+  source.status_token,
+  source.funding_state,
+  source.completeness,
+  source.content_hash,
+  latest_candidate_status.status AS candidate_status,
+  EXISTS(SELECT 1 FROM import_candidate_requires_confirmation AS requirement
+     WHERE requirement.ledger_id = candidate.ledger_id
+       AND requirement.candidate_id = candidate.candidate_id
+       AND requirement.requirement = 'formal_transaction_creation') AS requires_confirmation,
+  duplicate.candidate_id AS duplicate_candidate_id,
+  duplicate_status.status AS duplicate_latest_status,
+  profile.variant AS payment_profile_variant,
+  profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+LEFT JOIN import_candidate_status_history AS latest_candidate_status
+  ON latest_candidate_status.ledger_id = candidate.ledger_id
+ AND latest_candidate_status.candidate_id = candidate.candidate_id
+ AND latest_candidate_status.sequence = (SELECT max(s3.sequence) FROM import_candidate_status_history AS s3
+       WHERE s3.ledger_id = candidate.ledger_id AND s3.candidate_id = candidate.candidate_id)
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+LEFT JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS duplicate_status
+  ON duplicate_status.ledger_id = duplicate.ledger_id
+ AND duplicate_status.candidate_id = duplicate.candidate_id
+ AND duplicate_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?
+ORDER BY candidate.candidate_id, duplicate.candidate_id;
+
+-- A-PERF: the lightweight candidate existence probe (the import_candidate primary key). The
+-- per-candidate duplicate-review read's absent-vs-empty verdict previously executed the whole
+-- 4-JOIN list query just to decide existence; this probe answers the same question through the
+-- PK alone. Zero DDL; SELECT 1 never reports a present candidate as absent (G6 discipline stays
+-- with the port contract, ImportReviewReadPort.kt).
+importCandidateExistsByCandidateId:
+SELECT 1 FROM import_candidate WHERE ledger_id = ? AND candidate_id = ?;
+
+-- A-PERF: the lightweight session existence probe (the pick-session handle's opaque input_ref,
+-- R-Q09-1). The session-level batch read's empty result cannot distinguish absent (the session
+-- has no candidate) from no-duplicates by itself; this probe decides that verdict for the whole
+-- session through the import_source_record UNIQUE (ledger_id, input_ref, record_ordinal) index
+-- (:7661) joined with the import_candidate UNIQUE (ledger_id, source_id) (:7686) — never through
+-- the full 4-JOIN list query.
+importCandidateExistsByInputRef:
+SELECT 1
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+WHERE candidate.ledger_id = ? AND source.input_ref = ?;
+
 importDuplicateReviewsForSource:
 -- Duplicate candidates of one candidate's subject source (spec 4.5, Appendix A). The
 -- candidate -> source join resolves the duplicate table's subject-source granularity

@@ -139,10 +139,60 @@ fun P503App(
 ) {
     val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency, facade.ledgerClock) }
     val validation = remember(facade) { P503DraftValidation(facade.parseAmount, facade.parseOccurredAt, facade.ledgerClock) }
+    val scope = rememberCoroutineScope()
+    // A-PERF (P7-04 read-governance batch, spec section 2.3): the cached authoritative catalog
+    // snapshot. The composition previously read `facade.catalogSnapshot()` directly on the main
+    // thread at :145 (EVERY recomposition), at the detail screen and on the
+    // pinnedCatalogSnapshot event path — with a background full-ledger read occupying the single
+    // SQLite connection, those reads were the ANR's main-thread wait (the pre-fix baseline's
+    // 30s "unable to grant a connection to thread main" trace). D-A ruling: a nullable cached
+    // State + single-flight background loading + the last-loaded value kept until a fresh one
+    // lands. `null` is the explicit loading window: the consumers below present the honest
+    // 载入中 placeholder instead of presenting an empty set as the authoritative catalog (S2-2)
+    // and the null-keyed option derivations stay empty until the first snapshot lands (提交入口
+    // 以必填 null 不提交保持账务安全).
+    var cachedCatalogSnapshot by remember(facade) { mutableStateOf<CatalogSnapshotView?>(null) }
+    // The single-flight admission and the stale-merge decision live in the pure, JVM-tested
+    // [P503CatalogSnapshotLoadCoordinator] (the P503HostCoordinator extraction precedent).
+    val catalogSnapshotLoadCoordinator = remember(facade) { P503CatalogSnapshotLoadCoordinator() }
+    // A-PERF (rework path 1a): the single-flight coalescing admission of the authoritative
+    // current-state read behind refresh() and the initial load (pure, JVM-tested the same way).
+    val currentStateLoadCoordinator = remember(facade) { P503CurrentStateLoadCoordinator() }
+
+    /**
+     * A-PERF (spec section 2.3): requests the authoritative snapshot on the background
+     * dispatcher, single-flight (concurrent requests merge into the running load), with the
+     * result hopped back onto the composition's main dispatcher (P704C-SPEC-01/QUAL-02 — the
+     * nested `scope.launch` hop keeps every cached-state write serial on the main thread). A
+     * late stale completion never overwrites a newer cached state (S2-3): a failed/absent read
+     * keeps the previously loaded snapshot (旧值保留); the first-ever failure leaves the null
+     * loading window standing (an honest 载入中, never a faked empty catalog).
+     */
+    fun requestCatalogSnapshotLoad() {
+        catalogSnapshotLoadCoordinator.startLoadOnce {
+            scope.launch(Dispatchers.Default) {
+                val fresh = runCatching { facade.catalogSnapshot() }.getOrNull()
+                scope.launch {
+                    cachedCatalogSnapshot = catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, fresh)
+                }
+            }
+        }
+    }
+
+    // Initial load: the first composition starts the single background load once.
+    LaunchedEffect(facade) {
+        requestCatalogSnapshotLoad()
+    }
+
     // D-140-style authoritative options snapshot. Reading the version here makes the options
     // reload after a catalog refresh (spec 7.4), because the facade exposes the refreshed
     // session models; options/reads/summaries then all follow one authoritative catalog version.
-    val catalogVersion = facade.catalogSnapshot()?.catalogVersion
+    // A-PERF: the version now reads the CACHED snapshot (no main-thread catalog read per
+    // recomposition); the remember blocks below re-derive only when the loaded version actually
+    // changes, and the null loading window deliberately yields empty options (the honest 载入中
+    // placeholder discipline above — an absent catalog is never presented as an empty but
+    // authoritative catalog, S2-2).
+    val catalogVersion = cachedCatalogSnapshot?.catalogVersion
     // P7-02.D E-4: the host's mirror of the persisted pin set. Seeded from the store at startup,
     // updated after every successful toggle, and injected into the overview through the load and
     // refresh events; the lists below derive their pinned-first order from it.
@@ -150,12 +200,30 @@ fun P503App(
     // P702SPEC-03: bumped after every successful counterparty create/rename so the option
     // projections (which read the directory fresh per query) re-derive.
     var counterpartyVersion by remember { mutableStateOf(0) }
-    val baseExpenseOptions = remember(facade, catalogVersion) { facade.optionsProvider.queryOptions() }
-    val baseIncomeOptions = remember(facade, catalogVersion) { facade.incomeOptionsProvider.queryOptions() }
-    val baseTransferOptions = remember(facade, catalogVersion) { facade.transferOptionsProvider.queryOptions() }
+    // A-PERF (S2-2): while the cached snapshot is still loading (catalogVersion == null) the
+    // option projections stay the EMPTY placeholder set — the editor simply offers nothing to
+    // pick (必填 null 不提交 keeps the entry submit blocked), and the real projections derive
+    // once the loaded version lands. This is why these remember blocks never run a catalog read
+    // keyed on a null version: the loading window must not trade its placeholder back for the
+    // very main-thread catalog read the batch removes.
+    val baseExpenseOptions =
+        remember(facade, catalogVersion) {
+            if (catalogVersion == null) ManualExpenseOptions(emptyList(), emptyList()) else facade.optionsProvider.queryOptions()
+        }
+    val baseIncomeOptions =
+        remember(facade, catalogVersion) {
+            if (catalogVersion == null) ManualIncomeOptions(emptyList(), emptyList()) else facade.incomeOptionsProvider.queryOptions()
+        }
+    val baseTransferOptions =
+        remember(facade, catalogVersion) {
+            if (catalogVersion == null) ManualTransferOptions(emptyList(), emptyList()) else facade.transferOptionsProvider.queryOptions()
+        }
     // P702SPEC-13: the lending projection is the only one that reads the counterparty
     // directory, so it must re-query when a create/rename command succeeds.
-    val baseLendingOptions = remember(facade, catalogVersion, counterpartyVersion) { facade.lendingOptionsProvider.queryOptions() }
+    val baseLendingOptions =
+        remember(facade, catalogVersion, counterpartyVersion) {
+            if (catalogVersion == null) ManualLendingOptions(emptyList(), emptyList(), emptyList()) else facade.lendingOptionsProvider.queryOptions()
+        }
     // E-4: pinned entries first, remaining entries keep the deterministic option order.
     val options =
         remember(baseExpenseOptions, pinnedTargets) {
@@ -186,7 +254,6 @@ fun P503App(
                 baseLendingOptions.counterparties,
             )
         }
-    val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
@@ -261,18 +328,46 @@ fun P503App(
                 lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: facade.currency
         }
 
+    /**
+     * Authoritative current-state refresh (the frozen layer-2 refresh chain, spec section 2.3).
+     * A-PERF (rework path 1a): the read itself runs OFF the UI thread
+     * (`Dispatchers.Default`) behind the single-flight [P503CurrentStateLoadCoordinator], and the
+     * result hops back ON the composition's main dispatcher before dispatching
+     * (P704C-SPEC-01/QUAL-02 — the nested `scope.launch` hop keeps every reducer event serial on
+     * the main thread; `dispatch` is a non-atomic read-modify-write, so a Default-thread dispatch
+     * interleaved with user events could drop a transition).
+     *
+     * Serialization: the coordinator admits one load at a time and every result lands before any
+     * coalesced re-run starts, so a late stale result can never overwrite a newer state (S2-3);
+     * requests arriving mid-run coalesce into exactly one deferred re-run that observes
+     * everything committed in between (the reducer's Created/NoChange/Recovered auto-refresh
+     * chain may legitimately trigger several refreshes in quick succession).
+     */
     fun refresh() {
-        val intent = retainedIntent
-        when (val result = facade.queryCurrentState.query()) {
-            is LedgerCurrentStateResult.Success -> {
-                // P7-02.A E-2: the intent is consumed only by a successful authoritative refresh;
-                // a failed read keeps it so the READ retry can still forward it (P3-3).
-                retainedIntent = null
-                // P7-02.D E-4: every refresh that builds a fresh overview carries the pin mirror
-                // so the persisted pins survive success-result and READ-retry constructions.
-                dispatch(P503UiEvent.RefreshResult(result.state, intent, pinnedTargets))
+        currentStateLoadCoordinator.startLoadOnce {
+            val intent = retainedIntent
+            scope.launch(Dispatchers.Default) {
+                val result = facade.queryCurrentState.query()
+                // Back on the main dispatcher: consume the retained intent and dispatch serially
+                // with every other main-thread event (the same consume-on-success semantics as
+                // the previous synchronous body — a failed read keeps the intent for the retry).
+                scope.launch {
+                    when (result) {
+                        is LedgerCurrentStateResult.Success -> {
+                            // P7-02.A E-2: the intent is consumed only by a successful
+                            // authoritative refresh; a failed read keeps it so the READ retry can
+                            // still forward it (P3-3).
+                            retainedIntent = null
+                            // P7-02.D E-4: every refresh that builds a fresh overview carries the
+                            // pin mirror so the persisted pins survive success-result and
+                            // READ-retry constructions.
+                            dispatch(P503UiEvent.RefreshResult(result.state, intent, pinnedTargets))
+                        }
+                        else -> dispatch(P503UiEvent.RefreshFailed)
+                    }
+                    if (currentStateLoadCoordinator.loadCompleted()) refresh()
+                }
             }
-            else -> dispatch(P503UiEvent.RefreshFailed)
         }
     }
 
@@ -686,14 +781,29 @@ fun P503App(
     }
 
     // Initial authoritative load (the facade already implies startup completed).
+    // A-PERF (rework path 1a): the same off-the-UI-thread read as refresh() behind the same
+    // single-flight coordinator — the initial load and any refresh landing simultaneously admit
+    // exactly one read, and the result hops back onto the main dispatcher before dispatching.
+    // The pin seeding stays on the main thread (it reads the preference store after the result
+    // lands; the store read is the entry-preference surface, not the current-state read this
+    // batch governs).
     LaunchedEffect(Unit) {
-        when (val result = facade.queryCurrentState.query()) {
-            is LedgerCurrentStateResult.Success -> {
-                // P7-02.D E-4: seed the persisted pins so they survive an app restart.
-                facade.entryPreferences?.let { store -> pinnedTargets = store.pinnedTargets(facade.ledgerId) }
-                dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
+        currentStateLoadCoordinator.startLoadOnce {
+            scope.launch(Dispatchers.Default) {
+                val result = facade.queryCurrentState.query()
+                // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
+                scope.launch {
+                    when (result) {
+                        is LedgerCurrentStateResult.Success -> {
+                            // P7-02.D E-4: seed the persisted pins so they survive an app restart.
+                            facade.entryPreferences?.let { store -> pinnedTargets = store.pinnedTargets(facade.ledgerId) }
+                            dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
+                        }
+                        else -> dispatch(P503UiEvent.InitialLoadFailed)
+                    }
+                    if (currentStateLoadCoordinator.loadCompleted()) refresh()
+                }
             }
-            else -> dispatch(P503UiEvent.InitialLoadFailed)
         }
     }
 
@@ -792,6 +902,13 @@ fun P503App(
                     is BoundedFileRead.ExceedsLimit -> ImportIntakePipelineOutcome.ReadExceedsLimit(read.actualBytes)
                     is BoundedFileRead.ReadFailed -> ImportIntakePipelineOutcome.ReadFailed(read.reason)
                 }
+            // A-PERF (P7-04 read-governance batch, spec section 2.1): the intake-completion
+            // statistics refresh — SQLite's official semantics re-analyze after a ~10x row
+            // change, and one intake can multiply the duplicate-candidate table (the 20k-lib
+            // baseline ANR root cause). The hook is the root-injected controlled driver entry,
+            // still off the UI thread here; a refresh failure never degrades the intake result
+            // (statistics are a planner concern, the intake transaction is already committed).
+            runCatching { facade.importIntakeStatisticsRefresh() }
             val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
             // Back on the composition's (main) dispatcher: the single-flight slot is released and
             // the event is dispatched serially with every other main-thread dispatch.
@@ -1340,8 +1457,13 @@ fun P503App(
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
     // its account and category lists (ordering only; the rows themselves are untouched).
+    // A-PERF (spec section 2.3): reads the CACHED snapshot — this function serves the
+    // composition-time event payloads (SelectTab/detail) and must never hit the database on the
+    // main thread. The cache refresh is [requestCatalogSnapshotLoad] (single-flight background);
+    // a null cache is propagated as-is so every consumer applies its own honest loading
+    // placeholder instead of an empty authoritative catalog (S2-2).
     fun pinnedCatalogSnapshot(): CatalogSnapshotView? {
-        val snapshot = facade.catalogSnapshot() ?: return null
+        val snapshot = cachedCatalogSnapshot ?: return null
         return CatalogSnapshotView(
             snapshot.catalogVersion,
             EntryPinOrdering.sortAccounts(snapshot.manageableAccounts, pinnedTargets),
@@ -1349,10 +1471,19 @@ fun P503App(
         )
     }
 
-    // P7-01.D: run one catalog command, then refresh the shared session and read the fresh
-    // authoritative snapshot. `refreshCatalog()` reloads the catalog so options/reads/summaries
-    // continue from the same version without a restart; a typed conflict is surfaced as a
-    // banner and never retried automatically.
+    /**
+     * P7-01.D: run one catalog command, then refresh the shared session and read the fresh
+     * authoritative snapshot. `refreshCatalog()` reloads the catalog so options/reads/summaries
+     * continue from the same version without a restart; a typed conflict is surfaced as a
+     * banner and never retried automatically.
+     *
+     * A-PERF (spec section 2.3): the event payload's fresh snapshot comes from the session the
+     * command just refreshed (`facade.catalogSnapshot()` after `facade.refreshCatalog()`, the
+     * same synchronous pair the catalog-command path already owned — this path's WRITE chain is
+     * the spec's out-of-scope disclosure; only the snapshot's *consumer* copies stay cached).
+     * The load also updates the cached snapshot so the composition reads stay cache-only; a
+     * failed load keeps the previous cache (S2-3).
+     */
     fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
         if (shouldRefreshReadModelAfterCatalogCommand(result)) {
             facade.refreshCatalog()
@@ -1362,9 +1493,10 @@ fun P503App(
             refresh()
         }
         val fresh =
-            pinnedCatalogSnapshot()
+            runCatching { facade.catalogSnapshot() }.getOrNull()
                 ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
                 ?: return
+        cachedCatalogSnapshot = fresh
         // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
         // transition for management events; publish the outcome only while still on the overview.
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogCommandCompleted(result, fresh), ::dispatch)
@@ -1429,12 +1561,17 @@ fun P503App(
     }
 
     // Explicit refresh used by the management screen: reload the shared session and install the
-    // reloaded projection (a no-op command success path). The read model is re-queried against
-    // the reloaded session too, for the same HOME-freshness reason as the command success path.
+    // reloaded projection (a no-op command success path). The read model is re-queried against the
+    // reloaded session too, for the same HOME-freshness reason as the command success path.
+    // A-PERF (spec section 2.3): the explicit refresh is the one user action that legitimately
+    // reads the freshly refreshed session synchronously (its own button press, the same
+    // synchronous pair the command path owns) — the result also updates the cached snapshot so
+    // every composition-time consumer stays cache-only.
     fun refreshCatalogSnapshot() {
         facade.refreshCatalog()
         refresh()
-        val fresh = pinnedCatalogSnapshot() ?: return
+        val fresh = runCatching { facade.catalogSnapshot() }.getOrNull() ?: return
+        cachedCatalogSnapshot = fresh
         // F1 (N-5): same overview-only guard as the command success path.
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(fresh), ::dispatch)
     }
@@ -1610,7 +1747,13 @@ fun P503App(
                     state = current,
                     defaultCurrency = facade.currency,
                     validation = importDecisionValidation,
-                    catalogAccounts = facade.catalogSnapshot()?.manageableAccounts ?: emptyList(),
+                    // A-PERF (spec section 2.3): the detail screen's catalog accounts read the
+                    // CACHED snapshot (the previous direct facade read ran on the main thread
+                    // during every detail recomposition); `catalogLoading` carries the honest
+                    // null window so the decision form presents the placeholder instead of an
+                    // empty authoritative catalog (S2-2).
+                    catalogAccounts = cachedCatalogSnapshot?.manageableAccounts ?: emptyList(),
+                    catalogLoading = cachedCatalogSnapshot == null,
                     expenseCategories = options.expenseCategories,
                     onUpdateDecisionField = { update -> dispatch(P503UiEvent.UpdateImportDecisionField(update)) },
                     onToggleSelection = { candidateId ->

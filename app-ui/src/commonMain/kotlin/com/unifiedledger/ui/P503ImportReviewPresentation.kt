@@ -926,3 +926,13 @@ internal fun importReviewRenderItems(
     }
     return items
 }
+
+/**
+ * A-PERF (P7-04 read-governance batch, spec section 2.3, rework path 2a): the detail screen's
+ * decision-form face when the cached authoritative catalog snapshot is still loading. The pure
+ * decision extracted from the screen composable so the S2-2 contract is JVM-testable (the
+ * classifyImportCandidate presentation precedent): a loading catalog yields the explicit 载入中
+ * placeholder copy — NEVER an empty option set presented as the authoritative catalog — while a
+ * loaded catalog yields null (the decision form section renders its real options).
+ */
+internal fun importDecisionCatalogPlaceholder(catalogLoading: Boolean): String? = if (catalogLoading) "账户与分类目录载入中，稍候即可补齐决策。" else null
