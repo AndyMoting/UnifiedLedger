@@ -74,10 +74,13 @@ sealed interface P503AppState {
          */
         val retainedIntent: RetainedEntryIntent? = null,
         /**
-         * P7-02.D E-4: the reducer's render copy of the persisted pin set. `TogglePin` flips it
-         * on the overview only (ordering preference, zero accounting effect); the host seeds it
-         * from the [com.unifiedledger.application.EntryPreferenceStore] on load/refresh and
-         * persists each toggle.
+         * P7-02.D E-4: the reducer's render copy of the persisted pin set. `TogglePin` sets it to
+         * the store's authoritative membership on the overview only (ordering preference, zero
+         * accounting effect); the host seeds it from the
+         * [com.unifiedledger.application.EntryPreferenceStore] on load/refresh and persists each
+         * toggle. Every transition that rebuilds an overview from a carried one keeps this set, so
+         * the management rows can never offer a pin action whose direction contradicts the store
+         * (A02PIN-002).
          */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
         /** P7-03.C: the shared month cursor; `null` = 本月 (clock-resolved, R-Q06-2). */
@@ -126,6 +129,13 @@ sealed interface P503AppState {
          * by every transition away from `Editing` and never blocks the draft.
          */
         val counterpartyDialog: CounterpartyDialog? = null,
+        /**
+         * A-02 FIX-PIN-2: the overview's pin set, carried through the flow so the overview rebuilt
+         * by `Back` keeps the pin marks (and their action direction) instead of resetting them.
+         * Every flow state that can reach a `Back` reconstruction carries it, so no close path can
+         * drop a persisted pin.
+         */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -138,6 +148,15 @@ sealed interface P503AppState {
         // empty default is defensive only.
         val paymentAccountLabel: String = "",
         val categoryLabel: String = "",
+        /**
+         * A-02 FIX-CONFIRM-1: the type-owned labels the confirmation page's transfer and lending
+         * rows need. `null` for every type that owns no such row, and for a draft whose object
+         * was never resolved.
+         */
+        val destinationAccountLabel: String? = null,
+        val counterpartyLabel: String? = null,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data class Submitting(
@@ -145,6 +164,8 @@ sealed interface P503AppState {
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data object Created : P503AppState
@@ -156,6 +177,8 @@ sealed interface P503AppState {
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data class DomainRejected(
@@ -163,6 +186,8 @@ sealed interface P503AppState {
         val requestId: RequestId,
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data class InfrastructureFailure(
@@ -186,6 +211,8 @@ sealed interface P503AppState {
          * re-dispatched SelectMonth (residual boundary (a) of section 6.2).
          */
         val monthlyOverview: OverviewEmpty? = null,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     /**
@@ -264,6 +291,8 @@ sealed interface P503AppState {
         val overview: LedgerCurrentState? = null,
         val originTab: P503Tab = P503Tab.HOME,
         val lastCheckOutcome: UnknownCommitCheckOutcome = UnknownCommitCheckOutcome.NONE,
+        /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
+        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
     ) : P503AppState
 
     data object Recovered : P503AppState

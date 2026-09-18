@@ -1546,15 +1546,19 @@ fun P503App(
     }
 
     // P7-02.D E-4: persist the pin toggle first (typed zero-write rejection for a missing or
-    // cross-ledger target), then let the reducer flip its render copy; a rejection leaves the
-    // pure state untouched.
+    // cross-ledger target), then install the store's authoritative membership into both the host
+    // mirror and the reducer; a rejection leaves the pure state untouched.
+    // A-02 FIX-PIN-3: the same success also re-derives the management projection from the updated
+    // pin set (the cached snapshot is read, never the database) so the ACCOUNTS lists re-sort on
+    // the spot — the event carries it instead of a CatalogSnapshotRefreshed dispatch, which would
+    // clear the open notice/dialog.
     fun runPinToggle(target: EntryPinTarget) {
         val store = facade.entryPreferences ?: return
         scope.launch {
             when (val result = store.togglePin(target, facade.ledgerClock.now())) {
                 is EntryPinResult.Toggled -> {
                     pinnedTargets = if (result.pinned) pinnedTargets + target else pinnedTargets - target
-                    dispatch(P503UiEvent.TogglePin(target))
+                    dispatch(P503UiEvent.TogglePin(target, result.pinned, pinnedCatalogSnapshot()))
                 }
                 is EntryPinResult.Rejected -> Unit
             }
@@ -1670,6 +1674,21 @@ fun P503App(
             is TransferDraft -> transferOptions.feeCategories.firstOrNull { it.categoryId == draft.feeCategoryId }?.label ?: ""
             is LendDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name ?: ""
             is CollectDraft -> lendingOptions.interestCategories.firstOrNull { it.categoryId == draft.interestCategoryId }?.label ?: ""
+        }
+
+    // A-02 FIX-CONFIRM-1: the two type-owned confirmation labels. A `null` (the type owns no such
+    // row, or the object was never resolved) lets the reducer fall back to the draft id.
+    fun destinationAccountLabel(draft: TypedEntryDraft): String? =
+        when (draft) {
+            is TransferDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.label
+            else -> null
+        }
+
+    fun counterpartyLabel(draft: TypedEntryDraft): String? =
+        when (draft) {
+            is LendDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name
+            is CollectDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name
+            else -> null
         }
 
     P503Theme {
@@ -1897,6 +1916,9 @@ fun P503App(
                                 // options fall back to the draft id values in the reducer.
                                 paymentAccountLabel = accountLabel(current.draft),
                                 categoryLabel = categoryLabel(current.draft),
+                                // A-02 FIX-CONFIRM-1: the type-owned confirmation labels.
+                                destinationAccountLabel = destinationAccountLabel(current.draft),
+                                counterpartyLabel = counterpartyLabel(current.draft),
                             )
                         }, ::dispatch)
                     },
@@ -1912,8 +1934,14 @@ fun P503App(
                 P503ConfirmationScreen(
                     draft = current.draft,
                     currencyCode = resolvedCurrency(current.draft).code,
-                    paymentAccountLabel = current.paymentAccountLabel,
-                    categoryLabel = current.categoryLabel,
+                    currencyPrecision = resolvedCurrency(current.draft).precision,
+                    labels =
+                        ConfirmationLabels(
+                            paymentAccount = current.paymentAccountLabel,
+                            category = current.categoryLabel,
+                            destinationAccount = current.destinationAccountLabel,
+                            counterparty = current.counterpartyLabel,
+                        ),
                     onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
                     confirmEnabled = latestState.value === current,
                     cancelEnabled = latestState.value === current,
