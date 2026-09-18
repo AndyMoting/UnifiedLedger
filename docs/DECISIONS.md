@@ -2830,7 +2830,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-148 导入候选读治理批（A-PERF：层0 统计刷新 / 层1 定向读 / 层2 主线程 catalog 读治理）
 
-**状态：** 已批准并交付（实施链 2026-09-17 `4c4b7e3`→`169f008`→`82b54ef`；merge `e61b9a0` 于 2026-09-18 收口：双评审 APPROVE + verifier 全 VERIFIED + 设备复测全项 + 同提交 CI run `35280369455` 三 job 全 success）。
+**状态：** 已批准并交付（实施链 2026-09-17 `4c4b7e3`→`169f008`→`82b54ef`；merge `e61b9a0` 于 2026-09-18 收口：双评审 APPROVE + verifier 全 VERIFIED + 设备复测（B2/B3/B6 门槛经地板校准达标；B5 ≤1s 未获证实，见下） + 同提交 CI run `35280369455` 三 job 全 success）。
 
 **授权依据：** 用户 2026-09-17 /goal 常设授权「计划范围内经独立取证和研判后的推荐方案授权主代理批准、记录并继续执行」；本批走完整验收拓扑（单 bounded writer 于隔离 worktree → 双评审两轮 REQUEST-CHANGES 后 APPROVE → distinct verifier → 主代理设备窗口 → 主代理终检合并推送）。
 
@@ -2840,7 +2840,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 2. **层1 定向读（纯查询形态替换）**：新增 `importReviewRowForCandidate` 等三条纯 SELECT 命名查询——单候选详情主键定向读（替换整账本读+过滤）、重复探针轻量定向查询、会话批量空探针 `input_ref` 定向查询（替换 4-JOIN 整账本空探针）；空/缺语义逐分支等价。列表读本体保留整账本读（D-D 裁决：统计修复后 20k 库列表查询 0.24s，无需投影裁剪）。
 3. **层2 主线程 catalog 读治理（直击 ANR 根因）**：catalog 读路径（组合期/刷新链/事件路径）移出主线程——缓存 State + single-flight 后台加载 + 主调度器 hop 串行 dispatch + 晚到旧快照不覆盖新状态；数据未就绪呈现载入中占位、不得把空集呈现为权威目录；异步完成事件经吸收表防 `unhandled` 尾 ISE。修复前基线：10k 库 B2/B3/B5 ≈5s 超门槛；20k 库 B6 组开卡触发 app ANR（主线程等连接 30.015s）。
 
-**验收拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree，实施链 `4c4b7e3`→`169f008`→`82b54ef`，20 文件 +1747/−49）→ 双评审两轮 REQUEST-CHANGES 后 delta 复核双双 APPROVE（APQUAL-01/02/05、APSPEC-01 闭合；新登记 APQUAL-R3-01..04、APSPEC-R3-01..03）→ distinct verifier V1-V11 全 VERIFIED（含 V8 零 DDL 实质：整批 `.sq` 增量为纯 SELECT）→ 设备复测全项（uiautomator dump 地板实测 ~2.29s/次，报告同时给出原始与地板校准值，门槛判定以校准值为据）：fresh-start B2 = 4.93s 原始 / ≤~2.7s 校准（门槛 ≤3s，修复前同场景 300+s 卡死）；B3 热刷新 5.03s 原始 / ≤~2.7s 校准（门槛 ≤3s）；B5 单候选详情 ≤~2.4s 校准（门槛 ≤1s）；B6 20k 组开卡冷开 2.61s 原始 / ≤~1s 校准（门槛 ≤3s，R4/R5 re-tap 2.64s/2.62s）；全程零 ANR/OOM/FATAL。合并 merge `e61b9a0`，push 前 clean trace valid=true，同提交 CI run `35280369455` 三 job（Kotlin/Python/Android compile）全 success。
+**验收拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree，实施链 `4c4b7e3`→`169f008`→`82b54ef`，20 文件 +1747/−49）→ 双评审两轮 REQUEST-CHANGES 后 delta 复核双双 APPROVE（APQUAL-01/02/05、APSPEC-01 闭合；新登记 APQUAL-R3-01..04、APSPEC-R3-01..03）→ distinct verifier V1-V11 全 VERIFIED（含 V8 零 DDL 实质：整批 `.sq` 增量为纯 SELECT）→ 设备复测（B2/B3/B6 以地板校准判定达标；B5 未获证实，见下段。uiautomator dump 地板实测 ~2.29s/次，报告同时给出原始与地板校准值）：fresh-start B2 = 4.93s 原始 / ≤~2.7s 校准（门槛 ≤3s，修复前同场景 300+s 卡死）；B3 热刷新 5.03s 原始 / ≤~2.7s 校准（门槛 ≤3s）；**B5 单候选详情：门槛 ≤1s，未获证实**（原始读数与校准上界见下段）；B6 20k 组开卡冷开 2.61s 原始 / ≤~1s 校准（门槛 ≤3s，R4/R5 re-tap 2.64s/2.62s）；全程零 ANR/OOM/FATAL。合并 merge `e61b9a0`，push 前 clean trace valid=true，同提交 CI run `35280369455` 三 job（Kotlin/Python/Android compile）全 success。
+
+**B5 定向详情门槛未获证实（诚实登记，非 PASS 亦非 FAIL）：** 冻结规格 §6 的 B5 门槛为定向详情 ≤1s，现有记录**未获证实**其达成——修复前基线 4.92s（超门槛严重）；修复后原始读数落在 4.68s–5.25s 带内（B5 两轮读数 4.85s/4.68s，另记该场详情屏可见 <2.5s 落在 dump 地板内；5.25s 为同批复测中 B2 的最高原始读数，非 B5 读数），报告给出的地板校准上界 ~2.4s，**仍高于 ≤1s 门槛**。现有记录无法裁决该门槛的原因：测量方法分辨率不足——uiautomator dump 地板实测 ~2.29s/次，粗于 1s 门槛本身，故该方法在门槛两侧均不可分辨；规格 §6 要求的 logcat 首帧时间戳交叉计时在现有证据中无记录。处置：按阶段计划 §10.3「超过目标需优化或明确裁决，不事后改口径」登记为**超门槛/未证实项**，由 A-PERF 后续排查批承接，先以更细粒度测量（logcat 首帧时间戳）取得可分辨读数后方可判定该门槛。本条不主张 B5 门槛 PASS；地板校准值不替代冻结门槛，B2/B3/B6 的校准判定不扩展至 B5。
 
 **登记（均不阻塞）：** APQUAL-03/04、APSPEC-02/03/04/05、APSPEC-R3-01/02/03、APQUAL-R3-01..04、两条测试编译 warning（APSPEC-R3-01 spec §0 措辞残留与 APQUAL-R3-02 PENDING 注释滞后由 A-DOC 批承接改写，APSPEC-05 张力解释放同由 A-DOC 承接）。**范围外观察项**：OBS-APERF-INPUT-FREEZE（长连发合成 fling 后列表指针输入冻结，两次独立复现，疑似 Compose pointerInput 在合成 fling 风暴下状态卡滞，真实用户手势能否触发未验证——独立排查另批，不并入本批缺陷分母）；50k 冷读 31.6s（超冻结 20k 口径，归裁决）。规格：`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`（v2.2 冻结候选落盘）。
 
