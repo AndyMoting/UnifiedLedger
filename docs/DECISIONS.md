@@ -2827,3 +2827,53 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实施登记：** 实施候选 = 分支 `UL-p7-enum-perf` 提交 `ae29afb`（33 文件 +911/−72 含新文件全量，2026-09-17）；随本决议合并本地 main（merge --no-ff）。设备复测（万级组开卡毫秒级上屏 + 进度行 + 零 ANR + ASPEC-04 间距目检）与 push + 同提交 CI 按 PROJECT_STATE 待办 4/6 执行，结果以 PROGRESS_LOG/WORK_PLAN 登记为准。
 
 **关联决定：** D-146（本批打破其 schema 停留 v29 承诺，理由与影响评估见本条第 2 部分；P704SPEC-12 组键与本批会话级查询的接合部）、D-145（G6 fail-loud 默认端口先例）、D-088（已发布迁移一字不改纪律）、D-113（26.sqm 加性迁移与外层事务纪律先例）、D-144（批次范围冻结先例）。
+
+## D-148 导入候选读治理批（A-PERF：层0 统计刷新 / 层1 定向读 / 层2 主线程 catalog 读治理）
+
+**状态：** 已批准并交付（实施链 2026-09-17 `4c4b7e3`→`169f008`→`82b54ef`；merge `e61b9a0` 于 2026-09-18 收口：双评审 APPROVE + verifier 全 VERIFIED + 设备复测（B2/B3/B6 门槛经地板校准达标；B5 ≤1s 未获证实，见下） + 同提交 CI run `35280369455` 三 job 全 success）。
+
+**授权依据：** 用户 2026-09-17 /goal 常设授权「计划范围内经独立取证和研判后的推荐方案授权主代理批准、记录并继续执行」；本批走完整验收拓扑（单 bounded writer 于隔离 worktree → 双评审两轮 REQUEST-CHANGES 后 APPROVE → distinct verifier → 主代理设备窗口 → 主代理终检合并推送）。
+
+**决定（三层修复面，零 DDL——整批 `.sq` 增量为纯 SELECT，schema 停留 v30）：**
+
+1. **层0 统计刷新机制（主修复）**：Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网）+ 接治收尾（intake pipeline 完成事务后）后台执行显式 `ANALYZE;`（全 schema，强保证）；desktop 同链共享。设备证据裁决（API 36 系统 SQLite 3.44.3，20k 库）：`PRAGMA optimize` 的重分析资格依赖「该表曾被 stat1 规划」——import 表首次启动无统计、无规划历史，官方 10× 规则救不了首次，全新库列表查询卡死 300+s；显式 `ANALYZE` 后同库同查询 2.4s 落地，故接治收尾点改用强保证。执行面 one-surface-per-statement-form（返工 3 实测偏离「统一 executeQuery 面」指示并如实披露）：`PRAGMA optimize` 有结果列走 executeQuery 面（Android rawQuery 等价安全面）；`ANALYZE;` 无结果行 desktop 走 `driver.execute()`（JDBC executeQuery 拒绝无结果语句，测试钉死）、Android executeForChangedRowCount 面可行。Android execute 面推论已由设备复测解除（2026-09-17 两轮设备复测：接治收尾后 `sqlite_stat1` 生成 import 表统计行，fresh-start 卡死消除）。
+2. **层1 定向读（纯查询形态替换）**：新增 `importReviewRowForCandidate` 等三条纯 SELECT 命名查询——单候选详情主键定向读（替换整账本读+过滤）、重复探针轻量定向查询、会话批量空探针 `input_ref` 定向查询（替换 4-JOIN 整账本空探针）；空/缺语义逐分支等价。列表读本体保留整账本读（D-D 裁决：统计修复后 20k 库列表查询 0.24s，无需投影裁剪）。
+3. **层2 主线程 catalog 读治理（直击 ANR 根因）**：catalog 读路径（组合期/刷新链/事件路径）移出主线程——缓存 State + single-flight 后台加载 + 主调度器 hop 串行 dispatch + 晚到旧快照不覆盖新状态；数据未就绪呈现载入中占位、不得把空集呈现为权威目录；异步完成事件经吸收表防 `unhandled` 尾 ISE。修复前基线：10k 库 B2/B3/B5 ≈5s 超门槛；20k 库 B6 组开卡触发 app ANR（主线程等连接 30.015s）。
+
+**验收拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree，实施链 `4c4b7e3`→`169f008`→`82b54ef`，20 文件 +1747/−49）→ 双评审两轮 REQUEST-CHANGES 后 delta 复核双双 APPROVE（APQUAL-01/02/05、APSPEC-01 闭合；新登记 APQUAL-R3-01..04、APSPEC-R3-01..03）→ distinct verifier V1-V11 全 VERIFIED（含 V8 零 DDL 实质：整批 `.sq` 增量为纯 SELECT）→ 设备复测（B2/B3/B6 以地板校准判定达标；B5 未获证实，见下段。uiautomator dump 地板实测 ~2.29s/次，报告同时给出原始与地板校准值）：fresh-start B2 = 4.93s 原始 / ≤~2.7s 校准（门槛 ≤3s，修复前同场景 300+s 卡死）；B3 热刷新 5.03s 原始 / ≤~2.7s 校准（门槛 ≤3s）；**B5 单候选详情：门槛 ≤1s，未获证实**（原始读数与校准上界见下段）；B6 20k 组开卡冷开 2.61s 原始 / ≤~1s 校准（门槛 ≤3s，R4/R5 re-tap 2.64s/2.62s）；全程零 ANR/OOM/FATAL。合并 merge `e61b9a0`，push 前 clean trace valid=true，同提交 CI run `35280369455` 三 job（Kotlin/Python/Android compile）全 success。
+
+**B5 定向详情门槛未获证实（诚实登记，非 PASS 亦非 FAIL）：** 冻结规格 §6 的 B5 门槛为定向详情 ≤1s，现有记录**未获证实**其达成——修复前基线 4.92s（超门槛严重）；修复后 B5 原始读数两轮为 4.85s 与 4.68s（uiautomator dump 轮询地板主导）；另一次复测场次记录详情屏可见 <2.5s，落在单次 dump 地板间隔内；报告给出的地板校准上界 ~2.4s——**仍高于 ≤1s 门槛**。现有记录无法裁决该门槛的原因：测量方法分辨率不足——uiautomator dump 地板实测 ~2.29s/次，粗于 1s 门槛本身，故该方法在门槛两侧均不可分辨；规格 §6 要求的 logcat 首帧时间戳交叉计时在现有证据中无记录。处置：按阶段计划 §10.3「超过目标需优化或明确裁决，不事后改口径」登记为**超门槛/未证实项**，由 A-PERF 后续排查批承接，先以更细粒度测量（logcat 首帧时间戳）取得可分辨读数后方可判定该门槛。本条不主张 B5 门槛 PASS；地板校准值不替代冻结门槛，B2/B3/B6 的校准判定不扩展至 B5。
+
+**登记（均不阻塞）：** APQUAL-03/04、APSPEC-02/03/04/05、APSPEC-R3-01/02/03、APQUAL-R3-01..04、两条测试编译 warning（APSPEC-R3-01 spec §0 措辞残留与 APQUAL-R3-02 PENDING 注释滞后由 A-DOC 批承接改写，APSPEC-05 张力解释放同由 A-DOC 承接）。**范围外观察项**：OBS-APERF-INPUT-FREEZE（长连发合成 fling 后列表指针输入冻结，两次独立复现，疑似 Compose pointerInput 在合成 fling 风暴下状态卡滞，真实用户手势能否触发未验证——独立排查另批，不并入本批缺陷分母）；50k 冷读 31.6s（超冻结 20k 口径，归裁决）。规格：`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`（v2.2 冻结候选落盘）。
+
+**关联决定：** D-147（v30 覆盖索引与统计缺口根因的直接前置；29.sqm 上线即埋下统计缺口）、D-146（接治收尾触发点与 `runImportIntakePipeline` 管线归属）、D-145（G6 fail-loud 默认端口先例）、D-132（Android execute 面拒绝语义先例——busy_timeout 教训路径）。
+
+## D-149 建行 XLS Android 验证与矩阵翻转批（A-04.1 instrumented 验证 + A-04.2 矩阵翻转 + A-04.3 产品路径设备验收）
+
+**状态：** 已批准并交付（2026-09-18 全行收口：A-04.1 绿裁决 X-4 命题证实 + A-04.2/A-04.3 设备窗口 D1-D4 全绿 + merge `b66bdf3`/`c93e18a` + 同提交 CI run `35289045109`/`35301225076` 三 job 全 success）。
+
+**授权依据：** 用户 2026-09-17 /goal 常设授权「计划范围内经独立取证和研判后的推荐方案授权主代理批准、记录并继续执行」；本批各子批走完整验收拓扑（A-04.1 test-only normal 路由 + 设备门；A-04.2/A-04.3 产品行为变更高风险拓扑：规格三轮评审 → 单 bounded writer → 分开双评审 APPROVE → distinct verifier → 主代理设备窗口 → 终检合并）。
+
+**决定（三段递进，把 A-04.1 隔离证据兑现为产品可用性）：**
+
+1. **A-04.1（test-only instrumented 验证批，实施链 `57f9557` + EOL 规则修复 `5572fac`，merge `b66bdf3`）**：新增 `CcbBillParserAndroidInstrumentedTest`（隔离入口直调 `CcbBillParser.parse`，7 @Test：3 期望等价 + 4 拒绝向量）+ tracked 期望 JSON（`CcbBatchResultJson` 手写确定性序列化器，产品类型零注解）+ 7 个 fixture assets 副本（防漂移 SHA-256 同步测试）。等价链：**JVM 解析 == tracked 期望 JSON 逐字节 ∧ Android 解析 == 同文件逐字段 ⇒ 同字节输入两端解析等价**。设备门 connectedDebugAndroidTest 11/11 全 PASS（CCB 7/7 + Startup 4/4），logcat 零 POI/HSSF 异常、零 NoClassDefFoundError——**绿裁决成立：X-4 命题证实，Apache POI 5.5.1 HSSF 在 Android 运行时真实可执行，七 fixture 与 JVM oracle 逐字段等价**。A041SPEC-01（期望 JSON EOL 规则）升合并前置必修并闭合（`.gitattributes` 精确路径 `text eol=lf`）。
+2. **A-04.2（高风险矩阵翻转批，实施 `87ee946`，8 文件 +150/−40，并入 merge `c93e18a`）**：`ImportFormatCapabilities` 中 `CCB_XLS.availability[ANDROID]` 从 `PENDING_DEVICE_VERIFICATION` → `AVAILABLE`（唯一代码值变更）+ 6 处失准注释更新（引用 A-04.1 证据；orchestrator (a) 门登记「当下不可达的保留代码」）+ 平台门测试修订（删 pending 测试；新 `ccbXlsOnAndroidNowDispatchesToTheParser` 真实 fixture 字节断言 oracle 分发面）+ presentation 测试修订（四全 AVAILABLE）。值域 `PENDING_DEVICE_VERIFICATION` 保留（未来格式复入 pending 态）。规格 v3 三轮评审 13 findings 全吸收后 APPROVE 冻结。
+3. **A-04.3（产品路径设备验收，并入 A-04.2 设备窗口，D1-D4 全绿）**：D1 CCB 条目无 pending 行、SAF MIME 过滤可选；**D2 计划 :34 全链**——接治结果行逐字符命中 oracle（新增 13/等价重放 0/解析拒绝 5/接治拒绝 0）、13 候选（12 待确认 + 1 incomplete-first 正确分组）、确认前零写入、B1 详情表单补全 → 勾选 → 批量授权 →「已入账 1 项」、DB 权威核对（import_confirmation=1/ledger_transaction=1/confirmed=1）、2026-08 月度净支出 12.80 跨重启持久、权威回读「待确认（11）」；D3 损坏样本 `INPUT_DECODE_FAILED` 零新增逐字符命中；D4a/D4b 双级读取上限（16,789,561 B 管线级 / 10,486,759 B parser 级）字节数逐位命中；零 ANR/OOM/FATAL、零 POI/HSSF 异常。
+
+**矩阵翻转的诚实义务注记（R-Q08-3）：** D-146 冻结矩阵中建行 XLS Android 单元的「诚实不可用」状态由本批以设备证据正式翻转——翻转非删除诚实，而是该单元状态被设备 instrumented 与产品路径证据背书更新（instrumented 逐字段等价 + 产品路径全链含明确确认经设备证实）。
+
+**登记（均不阻塞）：** A041QUAL-01（org.json `optString` null 哨兵边界，fail-loud 不需改）、A041QUAL-02（D-116 fixture 内嵌 BIFF WriteAccess 含 Windows 账户名，非本批引入——归 A-DOC 批清理）、A042IMPSPEC-01/02、A042IMPQUAL-01/02（均 INFO）。规格：`docs/specs/2026-09-17-p7-04-ccb-android-parser-verification-design.md`（A-04.1，v2 冻结）、`docs/specs/2026-09-18-p7-04-ccb-xls-android-capability-flip-design.md`（A-04.2/A-04.3，v3 冻结）。
+
+**关联决定：** D-146（Q08 格式能力矩阵与 R-Q08-3 诚实义务——本批翻转其冻结矩阵单一单元，其余单元零触碰）、D-147（设备库与导入读治理前置——A-04.2 设备窗口隐含复验 A-PERF 修复在产品路径持续有效）、D-116（CCB 采用 POI HSSF 的原始裁决——本批以设备证据闭合其 Android 待验证面）、D-099（POI 依赖面：`poi` 留 jvmMain 供建行 HSSF 未变）。
+
+## D-150 A-DOC 批登记（2026-09-18）：正式状态同步与 CCB fixture WriteAccess 隐私清理
+
+**状态：** 已批准并交付（2026-09-18，A-DOC 批次：正式状态同步 + 已登记文案项承接 + fixture 隐私清理；无裁决变更）。
+
+**决定：**
+
+1. **A041QUAL-02 闭合**：D-149 登记为「D-116 fixture 内嵌 BIFF WriteAccess 含 Windows 账户名，非本批引入——归 A-DOC 批清理」的该项已由本批完成——`tests/fixtures/batch-bp01-ccb-*.xls` 7 个 fixture 与其 androidTest assets 7 个副本（共 7 对）内嵌的 WriteAccess 账户名全部替换为合成值（两目录副本同步，7 对逐字节互同）。
+2. **固定替换约定（钉死）**：合成值 `SYN-CCB-USER`（12 字符）。WriteAccess 记录长度字段保持 112 不变（记录头仍为 `005C` + `0070`），仅字符数字段由 6 改为 12（`0C00`）。该记录属解析惰性面：JVM 逐字节期望同步测试与 assets 防漂移测试均绿（`:ledger-application:jvmTest` 528/0）。
+3. **残余暴露面披露（不得静默）**：本次清理只覆盖工作树与本次及之后的提交；旧标识仍可达于既有历史——其存在于本批基线 `c93e18a`（`origin/main` head）及更早提交中。历史重写（filter-repo/BFG 等）会改变全部下游提交哈希并影响协作与证据引用，属独立决定，本批不做、也不隐含授权。
+
+**关联决定：** D-149（本条闭合其登记项 A041QUAL-02）、D-116（CCB fixture 来源批与 BIFF 记录形态）、D-146/D-147/D-148（正式状态同步所对齐的批次口径）。
