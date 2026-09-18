@@ -2891,3 +2891,17 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：`app-ui` 的 P503 状态/事件/reducer/宿主/确认页与纯呈现函数、对应 commonTest，以及本条决定登记。出：零账务语义、零请求载荷/receipt/结果页改动、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移、零 `EntryPinOrdering` 排序语义、零 `entry_pin` 表结构、零构建文件/依赖、零 Golden/fixture。本批**不**声称 A-02 整体 PASS：`A02MONTH-001` 与 `A02LEND-001` 属提交后权威刷新链，仍 OPEN，另批处理。设备回归（五类型确认页逐字段核对含转账手续费与转出总额、收回本金/利息构成；置顶向量含关闭录入页后标签与存储一致、方向正确、重进 Tab 顺序即时正确、重启持久化）与聚合编译（Android/KMP/Desktop）由本批设备窗口与同提交 CI 承担。
 
 **关联决定：** D-146（P7-02 批次范围与表 6.2a 事件纪律）、D-145（P7-03 状态机纪律与事件吸收表先例）、D-148（宿主镜像随事件下发的先例——本批刷新自愈沿用）、D-027（目录命令后重读权威读模型的先例）、D-088（已发布迁移一字不改纪律——本批零 schema 变更）。
+
+## D-152 P7-02 A-02 提交后刷新链缺陷修复批（月度小结 AWAITING + 借出后整屏读失败）
+
+**状态：** 已批准（2026-09-19，A-02 残余 OPEN 缺陷 `A02MONTH-001`、`A02LEND-001` 的修复批登记；D-151 明言该两缺陷「另批处理」，本条即该批）。规格：`docs/specs/2026-09-19-p7-02-refresh-chain-defect-fix-design.md`（approved）。
+
+**决定（纯宿主接线/状态呈现，零账务、零 schema、零迁移、零依赖；触发器冻结集与 §6.2 吸收表零改动）：**
+
+1. **FIX-MONTH-1（A02MONTH-001 时序路径）**：触发 (e)（`Created`/`NoChange`/`Recovered`）的月度重请求由「`decide()` 内同步 `requestMonthlyNow`」改为「置协调器挂起标记 + 宿主在 `refresh()` 结果分发后消费」——A-PERF（D-148，`e61b9a0`）将权威读改为异步后，同步请求读到瞬态结果态、载荷被 §6.2 吸收表吸收，月度小结停留 AWAITING 直至重启。成功落地（新 `OverviewEmpty`）→ 恰好一次无条件重请求（以落地月盖章；(a)/(d) 守卫逻辑不变，无双请求）；落地失败 → 清标记不请求（P703SPEC-11 残余边界 (a) 既定恢复路径不变）；非 (e) 落地不消费；挂起标记与 `P503CurrentStateLoadCoordinator` 合并重跑兼容（存活到首个成功落地）。触发器冻结集（P703SPEC-04）不变：仍恰好每个 (e) 事件一次无条件重请求，仅时序移到落地之后。技术注记：`refresh()` 与其后构造的宿主协调器互为引用，Kotlin 局部函数不得前向捕获局部量，经组合根内前置的可空接线槽（`landingHopCoordinator`，构造后立即赋值）完成——纯接线层结构，零语义影响。
+2. **FIX-MONTH-2（A02MONTH-001 编辑器开关路径，状态模型缺口）**：七个编辑流状态类（`Editing`/`AwaitingConfirmation`/`Submitting`/`RequestIdentityConflict`/`DomainRejected`/`InfrastructureFailure(SUBMISSION)`/`UnknownCommit`）新增三个可空快照字段（`selectedMonth`/`selectableMonths`/`monthlyActivity`，默认空、全部既有构造点向后兼容），流内全部转移机械携带（FIX-PIN-2 先例），`Back` 重建 `OverviewEmpty` 时还原三字段且 `monthlyReloadRequired = false`（载荷在场无需重载；载荷本为空则还原为空，AWAITING 行为与现状一致，无回归）。载荷 carry = 状态还原而非新触发：编辑期零写入（Cancel/Back 丢弃草稿）载荷不可能过期；确认提交产生 `Created` 走 FIX-MONTH-1 的新鲜刷新，不消费携带快照；编辑态内 `MonthlyActivityResult` 仍被吸收（仅保留、不更新）。附带效果（同一机械携带，非独立特性）：编辑器关闭后月份游标不再丢失。
+3. **FIX-LEND-1（A02LEND-001）**：`runCounterpartyForm` 的成功分支在 `counterpartyVersion++` 前新增 `facade.refreshCatalog()`（与目录管理命令路径同一既有约定；`CatalogConsumerSession.refresh()` 同步重建 authority），create 与 rename 都刷新——此前会话内新建往来对象写入了目录账户行但目录权威未刷新，借出提交后的权威读一致性门发现应收 posting 引用了会话目录中不存在的账户 → `InvalidState` → 整屏 `InfrastructureFailure(READ)`，重启重建 authority 后才恢复。失败处理沿用目录命令路径现状（不新造失败面）；`QueryMonthlyActivity` 的同型一致性门隐藏失败面一并消除。
+
+**边界：** 入：`app-ui` 的宿主协调器/宿主/状态/reducer 与 commonTest，以及本条登记。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖、零 Golden/fixture、触发器冻结集（P703SPEC-04）零改动、§6.2 `MonthlyActivityResult` 吸收表零改动。自动验证：`:app-ui:jvmTest` 393/0/0/0（较基线 384 新增 9 向量：协调器 (e) 时序/消费语义 3 + 携带/还原 5 + 吸收不变 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。设备回归（提交当次会话月度小结立即更新；打开并关闭录入页载荷与月份游标保留；会话内新建往来对象 → 借出无整屏读失败、重试可用性一致；重启持久回归）由合并后新 APK 的设备窗口（隔离 adb 5038）承担。
+
+**关联决定：** D-151（同批 A-02 缺陷修复的 FIX-PIN-2 流状态机械携带先例——本批沿用）、D-145（P7-03.C 月度触发冻结集——本批仅改 (e) 的时序，不改集合）、D-148（A-PERF 异步权威读裁决——本批修复其引入的 (e) 时序回归）、D-027（目录命令后刷新会话的既有约定——FIX-LEND-1 沿用）、D-119/D-120（UnknownCommit 禁自动重试——本批不触碰其语义）。

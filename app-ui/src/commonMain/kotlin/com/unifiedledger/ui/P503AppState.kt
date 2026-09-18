@@ -136,6 +136,22 @@ sealed interface P503AppState {
          * drop a persisted pin.
          */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /**
+         * A-02 FIX-MONTH-2 (D-152): the pre-editor monthly snapshot, carried mechanically through
+         * every in-flow transition (the FIX-PIN-2 precedent) so the `Back` rebuild of
+         * [OverviewEmpty] restores the month card payload and the shared month cursor
+         * (A02MONTH-001's editor-switch path). The flow is zero-write (Cancel/Back drop the
+         * draft), so the payload cannot go stale while editing; `Back` restores
+         * `monthlyReloadRequired = false` — a present payload never needs a reload, and an absent
+         * one keeps the pre-fix AWAITING surface. Empty defaults keep every pre-D constructor and
+         * copy site compiling; a determinate-success confirmation (`Created`) starts a fresh
+         * refresh and never consumes the carried snapshot.
+         */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -157,6 +173,12 @@ sealed interface P503AppState {
         val counterpartyLabel: String? = null,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data class Submitting(
@@ -166,6 +188,12 @@ sealed interface P503AppState {
         val originTab: P503Tab = P503Tab.HOME,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data object Created : P503AppState
@@ -179,6 +207,12 @@ sealed interface P503AppState {
         val originTab: P503Tab = P503Tab.HOME,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data class DomainRejected(
@@ -188,6 +222,12 @@ sealed interface P503AppState {
         val originTab: P503Tab = P503Tab.HOME,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data class InfrastructureFailure(
@@ -213,6 +253,16 @@ sealed interface P503AppState {
         val monthlyOverview: OverviewEmpty? = null,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /**
+         * A-02 FIX-MONTH-2: see [Editing.selectedMonth]. Carried by the SUBMISSION context's flow
+         * (the same snapshot the submitting flow held); the READ context never populates it (its
+         * monthly retention is [monthlyOverview]'s own contract).
+         */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     /**
@@ -293,6 +343,12 @@ sealed interface P503AppState {
         val lastCheckOutcome: UnknownCommitCheckOutcome = UnknownCommitCheckOutcome.NONE,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectedMonth: kotlinx.datetime.YearMonth? = null,
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
+        /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
+        val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
     ) : P503AppState
 
     data object Recovered : P503AppState

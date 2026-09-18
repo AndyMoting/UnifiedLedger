@@ -203,6 +203,11 @@ class P503ReducerImpl(
                     overview = state.state,
                     originTab = state.selectedTab,
                     pinnedTargets = state.pinnedTargets,
+                    // A-02 FIX-MONTH-2 (D-152): the pre-editor monthly snapshot rides the flow so
+                    // Back restores the month card and cursor (A02MONTH-001 editor path).
+                    selectedMonth = state.selectedMonth,
+                    selectableMonths = state.selectableMonths,
+                    monthlyActivity = state.monthlyActivity,
                 )
             // P7-02.D E-2: only a determinate-success retained intent can start a new editor.
             // The new editor clears the amount, the note and the old confirmation, takes
@@ -262,6 +267,10 @@ class P503ReducerImpl(
                         overview = state.state,
                         originTab = intent.originTab,
                         pinnedTargets = state.pinnedTargets,
+                        // A-02 FIX-MONTH-2 (D-152): see the StartNewExpense carry.
+                        selectedMonth = state.selectedMonth,
+                        selectableMonths = state.selectableMonths,
+                        monthlyActivity = state.monthlyActivity,
                     )
                 } ?: state
             // P7-02.D E-4: a pin toggle is a pure ordering-preference membership change on the
@@ -1497,6 +1506,10 @@ class P503ReducerImpl(
                                 ?: (state.draft as? LendDraft)?.counterpartyId?.value
                                 ?: (state.draft as? CollectDraft)?.counterpartyId?.value,
                         pinnedTargets = state.pinnedTargets,
+                        // A-02 FIX-MONTH-2 (D-152): see the StartNewExpense carry.
+                        selectedMonth = state.selectedMonth,
+                        selectableMonths = state.selectableMonths,
+                        monthlyActivity = state.monthlyActivity,
                     )
                 } else {
                     // Field error retains input and the (already allocated) requestId.
@@ -1507,7 +1520,9 @@ class P503ReducerImpl(
             // A-02 FIX-PIN-2: the rebuilt overview carries the flow's pin set, so returning to
             // the management lists keeps the pin marks (and their action direction) intact.
             P503UiEvent.Back ->
-                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets)
+                // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
+                // snapshot (payload, cursor, domain) with monthlyReloadRequired = false.
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             else -> unhandled(state, event)
         }
 
@@ -1519,9 +1534,9 @@ class P503ReducerImpl(
             // Cancelling an unsubmitted draft abandons the save intent; the requestId may
             // be discarded and a later Continue allocates a new one (spec 7.4).
             P503UiEvent.Cancel ->
-                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             P503UiEvent.Confirm ->
-                P503AppState.Submitting(draft = state.draft, requestId = state.requestId, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Submitting(draft = state.draft, requestId = state.requestId, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // A second confirm can arrive from a queued UI event after the first event has
             // already been handled. Keep the intent locked to the existing confirmation.
             is P503UiEvent.Continue -> state
@@ -1598,7 +1613,9 @@ class P503ReducerImpl(
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
             P503UiEvent.Back ->
-                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets)
+                // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
+                // snapshot (payload, cursor, domain) with monthlyReloadRequired = false.
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             else -> unhandled(state, event)
         }
 
@@ -1700,21 +1717,21 @@ class P503ReducerImpl(
             is com.unifiedledger.application.ManualExpenseSubmissionResult.Application ->
                 when (val application = result.result) {
                     is ManualExpenseSaveResult.InvalidInput ->
-                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     is ManualExpenseSaveResult.Executed ->
                         when (application.result) {
                             is ConfirmedManualExpenseResult.Created -> P503AppState.Created
                             is ConfirmedManualExpenseResult.NoChange -> P503AppState.NoChange
                             is ConfirmedManualExpenseResult.RequestIdentityConflict ->
-                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                             is ConfirmedManualExpenseResult.Rejected ->
-                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                         }
                 }
             is com.unifiedledger.application.ManualExpenseSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is com.unifiedledger.application.ManualExpenseSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is com.unifiedledger.application.ManualExpenseSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
@@ -1726,21 +1743,21 @@ class P503ReducerImpl(
             is ManualIncomeSubmissionResult.Application ->
                 when (val application = result.result) {
                     is ManualIncomeSaveResult.InvalidInput ->
-                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     is ManualIncomeSaveResult.Executed ->
                         when (application.result) {
                             is ConfirmedManualIncomeResult.Created -> P503AppState.Created
                             is ConfirmedManualIncomeResult.NoChange -> P503AppState.NoChange
                             is ConfirmedManualIncomeResult.RequestIdentityConflict ->
-                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                             is ConfirmedManualIncomeResult.Rejected ->
-                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                         }
                 }
             is ManualIncomeSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualIncomeSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualIncomeSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
@@ -1752,21 +1769,21 @@ class P503ReducerImpl(
             is ManualTransferSubmissionResult.Application ->
                 when (val application = result.result) {
                     is ManualTransferSaveResult.InvalidInput ->
-                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     is ManualTransferSaveResult.Executed ->
                         when (application.result) {
                             is ConfirmedManualTransferResult.Created -> P503AppState.Created
                             is ConfirmedManualTransferResult.NoChange -> P503AppState.NoChange
                             is ConfirmedManualTransferResult.RequestIdentityConflict ->
-                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                             is ConfirmedManualTransferResult.Rejected ->
-                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                         }
                 }
             is ManualTransferSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualTransferSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualTransferSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
@@ -1800,7 +1817,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualExpenseCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualExpenseCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualExpenseCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualExpenseCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -1812,7 +1829,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualIncomeCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualIncomeCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualIncomeCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualIncomeCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -1824,7 +1841,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualTransferCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualTransferCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualTransferCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualTransferCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -1837,21 +1854,21 @@ class P503ReducerImpl(
             is ManualLendSubmissionResult.Application ->
                 when (val application = result.result) {
                     is ManualLendSaveResult.InvalidInput ->
-                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     is ManualLendSaveResult.Executed ->
                         when (application.result) {
                             is ConfirmedManualLendingResult.Created -> P503AppState.Created
                             is ConfirmedManualLendingResult.NoChange -> P503AppState.NoChange
                             is ConfirmedManualLendingResult.RequestIdentityConflict ->
-                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                             is ConfirmedManualLendingResult.Rejected ->
-                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                         }
                 }
             ManualLendSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualLendSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualLendSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
@@ -1863,21 +1880,21 @@ class P503ReducerImpl(
             is ManualCollectSubmissionResult.Application ->
                 when (val application = result.result) {
                     is ManualCollectSaveResult.InvalidInput ->
-                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     is ManualCollectSaveResult.Executed ->
                         when (application.result) {
                             is ConfirmedManualLendingResult.Created -> P503AppState.Created
                             is ConfirmedManualLendingResult.NoChange -> P503AppState.NoChange
                             is ConfirmedManualLendingResult.RequestIdentityConflict ->
-                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.RequestIdentityConflict(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                             is ConfirmedManualLendingResult.Rejected ->
-                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                         }
                 }
             ManualCollectSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualCollectSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is ManualCollectSubmissionResult.Recovered -> P503AppState.Recovered
         }
 
@@ -1888,7 +1905,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualLendingCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualLendingCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualLendingCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualLendingCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -1900,7 +1917,7 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualLendingCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualLendingCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualLendingCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualLendingCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
@@ -1995,49 +2012,49 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             is P503UiEvent.UpdateAmount ->
-                P503AppState.Editing(state.draft.withAmountText(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withAmountText(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdatePaymentAccount ->
-                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCategory ->
-                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateOccurredAt ->
-                P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
-                P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateReceivingAccount ->
-                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateIncomeCategory ->
-                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferSourceAccount ->
-                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferDestinationAccount ->
-                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferDestinationCredit ->
-                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferFee ->
-                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferFeeCategory ->
-                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02.C: lending field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateLendCounterparty ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateLendFundingAccount ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateLendAmount ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectCounterparty ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectDestinationAccount ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectTotal ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectPrincipal ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterest ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterestCategory ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: a type switch and "record again" are absorbed on the conflict screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.ApplyExpressionResult,
@@ -2094,9 +2111,11 @@ class P503ReducerImpl(
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
-                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             P503UiEvent.Back ->
-                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets)
+                // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
+                // snapshot (payload, cursor, domain) with monthlyReloadRequired = false.
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             else -> unhandled(state, event)
         }
 
@@ -2106,49 +2125,49 @@ class P503ReducerImpl(
     ): P503AppState =
         when (event) {
             is P503UiEvent.UpdateAmount ->
-                P503AppState.Editing(state.draft.withAmountText(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withAmountText(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdatePaymentAccount ->
-                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCategory ->
-                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateOccurredAt ->
-                P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withOccurredAt(event.instant), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
-                P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateReceivingAccount ->
-                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateIncomeCategory ->
-                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferSourceAccount ->
-                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferSourceAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferDestinationAccount ->
-                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferDestinationAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferDestinationCredit ->
-                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferDestinationCredit(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferFee ->
-                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferFee(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateTransferFeeCategory ->
-                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing(state.draft.withTransferFeeCategory(event.categoryId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02.C: lending field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateLendCounterparty ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateLendFundingAccount ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(fundingAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateLendAmount ->
-                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? LendDraft)?.copy(amount = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectCounterparty ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(counterpartyId = event.counterpartyId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectDestinationAccount ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(destinationAccountId = event.accountId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectTotal ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(totalReceived = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectPrincipal ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(principal = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterest ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterestCategory ->
-                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: a type switch and "record again" are absorbed on the rejection screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.ApplyExpressionResult,
@@ -2204,7 +2223,9 @@ class P503ReducerImpl(
             is P503UiEvent.ImportUnknownItemCheckResult,
             -> state
             P503UiEvent.Back ->
-                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets)
+                // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
+                // snapshot (payload, cursor, domain) with monthlyReloadRequired = false.
+                P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             else -> unhandled(state, event)
         }
 
@@ -2216,11 +2237,12 @@ class P503ReducerImpl(
             InfrastructureFailureContext.SUBMISSION ->
                 when (event) {
                     P503UiEvent.RetrySubmission ->
-                        P503AppState.Submitting(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Submitting(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     P503UiEvent.Cancel ->
-                        P503AppState.Editing(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets)
+                        P503AppState.Editing(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     P503UiEvent.Back ->
-                        P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets)
+                        // A-02 FIX-MONTH-2 (D-152): see the Back restore comment above.
+                        P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
                     // P7-02: entry-field intents are absorbed in SUBMISSION failure (§6.2a).
                     // A-PERF (APQUAL-01): the layer-2 background current-state read's
                     // completion events are absorbed here too (the reduceImportCandidateDetail

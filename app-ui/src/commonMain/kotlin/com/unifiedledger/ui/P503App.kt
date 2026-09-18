@@ -328,6 +328,16 @@ fun P503App(
                 lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: facade.currency
         }
 
+    // A-02 FIX-MONTH-1 (D-152): forward wiring slot for the host coordinator below. The
+    // coordinator is constructed after this point (its callbacks need ::refresh/::submit/
+    // ::checkCommitStatus, which are themselves declared around it), while refresh() must
+    // complete trigger (e)'s armed monthly re-request on its landing hop — Kotlin forbids a
+    // local function from capturing a local declared later, so the landing hop reads the
+    // coordinator through this slot. Assignment happens immediately after the construction;
+    // every refresh() actually runs post-wiring (LaunchedEffect / user callbacks), so the slot
+    // is never observed null by a real refresh.
+    var landingHopCoordinator: P503HostCoordinator? = null
+
     /**
      * Authoritative current-state refresh (the frozen layer-2 refresh chain, spec section 2.3).
      * A-PERF (rework path 1a): the read itself runs OFF the UI thread
@@ -371,8 +381,21 @@ fun P503App(
                             // pin mirror so the persisted pins survive success-result and
                             // READ-retry constructions.
                             dispatch(P503UiEvent.RefreshResult(result.state, intent, pinnedTargets))
+                            // A-02 FIX-MONTH-1 (D-152): trigger (e)'s monthly re-request completes
+                            // HERE, after the refreshed overview landed (the former synchronous
+                            // request beside the refresh read the still-transient result state and
+                            // its payload was absorbed, leaving the month card AWAITING). One
+                            // unconditional request stamped on the landed month; a coalesced
+                            // re-run lands later with the pending flag already consumed. The slot
+                            // wiring note lives on [landingHopCoordinator] above.
+                            landingHopCoordinator?.consumeMonthlyReRequestAfterRefresh(latestState.value)
                         }
-                        else -> dispatch(P503UiEvent.RefreshFailed)
+                        else -> {
+                            dispatch(P503UiEvent.RefreshFailed)
+                            // A-02 FIX-MONTH-1 (D-152): a failed landing requests nothing; the
+                            // stale trigger must not be consumed by a later unrelated landing.
+                            landingHopCoordinator?.dropMonthlyReRequestAfterFailedRefresh()
+                        }
                     }
                     if (currentStateLoadCoordinator.loadCompleted()) refresh()
                 }
@@ -841,6 +864,8 @@ fun P503App(
                 },
             )
         }
+    // A-02 FIX-MONTH-1 (D-152): forward wiring — see [landingHopCoordinator] above refresh().
+    landingHopCoordinator = coordinator
 
     // P7-03.C: month selection dispatches first, then re-requests the monthly payload
     // unconditionally (trigger (b), including the failure-recovery path: re-selecting the same
@@ -1617,6 +1642,14 @@ fun P503App(
     // P702SPEC-03: run one counterparty directory command from the editor dialog. A successful
     // command closes the dialog and bumps the option refresh marker; a typed rejection is
     // absorbed safely — the dialog stays open with the typed text and nothing is dispatched.
+    // A-02 FIX-LEND-1 (D-152): a successful command also refreshes the shared catalog session's
+    // authority (the same existing convention as the catalog-command path in
+    // [dispatchCatalogCommandResult] and [refreshCatalogSnapshot]) BEFORE the option projections
+    // re-derive — the create wrote a directory row the session's authority did not know, so the
+    // subsequent LEND/COLLECT commit's authoritative read failed its consistency gate into a
+    // full-screen READ failure until a restart. Rename rewrites no posting reference, so the
+    // refresh is harmless and keeps the convention uniform. The failure handling stays exactly
+    // the catalog-command path's shape (no added failure surface).
     fun runCounterpartyForm(dialog: CounterpartyDialog) {
         val commands = facade.counterpartyCommands ?: return
         scope.launch {
@@ -1626,6 +1659,7 @@ fun P503App(
                     is CounterpartyDialog.Rename -> commands.rename.execute(facade.ledgerId, dialog.counterpartyId, dialog.nameText)
                 }
             if (shouldRefreshOptionsAfterCounterpartyCommand(result)) {
+                facade.refreshCatalog()
                 counterpartyVersion++
                 dispatch(P503UiEvent.DismissCounterpartyDialog)
             }
