@@ -1934,6 +1934,7 @@ fun P503App(
                 P503ConfirmationScreen(
                     draft = current.draft,
                     currencyCode = resolvedCurrency(current.draft).code,
+                    currencyPrecision = resolvedCurrency(current.draft).precision,
                     labels =
                         ConfirmationLabels(
                             paymentAccount = current.paymentAccountLabel,

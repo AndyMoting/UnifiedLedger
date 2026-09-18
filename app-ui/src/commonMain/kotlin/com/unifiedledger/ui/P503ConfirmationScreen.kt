@@ -20,13 +20,14 @@ import com.unifiedledger.application.TypedEntryDraft
  * Awaiting-confirmation screen (spec section 7.3.4). Shows the complete attempted snapshot; cancel
  * performs no save. Confirming enters the single-submission-lock Submitting state. The title and
  * the field rows are the type-aware presentation of [confirmationTitle]/[confirmationRows]; the
- * account and category lines render the display labels carried by the state (P5-04.3), so raw ids
- * are never rendered.
+ * account and category lines render the display labels carried by the state (P5-04.3), which the
+ * reducer falls back to the draft's id value when the host resolves no label.
  */
 @Composable
 internal fun P503ConfirmationScreen(
     draft: TypedEntryDraft,
     currencyCode: String,
+    currencyPrecision: Int,
     labels: ConfirmationLabels,
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
@@ -41,7 +42,7 @@ internal fun P503ConfirmationScreen(
             style = MaterialTheme.typography.titleLarge,
         )
         Spacer(Modifier.height(8.dp))
-        confirmationRows(draft, labels, currencyCode).forEach { row ->
+        confirmationRows(draft, labels, currencyCode, currencyPrecision).forEach { row ->
             Text("${row.label}：${row.value}", style = MaterialTheme.typography.bodyMedium)
         }
         Text("备注：${draft.note.ifEmpty { "—" }}", style = MaterialTheme.typography.bodyMedium)

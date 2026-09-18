@@ -55,14 +55,17 @@ internal fun confirmationTitle(draft: TypedEntryDraft): String =
  * explicitly presented; PRODUCT_REQUIREMENTS.md:11 keeps internal transfers distinct from income
  * and expense).
  *
- * Component amounts render the draft's already-validated text. Only the transfer total debit is
- * derived — the transfer draft stores no debit field (P1-2) — and it is derived exactly, without
- * rounding.
+ * Non-blank component amounts render the draft's already-validated text verbatim; a blank
+ * component is absent, because the gate accepts a blank component and the submission path stores
+ * it as zero. Only the transfer total debit is derived — the transfer draft stores no debit field
+ * (P1-2) — and it is derived exactly, at [currencyPrecision], so the total always renders at the
+ * currency's money scale.
  */
 internal fun confirmationRows(
     draft: TypedEntryDraft,
     labels: ConfirmationLabels,
     currencyCode: String,
+    currencyPrecision: Int,
 ): List<ConfirmationRow> =
     when (draft) {
         is ExpenseDraft ->
@@ -83,9 +86,9 @@ internal fun confirmationRows(
                 add(ConfirmationRow("转入账户", labels.destinationAccount ?: ABSENT_VALUE))
                 add(ConfirmationRow("到账本金", amountValue(draft.destinationCredit, currencyCode)))
                 add(ConfirmationRow("手续费", amountValue(draft.fee, currencyCode)))
-                // T-4: a zero fee never carries a fee category, so the row is absent rather than blank.
-                if (isPositiveAmount(draft.fee)) add(ConfirmationRow("手续费分类", labels.category))
-                add(ConfirmationRow("转出总额", amountValue(exactSumText(draft.destinationCredit, draft.fee), currencyCode)))
+                // T-4: a zero or blank fee never carries a fee category, so the row is absent.
+                if (isPositiveAmount(draft.fee, currencyPrecision)) add(ConfirmationRow("手续费分类", labels.category))
+                add(ConfirmationRow("转出总额", amountValue(exactSumText(draft.destinationCredit, draft.fee, currencyPrecision), currencyCode)))
             }
         is LendDraft ->
             listOf(
@@ -100,39 +103,44 @@ internal fun confirmationRows(
                 add(ConfirmationRow("本金", amountValue(draft.principal, currencyCode)))
                 add(ConfirmationRow("利息", amountValue(draft.interest, currencyCode)))
                 // The interest category is only meaningful when interest is positive (T-4 analogue).
-                if (isPositiveAmount(draft.interest)) add(ConfirmationRow("利息分类", labels.category))
+                if (isPositiveAmount(draft.interest, currencyPrecision)) add(ConfirmationRow("利息分类", labels.category))
                 // The collect draft already carries the total received; it is rendered as-is
                 // (spec 4.2), never recomputed from the components.
                 add(ConfirmationRow("实收总额", amountValue(draft.totalReceived, currencyCode)))
             }
     }
 
+/**
+ * A blank or absent component renders as the absent placeholder, never as a bare currency code.
+ * A non-blank component renders the draft's text verbatim: the page shows what the gate accepted
+ * and never normalizes the user's input.
+ */
 private fun amountValue(
     text: String,
     currencyCode: String,
-): String = if (text == ABSENT_VALUE) ABSENT_VALUE else "$text $currencyCode"
+): String = if (text.isBlank() || text == ABSENT_VALUE) ABSENT_VALUE else "$text $currencyCode"
 
 /**
- * Exact decimal sum of two validated amount texts, rendered at the operands' common (largest)
- * fraction scale. The Continue gate already validated both operands against the currency
- * precision, so the scale never exceeds it; the shared minor-unit parser keeps the addition in
- * integer arithmetic (no binary floating point, no rounding). The overflow guards are defensive:
- * each operand is a single parsed amount and the page renders both components regardless.
+ * Exact decimal sum of two amount texts, parsed and rendered at [precision]. A blank operand is
+ * zero (the submission path stores a blank transfer fee as zero), so the derived total stays
+ * visible and equal to the saved debit. A non-blank operand that does not parse at [precision]
+ * keeps the total absent instead of evaluated (spec 4.3 item 7). The addition is integer
+ * minor-unit arithmetic (no binary floating point); two operands can each parse within their own
+ * limits and still sum past `Long.MAX_VALUE`, so both overflow directions are rejected.
  */
 private fun exactSumText(
     left: String,
     right: String,
+    precision: Int,
 ): String {
-    val scale = maxOf(fractionDigits(left), fractionDigits(right))
-    val leftMinor = parseExactDecimalLenient(left, scale) ?: return ABSENT_VALUE
-    val rightMinor = parseExactDecimalLenient(right, scale) ?: return ABSENT_VALUE
+    val leftMinor = if (left.isBlank()) 0L else parseExactDecimalLenient(left, precision) ?: return ABSENT_VALUE
+    val rightMinor = if (right.isBlank()) 0L else parseExactDecimalLenient(right, precision) ?: return ABSENT_VALUE
     if (rightMinor > 0L && leftMinor > Long.MAX_VALUE - rightMinor) return ABSENT_VALUE
     if (rightMinor < 0L && leftMinor < Long.MIN_VALUE - rightMinor) return ABSENT_VALUE
-    return formatMinorUnits(leftMinor + rightMinor, scale)
+    return formatMinorUnits(leftMinor + rightMinor, precision)
 }
 
-private fun isPositiveAmount(text: String): Boolean = (exactMinorUnits(text) ?: 0L) > 0L
-
-private fun exactMinorUnits(text: String): Long? = parseExactDecimalLenient(text, fractionDigits(text))
-
-private fun fractionDigits(text: String): Int = text.substringAfter('.', missingDelimiterValue = "").length
+private fun isPositiveAmount(
+    text: String,
+    precision: Int,
+): Boolean = (parseExactDecimalLenient(text, precision) ?: 0L) > 0L

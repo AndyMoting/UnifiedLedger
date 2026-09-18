@@ -112,6 +112,22 @@
 5. 收回（本金 40 / 利息 5）：出现 `本金 40.00`、`利息 5.00`、`实收总额 45.00`；**断言不出现 `费用分类` 标签**。
 6. 支出/收入：与既有文案逐字一致（防回归）。
 7. 金额渲染为精确两位小数，且对 `1/8` 类不可表示值不参与本路径（确认页只渲染已校验草稿的既有金额文本，不做算式求值）。
+8. 转账空白手续费：`手续费` 行为 `—`（不得为只有币种代码的裸值），`转出总额` 可见且等于 `到账本金`，且不出现 `手续费分类` 行。
+9. 转账手续费 `2.500` / `2.5000000000000000000`（超出币种精度的零尾数，Continue 门接受）：`转出总额` 按币种精度渲染为 `102.50`，`手续费分类` 行保留。收回本金/利息空白：两行为 `—`。
+
+### 4.4 分量金额空白与精度规则（缺陷复查补录）
+
+复查发现 Continue 门对**空白**分量（转账手续费、收回本金/利息）不报错，写入路径把空白手续费存为 0；门同时也接受超出币种精度但多余位全为零的金额文本。呈现必须与之一致：
+
+1. `confirmationRows` 除 `currencyCode` 外还接收 `currencyPrecision`（宿主由 `resolvedCurrency(draft).precision` 提供）。
+2. **派生**的 `转出总额` 按 `currencyPrecision` 解析并按该精度渲染（`formatMinorUnits`），因此 `2.500` 与 `2.5000000000000000000` 都得到 `102.50`，与页面其余金额同尺度。
+3. `手续费分类` / `利息分类` 的判定按 `currencyPrecision` 解析，与 Continue 门的 `feeMinor > 0` 口径一致。
+4. **空白**操作数在求和时视为 0（与写入路径一致），使空白手续费下 `转出总额` 仍可见且等于 `到账本金`；**非空白但不可解析**的操作数不视为 0，总额保持 `—`（item 7：页面从不求值算式）。
+5. 分量行本身：空白渲染 `—`，非空白逐字渲染草稿已有文本，不做归一化。
+
+### 4.5 缺陷复查的 D-151 记录更正
+
+D-151 原记「`SelectTab` 与 READ 重试的集合保留同样显式化」不准确：基点提交（`470e83a`）上 `SelectTab` 已通过 `state.copy(...)` 保留集合、READ 重试分支已传 `event.pinnedTargets`。本批实际新增的是 `SelectTab` 的测试覆盖，以及 READ 重试在事件缺省时回退到保留的月度概览（`state.monthlyOverview?.pinnedTargets`）。
 
 ## 5. 验收
 
@@ -127,6 +143,7 @@ writer 只可写：
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ConfirmationScreen.kt`
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ConfirmationPresentation.kt`（新增）
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt`
+- `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503CatalogManagementScreen.kt`（置顶点击点改传期望 `pinned` 值）
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503AppState.kt`
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503Reducer.kt`
 - `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503UiEvent.kt`
