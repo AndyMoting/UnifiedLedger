@@ -11,7 +11,9 @@ import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseCommitResolution
+import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.RequestId
@@ -20,12 +22,16 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import com.unifiedledger.application.MonthlyActivityResult as MonthlyActivityQueryResult
 
 /**
  * P7-02.D entry-efficiency reducer contracts (E-2/E-3/E-4, section 6.1/6.2a/6.2b and B06):
@@ -362,6 +368,183 @@ class P503EntryEfficiencyReducerTest {
         // Startup seeds the persisted pins.
         val afterLoad = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(emptyState, pins)))
         assertEquals(pins, afterLoad.pinnedTargets)
+    }
+
+    // ---- A-02 FIX-MONTH-2 monthly snapshot carry (D-152; spec 2.2) ----
+
+    private val march = YearMonth(2026, 3)
+    private val selectableDomain = listOf(YearMonth(2026, 2), YearMonth(2026, 3))
+
+    /** Minimal unified payload whose identity is asserted through the carry/restore vectors. */
+    private fun monthlyActivity(month: YearMonth) =
+        MonthlyActivity(
+            ledgerId = ledgerId,
+            month = month,
+            currencies = emptyList(),
+            expenseCategories = emptyList(),
+            incomeCategories = emptyList(),
+        )
+
+    @Test
+    fun startNewExpenseCarriesTheMonthlySnapshotAndBackRestoresIt() {
+        val payload = monthlyActivity(march)
+        val overview =
+            P503AppState.OverviewEmpty(
+                emptyState,
+                P503Tab.ACCOUNTS,
+                selectedMonth = march,
+                selectableMonths = selectableDomain,
+                monthlyActivity = payload,
+            )
+
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.StartNewExpense))
+        assertEquals(march, editing.selectedMonth)
+        assertEquals(selectableDomain, editing.selectableMonths)
+        assertSame(payload, editing.monthlyActivity)
+
+        // A02MONTH-001 device vector: 打开并关闭录入页 → the month card payload and the month
+        // cursor are back on the overview without a re-request (monthlyReloadRequired stays off).
+        val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(editing, P503UiEvent.Back))
+        assertEquals(march, closed.selectedMonth)
+        assertEquals(selectableDomain, closed.selectableMonths)
+        assertSame(payload, closed.monthlyActivity)
+        assertFalse(closed.monthlyReloadRequired)
+    }
+
+    @Test
+    fun recordAgainCarriesTheMonthlySnapshotToo() {
+        val payload = monthlyActivity(march)
+        val overview =
+            P503AppState.OverviewEmpty(
+                emptyState,
+                P503Tab.HOME,
+                selectedMonth = march,
+                selectableMonths = selectableDomain,
+                monthlyActivity = payload,
+                retainedIntent = RetainedEntryIntent(EntryType.EXPENSE, "35.80", accountId, expenseCategoryId, "lunch", occurredAt, P503Tab.HOME),
+            )
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.SaveAndRecordAgain(revalidation)))
+        assertEquals(march, editing.selectedMonth)
+        assertEquals(selectableDomain, editing.selectableMonths)
+        assertSame(payload, editing.monthlyActivity)
+    }
+
+    @Test
+    fun monthlySnapshotSurvivesEveryEditorFlowBranchAndItsBack() {
+        val payload = monthlyActivity(march)
+        val draft = expenseDraft()
+        // Submitting has no Back; every other flow branch closes to the originating overview.
+        val branches =
+            listOf<P503AppState>(
+                P503AppState.Editing(draft, requestId, emptyState, P503Tab.ACCOUNTS, selectedMonth = march, selectableMonths = selectableDomain, monthlyActivity = payload),
+                P503AppState.AwaitingConfirmation(draft, requestId, emptyState, P503Tab.ACCOUNTS, selectedMonth = march, selectableMonths = selectableDomain, monthlyActivity = payload),
+                P503AppState.RequestIdentityConflict(draft, requestId, emptyState, P503Tab.ACCOUNTS, selectedMonth = march, selectableMonths = selectableDomain, monthlyActivity = payload),
+                P503AppState.DomainRejected(draft, requestId, emptyState, P503Tab.ACCOUNTS, selectedMonth = march, selectableMonths = selectableDomain, monthlyActivity = payload),
+                P503AppState.InfrastructureFailure(
+                    InfrastructureFailureContext.SUBMISSION,
+                    draft,
+                    requestId,
+                    emptyState,
+                    P503Tab.ACCOUNTS,
+                    selectedMonth = march,
+                    selectableMonths = selectableDomain,
+                    monthlyActivity = payload,
+                ),
+            )
+        for (branch in branches) {
+            val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(branch, P503UiEvent.Back))
+            assertEquals(march, closed.selectedMonth, "Back dropped the month cursor of $branch")
+            assertEquals(selectableDomain, closed.selectableMonths, "Back dropped the SelectMonth domain of $branch")
+            assertSame(payload, closed.monthlyActivity, "Back dropped the monthly payload of $branch")
+            assertFalse(closed.monthlyReloadRequired, "Back left a reload flag on $branch")
+        }
+    }
+
+    @Test
+    fun monthlySnapshotSurvivesTheFullSubmissionFlowAndUnknownCommitResolutions() {
+        val payload = monthlyActivity(march)
+        val overview =
+            P503AppState.OverviewEmpty(
+                emptyState,
+                P503Tab.HOME,
+                selectedMonth = march,
+                selectableMonths = selectableDomain,
+                monthlyActivity = payload,
+            )
+
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.StartNewExpense))
+        // Fill the draft so the Continue gate passes (the empty StartNewExpense draft does not).
+        val filled =
+            reduceAll(
+                editing,
+                P503UiEvent.UpdatePaymentAccount(accountId),
+                P503UiEvent.UpdateCategory(expenseCategoryId),
+                P503UiEvent.UpdateAmount("35.80"),
+                P503UiEvent.UpdateOccurredAt(occurredAt),
+            )
+        val awaiting = assertIs<P503AppState.AwaitingConfirmation>(reducer.reduce(filled, P503UiEvent.Continue(requestId)))
+        assertEquals(march, awaiting.selectedMonth)
+        val submitting = assertIs<P503AppState.Submitting>(reducer.reduce(awaiting, P503UiEvent.Confirm))
+        assertEquals(march, submitting.selectedMonth)
+
+        // The infrastructure-failure branch: Cancel returns to Editing, Back restores the payload.
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                reducer.reduce(submitting, P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure)),
+            )
+        assertEquals(march, failed.selectedMonth)
+        assertEquals(payload, assertIs<P503AppState.Editing>(reducer.reduce(failed, P503UiEvent.Cancel)).monthlyActivity)
+        assertSame(payload, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(failed, P503UiEvent.Back)).monthlyActivity)
+
+        // The unknown-commit branch: the conflict resolution and a later abandon keep the snapshot.
+        val unknown =
+            assertIs<P503AppState.UnknownCommit>(
+                reducer.reduce(submitting, P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.UnknownCommit)),
+            )
+        assertEquals(march, unknown.selectedMonth)
+        val conflicted =
+            assertIs<P503AppState.RequestIdentityConflict>(
+                reducer.reduce(unknown, P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.SnapshotConflict)),
+            )
+        assertEquals(march, conflicted.selectedMonth)
+        assertEquals(selectableDomain, assertIs<P503AppState.Editing>(reducer.reduce(conflicted, P503UiEvent.AbandonConflict)).selectableMonths)
+
+        // The invalid-input return to Editing carries the snapshot as well.
+        val invalid =
+            assertIs<P503AppState.Editing>(
+                reducer.reduce(submitting, P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.Application(ManualExpenseSaveResult.InvalidInput(emptySet())))),
+            )
+        assertSame(payload, invalid.monthlyActivity)
+    }
+
+    @Test
+    fun monthlySnapshotWithoutPayloadRestoresEmptyWithTheCursorIntact() {
+        // The pre-editor overview had no payload (a failed monthly read with the reload affordance
+        // up): Back restores the cursor/domain it had, no payload, and the explicit reload flag is
+        // NOT set — the AWAITING surface matches the pre-fix behavior with no regression.
+        val overview =
+            P503AppState.OverviewEmpty(
+                emptyState,
+                P503Tab.HOME,
+                selectedMonth = march,
+                selectableMonths = selectableDomain,
+                monthlyReloadRequired = true,
+            )
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.StartNewExpense))
+        assertNull(editing.monthlyActivity)
+        val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(editing, P503UiEvent.Back))
+        assertEquals(march, closed.selectedMonth)
+        assertEquals(selectableDomain, closed.selectableMonths)
+        assertNull(closed.monthlyActivity)
+        assertFalse(closed.monthlyReloadRequired)
+    }
+
+    @Test
+    fun monthlyActivityResultStaysAbsorbedInsideTheEditorFlow() {
+        // Spec 6.2 absorption table unchanged (D-152): an editor-state MonthlyActivityResult is
+        // still absorbed in place — it never updates the carried snapshot.
+        val editing = P503AppState.Editing(expenseDraft(), requestId, emptyState, P503Tab.HOME)
+        assertSame(editing, reducer.reduce(editing, P503UiEvent.MonthlyActivityResult(MonthlyActivityQueryResult.Unavailable, emptyList())))
     }
 
     private fun reduceAll(

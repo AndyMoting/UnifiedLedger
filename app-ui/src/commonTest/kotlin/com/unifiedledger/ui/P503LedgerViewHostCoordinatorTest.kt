@@ -16,6 +16,9 @@ import kotlin.test.assertTrue
  * authoritative refresh after each determinate success — and nothing else. Tab switches,
  * READ-retry recoveries, detail open/close and ordinary refreshes never re-request; recovery
  * from a monthly failure is a re-dispatched SelectMonth (unconditional via trigger (b)).
+ * A-02 FIX-MONTH-1 (D-152): trigger (e) arms a pending flag when the refresh starts and completes
+ * through the post-landing consumption (`consumeMonthlyReRequestAfterRefresh`/
+ * `dropMonthlyReRequestAfterFailedRefresh`) — never as a synchronous request beside the refresh.
  */
 class P503LedgerViewHostCoordinatorTest {
     private val ledgerId = LedgerId("ledger-monthly-host-test")
@@ -110,26 +113,82 @@ class P503LedgerViewHostCoordinatorTest {
         assertEquals(1, probe.monthlyRequests.size)
     }
 
-    // (e) every determinate success re-requests the monthly payload alongside the authoritative refresh.
+    // (e) every determinate success re-requests the monthly payload AFTER the refreshed overview
+    // lands (A-02 FIX-MONTH-1, D-152): arming the pending flag fires no synchronous request (the
+    // async refresh's result state would absorb the payload), the post-landing consumption fires
+    // exactly one unconditional request stamped on the LANDED month, and the (d) guard then stays
+    // quiet on the fresh overview.
 
     @Test
-    fun determinateSuccessRefreshReRequestsTheMonthlyPayloadWithoutDuplicates() {
+    fun determinateSuccessRefreshReRequestsTheMonthlyPayloadOnlyAfterItLands() {
         val (host, probe) = coordinator()
         val action = host.decide(P503AppState.Created)
         assertIs<HostAction.RefreshAfterResult>(action)
         assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        // The refreshed overview lands (selectedMonth = null = 本月) and the host consumes: exactly
+        // one unconditional request, and the (d) guard sees the stamped month with no duplicate.
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = null))
         assertEquals(1, probe.monthlyRequests.size)
-        // The refresh lands on a fresh overview (selectedMonth = null = 本月): no duplicate request.
         assertFalse(host.decideMonthly(overview(month = null)))
         assertEquals(1, probe.monthlyRequests.size)
     }
 
     @Test
-    fun noChangeAndRecoveredRefreshesReRequestTheMonthlyPayload() {
+    fun noChangeAndRecoveredRefreshesReRequestTheMonthlyPayloadAfterLanding() {
         val (host, probe) = coordinator()
+        // Each (e) event: arm on decide, exactly one unconditional request on its landing. The
+        // arms never overlap in the real host (an (e) landing rebuilding the overview is the
+        // precondition for the next flow's (e) event), so the pending boolean coalesces them.
         assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.NoChange))
+        assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
+
         assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Recovered))
         assertEquals(2, probe.refreshes.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(2, probe.monthlyRequests.size)
+    }
+
+    // (e) failure: a failed authoritative refresh clears the pending re-request without firing —
+    // recovery stays the residual boundary (a) path (a user re-select or the READ retry).
+
+    @Test
+    fun failedRefreshLandingClearsThePendingMonthlyReRequestWithoutRequesting() {
+        val (host, probe) = coordinator()
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Created))
+        assertEquals(0, probe.monthlyRequests.size)
+        host.dropMonthlyReRequestAfterFailedRefresh()
+        // A later consumption (the coalesced re-run landing) must stay a no-op after the drop.
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
+    // Landings without an armed (e) trigger (startup load, ordinary/READ-retry refreshes)
+    // consume nothing.
+
+    @Test
+    fun consumptionWithoutAnArmedTriggerNeverRequestsTheMonthlyPayload() {
+        val (host, probe) = coordinator()
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        host.dropMonthlyReRequestAfterFailedRefresh()
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
+    // The consumption stamps the LANDED month, so the (d) guard compares against it and a second
+    // consumption stays unconditional (each (e) event re-requests exactly once).
+
+    @Test
+    fun consumptionStampsTheLandedMonthAndStaysUnconditional() {
+        val (host, probe) = coordinator()
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Created))
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = YearMonth(2026, 3)))
+        assertEquals(1, probe.monthlyRequests.size)
+        assertFalse(host.decideMonthly(overview(month = YearMonth(2026, 3))))
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.NoChange))
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = YearMonth(2026, 4)))
         assertEquals(2, probe.monthlyRequests.size)
     }
 

@@ -85,8 +85,9 @@ internal fun dispatchCurrentP503Action(
  *     [requestMonthlyNow]); an absorbed shift re-requests nothing;
  * (d) an effective-month change, including 本月 re-resolution across a clock rollover
  *     ([decideMonthly], C01);
- * (e) the authoritative refresh after each determinate success ([decide] fires it alongside
- *     the refresh).
+ * (e) the authoritative refresh after each determinate success ([decide] arms the re-request;
+ *     the host completes it via [consumeMonthlyReRequestAfterRefresh] once the refreshed
+ *     overview lands — A-02 FIX-MONTH-1, D-152).
  * Tab switches, `CloseTransactionDetail`, ordinary refreshes and READ-retry recoveries never
  * re-request.
  */
@@ -116,6 +117,17 @@ internal class P503HostCoordinator(
 
     /** P7-03.C: the effective month of the last monthly request (trigger (d) comparison). */
     private var monthlyLastEffectiveMonth: kotlinx.datetime.YearMonth? = null
+
+    /**
+     * A-02 FIX-MONTH-1 (D-152): trigger (e) has fired its authoritative refresh and awaits the
+     * post-landing monthly re-request. `@Volatile` for the same reason as the single-flight
+     * markers: [decide] writes it on the UI thread and the refresh's main-dispatcher completion
+     * hop consumes it. The flag survives coalesced re-runs (the merged
+     * [P503CurrentStateLoadCoordinator] read may land later than the trigger) until the first
+     * landing, and is consumed exactly once.
+     */
+    @Volatile
+    private var pendingMonthlyReRequestAfterRefresh = false
 
     /**
      * P7-04.C (P704C-QUAL-02): an intake pipeline is currently running; a concurrent second pick
@@ -168,8 +180,13 @@ internal class P503HostCoordinator(
                     refreshAfterResultServed = state
                     onRefresh()
                     // Trigger (e): the authoritative refresh of a determinate success re-requests
-                    // the monthly payload for the fresh overview (P703SPEC-04).
-                    requestMonthlyNow(state)
+                    // the monthly payload for the fresh overview (P703SPEC-04). A-02 FIX-MONTH-1
+                    // (D-152): the re-request is armed here and COMPLETED by the host after the
+                    // refreshed overview lands ([consumeMonthlyReRequestAfterRefresh]) — the
+                    // A-PERF async rework moved the read off the UI thread, so a synchronous
+                    // request beside the refresh would read the still-transient result state and
+                    // its payload would be absorbed, leaving the month card AWAITING.
+                    pendingMonthlyReRequestAfterRefresh = true
                     HostAction.RefreshAfterResult
                 }
             }
@@ -221,8 +238,9 @@ internal class P503HostCoordinator(
      * (`analysisMonthShiftReRequest`) shows the reduced shift actually moved the cursor inside
      * the frozen SelectMonth domain (an absorbed shift never calls this). The host calls this
      * right after dispatching SelectMonth (including the failure-recovery re-dispatch of the
-     * same month, residual boundary (a)) and [decide] calls it after the determinate-success
-     * refresh. The effective month is recomputed from the (already reduced) state so the
+     * same month, residual boundary (a)) and [consumeMonthlyReRequestAfterRefresh] calls it
+     * after the determinate-success refresh lands (A-02 FIX-MONTH-1). The effective month is
+     * recomputed from the (already reduced) state so the
      * (d) guard sees the month that was actually requested.
      */
     internal fun requestMonthlyNow(state: P503AppState): Boolean {
@@ -231,6 +249,33 @@ internal class P503HostCoordinator(
         monthlyLastEffectiveMonth = effectiveMonth
         onMonthlyRequest()
         return true
+    }
+
+    /**
+     * A-02 FIX-MONTH-1 (D-152): completes trigger (e)'s armed re-request AFTER the authoritative
+     * refresh landed. The host calls this from the refresh's success branch once the
+     * `RefreshResult` has been dispatched, passing the LANDED state (the fresh
+     * `OverviewEmpty`): the pending flag clears and [requestMonthlyNow] fires exactly one
+     * unconditional re-request stamped on the landed month, so the unified payload actually
+     * reaches the new overview instead of being absorbed by the former still-transient state.
+     * The (a)/(d) guard logic is unchanged: the stamp here keeps the immediately following
+     * overview evaluation from double-requesting. A landing without an armed trigger (startup
+     * load, ordinary or READ-retry refreshes) is a no-op.
+     */
+    internal fun consumeMonthlyReRequestAfterRefresh(landedState: P503AppState) {
+        if (!pendingMonthlyReRequestAfterRefresh) return
+        pendingMonthlyReRequestAfterRefresh = false
+        requestMonthlyNow(landedState)
+    }
+
+    /**
+     * A-02 FIX-MONTH-1 (D-152): the refresh's failure branch (`RefreshFailed` dispatched) clears
+     * the armed re-request without firing — a failed landing requests nothing, and recovery stays
+     * the P703SPEC-11 residual boundary (a) path (a user re-select or the READ retry). The flag
+     * is cleared so a later unrelated refresh landing cannot consume a stale trigger.
+     */
+    internal fun dropMonthlyReRequestAfterFailedRefresh() {
+        pendingMonthlyReRequestAfterRefresh = false
     }
 
     /**
