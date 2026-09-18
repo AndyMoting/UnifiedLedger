@@ -1,15 +1,15 @@
 # P7-04 收尾批：A-PERF 导入候选全量读治理实施规格（性能批）
 
-状态：approved（规格草案 v2.2 冻结候选 = v2.1 评审 APPROVE + 修复前基线实测 D-D 裁决吸收；本 tracked 版由该冻结候选按本目录既有 design 文档组织风格正式落盘，全部裁决/约束/门槛逐条忠实保留。源码基线 `f13f426`，schema v30）。
+状态：approved（规格草案 v2.2 冻结候选 = v2.1 评审 APPROVE + 修复前基线实测 D-D 裁决吸收；本 tracked 版由该冻结候选按本目录既有 design 文档组织风格正式落盘，全部裁决/约束/门槛逐条忠实保留。源码基线 `f13f426`，schema v30）。2026-09-18 A-DOC 措辞同步见下方 Revision 注记（无裁决变更）。
 
-**Revision:** v2.2（2026-09-17 冻结候选）。依据：`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-PERF、§10.3；D-146/D-147；2026-09-16/17 设备证据（PROGRESS_LOG，主检出本地文件）；修复前基线实测（2026-09-17，本地证据包：ANR 实测 + host 复算 255.98s→0.24s + SQLite 官方文档语义核实）。v2.2 相对 v2.1 的唯一增量 = §0 基线裁决（D-D，替代悬置分支 D-B/D-C 的证据裁决）。本规格冻结三层修复面（层0 统计刷新 / 层1 定向读 / 层2 主线程 catalog 读治理）、测量门槛与显式非目标；实施、Git 写操作与最终验收属本 worktree 实施批。
+**Revision:** v2.2（2026-09-17 冻结候选）。依据：`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-PERF、§10.3；D-146/D-147；2026-09-16/17 设备证据（PROGRESS_LOG，主检出本地文件）；修复前基线实测（2026-09-17，本地证据包：ANR 实测 + host 复算 255.98s→0.24s + SQLite 官方文档语义核实）。v2.2 相对 v2.1 的唯一增量 = §0 基线裁决（D-D，替代悬置分支 D-B/D-C 的证据裁决）。本规格冻结三层修复面（层0 统计刷新 / 层1 定向读 / 层2 主线程 catalog 读治理）、测量门槛与显式非目标；实施、Git 写操作与最终验收属本 worktree 实施批。**Revision 注记（2026-09-18，A-DOC wording sync）：** §0 第 4 条 `optimize`→统计刷新（ANALYZE）措辞、§2.1 新增 APSPEC-05「恰一次」张力解释、§3 统计刷新泛指化，另 §0「返工 3 根因披露」补 2026-09-17 设备实测通过注记；均为措辞与证据补登，无裁决/约束/门槛变更。
 
 ## Authority And Boundary
 
 本规格逐条对齐以下权威（tracked 文件行号为工作基线 `f13f426` 实读行号；`.local.md` 与本地证据包以主 checkout 为准、只读）：
 
 - **阶段计划**：`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-PERF（导入候选全量读治理）、§10.3（超门槛项处置流程）。
-- **决定（已确认/已批准）**：D-146（P7-04 导入与草稿确认批次裁决族）、D-147（P7-05 枚举性能批：会话级批量读 + v30 覆盖索引 `import_duplicate_candidate_subject_idx`，本批读形态治理的直接前置）。
+- **决定（已确认/已批准）**：D-146（P7-04 导入与草稿确认批次裁决族）、D-147（开卡枚举性能批：会话级批量读 + v30 覆盖索引 `import_duplicate_candidate_subject_idx`，本批读形态治理的直接前置）。
 - **SQLite 官方语义（基线报告 §2 落库的中立契约）**：ANALYZE 统计不随内容自动更新；内容约 10 倍变化触发 `PRAGMA optimize` 重分析；长连接推荐 open 后 `PRAGMA optimize=0x10002` + 周期 `PRAGMA optimize`；`PRAGMA optimize` 通常近 no-op 且很快，并随 schema 变化（CREATE INDEX 后）推荐执行；3.46.0+ 自动带 `analysis_limit`。
 - **不可触碰面**：`.external/` 只读；`rgXX_` 竖井与 golden fixtures/expected 零改动；D-147 会话批量读语义、19 子型渲染模型、披露行先例不动；schema 停留 v30（本批零 DDL）；月度查询/单笔读/写事务的主线程现状不在本批（§5 披露）。
 
@@ -22,7 +22,7 @@
 **D-D 裁决（已按基线证据裁决，替代 D-B/D-C 悬置分支）**：
 
 - **层0（新增，主修复）**：统计刷新机制——Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网）；接治收尾（intake pipeline 完成事务后）后台执行**显式 `ANALYZE;`（全 schema）**（返工 3，设备证据裁决，见下）。desktop 同链共享。零 DDL、零 schema 变更、零查询重写、零产品语义变更。PRAGMA/ANALYZE 语句经现有驱动执行面（AndroidSqliteDriver / JDBC），不新增依赖。
-- **返工 3 根因披露（2026-09-17 设备复测，AVD ul_p7_d01，API 36 系统 SQLite 3.44.3，20k 库）**：`PRAGMA optimize` 的重分析资格依赖「该表曾被 stat1 规划」——import 表首次启动时无统计、无规划历史，二者皆无，官方 10× 规则救不了首次；实测 bootstrap 触发后 `sqlite_stat1` 仅 catalog 表 4 行、import 表零统计，`PRAGMA optimize=0x10002` 重跑同样不分析 import 表（0x10000 全表位属较新版本行为），列表查询仍选错 autoindex 卡 300+s；手动 `ANALYZE` import 三表后列表 2.4s 落地。故接治收尾点改用强保证 `ANALYZE;`，且该 hook 在 `runImportIntakePipeline` 的 Default 线程、列表重读**之前**执行——统计永远先于读落地。**边界披露**：外部注入库（未来 P7-06 恢复路径）的统计新鲜度归该批处理，本批不静默扩大。**执行面披露（返工 3 实测，对返工 3 指示"统一 executeQuery 面"的偏离）**：按语句结果形态各归其消耗面，两个触发点测试分别钉死——`PRAGMA optimize` 有结果列，走 executeQuery 面（Android rawQuery 等价安全面；有结果列语句经 execute/executeForChangedRowCount 会被拒，busy_timeout 教训路径）；`ANALYZE;` 无结果行：JDBC 端实测 sqlite-jdbc executeQuery 拒绝无结果语句（"Query does not return results"，DesktopQueryStatisticsOptimizeTriggerTest 失败钉死）→ desktop 走 `driver.execute()`；Android 端 executeForChangedRowCount 的拒绝仅适用于**返回结果行**的语句，无结果行的 ANALYZE 预期可行（代码级推论，非设备实测）——**设备复测必须实测**：接治收尾后 `sqlite_stat1` 须出现 import 表统计行，否则本返工 FAIL。
+- **返工 3 根因披露（2026-09-17 设备复测，AVD ul_p7_d01，API 36 系统 SQLite 3.44.3，20k 库）**：`PRAGMA optimize` 的重分析资格依赖「该表曾被 stat1 规划」——import 表首次启动时无统计、无规划历史，二者皆无，官方 10× 规则救不了首次；实测 bootstrap 触发后 `sqlite_stat1` 仅 catalog 表 4 行、import 表零统计，`PRAGMA optimize=0x10002` 重跑同样不分析 import 表（0x10000 全表位属较新版本行为），列表查询仍选错 autoindex 卡 300+s；手动 `ANALYZE` import 三表后列表 2.4s 落地。故接治收尾点改用强保证 `ANALYZE;`，且该 hook 在 `runImportIntakePipeline` 的 Default 线程、列表重读**之前**执行——统计永远先于读落地。**边界披露**：外部注入库（未来 P7-06 恢复路径）的统计新鲜度归该批处理，本批不静默扩大。**执行面披露（返工 3 实测，对返工 3 指示"统一 executeQuery 面"的偏离）**：按语句结果形态各归其消耗面，两个触发点测试分别钉死——`PRAGMA optimize` 有结果列，走 executeQuery 面（Android rawQuery 等价安全面；有结果列语句经 execute/executeForChangedRowCount 会被拒，busy_timeout 教训路径）；`ANALYZE;` 无结果行：JDBC 端实测 sqlite-jdbc executeQuery 拒绝无结果语句（"Query does not return results"，DesktopQueryStatisticsOptimizeTriggerTest 失败钉死）→ desktop 走 `driver.execute()`；Android 端 executeForChangedRowCount 的拒绝仅适用于**返回结果行**的语句，无结果行的 ANALYZE 预期可行（代码级推论，非设备实测）——**设备复测必须实测**：接治收尾后 `sqlite_stat1` 须出现 import 表统计行，否则本返工 FAIL。**该实测要求已由 2026-09-17 设备复测通过而解除**：接治收尾后 `sqlite_stat1` 生成 import 表统计行（跨重启持久），fresh-start 卡死消除——Android execute 面推论成立，详见 PROGRESS_LOG 续6/续7 与设备复测报告。
 - **层0 实施坑与接口约束（反编译 android-driver 2.3.2 证实 + 实测钉死，实施必须遵守）**：
   1. `PRAGMA optimize` **不得进入 Ledger.sq 命名查询**——SQLDelight 将 PRAGMA 归类为 EXECUTE 语句走 `driver.execute()`，Android 链到 androidx `executeUpdateDelete`/`SQLiteSession.executeForChangedRowCount`，对返回结果列的语句抛 "Queries can be performed using SQLiteDatabase query or rawQuery methods only"（busy_timeout 教训同路径，`AndroidLedgerDatabaseHandle.kt:98-100` 注记）。
   2. Android 端执行面 = `driver.executeQuery(null, "PRAGMA optimize", mapper, 0, null)`（rawQuery 等价安全面；先例 = `AndroidLedgerDatabaseHandle.kt:25-32` SELECT 1 探针）。`AndroidSqliteDriver` 的 driver 字段是 handle 的 private 成员——**handle 新开一个受控执行入口**，由组合根在触发点调用。
@@ -94,7 +94,7 @@
 
 ## 5. 测试与验收
 
-- **JVM**：adapter 层定向读等价测试（详情/探针与整账本读+过滤逐行等价，含重复折叠 / absent-vs-empty / G6 Unavailable 语义）；层0 触发点结构断言（bootstrap 后/接治收尾后各一次 optimize 的可观察性——以最小注入面实现，不引 mock 库，按仓内既有测试风格）；层2 空窗占位与 single-flight 断言。既有 536/521/343/48 套件零回归。
+- **JVM**：adapter 层定向读等价测试（详情/探针与整账本读+过滤逐行等价，含重复折叠 / absent-vs-empty / G6 Unavailable 语义）；层0 触发点结构断言（bootstrap 后/接治收尾后各一次统计刷新的可观察性——bootstrap 为 `PRAGMA optimize`、接治收尾为显式 `ANALYZE;`，以最小注入面实现，不引 mock 库，按仓内既有测试风格）；层2 空窗占位与 single-flight 断言。既有 536/521/343/48 套件零回归。
 - **设备**：§6 门槛全程计时 + 修复后复测；ANR/OOM 零容忍（合法规模下）。设备验收绑定 AVD（Android）。
 
 ## 6. 测量门槛与验收（冻结）

@@ -2830,7 +2830,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-148 导入候选读治理批（A-PERF：层0 统计刷新 / 层1 定向读 / 层2 主线程 catalog 读治理）
 
-**状态：** 已批准并交付（2026-09-17 完整收口：双评审 APPROVE + verifier 全 VERIFIED + 设备复测全项 + merge `e61b9a0` + 同提交 CI run `35280369455` 三 job 全 success）。
+**状态：** 已批准并交付（实施链 2026-09-17 `4c4b7e3`→`169f008`→`82b54ef`；merge `e61b9a0` 于 2026-09-18 收口：双评审 APPROVE + verifier 全 VERIFIED + 设备复测全项 + 同提交 CI run `35280369455` 三 job 全 success）。
 
 **授权依据：** 用户 2026-09-17 /goal 常设授权「计划范围内经独立取证和研判后的推荐方案授权主代理批准、记录并继续执行」；本批走完整验收拓扑（单 bounded writer 于隔离 worktree → 双评审两轮 REQUEST-CHANGES 后 APPROVE → distinct verifier → 主代理设备窗口 → 主代理终检合并推送）。
 
@@ -2838,9 +2838,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 1. **层0 统计刷新机制（主修复）**：Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网）+ 接治收尾（intake pipeline 完成事务后）后台执行显式 `ANALYZE;`（全 schema，强保证）；desktop 同链共享。设备证据裁决（API 36 系统 SQLite 3.44.3，20k 库）：`PRAGMA optimize` 的重分析资格依赖「该表曾被 stat1 规划」——import 表首次启动无统计、无规划历史，官方 10× 规则救不了首次，全新库列表查询卡死 300+s；显式 `ANALYZE` 后同库同查询 2.4s 落地，故接治收尾点改用强保证。执行面 one-surface-per-statement-form（返工 3 实测偏离「统一 executeQuery 面」指示并如实披露）：`PRAGMA optimize` 有结果列走 executeQuery 面（Android rawQuery 等价安全面）；`ANALYZE;` 无结果行 desktop 走 `driver.execute()`（JDBC executeQuery 拒绝无结果语句，测试钉死）、Android executeForChangedRowCount 面可行。Android execute 面推论已由设备复测解除（2026-09-17 两轮设备复测：接治收尾后 `sqlite_stat1` 生成 import 表统计行，fresh-start 卡死消除）。
 2. **层1 定向读（纯查询形态替换）**：新增 `importReviewRowForCandidate` 等三条纯 SELECT 命名查询——单候选详情主键定向读（替换整账本读+过滤）、重复探针轻量定向查询、会话批量空探针 `input_ref` 定向查询（替换 4-JOIN 整账本空探针）；空/缺语义逐分支等价。列表读本体保留整账本读（D-D 裁决：统计修复后 20k 库列表查询 0.24s，无需投影裁剪）。
-3. **层2 主线程 catalog 读治理（直击 ANR 根因）**：catalog 读路径（组合期/刷新链/事件路径）移出主线程——缓存 State + single-flight 后台加载 + 主调度器 hop 串行 dispatch + 晚到旧快照不覆盖新状态；数据未就绪呈现载入中占位、不得把空集呈现为权威目录；异步完成事件经吸收表防 `unhandled` 尾 ISE。修复前基线（20k 库）：B2/B3/B5 均 ~5s 超门槛、B6 组开卡触发 app ANR（主线程等连接 30.015s）。
+3. **层2 主线程 catalog 读治理（直击 ANR 根因）**：catalog 读路径（组合期/刷新链/事件路径）移出主线程——缓存 State + single-flight 后台加载 + 主调度器 hop 串行 dispatch + 晚到旧快照不覆盖新状态；数据未就绪呈现载入中占位、不得把空集呈现为权威目录；异步完成事件经吸收表防 `unhandled` 尾 ISE。修复前基线：10k 库 B2/B3/B5 ≈5s 超门槛；20k 库 B6 组开卡触发 app ANR（主线程等连接 30.015s）。
 
-**验收拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree，实施链 `4c4b7e3`→`169f008`→`82b54ef`，20 文件 +1747/−49）→ 双评审两轮 REQUEST-CHANGES 后 delta 复核双双 APPROVE（APQUAL-01/02/05、APSPEC-01 闭合；新登记 APQUAL-R3-01..04、APSPEC-R3-01..03）→ distinct verifier V1-V11 全 VERIFIED（含 V8 零 DDL 实质：整批 `.sq` 增量为纯 SELECT）→ 设备复测全项：fresh-start B2 = 4.93s（修复前同场景 300+s 卡死）；B6 20k 组开卡冷开 2.61s（门槛 ≤3s，R4/R5 re-tap 2.64s/2.62s）；B2/B3/B5 地板校准后同带；全程零 ANR/OOM/FATAL。合并 merge `e61b9a0`，push 前 clean trace valid=true，同提交 CI run `35280369455` 三 job（Kotlin/Python/Android compile）全 success。
+**验收拓扑与验证（全部以仓库现实为准）：** 单 bounded writer（隔离 worktree，实施链 `4c4b7e3`→`169f008`→`82b54ef`，20 文件 +1747/−49）→ 双评审两轮 REQUEST-CHANGES 后 delta 复核双双 APPROVE（APQUAL-01/02/05、APSPEC-01 闭合；新登记 APQUAL-R3-01..04、APSPEC-R3-01..03）→ distinct verifier V1-V11 全 VERIFIED（含 V8 零 DDL 实质：整批 `.sq` 增量为纯 SELECT）→ 设备复测全项（uiautomator dump 地板实测 ~2.29s/次，报告同时给出原始与地板校准值，门槛判定以校准值为据）：fresh-start B2 = 4.93s 原始 / ≤~2.7s 校准（门槛 ≤3s，修复前同场景 300+s 卡死）；B3 热刷新 5.03s 原始 / ≤~2.7s 校准（门槛 ≤3s）；B5 单候选详情 ≤~2.4s 校准（门槛 ≤1s）；B6 20k 组开卡冷开 2.61s 原始 / ≤~1s 校准（门槛 ≤3s，R4/R5 re-tap 2.64s/2.62s）；全程零 ANR/OOM/FATAL。合并 merge `e61b9a0`，push 前 clean trace valid=true，同提交 CI run `35280369455` 三 job（Kotlin/Python/Android compile）全 success。
 
 **登记（均不阻塞）：** APQUAL-03/04、APSPEC-02/03/04/05、APSPEC-R3-01/02/03、APQUAL-R3-01..04、两条测试编译 warning（APSPEC-R3-01 spec §0 措辞残留与 APQUAL-R3-02 PENDING 注释滞后由 A-DOC 批承接改写，APSPEC-05 张力解释放同由 A-DOC 承接）。**范围外观察项**：OBS-APERF-INPUT-FREEZE（长连发合成 fling 后列表指针输入冻结，两次独立复现，疑似 Compose pointerInput 在合成 fling 风暴下状态卡滞，真实用户手势能否触发未验证——独立排查另批，不并入本批缺陷分母）；50k 冷读 31.6s（超冻结 20k 口径，归裁决）。规格：`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`（v2.2 冻结候选落盘）。
 
@@ -2863,3 +2863,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **登记（均不阻塞）：** A041QUAL-01（org.json `optString` null 哨兵边界，fail-loud 不需改）、A041QUAL-02（D-116 fixture 内嵌 BIFF WriteAccess 含 Windows 账户名，非本批引入——归 A-DOC 批清理）、A042IMPSPEC-01/02、A042IMPQUAL-01/02（均 INFO）。规格：`docs/specs/2026-09-17-p7-04-ccb-android-parser-verification-design.md`（A-04.1，v2 冻结）、`docs/specs/2026-09-18-p7-04-ccb-xls-android-capability-flip-design.md`（A-04.2/A-04.3，v3 冻结）。
 
 **关联决定：** D-146（Q08 格式能力矩阵与 R-Q08-3 诚实义务——本批翻转其冻结矩阵单一单元，其余单元零触碰）、D-147（设备库与导入读治理前置——A-04.2 设备窗口隐含复验 A-PERF 修复在产品路径持续有效）、D-116（CCB 采用 POI HSSF 的原始裁决——本批以设备证据闭合其 Android 待验证面）、D-099（POI 依赖面：`poi` 留 jvmMain 供建行 HSSF 未变）。
+
+## D-150 A-DOC 批登记（2026-09-18）：正式状态同步与 CCB fixture WriteAccess 隐私清理
+
+**状态：** 已批准并交付（2026-09-18，A-DOC 批次：正式状态同步 + 已登记文案项承接 + fixture 隐私清理；无裁决变更）。
+
+**决定：**
+
+1. **A041QUAL-02 闭合**：D-149 登记为「D-116 fixture 内嵌 BIFF WriteAccess 含 Windows 账户名，非本批引入——归 A-DOC 批清理」的该项已由本批完成——`tests/fixtures/batch-bp01-ccb-*.xls` 7 个 fixture 与其 androidTest assets 7 个副本（共 7 对）内嵌的 WriteAccess 账户名全部替换为合成值（两目录副本同步，7 对逐字节互同）。
+2. **固定替换约定（钉死）**：合成值 `SYN-CCB-USER`（12 字符）。WriteAccess 记录长度字段保持 112 不变（记录头仍为 `005C` + `0070`），仅字符数字段由 6 改为 12（`0C00`）。该记录属解析惰性面：JVM 逐字节期望同步测试与 assets 防漂移测试均绿（`:ledger-application:jvmTest` 528/0）。
+3. **残余暴露面披露（不得静默）**：本次清理只覆盖工作树与本次及之后的提交；旧标识仍可达于既有历史——其存在于本批基线 `c93e18a`（`origin/main` head）及更早提交中。历史重写（filter-repo/BFG 等）会改变全部下游提交哈希并影响协作与证据引用，属独立决定，本批不做、也不隐含授权。
+
+**关联决定：** D-149（本条闭合其登记项 A041QUAL-02）、D-116（CCB fixture 来源批与 BIFF 记录形态）、D-146/D-147/D-148（正式状态同步所对齐的批次口径）。
