@@ -27,7 +27,7 @@
   1. `PRAGMA optimize` **不得进入 Ledger.sq 命名查询**——SQLDelight 将 PRAGMA 归类为 EXECUTE 语句走 `driver.execute()`，Android 链到 androidx `executeUpdateDelete`/`SQLiteSession.executeForChangedRowCount`，对返回结果列的语句抛 "Queries can be performed using SQLiteDatabase query or rawQuery methods only"（busy_timeout 教训同路径，`AndroidLedgerDatabaseHandle.kt:98-100` 注记）。
   2. Android 端执行面 = `driver.executeQuery(null, "PRAGMA optimize", mapper, 0, null)`（rawQuery 等价安全面；先例 = `AndroidLedgerDatabaseHandle.kt:25-32` SELECT 1 探针）。`AndroidSqliteDriver` 的 driver 字段是 handle 的 private 成员——**handle 新开一个受控执行入口**，由组合根在触发点调用。
   3. Desktop 落点 = `buildLedgerGraph` 内 `bootstrapAuthority`（`Main.kt:325` 调用点）之后执行一次（官方 open 时模式；JDBC `driver.execute` 对返回列 PRAGMA 不抛，busy_timeout 先例 `configureSqliteConnection` 即该面；但语义上不塞进 configureSqliteConnection，保持统计维护与连接配置分离）；接治收尾触发与 Android 共享 commonMain `runImportIntakePipeline`，desktop 侧 driver 执行入口同样经受控 handle/graph 方法暴露（`CloseableLedgerGraph` 现不暴露 driver，同接口缺口一并补）。
-  4. 触发点最小集推理留痕：整组处置/审核只写 `import_duplicate_status_history` 状态行、不新增 `import_duplicate_candidate` 行——接治收尾跑过一次 ANALYZE 后，dup 表行数不变（官方 10× 规则）不再依赖新分析，处置收尾**不需要第三个触发点**。`import_duplicate_status_history` 在整组处置中可新增 ~10k 行（10× 可达），但其读路径全走 PK `(ledger_id, candidate_id, sequence)` 索引、无统计敏感性，且接治收尾点已在处置前跑过 optimize——不为其加触发点，如实登记此边界。
+  4. 触发点最小集推理留痕：整组处置/审核只写 `import_duplicate_status_history` 状态行、不新增 `import_duplicate_candidate` 行——接治收尾跑过一次统计刷新（ANALYZE）后，dup 表行数不变（官方 10× 规则）不再依赖新分析，处置收尾**不需要第三个触发点**。`import_duplicate_status_history` 在整组处置中可新增 ~10k 行（10× 可达），但其读路径全走 PK `(ledger_id, candidate_id, sequence)` 索引、无统计敏感性，且接治收尾点已在处置前跑过统计刷新（ANALYZE）——不为其加触发点，如实登记此边界。
 - D-B 分支（轻量列表投影）**不启用**：基线证明统计修复后列表查询 0.24s（20k 库 host），无需投影裁剪。
 - D-C 分支（列表读零改动）确认：列表读本体保留整账本读。
 - 30k 铺库不必要：20k 已复现 ANR（同根因更劣规模），修复后复测以 20k 库为准（B6 组开卡、B2/B3 刷新、B5 详情）。
@@ -55,6 +55,7 @@
 
 - Android 端启动 bootstrap 完成点后台执行 `PRAGMA optimize`（安全网，对有 stat1 规划历史的表有效）；接治收尾（intake pipeline 完成事务后）后台执行显式 `ANALYZE;`（强保证，§0 返工 3 根因披露）。desktop 同链共享（§0 实施坑 1-4 逐条适用）。
 - 触发点最小集 = 恰好两处（bootstrap 完成点 + 接治收尾点）；不加第三个触发点的推理边界见 §0 第 4 条。
+- 「接治收尾恰一次」的张力解释（APSPEC-05 落盘）：该「恰一次」由管线结构保证，而非独立结构断言——统计刷新 hook 位于 `runImportIntakePipeline` 单飞管线内（每次接治收尾恰调用一次、列表重读之前执行），不在处置/审核等其他路径上重复出现；无独立结构断言属登记边界（与 APSPEC-03「测试以最小注入面实现、不引 mock 库」同族），触发测试钉死的是两个触发点各恰一次的可观察性。
 
 ### 2.2 层1：定向读（纯查询形态替换，零 DDL）
 
@@ -84,7 +85,7 @@
 - 不动 D-147 会话批量读语义、19 子型渲染模型、披露行先例。
 - 不引入新生产依赖；零 DDL（层1 全部只读命名查询；若基线证明需新索引，另行裁决——基线已证明无需）。
 - 不改月度查询/写事务的主线程现状（§2.3 范围外披露）。
-- 不做第三个 optimize 触发点（§0 推理边界如实登记）。
+- 不做第三个统计刷新触发点（§0 推理边界如实登记；接治收尾已显式 ANALYZE，处置读路径无统计敏感性）。
 
 ## 4. 决策点（全部已裁决）
 

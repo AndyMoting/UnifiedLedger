@@ -42,12 +42,12 @@ import app.cash.sqldelight.db.SqlDriver
  *     statements that do not produce result sets — the DesktopQueryStatisticsOptimizeTriggerTest
  *     failure that pinned this), so on desktop it rides `driver.execute(...)` — the correct
  *     surface for a row-less statement (the JDBC busy_timeout precedent uses the same face).
- *   - Android (expected, DEVICE-VERIFICATION PENDING): the same androidx rejection applies
- *     only to statements that RETURN result rows; a row-less ANALYZE is acceptable through
- *     the executeForChangedRowCount path (execSQL-shaped). This half is a code-level
- *     expectation, NOT device-measured — the device re-test MUST verify that intake
- *     completion actually produces import-table statistics (sqlite_stat1 gains import rows);
- *     if the intake hook's statistics still do not land, that is a FAIL of this rework.
+ *   - Android (device-verified 2026-09-17, two device re-test sessions): the same androidx
+ *     rejection applies only to statements that RETURN result rows; a row-less ANALYZE is
+ *     acceptable through the executeForChangedRowCount path (execSQL-shaped). The device
+ *     re-tests confirmed the intake hook actually produces import-table statistics
+ *     (sqlite_stat1 gained the import-table rows after intake completion; the fresh-start
+ *     stuck list was eliminated).
  *
  * Zero DDL, zero schema change, zero query rewrite, zero product semantics: these only help
  * the planner pick the already-shipped indexes.

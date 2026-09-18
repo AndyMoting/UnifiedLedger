@@ -99,11 +99,11 @@ class AndroidLedgerDatabaseHandle internal constructor(
      * Default thread BEFORE the list re-read) needs the strong guarantee. ANALYZE is a row-less
      * statement and rides `driver.execute` (the changed-row-count surface): the androidx
      * executeForChangedRowCount rejection that forced PRAGMA optimize onto executeQuery applies
-     * only to statements that RETURN result rows, so a row-less ANALYZE is expected to pass —
-     * a code-level expectation the device re-test must confirm (the intake hook must actually
-     * produce import-table statistics; the JDBC half of this two-sided reasoning is
-     * JVM-measured — executeQuery rejects result-less statements there). Full disclosure in
-     * [runFullAnalyzeOn].
+     * only to statements that RETURN result rows, so a row-less ANALYZE passes — device-verified
+     * 2026-09-17 (two device re-test sessions: the intake hook actually produces import-table
+     * statistics, sqlite_stat1 gaining the import-table rows after intake completion; the JDBC
+     * half of this two-sided reasoning is JVM-measured — executeQuery rejects result-less
+     * statements there). Full disclosure in [runFullAnalyzeOn].
      */
     fun runFullAnalyze() {
         runFullAnalyzeOn(driver)
