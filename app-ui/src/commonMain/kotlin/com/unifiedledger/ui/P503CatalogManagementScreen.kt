@@ -498,9 +498,9 @@ internal const val CATALOG_SWITCH_LEDGER_ENABLED: Boolean = false
 internal const val CATALOG_SWITCH_LEDGER_BUTTON_TEXT: String = "切换账本"
 
 /**
- * The honest suffix next to the disabled trigger — same honesty class as the import format
- * matrix's 待设备运行验证，暂不可用 line (R-Q08-3): never presented as usable, never a dead
- * button without explanation.
+ * The honest suffix next to the disabled trigger — same honesty class as an import format
+ * matrix entry still pending device runtime verification: never presented as usable, never a
+ * dead button without explanation (R-Q08-3).
  */
 internal const val CATALOG_SWITCH_LEDGER_HONEST_SUFFIX_TEXT: String = "（多账本未启用）"
 

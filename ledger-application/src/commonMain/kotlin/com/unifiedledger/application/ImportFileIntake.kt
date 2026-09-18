@@ -55,7 +55,12 @@ const val IMPORT_INTAKE_MAX_ACCEPTED_RECORDS: Int = 10_000
 
 /** Typed reasons a format cannot be intaken on the current platform (spec section 4.6). */
 enum class ImportFormatUnavailableReason {
-    /** The matrix marks the format pending device runtime verification on this platform (CCB XLS on Android). */
+    /**
+     * The matrix marked the format pending device runtime verification on this platform. The
+     * CCB XLS on Android case flipped to available after A-04.1's instrumented verification;
+     * the reason stays in the value set so the intake (a) gate keeps its typed pending
+     * branch for any future format that re-enters the pending state.
+     */
     PENDING_DEVICE_VERIFICATION,
 
     /** A runtime-required charset (GB18030 for Alipay CSV) is not supported by the runtime. */

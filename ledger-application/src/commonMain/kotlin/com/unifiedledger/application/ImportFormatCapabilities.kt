@@ -5,12 +5,12 @@ package com.unifiedledger.application
  *
  * The matrix is an immutable code declaration: each entry carries a format identifier, a
  * display name, the MIME filter set handed to the platform file picker, and the per-platform
- * availability. The UI must only offer formats the matrix declares available; the Android
- * column for the CCB XLS format stays [ImportFormatAvailability.PENDING_DEVICE_VERIFICATION]
- * (HSSF has no official Android backing, spec section 2.2 X-4) and must not be presented as
- * available until the Android runtime-evidence gate (R-Q08-4, D01) passes. Runtime
- * discrimination (the GB18030 charset probe, container pre-checks) never changes this
- * declaration; it is layered on top by the intake orchestration (spec section 4.2).
+ * availability. The UI must only offer formats the matrix declares available. A format's
+ * Android availability may only flip from [ImportFormatAvailability.PENDING_DEVICE_VERIFICATION]
+ * to [ImportFormatAvailability.AVAILABLE] once the device runtime-evidence gate has passed —
+ * the CCB XLS unit did so after A-04.1's instrumented verification (HSSF equivalence on
+ * Android). Runtime discrimination (the GB18030 charset probe, container pre-checks) never
+ * changes this declaration; it is layered on top by the intake orchestration (spec section 4.2).
  */
 enum class ImportPlatformKind {
     ANDROID,
@@ -89,9 +89,9 @@ object ImportFormatCapabilities {
         )
 
     /**
-     * CCB online-banking XLS. Desktop reads it through HSSF (`poi` stays in jvmMain);
-     * Android is pending device runtime verification and must not be shown as available
-     * (spec section 3.1.1, X-4).
+     * CCB online-banking XLS. Both platforms read it through HSSF (`poi` stays in jvmMain);
+     * the Android unit flipped to available after A-04.1's instrumented verification proved
+     * HSSF executable on Android with JVM-oracle-equivalent results (D-146 matrix, Q08-3).
      */
     val CCB_XLS: ImportFormatDescriptor =
         ImportFormatDescriptor(
@@ -100,7 +100,7 @@ object ImportFormatCapabilities {
             mimeFilters = listOf("application/vnd.ms-excel"),
             availability =
                 mapOf(
-                    ImportPlatformKind.ANDROID to ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+                    ImportPlatformKind.ANDROID to ImportFormatAvailability.AVAILABLE,
                     ImportPlatformKind.DESKTOP to ImportFormatAvailability.AVAILABLE,
                 ),
         )

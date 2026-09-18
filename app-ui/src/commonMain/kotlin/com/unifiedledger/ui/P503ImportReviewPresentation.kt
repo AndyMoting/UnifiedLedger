@@ -175,9 +175,10 @@ internal data class ImportFormatEntry(
 
 /**
  * The import entries the UI renders for a platform: every matrix format appears (不静默省略),
- * each with its declared availability on that platform — the CCB XLS entry on Android carries
- * PENDING_DEVICE_VERIFICATION and is never presented as 可用 (R-Q08-3); picking it still runs the
- * pipeline so the intake (a) gate produces the typed 该格式在 Android 待运行验证 result.
+ * each with its declared availability on that platform. A format whose matrix unit is still
+ * [ImportFormatAvailability.PENDING_DEVICE_VERIFICATION] would render with that honest status
+ * (R-Q08-3); after A-04.1's instrumented verification the CCB XLS Android unit flipped to
+ * AVAILABLE (A-04.2), so all four formats currently render as available on both platforms.
  */
 internal fun importFormatEntries(platform: ImportPlatformKind): List<ImportFormatEntry> = ImportFormatCapabilities.ALL.map { ImportFormatEntry(descriptor = it, availability = it.availabilityOn(platform)) }
 
