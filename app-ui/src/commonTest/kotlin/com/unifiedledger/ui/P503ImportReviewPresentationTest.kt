@@ -36,9 +36,9 @@ import kotlin.test.assertTrue
  * Pins the six-class classification matrix with the incomplete-first RED LINE (a NO_FUNDS
  * candidate's folded DEFERRED duplicate status must never read as 疑似重复待审核), the D03 batch
  * group boundary (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED 入组；异次选择/异 kind/非 DEFERRED
- * 出组), the honest format matrix (CCB XLS on Android is never shown as available and never
- * silently omitted), the session summary/failure copy, and the decision form face + validation
- * (mixed 确认时间必填， E13).
+ * 出组), the honest format matrix (every format appears with its declared availability; all
+ * four are available on both platforms since the A-04.2 flip), the session summary/failure
+ * copy, and the decision form face + validation (mixed 确认时间必填， E13).
  */
 class P503ImportReviewPresentationTest {
     private val cny = CurrencyUnit("CNY", 2)
@@ -430,20 +430,16 @@ class P503ImportReviewPresentationTest {
         assertTrue(importPossibleExistingSourceText(null).contains("无指向目标"))
     }
 
-    // ---- format capability matrix (R-Q08-3; CCB XLS on Android never shown as available) ----
+    // ---- format capability matrix (R-Q08-3; A-04.2 flip: all four formats available on Android) ----
 
     @Test
-    fun androidShowsAllFourEntriesButCcbXlsIsNeverAvailable() {
+    fun androidShowsAllFourEntriesAllAvailable() {
         val entries = importFormatEntries(ImportPlatformKind.ANDROID)
         assertEquals(ImportFormatCapabilities.ALL.map { it.identifier }, entries.map { it.descriptor.identifier })
-        val ccb = entries.single { it.descriptor.identifier == ImportFormatCapabilities.CCB_XLS.identifier }
-        assertEquals(ImportFormatAvailability.PENDING_DEVICE_VERIFICATION, ccb.availability)
-        assertFalse(ccb.availability == ImportFormatAvailability.AVAILABLE)
-        // The other three formats are offered as available on Android.
-        assertEquals(
-            3,
-            entries.count { it.availability == ImportFormatAvailability.AVAILABLE },
-        )
+        // A-04.1's instrumented verification flipped the CCB XLS Android matrix unit to
+        // AVAILABLE (A-04.2); every matrix format is now offered as available on Android.
+        assertTrue(entries.all { it.availability == ImportFormatAvailability.AVAILABLE })
+        assertEquals(4, entries.count { it.availability == ImportFormatAvailability.AVAILABLE })
     }
 
     @Test

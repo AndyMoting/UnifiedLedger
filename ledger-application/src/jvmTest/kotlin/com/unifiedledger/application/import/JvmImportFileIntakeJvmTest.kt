@@ -26,6 +26,8 @@ import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.aggregateImportIntakeRecords
 import com.unifiedledger.domain.LedgerId
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -265,21 +267,37 @@ class JvmImportFileIntakeJvmTest {
 
     // ---------------------------------------------------------------- format / charset gates
 
+    /**
+     * A-04.2 flip: CCB XLS on Android is no longer a typed (a)-gate rejection — the matrix
+     * unit flipped to AVAILABLE after A-04.1's instrumented verification, so the intake
+     * dispatches the real fixture bytes to the parser. The dispatch face must equal the
+     * P-49 oracle of tests/fixtures/batch-bp01-ccb-a.xls: 13 accepted records reach the
+     * spine (the recording port's snapshots) and 5 parser-rejected rows never do.
+     */
     @Test
-    fun pendingDeviceVerificationFormatIsTypedWithZeroRead() {
+    fun ccbXlsOnAndroidNowDispatchesToTheParser() {
+        val repositoryRoot =
+            generateSequence(Path.of(System.getProperty("user.dir"))) { it.parent }
+                .firstOrNull { Files.isRegularFile(it.resolve("settings.gradle.kts")) }
+                ?: error("repository root not found")
+        val fixtureBytes = Files.readAllBytes(repositoryRoot.resolve("tests/fixtures").resolve("batch-bp01-ccb-a.xls"))
+
+        val port = RecordingIntakePort()
         val outcome =
-            orchestrator(RecordingIntakePort()).intake(
+            orchestrator(port).intake(
                 ImportFileIntakeInput(
                     format = ImportFormatCapabilities.CCB_XLS.identifier,
                     platform = ImportPlatformKind.ANDROID,
                     session = newSession(),
-                    bytes = ByteArray(0),
+                    bytes = fixtureBytes,
                 ),
             )
-        val rejected = assertIs<ImportFileIntakeOutcome.Rejected>(outcome)
-        val failure = assertIs<ImportIntakeBatchFailure.FormatUnavailable>(rejected.failure)
-        assertEquals(ImportFormatUnavailableReason.PENDING_DEVICE_VERIFICATION, failure.reason)
-        assertEquals(ImportFormatCapabilities.CCB_XLS.displayName, failure.formatDisplayName)
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(18, accepted.records.size)
+        assertEquals(13, accepted.records.count { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED })
+        assertEquals(5, accepted.records.count { it.disposition == ImportIntakeRecordDisposition.PARSER_REJECTED })
+        assertEquals(13, port.snapshots.size)
     }
 
     @Test

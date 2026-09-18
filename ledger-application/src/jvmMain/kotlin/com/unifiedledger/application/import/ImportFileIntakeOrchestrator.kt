@@ -45,9 +45,12 @@ import java.nio.charset.Charset
  *
  * (a) matrix gate: a format the matrix does not declare available on the platform is a typed
  * [ImportIntakeBatchFailure.FormatUnavailable] with reason
- * [ImportFormatUnavailableReason.PENDING_DEVICE_VERIFICATION] (CCB XLS on Android) — zero
- * read, zero parse. (b) GB18030 runtime probe (Alipay CSV only): an unsupported charset is a
- * typed [ImportFormatUnavailableReason.CHARSET_UNSUPPORTED]; the probe lives here in the
+ * [ImportFormatUnavailableReason.PENDING_DEVICE_VERIFICATION] — zero read, zero parse. After
+ * the A-04.2 flip every frozen matrix format is AVAILABLE on both platforms, so this branch
+ * is currently unreachable; it is retained as preserved code so a future format entering the
+ * matrix in the pending state fails typed instead of silently dispatching. (b) GB18030
+ * runtime probe (Alipay CSV only): an unsupported charset is a typed
+ * [ImportFormatUnavailableReason.CHARSET_UNSUPPORTED]; the probe lives here in the
  * orchestration, the parser stays unchanged (spec R-11). (c) dispatch to the jvmMain parser
  * of the format. (d) L2 bound: more than [IMPORT_INTAKE_MAX_ACCEPTED_RECORDS] accepted
  * records is a typed [ImportIntakeBatchFailure.BatchExceedsLimit] carrying the actual
