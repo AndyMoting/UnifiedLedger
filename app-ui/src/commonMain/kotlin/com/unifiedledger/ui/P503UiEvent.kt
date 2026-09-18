@@ -207,20 +207,33 @@ sealed interface P503UiEvent {
      * preference only — zero accounting effect; the host persists it through the
      * EntryPreferenceStore and only dispatches after a successful toggle. Absorbed in every
      * other state (§6.2a).
+     *
+     * [pinned] is the store's authoritative post-toggle membership
+     * ([com.unifiedledger.application.EntryPinResult.Toggled.pinned]); the reducer sets the render
+     * copy to that value instead of flipping its own, so a render copy that had diverged can never
+     * invert the persisted state (A02PIN-002). [catalogSnapshot] is the management projection
+     * re-derived from the updated pin set by the host, so the ACCOUNTS lists re-sort on the spot
+     * (A02PIN-001); `null` keeps the current projection and never touches the notice/dialog.
      */
     data class TogglePin(
         val target: EntryPinTarget,
+        val pinned: Boolean,
+        val catalogSnapshot: CatalogSnapshotView? = null,
     ) : P503UiEvent
 
     /**
      * The host obtains the requestId per spec section 4.6 and dispatches it. P5-04.3: the
      * host may attach display labels resolved from ManualExpenseOptions; the reducer falls
-     * back to the draft id values when a label is absent.
+     * back to the draft id values when a label is absent. A-02 FIX-CONFIRM-1 adds the two
+     * type-owned labels the confirmation page needs: the transfer destination account and the
+     * lending counterparty. Both stay `null` for the types that own no such row.
      */
     data class Continue(
         val requestId: RequestId,
         val paymentAccountLabel: String? = null,
         val categoryLabel: String? = null,
+        val destinationAccountLabel: String? = null,
+        val counterpartyLabel: String? = null,
     ) : P503UiEvent
 
     data object Cancel : P503UiEvent
@@ -675,10 +688,12 @@ sealed interface P503UiEvent {
         val retainedIntent: RetainedEntryIntent? = null,
         /**
          * P7-02.D E-4: the host's current pin mirror, carried on the refreshes that build a
-         * fresh overview (success result / READ retry); an ordinary overview refresh keeps the
-         * state's existing set. Backward compatible default.
+         * fresh overview (success result / READ retry). A-02 FIX-PIN-4: `null` keeps the pin set
+         * the reduced state already carries (the ordinary overview refresh self-heals from the
+         * host mirror only when the host supplies one), so a refresh can never silently empty a
+         * pin set it did not read.
          */
-        val pinnedTargets: Set<EntryPinTarget> = emptySet(),
+        val pinnedTargets: Set<EntryPinTarget>? = null,
     ) : P503UiEvent
 
     data object RefreshFailed : P503UiEvent

@@ -203,9 +203,11 @@ private fun AccountsSection(
                         Text(if (account.active) "停用" else "启用")
                     }
                     // P7-02.D E-4: manual pin — ordering preference only; the host persists the
-                    // toggle through the EntryPreferenceStore before the event is dispatched.
+                    // toggle through the EntryPreferenceStore before the event is dispatched. The
+                    // click requests the inverse of the rendered membership; the host replaces it
+                    // with the store's authoritative result.
                     TextButton(
-                        onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.AccountTarget(ledgerId, account.accountId))) },
+                        onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.AccountTarget(ledgerId, account.accountId), pinned = !pinned)) },
                     ) {
                         Text(if (pinned) "取消置顶" else "置顶")
                     }
@@ -280,7 +282,7 @@ private fun GroupRow(
             TextButton(onClick = { onEvent(P503UiEvent.OpenCategoryDeleteDialog(group.categoryId)) }) {
                 Text("删除")
             }
-            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, group.categoryId))) }) {
+            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, group.categoryId), pinned = !pinned)) }) {
                 Text(if (pinned) "取消置顶" else "置顶")
             }
         }
@@ -312,7 +314,7 @@ private fun LeafRow(
             TextButton(onClick = { onEvent(P503UiEvent.OpenCategoryDeleteDialog(child.categoryId)) }) {
                 Text("删除")
             }
-            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, child.categoryId))) }) {
+            TextButton(onClick = { onEvent(P503UiEvent.TogglePin(EntryPinTarget.CategoryTarget(ledgerId, child.categoryId), pinned = !pinned)) }) {
                 Text(if (pinned) "取消置顶" else "置顶")
             }
         }

@@ -750,7 +750,7 @@ class P503ImportReviewReducerTest {
                 P503UiEvent.SelectTransaction(TransactionId("tx-1"), TransactionDetailResult.NotFound),
                 P503UiEvent.SelectMonth(kotlinx.datetime.YearMonth(2026, 3)),
                 P503UiEvent.MonthlyActivityResult(MonthlyActivityResult.Unavailable, emptyList()),
-                P503UiEvent.TogglePin(EntryPinTarget.AccountTarget(ledgerId, AccountId("asset-payment-local"))),
+                P503UiEvent.TogglePin(EntryPinTarget.AccountTarget(ledgerId, AccountId("asset-payment-local")), pinned = true),
             )
         for (event in events) {
             assertSame(state, reducer.reduce(state, event))

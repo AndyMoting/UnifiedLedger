@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.EntryExpressionCode
 import com.unifiedledger.application.EntryExpressionEvaluator
@@ -9,6 +10,8 @@ import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.ManualExpenseCommitResolution
+import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.RequestId
@@ -166,20 +169,57 @@ class P503EntryEfficiencyReducerTest {
         }
     }
 
-    // ---- E-4 manual pinning (section 6.1/6.2a) ----
+    // ---- E-4 manual pinning (section 6.1/6.2a; A-02 FIX-PIN-1..4) ----
 
     @Test
-    fun togglePinFlipsTheOverviewMembershipOnly() {
+    fun togglePinSetsTheAuthoritativeMembershipInsteadOfFlipping() {
         val target = EntryPinTarget.AccountTarget(ledgerId, accountId)
         val categoryTarget = EntryPinTarget.CategoryTarget(ledgerId, expenseCategoryId)
         val overview = P503AppState.OverviewEmpty(emptyState)
 
-        val pinned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.TogglePin(target)))
+        val pinned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.TogglePin(target, pinned = true)))
         assertEquals(setOf<EntryPinTarget>(target), pinned.pinnedTargets)
-        val alsoCategory = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(pinned, P503UiEvent.TogglePin(categoryTarget)))
+        val alsoCategory = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(pinned, P503UiEvent.TogglePin(categoryTarget, pinned = true)))
         assertEquals(setOf<EntryPinTarget>(target, categoryTarget), alsoCategory.pinnedTargets)
-        val unpinned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(alsoCategory, P503UiEvent.TogglePin(target)))
+        val unpinned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(alsoCategory, P503UiEvent.TogglePin(target, pinned = false)))
         assertEquals(setOf<EntryPinTarget>(categoryTarget), unpinned.pinnedTargets)
+
+        // A02PIN-002: setting the desired value is idempotent in both directions. A render copy
+        // that had diverged (the target absent while the store still holds the pin) must not
+        // invert the persisted state, and re-setting an already-present target changes nothing.
+        val unsetWhenAbsent = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.TogglePin(target, pinned = false)))
+        assertTrue(unsetWhenAbsent.pinnedTargets.isEmpty())
+        val stillPinned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(pinned, P503UiEvent.TogglePin(target, pinned = true)))
+        assertEquals(setOf<EntryPinTarget>(target), stillPinned.pinnedTargets)
+    }
+
+    @Test
+    fun togglePinInstallsTheHostReDerivedSnapshotWithoutTouchingTheNoticeOrDialog() {
+        val target = EntryPinTarget.AccountTarget(ledgerId, accountId)
+        val current = CatalogSnapshotView(6, emptyList(), emptyList())
+        val reDerived = CatalogSnapshotView(7, emptyList(), emptyList())
+        val notice = CatalogNotice("已保存", error = false)
+        val dialog = CatalogDialog.RenameAccount(accountId, "旧名")
+        val overview =
+            P503AppState.OverviewEmpty(
+                emptyState,
+                catalogSnapshot = current,
+                catalogDialog = dialog,
+                catalogNotice = notice,
+            )
+
+        val toggled =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(overview, P503UiEvent.TogglePin(target, pinned = true, catalogSnapshot = reDerived)),
+            )
+        assertEquals(reDerived, toggled.catalogSnapshot)
+        // A02PIN-001: the re-derivation must not clear the management banner or the open form.
+        assertEquals(notice, toggled.catalogNotice)
+        assertEquals(dialog, toggled.catalogDialog)
+
+        // A payload-less toggle keeps the current projection (defensive call sites).
+        val kept = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.TogglePin(target, pinned = true)))
+        assertEquals(current, kept.catalogSnapshot)
     }
 
     @Test
@@ -187,17 +227,120 @@ class P503EntryEfficiencyReducerTest {
         val target = EntryPinTarget.AccountTarget(ledgerId, accountId)
         // TogglePin's only effect state is OverviewEmpty; everywhere else it is absorbed.
         for (state in nonEditingStates.filterNot { it is P503AppState.OverviewEmpty }) {
-            assertEquals(state, reducer.reduce(state, P503UiEvent.TogglePin(target)), "absorbed TogglePin in $state")
+            assertEquals(state, reducer.reduce(state, P503UiEvent.TogglePin(target, pinned = true)), "absorbed TogglePin in $state")
         }
+    }
+
+    @Test
+    fun selectTabKeepsThePinSet() {
+        val pins = setOf<EntryPinTarget>(EntryPinTarget.AccountTarget(ledgerId, accountId))
+        val overview = P503AppState.OverviewEmpty(emptyState, P503Tab.HOME, pinnedTargets = pins)
+        val accounts = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.SelectTab(P503Tab.ACCOUNTS)))
+        assertEquals(pins, accounts.pinnedTargets)
+    }
+
+    @Test
+    fun backFromEveryEditorFlowBranchKeepsThePinSet() {
+        val pins = setOf<EntryPinTarget>(EntryPinTarget.AccountTarget(ledgerId, accountId))
+        val draft = expenseDraft()
+        val branches =
+            listOf<P503AppState>(
+                P503AppState.Editing(draft, requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins),
+                P503AppState.AwaitingConfirmation(draft, requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins),
+                P503AppState.RequestIdentityConflict(draft, requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins),
+                P503AppState.DomainRejected(draft, requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins),
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, draft, requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins),
+            )
+        for (branch in branches) {
+            val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(branch, P503UiEvent.Back))
+            assertEquals(pins, closed.pinnedTargets, "Back dropped the pin set of $branch")
+            assertEquals(emptyState, closed.state)
+            assertEquals(P503Tab.ACCOUNTS, closed.selectedTab)
+        }
+    }
+
+    @Test
+    fun pinsSurviveTheEditorFlowBackToTheManagementList() {
+        // A02PIN-002 device vector: 置顶 → 关闭录入页 → the management list keeps its pin marks.
+        val pins = setOf<EntryPinTarget>(EntryPinTarget.CategoryTarget(ledgerId, expenseCategoryId))
+        val overview = P503AppState.OverviewEmpty(emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins)
+
+        val editing = assertIs<P503AppState.Editing>(reducer.reduce(overview, P503UiEvent.StartNewExpense))
+        assertEquals(pins, editing.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(editing, P503UiEvent.Back)).pinnedTargets)
+
+        val filled =
+            reduceAll(
+                editing,
+                P503UiEvent.UpdatePaymentAccount(accountId),
+                P503UiEvent.UpdateCategory(expenseCategoryId),
+                P503UiEvent.UpdateAmount("35.80"),
+                P503UiEvent.UpdateOccurredAt(occurredAt),
+            )
+        val awaiting = assertIs<P503AppState.AwaitingConfirmation>(reducer.reduce(filled, P503UiEvent.Continue(requestId)))
+        assertEquals(pins, awaiting.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(awaiting, P503UiEvent.Back)).pinnedTargets)
+
+        val cancelled = assertIs<P503AppState.Editing>(reducer.reduce(awaiting, P503UiEvent.Cancel))
+        assertEquals(pins, cancelled.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(cancelled, P503UiEvent.Back)).pinnedTargets)
+    }
+
+    @Test
+    fun pinsSurviveEverySubmissionFailureBranchAndItsBack() {
+        val pins = setOf<EntryPinTarget>(EntryPinTarget.AccountTarget(ledgerId, accountId))
+        val submitting = P503AppState.Submitting(expenseDraft(), requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins)
+
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                reducer.reduce(submitting, P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.InfrastructureFailure)),
+            )
+        assertEquals(pins, failed.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(failed, P503UiEvent.Back)).pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.Submitting>(reducer.reduce(failed, P503UiEvent.RetrySubmission)).pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.Editing>(reducer.reduce(failed, P503UiEvent.Cancel)).pinnedTargets)
+
+        val unknown =
+            assertIs<P503AppState.UnknownCommit>(
+                reducer.reduce(submitting, P503UiEvent.SubmissionResult(ManualExpenseSubmissionResult.UnknownCommit)),
+            )
+        assertEquals(pins, unknown.pinnedTargets)
+        val conflicted =
+            assertIs<P503AppState.RequestIdentityConflict>(
+                reducer.reduce(unknown, P503UiEvent.CommitStatusResolved(ManualExpenseCommitResolution.SnapshotConflict)),
+            )
+        assertEquals(pins, conflicted.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(conflicted, P503UiEvent.Back)).pinnedTargets)
+    }
+
+    @Test
+    fun fieldEditsAndAbandonOnTheFailureScreensKeepThePinSet() {
+        val pins = setOf<EntryPinTarget>(EntryPinTarget.AccountTarget(ledgerId, accountId))
+        val conflict = P503AppState.RequestIdentityConflict(expenseDraft(), requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins)
+        val edited = assertIs<P503AppState.Editing>(reducer.reduce(conflict, P503UiEvent.UpdateAmount("12.00")))
+        assertEquals(pins, edited.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(edited, P503UiEvent.Back)).pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.Editing>(reducer.reduce(conflict, P503UiEvent.AbandonConflict)).pinnedTargets)
+
+        val rejected = P503AppState.DomainRejected(expenseDraft(), requestId, emptyState, P503Tab.ACCOUNTS, pinnedTargets = pins)
+        val rejectedEdit = assertIs<P503AppState.Editing>(reducer.reduce(rejected, P503UiEvent.UpdateNote("retry")))
+        assertEquals(pins, rejectedEdit.pinnedTargets)
+        assertEquals(pins, assertIs<P503AppState.OverviewEmpty>(reducer.reduce(rejectedEdit, P503UiEvent.Back)).pinnedTargets)
     }
 
     @Test
     fun pinsSurviveRefreshesAndAreSeededFromTheInitialLoad() {
         val pins = setOf<EntryPinTarget>(EntryPinTarget.AccountTarget(ledgerId, accountId))
-        // An ordinary overview refresh keeps the current pin set.
+        val otherPins = setOf<EntryPinTarget>(EntryPinTarget.CategoryTarget(ledgerId, expenseCategoryId))
+        // An ordinary overview refresh without a payload keeps the current pin set.
         val overview = P503AppState.OverviewEmpty(emptyState, P503Tab.HOME, pinnedTargets = pins)
         val refreshed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.RefreshResult(emptyState)))
         assertEquals(pins, refreshed.pinnedTargets)
+
+        // A-02 FIX-PIN-4: an ordinary refresh carrying the host mirror adopts it, so a diverged
+        // render copy self-heals instead of keeping its stale set.
+        val healed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.RefreshResult(emptyState, pinnedTargets = otherPins)))
+        assertEquals(otherPins, healed.pinnedTargets)
 
         // The determinate-success refresh carries the host mirror into the fresh overview.
         val afterSuccess =
@@ -211,10 +354,20 @@ class P503EntryEfficiencyReducerTest {
             )
         assertEquals(pins, afterReadRetry.pinnedTargets)
 
+        // A payload-less retry falls back to the retained monthly overview's pin set.
+        val retained = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = P503AppState.OverviewEmpty(emptyState, P503Tab.HOME, pinnedTargets = pins))
+        val afterRetryWithoutPayload = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(retained, P503UiEvent.RefreshResult(emptyState)))
+        assertEquals(pins, afterRetryWithoutPayload.pinnedTargets)
+
         // Startup seeds the persisted pins.
         val afterLoad = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(emptyState, pins)))
         assertEquals(pins, afterLoad.pinnedTargets)
     }
+
+    private fun reduceAll(
+        from: P503AppState,
+        vararg events: P503UiEvent,
+    ): P503AppState = events.fold(from) { state, event -> reducer.reduce(state, event) }
 
     // ---- E-2 record again (per-type rebuild + catalog revalidation, B06) ----
 
