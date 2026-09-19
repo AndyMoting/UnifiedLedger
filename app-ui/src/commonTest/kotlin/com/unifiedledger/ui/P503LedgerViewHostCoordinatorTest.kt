@@ -1,5 +1,8 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportReceipt
+import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.domain.LedgerId
 import kotlinx.datetime.YearMonth
@@ -19,6 +22,8 @@ import kotlin.test.assertTrue
  * A-02 FIX-MONTH-1 (D-152): trigger (e) arms a pending flag when the refresh starts and completes
  * through the post-landing consumption (`consumeMonthlyReRequestAfterRefresh`/
  * `dropMonthlyReRequestAfterFailedRefresh`) — never as a synchronous request beside the refresh.
+ * P7-03 FIX-STALE-1 (D-153): trigger (f) — a completed import batch confirmation dispatch run —
+ * arms the SAME pending flag via `onImportBatchConfirmed` and is consumed by the same landing hop.
  */
 class P503LedgerViewHostCoordinatorTest {
     private val ledgerId = LedgerId("ledger-monthly-host-test")
@@ -190,6 +195,134 @@ class P503LedgerViewHostCoordinatorTest {
         assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.NoChange))
         host.consumeMonthlyReRequestAfterRefresh(overview(month = YearMonth(2026, 4)))
         assertEquals(2, probe.monthlyRequests.size)
+    }
+
+    // (f) a completed import batch confirmation dispatch run (P7-03 FIX-STALE-1, D-153) fires the
+    // authoritative refresh and arms the SAME pending flag as (e): no synchronous request beside
+    // the refresh, exactly one unconditional post-landing request stamped on the landed month,
+    // and the (d) guard then stays quiet on the fresh overview.
+
+    @Test
+    fun importBatchConfirmedFiresTheRefreshAndReRequestsTheMonthlyPayloadOnlyAfterItLands() {
+        val (host, probe) = coordinator()
+        host.onImportBatchConfirmed()
+        assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        // The refreshed overview lands (selectedMonth = null = 本月) and the host consumes: exactly
+        // one unconditional request, and the (d) guard sees the stamped month with no duplicate.
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = null))
+        assertEquals(1, probe.monthlyRequests.size)
+        assertFalse(host.decideMonthly(overview(month = null)))
+        assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    // (f) failure: a failed authoritative refresh clears the (f) arm without firing — recovery
+    // stays the residual boundary (a) path, and a later unrelated landing consumes nothing.
+
+    @Test
+    fun failedRefreshLandingDropsTheImportBatchConfirmedArmWithoutRequesting() {
+        val (host, probe) = coordinator()
+        host.onImportBatchConfirmed()
+        assertEquals(1, probe.refreshes.size)
+        host.dropMonthlyReRequestAfterFailedRefresh()
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
+    // (f)/(e) share one armed marker, so they cannot cross-interfere: an (e) arm followed by an
+    // (f) trigger before the landing coalesces into ONE consumption — exactly one request.
+
+    @Test
+    fun importBatchConfirmedSharesTheArmedMarkerWithTheDeterminateSuccessTrigger() {
+        val (host, probe) = coordinator()
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Created))
+        host.onImportBatchConfirmed()
+        assertEquals(2, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    // (f) the ONE shared arm-gate for both host call sites (dispatch-loop completed branch and
+    // Unknown 核对 resolution hop): arm exactly when the landed state is the overview carrying a
+    // retained summary with no Unknown left. The pure truth table is covered here; the hop wiring
+    // itself is Composable host code and is covered by the device window (registered in D-153).
+
+    private fun overviewWithBatchResult(vararg outcomes: ImportBatchItemOutcome): P503AppState.OverviewEmpty {
+        val summaryItems =
+            outcomes.mapIndexed { index, outcome ->
+                ImportBatchResultItem(
+                    ImportBatchItem(ImportCandidateId("cand-$index"), ImportRequestId("req-$index")),
+                    outcome,
+                )
+            }
+        val summary = ImportBatchResultSummary(confirmedAt = "2026-09-19T08:00:00", items = summaryItems)
+        return overview().copy(importReview = ImportReviewView(batchResult = summary))
+    }
+
+    private fun batchSubmitting(vararg outcomes: ImportBatchItemOutcome?): P503AppState.ImportBatchSubmitting =
+        P503AppState.ImportBatchSubmitting(
+            overview = overview(),
+            confirmedAt = "2026-09-19T08:00:00",
+            items =
+                outcomes.mapIndexed { index, outcome ->
+                    ImportBatchSubmittingItem(ImportBatchItem(ImportCandidateId("cand-$index"), ImportRequestId("req-$index")), outcome)
+                },
+        )
+
+    @Test
+    fun importBatchConfirmedArmsOnlyWhenTheLandedSummaryIsUnknownFree() {
+        // Completed run, every item terminal (the reducer auto-left): the completed branch's hop
+        // observes the overview with the Unknown-free summary → arm.
+        assertTrue(
+            shouldArmImportBatchConfirmed(
+                overviewWithBatchResult(ImportBatchItemOutcome.CheckConflict("E_TEST"), ImportBatchItemOutcome.Skipped("SKIP_TEST")),
+            ),
+        )
+        assertTrue(shouldArmImportBatchConfirmed(overviewWithBatchResult(ImportBatchItemOutcome.Rejected("E_TEST"))))
+
+        // FALSIFIED-ORDERING REGRESSION (verifier): A confirmed, B Unknown → paused → Resume
+        // dispatches C → run completes while B still blocks the auto-leave (state stays
+        // ImportBatchSubmitting) → the completed branch must NOT arm; the later 核对 resolution
+        // of B (all-terminal auto-leave) arms exactly once.
+        assertFalse(
+            shouldArmImportBatchConfirmed(
+                batchSubmitting(ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)), ImportBatchItemOutcome.Unknown, null),
+            ),
+        )
+        // ...and the same resolution's landing (auto-left, summary Unknown-free) arms.
+        assertTrue(
+            shouldArmImportBatchConfirmed(
+                overviewWithBatchResult(
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)),
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-1"), null, null, ImportCandidateId("cand-1"), null, null)),
+                    ImportBatchItemOutcome.Skipped("SKIP_TEST"),
+                ),
+            ),
+        )
+
+        // A mid-batch 核对 resolution: the state is still dispatching — the later completed
+        // branch arms.
+        assertFalse(shouldArmImportBatchConfirmed(batchSubmitting(ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)), null)))
+
+        // StillUnknown (or an absorbed verdict): the checked item keeps its check entry — the run
+        // stays incomplete, the user may retry or resolve it later.
+        assertFalse(shouldArmImportBatchConfirmed(overviewWithBatchResult(ImportBatchItemOutcome.Unknown)))
+
+        // Another Unknown still remains after this resolution: not all-terminal yet — the LATER
+        // resolution completes the run and arms exactly once.
+        assertFalse(
+            shouldArmImportBatchConfirmed(
+                overviewWithBatchResult(
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)),
+                    ImportBatchItemOutcome.Unknown,
+                ),
+            ),
+        )
+
+        // An absorbed landing without the retained summary never arms.
+        assertFalse(shouldArmImportBatchConfirmed(overview()))
+        assertFalse(shouldArmImportBatchConfirmed(P503AppState.Ready))
     }
 
     // Nothing outside the frozen set re-requests.
