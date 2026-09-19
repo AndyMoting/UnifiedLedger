@@ -87,7 +87,10 @@ internal fun dispatchCurrentP503Action(
  *     ([decideMonthly], C01);
  * (e) the authoritative refresh after each determinate success ([decide] arms the re-request;
  *     the host completes it via [consumeMonthlyReRequestAfterRefresh] once the refreshed
- *     overview lands — A-02 FIX-MONTH-1, D-152).
+ *     overview lands — A-02 FIX-MONTH-1, D-152);
+ * (f) a completed import batch confirmation dispatch run ([onImportBatchConfirmed] arms the
+ *     same post-landing re-request — P7-03 FIX-STALE-1, D-153); per-item result landings and
+ *     a pause/abandon of the run never re-request.
  * Tab switches, `CloseTransactionDetail`, ordinary refreshes and READ-retry recoveries never
  * re-request.
  */
@@ -276,6 +279,26 @@ internal class P503HostCoordinator(
      */
     internal fun dropMonthlyReRequestAfterFailedRefresh() {
         pendingMonthlyReRequestAfterRefresh = false
+    }
+
+    /**
+     * P7-03 FIX-STALE-1 (D-153): trigger (f) — the import batch confirmation dispatch run has
+     * reached its terminal state (every item terminal, including a run-level typed pre-phase
+     * failure and an Unknown-paused run resumed to completion; a partial success still counts,
+     * exactly once per run). The confirmation created formal ledger effects, so the host fires
+     * the authoritative refresh and arms the SAME post-landing monthly re-request as the (e) arm
+     * in [decide]: the flag is consumed by the same landing hop
+     * ([consumeMonthlyReRequestAfterRefresh] on a successful landing — exactly one unconditional
+     * request stamped on the landed month, so the month card, SelectMonth domain, trend, and
+     * entry rows reflect the confirmed batch this session; [dropMonthlyReRequestAfterFailedRefresh]
+     * on a failed landing). Mirrors the (e) arm for the same A-PERF reason: no synchronous
+     * request beside the refresh, whose transient result state would absorb the payload. Not
+     * fired by per-item result landings (only the run's completion triggers once) nor by a
+     * pause/abandon of the run.
+     */
+    internal fun onImportBatchConfirmed() {
+        onRefresh()
+        pendingMonthlyReRequestAfterRefresh = true
     }
 
     /**

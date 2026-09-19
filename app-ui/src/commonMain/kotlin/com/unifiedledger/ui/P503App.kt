@@ -1355,10 +1355,14 @@ fun P503App(
                 } finally {
                     // Back on the main dispatcher: release the slot (queued after every per-item
                     // result hop) and, on a completed run, re-read the list so the rows reflect
-                    // the confirmed items.
+                    // the confirmed items. A completed run is monthly trigger (f) (P7-03
+                    // FIX-STALE-1, D-153): the authoritative refresh + the armed post-landing
+                    // monthly re-request make the home reflect the confirmed batch this session
+                    // (a paused run arms nothing; its resumed completion reaches here completed).
                     scope.launch {
                         coordinator.importBatchDispatchCompleted()
                         if (completed) {
+                            coordinator.onImportBatchConfirmed()
                             requestImportReviewRowsRead()
                         }
                     }

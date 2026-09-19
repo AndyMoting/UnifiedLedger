@@ -2905,3 +2905,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：`app-ui` 的宿主协调器/宿主/状态/reducer 与 commonTest，以及本条登记。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖、零 Golden/fixture、触发器冻结集（P703SPEC-04）零改动、§6.2 `MonthlyActivityResult` 吸收表零改动。自动验证：`:app-ui:jvmTest` 393/0/0/0（较基线 384 新增 9 向量：协调器 (e) 时序/消费语义 3 + 携带/还原 5 + 吸收不变 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。设备回归（提交当次会话月度小结立即更新；打开并关闭录入页载荷与月份游标保留；会话内新建往来对象 → 借出无整屏读失败、重试可用性一致；重启持久回归）由合并后新 APK 的设备窗口（隔离 adb 5038）承担。
 
 **关联决定：** D-151（同批 A-02 缺陷修复的 FIX-PIN-2 流状态机械携带先例——本批沿用）、D-145（P7-03.C 月度触发冻结集——本批仅改 (e) 的时序，不改集合）、D-148（A-PERF 异步权威读裁决——本批修复其引入的 (e) 时序回归）、D-027（目录命令后刷新会话的既有约定——FIX-LEND-1 沿用）、D-119/D-120（UnknownCommit 禁自动重试——本批不触碰其语义）。
+
+## D-153 P7-03 A05HOME-STALE-001 触发集 (f) 增补裁决：导入批量确认派发完成触发权威刷新与月度重请求
+
+**状态：** 已批准（2026-09-19，P7-03 A05HOME-STALE-001 修复批随批登记的裁决性契约修正——月度触发冻结集（P703SPEC-04，D-145）的有意增补，经缺陷报告独立取证与常设授权）。规格：`docs/specs/2026-09-19-p7-03-import-refresh-trigger-design.md`（approved）。
+
+**决定（FIX-STALE-1，触发 (f) 定义）：** 增补触发 **(f) 导入批量确认派发完成**——一次批量派发运行到达运行终态，即全部项到达逐项终态（已入账/拒绝/核对冲突/跳过），含 run 级类型化失败（pre-phase 失败同样使全部项终态）与 Unknown 暂停后恢复完成的运行；部分成功的运行恰触发一次。触发效果与 (e) 同型：一次无条件权威刷新 + 月度重请求（刷新落地后执行，复用既有 arm/consume 机制）。理由：导入批量确认创建正式账务效果（posting 落库），首页不得呈现相反事实——确认后首页月度小结与流水列表停留在确认前的陈旧载荷上（流水显示「账本为空」、月卡不反映新交易月、SelectMonth 域不含新交易月），违反呈现原则（旧数据不冒充实时），且仅重启（触发 (a)）可恢复。根因：导入确认走导入自身状态机（`ImportBatchSubmitting → ImportBatchResultSummary` 等）而非入口提交的 `Created/NoChange/Recovered`，冻结集 (a)–(e) 均不覆盖。不触发：逐项结果落地（仅运行完成触发一次，避免 10k 级逐项风暴）；批量暂停/放弃（放弃时未入账项本就零正式效果，既有列表重读已覆盖）。
+
+**与 D-152 的关系：** 复用 FIX-MONTH-1 的同一 arm/consume 机制——`onImportBatchConfirmed()` 触发权威刷新并置位同一 `pendingMonthlyReRequestAfterRefresh` 挂起标记，由同一落地跳消费：成功落地 `consumeMonthlyReRequestAfterRefresh`（恰一次无条件重请求，落月盖章抑制随后的 (a)/(d) 守卫；与 `P503CurrentStateLoadCoordinator` 合并重跑兼容——标记存活到首个成功落地）、失败落地 `dropMonthlyReRequestAfterFailedRefresh`（清标记不请求）。触发点位于 `runImportBatchDispatch` 的 finally 主线程跳、仅 `completed == true` 分支（暂停不触发；恢复完成的运行到达 completed 分支）。(e) 分支、consume/drop、(a)/(d) 守卫与 §6.2 吸收表零改动；(a)–(e) 语义逐字保留，仅增补 (f)。
+
+**边界：** 入：`app-ui` 的宿主协调器/宿主与 commonTest，以及本条登记。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖、零 Golden/fixture。自动验证：`:app-ui:jvmTest` 396/0/0/0（较基线 393 新增 3 向量：(f) 臂标记→落地恰一次消费 1、失败落地丢弃 1、与 (e) 同标记恰一次 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。接线（`runImportBatchDispatch` completed 分支）位于 `@Composable` 宿主内、无既有 JVM 断言基建，按规格 §3 以协调器向量 + 设备回归覆盖并如实登记。设备回归（导入 CCB 样本 → 批量确认入账 → 首页月卡与流水当次会话立即反映确认结果、无需重启 → 月份切换正常（SelectMonth 域含新交易月）→ 重启持久）由合并后新 APK 的设备窗口（隔离 adb 5038）承担。技术注记：无。
+
+**关联决定：** D-145（P7-03.C 月度触发冻结集——本条为其唯一增补 (f)）、D-152（FIX-MONTH-1 arm/consume 机制——本条复用同一机制，不改机制）、D-146（P7-04.D 批量派发宿主决策——(f) 的触发点位于其完成跳）。

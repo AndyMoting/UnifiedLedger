@@ -19,6 +19,8 @@ import kotlin.test.assertTrue
  * A-02 FIX-MONTH-1 (D-152): trigger (e) arms a pending flag when the refresh starts and completes
  * through the post-landing consumption (`consumeMonthlyReRequestAfterRefresh`/
  * `dropMonthlyReRequestAfterFailedRefresh`) — never as a synchronous request beside the refresh.
+ * P7-03 FIX-STALE-1 (D-153): trigger (f) — a completed import batch confirmation dispatch run —
+ * arms the SAME pending flag via `onImportBatchConfirmed` and is consumed by the same landing hop.
  */
 class P503LedgerViewHostCoordinatorTest {
     private val ledgerId = LedgerId("ledger-monthly-host-test")
@@ -190,6 +192,52 @@ class P503LedgerViewHostCoordinatorTest {
         assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.NoChange))
         host.consumeMonthlyReRequestAfterRefresh(overview(month = YearMonth(2026, 4)))
         assertEquals(2, probe.monthlyRequests.size)
+    }
+
+    // (f) a completed import batch confirmation dispatch run (P7-03 FIX-STALE-1, D-153) fires the
+    // authoritative refresh and arms the SAME pending flag as (e): no synchronous request beside
+    // the refresh, exactly one unconditional post-landing request stamped on the landed month,
+    // and the (d) guard then stays quiet on the fresh overview.
+
+    @Test
+    fun importBatchConfirmedFiresTheRefreshAndReRequestsTheMonthlyPayloadOnlyAfterItLands() {
+        val (host, probe) = coordinator()
+        host.onImportBatchConfirmed()
+        assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        // The refreshed overview lands (selectedMonth = null = 本月) and the host consumes: exactly
+        // one unconditional request, and the (d) guard sees the stamped month with no duplicate.
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = null))
+        assertEquals(1, probe.monthlyRequests.size)
+        assertFalse(host.decideMonthly(overview(month = null)))
+        assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    // (f) failure: a failed authoritative refresh clears the (f) arm without firing — recovery
+    // stays the residual boundary (a) path, and a later unrelated landing consumes nothing.
+
+    @Test
+    fun failedRefreshLandingDropsTheImportBatchConfirmedArmWithoutRequesting() {
+        val (host, probe) = coordinator()
+        host.onImportBatchConfirmed()
+        assertEquals(1, probe.refreshes.size)
+        host.dropMonthlyReRequestAfterFailedRefresh()
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
+    // (f)/(e) share one armed marker, so they cannot cross-interfere: an (e) arm followed by an
+    // (f) trigger before the landing coalesces into ONE consumption — exactly one request.
+
+    @Test
+    fun importBatchConfirmedSharesTheArmedMarkerWithTheDeterminateSuccessTrigger() {
+        val (host, probe) = coordinator()
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Created))
+        host.onImportBatchConfirmed()
+        assertEquals(2, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
     }
 
     // Nothing outside the frozen set re-requests.
